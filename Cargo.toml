@@ -1,0 +1,24 @@
+[package]
+name = "zenpng"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "AGPL-3.0-or-later"
+description = "PNG encoding and decoding with zencodec-types trait integration"
+categories = ["multimedia::images", "multimedia::encoding"]
+keywords = ["png", "image", "encoder", "decoder", "codec"]
+repository = "https://github.com/imazen/zenpng"
+
+[dependencies]
+png = "0.18"
+thiserror = { version = "2.0", default-features = false }
+rgb = { version = "0.8", default-features = false, features = ["as-bytes"] }
+imgref = "1.12"
+bytemuck = { version = "1.25", default-features = false }
+enough = "0.3"
+zencodec-types = { path = "../zencodec-types" }
+zenquant = { path = "../zenquant", optional = true }
+
+[features]
+default = ["quantize"]
+quantize = ["dep:zenquant"]
