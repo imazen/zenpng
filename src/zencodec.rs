@@ -13,7 +13,7 @@ use rgb::{Gray, Rgb, Rgba};
 use zencodec_types::{
     DecodeOutput as ZDecodeOutput, Decoding, DecodingJob, EncodeOutput as ZEncodeOutput, Encoding,
     EncodingJob, ImageFormat as ZImageFormat, ImageInfo as ZImageInfo,
-    ImageMetadata as ZImageMetadata, Stop,
+    ImageMetadata as ZImageMetadata, ResourceLimits, Stop,
 };
 
 use crate::decode::PngLimits;
@@ -24,14 +24,12 @@ use crate::error::PngError;
 
 /// PNG encoder configuration implementing [`Encoding`].
 ///
-/// PNG is lossless — quality and alpha_quality have no effect.
-/// Effort maps to png compression level.
+/// PNG is lossless — quality and alpha_quality are not applicable.
+/// Use [`with_effort`](PngEncoding::with_effort) to control compression level.
 #[derive(Clone, Debug)]
 pub struct PngEncoding {
     config: EncodeConfig,
-    limit_pixels: Option<u64>,
-    limit_memory: Option<u64>,
-    limit_output: Option<u64>,
+    limits: ResourceLimits,
 }
 
 impl PngEncoding {
@@ -40,10 +38,24 @@ impl PngEncoding {
     pub fn new() -> Self {
         Self {
             config: EncodeConfig::default(),
-            limit_pixels: None,
-            limit_memory: None,
-            limit_output: None,
+            limits: ResourceLimits::none(),
         }
+    }
+
+    /// Set compression effort (0–10).
+    ///
+    /// Maps to PNG compression levels:
+    /// - 0–2: Fast
+    /// - 3–7: Balanced
+    /// - 8–10: High
+    #[must_use]
+    pub fn with_effort(mut self, effort: u32) -> Self {
+        self.config.compression = match effort {
+            0..=2 => png::Compression::Fast,
+            3..=7 => png::Compression::Balanced,
+            _ => png::Compression::High,
+        };
+        self
     }
 
     /// Set PNG compression level directly.
@@ -71,39 +83,8 @@ impl Encoding for PngEncoding {
     type Error = PngError;
     type Job<'a> = PngEncodeJob<'a>;
 
-    fn with_quality(self, _quality: f32) -> Self {
-        self // PNG is lossless
-    }
-
-    fn with_effort(mut self, effort: u32) -> Self {
-        self.config.compression = match effort {
-            0..=2 => png::Compression::Fast,
-            3..=7 => png::Compression::Balanced,
-            _ => png::Compression::High,
-        };
-        self
-    }
-
-    fn with_lossless(self, _lossless: bool) -> Self {
-        self // PNG is always lossless
-    }
-
-    fn with_alpha_quality(self, _quality: f32) -> Self {
-        self // PNG doesn't have separate alpha quality
-    }
-
-    fn with_limit_pixels(mut self, max: u64) -> Self {
-        self.limit_pixels = Some(max);
-        self
-    }
-
-    fn with_limit_memory(mut self, bytes: u64) -> Self {
-        self.limit_memory = Some(bytes);
-        self
-    }
-
-    fn with_limit_output(mut self, bytes: u64) -> Self {
-        self.limit_output = Some(bytes);
+    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
+        self.limits = limits.clone();
         self
     }
 
@@ -113,8 +94,7 @@ impl Encoding for PngEncoding {
             icc: None,
             exif: None,
             xmp: None,
-            limit_pixels: None,
-            limit_memory: None,
+            limits: self.limits.clone(),
         }
     }
 }
@@ -127,20 +107,46 @@ pub struct PngEncodeJob<'a> {
     icc: Option<&'a [u8]>,
     exif: Option<&'a [u8]>,
     xmp: Option<&'a [u8]>,
-    limit_pixels: Option<u64>,
-    limit_memory: Option<u64>,
+    limits: ResourceLimits,
 }
 
 impl<'a> PngEncodeJob<'a> {
+    /// Set ICC color profile for this encode operation.
+    #[must_use]
+    pub fn with_icc(mut self, icc: &'a [u8]) -> Self {
+        self.icc = Some(icc);
+        self
+    }
+
+    /// Set EXIF metadata for this encode operation.
+    #[must_use]
+    pub fn with_exif(mut self, exif: &'a [u8]) -> Self {
+        self.exif = Some(exif);
+        self
+    }
+
+    /// Set XMP metadata for this encode operation.
+    #[must_use]
+    pub fn with_xmp(mut self, xmp: &'a [u8]) -> Self {
+        self.xmp = Some(xmp);
+        self
+    }
+
     fn build_metadata(&self) -> Option<ZImageMetadata<'a>> {
         if self.icc.is_none() && self.exif.is_none() && self.xmp.is_none() {
             return None;
         }
-        Some(ZImageMetadata {
-            icc_profile: self.icc,
-            exif: self.exif,
-            xmp: self.xmp,
-        })
+        let mut meta = ZImageMetadata::none();
+        if let Some(icc) = self.icc {
+            meta = meta.with_icc(icc);
+        }
+        if let Some(exif) = self.exif {
+            meta = meta.with_exif(exif);
+        }
+        if let Some(xmp) = self.xmp {
+            meta = meta.with_xmp(xmp);
+        }
+        Some(meta)
     }
 
     fn do_encode(
@@ -177,28 +183,8 @@ impl<'a> EncodingJob<'a> for PngEncodeJob<'a> {
         self
     }
 
-    fn with_icc(mut self, icc: &'a [u8]) -> Self {
-        self.icc = Some(icc);
-        self
-    }
-
-    fn with_exif(mut self, exif: &'a [u8]) -> Self {
-        self.exif = Some(exif);
-        self
-    }
-
-    fn with_xmp(mut self, xmp: &'a [u8]) -> Self {
-        self.xmp = Some(xmp);
-        self
-    }
-
-    fn with_limit_pixels(mut self, max: u64) -> Self {
-        self.limit_pixels = Some(max);
-        self
-    }
-
-    fn with_limit_memory(mut self, bytes: u64) -> Self {
-        self.limit_memory = Some(bytes);
+    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
+        self.limits = limits.clone();
         self
     }
 
@@ -226,9 +212,7 @@ impl<'a> EncodingJob<'a> for PngEncodeJob<'a> {
 /// PNG decoder configuration implementing [`Decoding`].
 #[derive(Clone, Debug)]
 pub struct PngDecoding {
-    limit_pixels: Option<u64>,
-    limit_memory: Option<u64>,
-    limit_file_size: Option<u64>,
+    limits: ResourceLimits,
 }
 
 impl PngDecoding {
@@ -236,9 +220,7 @@ impl PngDecoding {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            limit_pixels: None,
-            limit_memory: None,
-            limit_file_size: None,
+            limits: ResourceLimits::none(),
         }
     }
 }
@@ -253,31 +235,15 @@ impl Decoding for PngDecoding {
     type Error = PngError;
     type Job<'a> = PngDecodeJob<'a>;
 
-    fn with_limit_pixels(mut self, max: u64) -> Self {
-        self.limit_pixels = Some(max);
-        self
-    }
-
-    fn with_limit_memory(mut self, bytes: u64) -> Self {
-        self.limit_memory = Some(bytes);
-        self
-    }
-
-    fn with_limit_dimensions(mut self, width: u32, height: u32) -> Self {
-        self.limit_pixels = Some(width as u64 * height as u64);
-        self
-    }
-
-    fn with_limit_file_size(mut self, bytes: u64) -> Self {
-        self.limit_file_size = Some(bytes);
+    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
+        self.limits = limits.clone();
         self
     }
 
     fn job(&self) -> PngDecodeJob<'_> {
         PngDecodeJob {
             config: self,
-            limit_pixels: None,
-            limit_memory: None,
+            limits: self.limits.clone(),
         }
     }
 
@@ -292,8 +258,7 @@ impl Decoding for PngDecoding {
 /// Per-operation PNG decode job.
 pub struct PngDecodeJob<'a> {
     config: &'a PngDecoding,
-    limit_pixels: Option<u64>,
-    limit_memory: Option<u64>,
+    limits: ResourceLimits,
 }
 
 impl<'a> DecodingJob<'a> for PngDecodeJob<'a> {
@@ -303,31 +268,29 @@ impl<'a> DecodingJob<'a> for PngDecodeJob<'a> {
         self // PNG decoding is not cancellable
     }
 
-    fn with_limit_pixels(mut self, max: u64) -> Self {
-        self.limit_pixels = Some(max);
-        self
-    }
-
-    fn with_limit_memory(mut self, bytes: u64) -> Self {
-        self.limit_memory = Some(bytes);
+    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
+        self.limits = limits.clone();
         self
     }
 
     fn decode(self, data: &[u8]) -> Result<ZDecodeOutput, Self::Error> {
-        let limits = if self.limit_pixels.is_some()
-            || self.limit_memory.is_some()
-            || self.config.limit_pixels.is_some()
-            || self.config.limit_memory.is_some()
-        {
+        // Merge job-level limits with config-level limits (job takes precedence).
+        let max_pixels = self.limits.max_pixels.or(self.config.limits.max_pixels);
+        let max_memory = self
+            .limits
+            .max_memory_bytes
+            .or(self.config.limits.max_memory_bytes);
+
+        let png_limits = if max_pixels.is_some() || max_memory.is_some() {
             Some(PngLimits {
-                max_pixels: self.limit_pixels.or(self.config.limit_pixels),
-                max_memory_bytes: self.limit_memory.or(self.config.limit_memory),
+                max_pixels,
+                max_memory_bytes: max_memory,
             })
         } else {
             None
         };
 
-        let result = crate::decode::decode(data, limits.as_ref())?;
+        let result = crate::decode::decode(data, png_limits.as_ref())?;
         let info = convert_info(&result.info);
 
         Ok(ZDecodeOutput::new(result.pixels, info))
