@@ -11,9 +11,9 @@ use imgref::ImgRef;
 use rgb::{Gray, Rgb, Rgba};
 
 use zencodec_types::{
-    DecodeOutput as ZDecodeOutput, Decoding, DecodingJob, EncodeOutput as ZEncodeOutput, Encoding,
-    EncodingJob, ImageFormat as ZImageFormat, ImageInfo as ZImageInfo,
-    ImageMetadata as ZImageMetadata, ResourceLimits, Stop,
+    CodecCapabilities, DecodeOutput as ZDecodeOutput, Decoding, DecodingJob,
+    EncodeOutput as ZEncodeOutput, Encoding, EncodingJob, ImageFormat as ZImageFormat,
+    ImageInfo as ZImageInfo, ImageMetadata as ZImageMetadata, ResourceLimits, Stop,
 };
 
 use crate::decode::PngLimits;
@@ -79,12 +79,23 @@ impl Default for PngEncoding {
     }
 }
 
+static ENCODE_CAPS: CodecCapabilities = CodecCapabilities::new()
+    .with_encode_icc(true)
+    .with_encode_exif(true)
+    .with_encode_xmp(true)
+    .with_native_gray(true)
+    .with_cheap_probe(true);
+
 impl Encoding for PngEncoding {
     type Error = PngError;
     type Job<'a> = PngEncodeJob<'a>;
 
-    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
-        self.limits = limits.clone();
+    fn capabilities() -> &'static CodecCapabilities {
+        &ENCODE_CAPS
+    }
+
+    fn with_limits(mut self, limits: ResourceLimits) -> Self {
+        self.limits = limits;
         self
     }
 
@@ -94,7 +105,7 @@ impl Encoding for PngEncoding {
             icc: None,
             exif: None,
             xmp: None,
-            limits: self.limits.clone(),
+            limits: self.limits,
         }
     }
 }
@@ -183,8 +194,8 @@ impl<'a> EncodingJob<'a> for PngEncodeJob<'a> {
         self
     }
 
-    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
-        self.limits = limits.clone();
+    fn with_limits(mut self, limits: ResourceLimits) -> Self {
+        self.limits = limits;
         self
     }
 
@@ -231,23 +242,34 @@ impl Default for PngDecoding {
     }
 }
 
+static DECODE_CAPS: CodecCapabilities = CodecCapabilities::new()
+    .with_decode_icc(true)
+    .with_decode_exif(true)
+    .with_decode_xmp(true)
+    .with_native_gray(true)
+    .with_cheap_probe(true);
+
 impl Decoding for PngDecoding {
     type Error = PngError;
     type Job<'a> = PngDecodeJob<'a>;
 
-    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
-        self.limits = limits.clone();
+    fn capabilities() -> &'static CodecCapabilities {
+        &DECODE_CAPS
+    }
+
+    fn with_limits(mut self, limits: ResourceLimits) -> Self {
+        self.limits = limits;
         self
     }
 
     fn job(&self) -> PngDecodeJob<'_> {
         PngDecodeJob {
             config: self,
-            limits: self.limits.clone(),
+            limits: self.limits,
         }
     }
 
-    fn probe(&self, data: &[u8]) -> Result<ZImageInfo, Self::Error> {
+    fn probe_header(&self, data: &[u8]) -> Result<ZImageInfo, Self::Error> {
         let info = crate::decode::probe(data)?;
         Ok(convert_info(&info))
     }
@@ -268,8 +290,8 @@ impl<'a> DecodingJob<'a> for PngDecodeJob<'a> {
         self // PNG decoding is not cancellable
     }
 
-    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
-        self.limits = limits.clone();
+    fn with_limits(mut self, limits: ResourceLimits) -> Self {
+        self.limits = limits;
         self
     }
 
@@ -398,14 +420,14 @@ mod tests {
     }
 
     #[test]
-    fn probe_info() {
+    fn probe_header_info() {
         let enc = PngEncoding::new();
         let pixels = vec![Rgb { r: 0, g: 0, b: 0 }; 100];
         let img = Img::new(pixels, 10, 10);
         let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
 
         let dec = PngDecoding::new();
-        let info = dec.probe(encoded.bytes()).unwrap();
+        let info = dec.probe_header(encoded.bytes()).unwrap();
         assert_eq!(info.width, 10);
         assert_eq!(info.height, 10);
         assert_eq!(info.format, ZImageFormat::Png);
