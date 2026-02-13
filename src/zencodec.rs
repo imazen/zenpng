@@ -480,16 +480,18 @@ impl<'a> DecodingJob<'a> for PngDecodeJob<'a> {
         data: &[u8],
         mut dst: imgref::ImgRefMut<'_, Rgb<f32>>,
     ) -> Result<ZImageInfo, Self::Error> {
-        use linear_srgb::default::srgb_u8_to_linear;
+        use linear_srgb::default::srgb_to_linear;
         let output = self.decode(data)?;
         let info = output.info().clone();
-        let src = output.into_rgb8();
+        // Use into_rgb_f32() to preserve full source precision (u16 → f32 via /65535)
+        // then linearize. This avoids truncating 16-bit PNG to 8-bit.
+        let src = output.into_rgb_f32();
         for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
             for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
                 *d = Rgb {
-                    r: srgb_u8_to_linear(s.r),
-                    g: srgb_u8_to_linear(s.g),
-                    b: srgb_u8_to_linear(s.b),
+                    r: srgb_to_linear(s.r),
+                    g: srgb_to_linear(s.g),
+                    b: srgb_to_linear(s.b),
                 };
             }
         }
@@ -501,17 +503,17 @@ impl<'a> DecodingJob<'a> for PngDecodeJob<'a> {
         data: &[u8],
         mut dst: imgref::ImgRefMut<'_, Rgba<f32>>,
     ) -> Result<ZImageInfo, Self::Error> {
-        use linear_srgb::default::srgb_u8_to_linear;
+        use linear_srgb::default::srgb_to_linear;
         let output = self.decode(data)?;
         let info = output.info().clone();
-        let src = output.into_rgba8();
+        let src = output.into_rgba_f32();
         for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
             for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
                 *d = Rgba {
-                    r: srgb_u8_to_linear(s.r),
-                    g: srgb_u8_to_linear(s.g),
-                    b: srgb_u8_to_linear(s.b),
-                    a: s.a as f32 / 255.0,
+                    r: srgb_to_linear(s.r),
+                    g: srgb_to_linear(s.g),
+                    b: srgb_to_linear(s.b),
+                    a: s.a,
                 };
             }
         }
@@ -523,13 +525,13 @@ impl<'a> DecodingJob<'a> for PngDecodeJob<'a> {
         data: &[u8],
         mut dst: imgref::ImgRefMut<'_, Gray<f32>>,
     ) -> Result<ZImageInfo, Self::Error> {
-        use linear_srgb::default::srgb_u8_to_linear;
+        use linear_srgb::default::srgb_to_linear;
         let output = self.decode(data)?;
         let info = output.info().clone();
-        let src = output.into_gray8();
+        let src = output.into_gray_f32();
         for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
             for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
-                *d = Gray::new(srgb_u8_to_linear(s.value()));
+                *d = Gray::new(srgb_to_linear(s.value()));
             }
         }
         Ok(info)
