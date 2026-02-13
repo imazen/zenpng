@@ -742,4 +742,112 @@ mod tests {
         });
         assert!(report.permutations_run >= 1);
     }
+
+    #[test]
+    fn f32_rgba_roundtrip() {
+        use linear_srgb::default::{linear_to_srgb_u8, srgb_u8_to_linear};
+
+        let pixels = vec![
+            Rgba { r: 0.0f32, g: 0.5, b: 1.0, a: 1.0 },
+            Rgba { r: 0.25, g: 0.75, b: 0.1, a: 0.5 },
+            Rgba { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
+            Rgba { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+        ];
+        let img = Img::new(pixels.clone(), 2, 2);
+        let enc = PngEncoding::new();
+        let output = enc.encode_rgba_f32(img.as_ref()).unwrap();
+
+        let dec = PngDecoding::new();
+        let mut dst = imgref::ImgVec::new(
+            vec![Rgba { r: 0.0f32, g: 0.0, b: 0.0, a: 0.0 }; 4],
+            2,
+            2,
+        );
+        dec.decode_into_rgba_f32(output.bytes(), dst.as_mut())
+            .unwrap();
+
+        for (orig, decoded) in pixels.iter().zip(dst.buf().iter()) {
+            let expected_r = srgb_u8_to_linear(linear_to_srgb_u8(orig.r.clamp(0.0, 1.0)));
+            let expected_g = srgb_u8_to_linear(linear_to_srgb_u8(orig.g.clamp(0.0, 1.0)));
+            let expected_b = srgb_u8_to_linear(linear_to_srgb_u8(orig.b.clamp(0.0, 1.0)));
+            let expected_a = (orig.a * 255.0).round() / 255.0;
+            assert!((decoded.r - expected_r).abs() < 1e-5, "r mismatch");
+            assert!((decoded.g - expected_g).abs() < 1e-5, "g mismatch");
+            assert!((decoded.b - expected_b).abs() < 1e-5, "b mismatch");
+            assert!((decoded.a - expected_a).abs() < 1e-2, "a mismatch: {} vs {}", decoded.a, expected_a);
+        }
+    }
+
+    #[test]
+    fn f32_gray_roundtrip() {
+        use linear_srgb::default::{linear_to_srgb_u8, srgb_u8_to_linear};
+        use zencodec_types::Gray;
+
+        let pixels = vec![
+            Gray(0.0f32),
+            Gray(0.18),
+            Gray(0.5),
+            Gray(1.0),
+        ];
+        let img = Img::new(pixels.clone(), 2, 2);
+        let enc = PngEncoding::new();
+        let output = enc.encode_gray_f32(img.as_ref()).unwrap();
+
+        let dec = PngDecoding::new();
+        let mut dst = imgref::ImgVec::new(vec![Gray(0.0f32); 4], 2, 2);
+        dec.decode_into_gray_f32(output.bytes(), dst.as_mut())
+            .unwrap();
+
+        for (orig, decoded) in pixels.iter().zip(dst.buf().iter()) {
+            let expected = srgb_u8_to_linear(linear_to_srgb_u8(orig.0.clamp(0.0, 1.0)));
+            assert!(
+                (decoded.0 - expected).abs() < 1e-5,
+                "gray mismatch: {} vs {}",
+                decoded.0,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn f32_known_srgb_values() {
+        use linear_srgb::default::srgb_u8_to_linear;
+
+        // Encode known sRGB u8 values, decode to linear f32, verify conversion
+        let pixels = vec![
+            Rgb { r: 0u8, g: 0, b: 0 },
+            Rgb { r: 128, g: 128, b: 128 },
+            Rgb { r: 255, g: 255, b: 255 },
+            Rgb { r: 255, g: 0, b: 0 },
+        ];
+        let img = Img::new(pixels, 2, 2);
+        let enc = PngEncoding::new();
+        let output = enc.encode_rgb8(img.as_ref()).unwrap();
+
+        let dec = PngDecoding::new();
+        let mut dst = imgref::ImgVec::new(
+            vec![Rgb { r: 0.0f32, g: 0.0, b: 0.0 }; 4],
+            2,
+            2,
+        );
+        dec.decode_into_rgb_f32(output.bytes(), dst.as_mut())
+            .unwrap();
+
+        let buf = dst.buf();
+        // Black → 0.0 linear
+        assert!(buf[0].r.abs() < 1e-6);
+        assert!(buf[0].g.abs() < 1e-6);
+        assert!(buf[0].b.abs() < 1e-6);
+        // sRGB 128 → known linear value
+        let expected_128 = srgb_u8_to_linear(128);
+        assert!((buf[1].r - expected_128).abs() < 1e-5);
+        // White → 1.0 linear
+        assert!((buf[2].r - 1.0).abs() < 1e-6);
+        assert!((buf[2].g - 1.0).abs() < 1e-6);
+        assert!((buf[2].b - 1.0).abs() < 1e-6);
+        // Pure red
+        assert!((buf[3].r - 1.0).abs() < 1e-6);
+        assert!(buf[3].g.abs() < 1e-6);
+        assert!(buf[3].b.abs() < 1e-6);
+    }
 }
