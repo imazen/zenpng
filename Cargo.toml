@@ -21,7 +21,7 @@ zenquant = { path = "../zenquant", optional = true }
 linear-srgb = { version = "0.4", default-features = false }
 
 [dev-dependencies]
-archmage = { version = "0.6", features = ["std"] }
+archmage = { version = "0.7", features = ["std"] }
 
 [features]
 default = ["quantize"]
