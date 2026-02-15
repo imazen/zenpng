@@ -480,7 +480,7 @@ impl<'a> DecodingJob<'a> for PngDecodeJob<'a> {
         data: &[u8],
         mut dst: imgref::ImgRefMut<'_, Rgb<f32>>,
     ) -> Result<ZImageInfo, Self::Error> {
-        use linear_srgb::default::srgb_to_linear;
+        use linear_srgb::default::srgb_to_linear_fast;
         let output = self.decode(data)?;
         let info = output.info().clone();
         // Use into_rgb_f32() to preserve full source precision (u16 → f32 via /65535)
@@ -489,9 +489,9 @@ impl<'a> DecodingJob<'a> for PngDecodeJob<'a> {
         for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
             for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
                 *d = Rgb {
-                    r: srgb_to_linear(s.r),
-                    g: srgb_to_linear(s.g),
-                    b: srgb_to_linear(s.b),
+                    r: srgb_to_linear_fast(s.r),
+                    g: srgb_to_linear_fast(s.g),
+                    b: srgb_to_linear_fast(s.b),
                 };
             }
         }
@@ -503,16 +503,16 @@ impl<'a> DecodingJob<'a> for PngDecodeJob<'a> {
         data: &[u8],
         mut dst: imgref::ImgRefMut<'_, Rgba<f32>>,
     ) -> Result<ZImageInfo, Self::Error> {
-        use linear_srgb::default::srgb_to_linear;
+        use linear_srgb::default::srgb_to_linear_fast;
         let output = self.decode(data)?;
         let info = output.info().clone();
         let src = output.into_rgba_f32();
         for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
             for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
                 *d = Rgba {
-                    r: srgb_to_linear(s.r),
-                    g: srgb_to_linear(s.g),
-                    b: srgb_to_linear(s.b),
+                    r: srgb_to_linear_fast(s.r),
+                    g: srgb_to_linear_fast(s.g),
+                    b: srgb_to_linear_fast(s.b),
                     a: s.a,
                 };
             }
@@ -525,13 +525,13 @@ impl<'a> DecodingJob<'a> for PngDecodeJob<'a> {
         data: &[u8],
         mut dst: imgref::ImgRefMut<'_, Gray<f32>>,
     ) -> Result<ZImageInfo, Self::Error> {
-        use linear_srgb::default::srgb_to_linear;
+        use linear_srgb::default::srgb_to_linear_fast;
         let output = self.decode(data)?;
         let info = output.info().clone();
         let src = output.into_gray_f32();
         for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
             for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
-                *d = Gray::new(srgb_to_linear(s.value()));
+                *d = Gray::new(srgb_to_linear_fast(s.value()));
             }
         }
         Ok(info)
