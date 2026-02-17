@@ -1,61 +1,81 @@
 //! zencodec-types trait implementations for PNG.
 //!
-//! Provides [`PngEncoding`] and [`PngDecoding`] types that implement the
-//! [`Encoding`] / [`Decoding`] traits from zencodec-types.
+//! Provides [`PngEncoderConfig`] and [`PngDecoderConfig`] types that implement the
+//! [`EncoderConfig`] / [`DecoderConfig`] traits from zencodec-types.
 
 extern crate std;
 
 use alloc::vec::Vec;
 
-use imgref::ImgRef;
-use rgb::{Gray, Rgb, Rgba};
-
 use zencodec_types::{
-    CodecCapabilities, DecodeOutput as ZDecodeOutput, Decoding, DecodingJob,
-    EncodeOutput as ZEncodeOutput, Encoding, EncodingJob, ImageFormat as ZImageFormat,
-    ImageInfo as ZImageInfo, ImageMetadata as ZImageMetadata, ResourceLimits, Stop,
+    CodecCapabilities, DecodeFrame, DecodeOutput, EncodeOutput, ImageFormat, ImageInfo,
+    ImageMetadata, OutputInfo, PixelDescriptor, PixelSlice, PixelSliceMut, ResourceLimits, Stop,
 };
 
 use crate::decode::PngLimits;
 use crate::encode::EncodeConfig;
 use crate::error::PngError;
 
-// ── Encoding ────────────────────────────────────────────────────────────────
+// ── Capabilities ─────────────────────────────────────────────────────
 
-/// PNG encoder configuration implementing [`Encoding`].
+static ENCODE_CAPS: CodecCapabilities = CodecCapabilities::new()
+    .with_encode_icc(true)
+    .with_encode_exif(true)
+    .with_encode_xmp(true)
+    .with_native_gray(true)
+    .with_cheap_probe(true)
+    .with_lossless(true)
+    .with_effort_range(0, 10);
+
+static DECODE_CAPS: CodecCapabilities = CodecCapabilities::new()
+    .with_decode_icc(true)
+    .with_decode_exif(true)
+    .with_decode_xmp(true)
+    .with_native_gray(true)
+    .with_cheap_probe(true);
+
+// ── Supported descriptors ────────────────────────────────────────────
+
+static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
+    PixelDescriptor::RGB8_SRGB,
+    PixelDescriptor::RGBA8_SRGB,
+    PixelDescriptor::GRAY8_SRGB,
+    PixelDescriptor::BGRA8_SRGB,
+    PixelDescriptor::RGBF32_LINEAR,
+    PixelDescriptor::RGBAF32_LINEAR,
+    PixelDescriptor::GRAYF32_LINEAR,
+];
+
+static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
+    PixelDescriptor::RGB8_SRGB,
+    PixelDescriptor::RGBA8_SRGB,
+    PixelDescriptor::GRAY8_SRGB,
+    PixelDescriptor::BGRA8_SRGB,
+    PixelDescriptor::RGBF32_LINEAR,
+    PixelDescriptor::RGBAF32_LINEAR,
+    PixelDescriptor::GRAYF32_LINEAR,
+];
+
+// ── PngEncoderConfig ─────────────────────────────────────────────────
+
+/// PNG encoder configuration implementing [`EncoderConfig`](zencodec_types::EncoderConfig).
 ///
-/// PNG is lossless — quality and alpha_quality are not applicable.
-/// Use [`with_effort`](PngEncoding::with_effort) to control compression level.
+/// PNG is lossless — quality is not applicable.
+/// Use [`with_effort`](PngEncoderConfig::with_effort) to control compression level.
 #[derive(Clone, Debug)]
-pub struct PngEncoding {
+pub struct PngEncoderConfig {
     config: EncodeConfig,
-    limits: ResourceLimits,
+    effort: Option<i32>,
 }
 
-impl PngEncoding {
+impl PngEncoderConfig {
     /// Create a default PNG encoder config.
     #[must_use]
     pub fn new() -> Self {
         Self {
             config: EncodeConfig::default(),
-            limits: ResourceLimits::none(),
+            effort: None,
         }
-    }
-
-    /// Set compression effort (0–10).
-    ///
-    /// Maps to PNG compression levels:
-    /// - 0–2: Fast
-    /// - 3–7: Balanced
-    /// - 8–10: High
-    #[must_use]
-    pub fn with_effort(mut self, effort: u32) -> Self {
-        self.config.compression = match effort {
-            0..=2 => png::Compression::Fast,
-            3..=7 => png::Compression::Balanced,
-            _ => png::Compression::High,
-        };
-        self
     }
 
     /// Set PNG compression level directly.
@@ -73,30 +93,44 @@ impl PngEncoding {
     }
 }
 
-impl Default for PngEncoding {
+impl Default for PngEncoderConfig {
     fn default() -> Self {
         Self::new()
     }
 }
 
-static ENCODE_CAPS: CodecCapabilities = CodecCapabilities::new()
-    .with_encode_icc(true)
-    .with_encode_exif(true)
-    .with_encode_xmp(true)
-    .with_native_gray(true)
-    .with_cheap_probe(true);
+fn effort_to_compression(effort: i32) -> png::Compression {
+    match effort {
+        ..=2 => png::Compression::Fast,
+        3..=7 => png::Compression::Balanced,
+        _ => png::Compression::High,
+    }
+}
 
-impl Encoding for PngEncoding {
+impl zencodec_types::EncoderConfig for PngEncoderConfig {
     type Error = PngError;
     type Job<'a> = PngEncodeJob<'a>;
+
+    fn supported_descriptors() -> &'static [PixelDescriptor] {
+        ENCODE_DESCRIPTORS
+    }
 
     fn capabilities() -> &'static CodecCapabilities {
         &ENCODE_CAPS
     }
 
-    fn with_limits(mut self, limits: ResourceLimits) -> Self {
-        self.limits = limits;
+    fn with_effort(mut self, effort: i32) -> Self {
+        self.effort = Some(effort);
+        self.config.compression = effort_to_compression(effort);
         self
+    }
+
+    fn effort(&self) -> Option<i32> {
+        self.effort
+    }
+
+    fn is_lossless(&self) -> Option<bool> {
+        Some(true)
     }
 
     fn job(&self) -> PngEncodeJob<'_> {
@@ -105,20 +139,20 @@ impl Encoding for PngEncoding {
             icc: None,
             exif: None,
             xmp: None,
-            limits: self.limits,
+            limits: None,
         }
     }
 }
 
-// ── Encode job ──────────────────────────────────────────────────────────────
+// ── PngEncodeJob ─────────────────────────────────────────────────────
 
 /// Per-operation PNG encode job.
 pub struct PngEncodeJob<'a> {
-    config: &'a PngEncoding,
+    config: &'a PngEncoderConfig,
     icc: Option<&'a [u8]>,
     exif: Option<&'a [u8]>,
     xmp: Option<&'a [u8]>,
-    limits: ResourceLimits,
+    limits: Option<ResourceLimits>,
 }
 
 impl<'a> PngEncodeJob<'a> {
@@ -142,46 +176,18 @@ impl<'a> PngEncodeJob<'a> {
         self.xmp = Some(xmp);
         self
     }
-
-    fn build_metadata(&self) -> Option<ZImageMetadata<'a>> {
-        if self.icc.is_none() && self.exif.is_none() && self.xmp.is_none() {
-            return None;
-        }
-        let mut meta = ZImageMetadata::none();
-        if let Some(icc) = self.icc {
-            meta = meta.with_icc(icc);
-        }
-        if let Some(exif) = self.exif {
-            meta = meta.with_exif(exif);
-        }
-        if let Some(xmp) = self.xmp {
-            meta = meta.with_xmp(xmp);
-        }
-        Some(meta)
-    }
-
-    fn do_encode(
-        self,
-        bytes: &[u8],
-        w: u32,
-        h: u32,
-        color_type: png::ColorType,
-    ) -> Result<ZEncodeOutput, PngError> {
-        let meta = self.build_metadata();
-        let data =
-            crate::encode::encode_raw(bytes, w, h, color_type, meta.as_ref(), &self.config.config)?;
-        Ok(ZEncodeOutput::new(data, ZImageFormat::Png))
-    }
 }
 
-impl<'a> EncodingJob<'a> for PngEncodeJob<'a> {
+impl<'a> zencodec_types::EncodeJob<'a> for PngEncodeJob<'a> {
     type Error = PngError;
+    type Encoder = PngEncoder<'a>;
+    type FrameEncoder = PngFrameEncoder;
 
     fn with_stop(self, _stop: &'a dyn Stop) -> Self {
         self // PNG encoding is not cancellable
     }
 
-    fn with_metadata(mut self, meta: &'a ZImageMetadata<'a>) -> Self {
+    fn with_metadata(mut self, meta: &'a ImageMetadata<'a>) -> Self {
         if let Some(icc) = meta.icc_profile {
             self.icc = Some(icc);
         }
@@ -195,114 +201,236 @@ impl<'a> EncodingJob<'a> for PngEncodeJob<'a> {
     }
 
     fn with_limits(mut self, limits: ResourceLimits) -> Self {
-        self.limits = limits;
+        self.limits = Some(limits);
         self
     }
 
-    fn encode_rgb8(self, img: ImgRef<'_, Rgb<u8>>) -> Result<ZEncodeOutput, Self::Error> {
-        let (buf, w, h) = img.to_contiguous_buf();
-        let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
-        self.do_encode(bytes, w as u32, h as u32, png::ColorType::Rgb)
+    fn encoder(self) -> PngEncoder<'a> {
+        PngEncoder {
+            config: self.config,
+            icc: self.icc,
+            exif: self.exif,
+            xmp: self.xmp,
+        }
     }
 
-    fn encode_rgba8(self, img: ImgRef<'_, Rgba<u8>>) -> Result<ZEncodeOutput, Self::Error> {
-        let (buf, w, h) = img.to_contiguous_buf();
-        let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
-        self.do_encode(bytes, w as u32, h as u32, png::ColorType::Rgba)
-    }
-
-    fn encode_gray8(self, img: ImgRef<'_, Gray<u8>>) -> Result<ZEncodeOutput, Self::Error> {
-        let (buf, w, h) = img.to_contiguous_buf();
-        let bytes: Vec<u8> = buf.iter().map(|g| g.value()).collect();
-        self.do_encode(&bytes, w as u32, h as u32, png::ColorType::Grayscale)
-    }
-
-    fn encode_bgra8(
-        self,
-        img: ImgRef<'_, rgb::alt::BGRA<u8>>,
-    ) -> Result<ZEncodeOutput, Self::Error> {
-        let (buf, w, h) = img.to_contiguous_buf();
-        let rgba: Vec<Rgba<u8>> = buf
-            .iter()
-            .map(|p| Rgba {
-                r: p.r,
-                g: p.g,
-                b: p.b,
-                a: p.a,
-            })
-            .collect();
-        let bytes: &[u8] = bytemuck::cast_slice(&rgba);
-        self.do_encode(bytes, w as u32, h as u32, png::ColorType::Rgba)
-    }
-
-    fn encode_bgrx8(
-        self,
-        img: ImgRef<'_, rgb::alt::BGRA<u8>>,
-    ) -> Result<ZEncodeOutput, Self::Error> {
-        let (buf, w, h) = img.to_contiguous_buf();
-        let rgb_pixels: Vec<Rgb<u8>> = buf
-            .iter()
-            .map(|p| Rgb {
-                r: p.r,
-                g: p.g,
-                b: p.b,
-            })
-            .collect();
-        let bytes: &[u8] = bytemuck::cast_slice(&rgb_pixels);
-        self.do_encode(bytes, w as u32, h as u32, png::ColorType::Rgb)
-    }
-
-    fn encode_rgb_f32(self, img: ImgRef<'_, Rgb<f32>>) -> Result<ZEncodeOutput, Self::Error> {
-        use linear_srgb::default::linear_to_srgb_u8;
-        let (buf, w, h) = img.to_contiguous_buf();
-        let srgb: Vec<Rgb<u8>> = buf
-            .iter()
-            .map(|p| Rgb {
-                r: linear_to_srgb_u8(p.r.clamp(0.0, 1.0)),
-                g: linear_to_srgb_u8(p.g.clamp(0.0, 1.0)),
-                b: linear_to_srgb_u8(p.b.clamp(0.0, 1.0)),
-            })
-            .collect();
-        let bytes: &[u8] = bytemuck::cast_slice(&srgb);
-        self.do_encode(bytes, w as u32, h as u32, png::ColorType::Rgb)
-    }
-
-    fn encode_rgba_f32(self, img: ImgRef<'_, Rgba<f32>>) -> Result<ZEncodeOutput, Self::Error> {
-        use linear_srgb::default::linear_to_srgb_u8;
-        let (buf, w, h) = img.to_contiguous_buf();
-        let srgb: Vec<Rgba<u8>> = buf
-            .iter()
-            .map(|p| Rgba {
-                r: linear_to_srgb_u8(p.r.clamp(0.0, 1.0)),
-                g: linear_to_srgb_u8(p.g.clamp(0.0, 1.0)),
-                b: linear_to_srgb_u8(p.b.clamp(0.0, 1.0)),
-                a: (p.a.clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
-            })
-            .collect();
-        let bytes: &[u8] = bytemuck::cast_slice(&srgb);
-        self.do_encode(bytes, w as u32, h as u32, png::ColorType::Rgba)
-    }
-
-    fn encode_gray_f32(self, img: ImgRef<'_, Gray<f32>>) -> Result<ZEncodeOutput, Self::Error> {
-        use linear_srgb::default::linear_to_srgb_u8;
-        let (buf, w, h) = img.to_contiguous_buf();
-        let bytes: Vec<u8> = buf
-            .iter()
-            .map(|g| linear_to_srgb_u8(g.value().clamp(0.0, 1.0)))
-            .collect();
-        self.do_encode(&bytes, w as u32, h as u32, png::ColorType::Grayscale)
+    fn frame_encoder(self) -> Result<PngFrameEncoder, PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support animation encoding".into(),
+        ))
     }
 }
 
-// ── Decoding ────────────────────────────────────────────────────────────────
+// ── PngEncoder ───────────────────────────────────────────────────────
 
-/// PNG decoder configuration implementing [`Decoding`].
+/// Single-image PNG encoder.
+pub struct PngEncoder<'a> {
+    config: &'a PngEncoderConfig,
+    icc: Option<&'a [u8]>,
+    exif: Option<&'a [u8]>,
+    xmp: Option<&'a [u8]>,
+}
+
+impl<'a> PngEncoder<'a> {
+    fn do_encode(
+        &self,
+        bytes: &[u8],
+        w: u32,
+        h: u32,
+        color_type: png::ColorType,
+    ) -> Result<EncodeOutput, PngError> {
+        let meta = self.build_metadata();
+        let data =
+            crate::encode::encode_raw(bytes, w, h, color_type, meta.as_ref(), &self.config.config)?;
+        Ok(EncodeOutput::new(data, ImageFormat::Png))
+    }
+
+    fn build_metadata(&self) -> Option<ImageMetadata<'a>> {
+        if self.icc.is_none() && self.exif.is_none() && self.xmp.is_none() {
+            return None;
+        }
+        let mut meta = ImageMetadata::none();
+        if let Some(icc) = self.icc {
+            meta = meta.with_icc(icc);
+        }
+        if let Some(exif) = self.exif {
+            meta = meta.with_exif(exif);
+        }
+        if let Some(xmp) = self.xmp {
+            meta = meta.with_xmp(xmp);
+        }
+        Some(meta)
+    }
+}
+
+impl zencodec_types::Encoder for PngEncoder<'_> {
+    type Error = PngError;
+
+    fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, PngError> {
+        let desc = pixels.descriptor();
+        let w = pixels.width();
+        let h = pixels.rows();
+
+        match (desc.channel_type, desc.layout) {
+            (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Rgb) => {
+                let bytes = collect_contiguous_bytes(&pixels);
+                self.do_encode(&bytes, w, h, png::ColorType::Rgb)
+            }
+            (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Rgba) => {
+                let bytes = collect_contiguous_bytes(&pixels);
+                self.do_encode(&bytes, w, h, png::ColorType::Rgba)
+            }
+            (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Gray) => {
+                // Gray<u8> needs .value() extraction (not byte-contiguous via ComponentBytes)
+                let bytes = collect_gray8_bytes(&pixels);
+                self.do_encode(&bytes, w, h, png::ColorType::Grayscale)
+            }
+            (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Bgra) => {
+                // BGRA → RGBA swizzle
+                let src = collect_contiguous_bytes(&pixels);
+                let rgba: Vec<u8> = src
+                    .chunks_exact(4)
+                    .flat_map(|c| [c[2], c[1], c[0], c[3]])
+                    .collect();
+                self.do_encode(&rgba, w, h, png::ColorType::Rgba)
+            }
+            (zencodec_types::ChannelType::F32, zencodec_types::ChannelLayout::Rgb) => {
+                use linear_srgb::default::linear_to_srgb_u8;
+                let src = collect_contiguous_bytes(&pixels);
+                let srgb: Vec<u8> = src
+                    .chunks_exact(12)
+                    .flat_map(|c| {
+                        let r = f32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
+                        let g = f32::from_ne_bytes([c[4], c[5], c[6], c[7]]);
+                        let b = f32::from_ne_bytes([c[8], c[9], c[10], c[11]]);
+                        [
+                            linear_to_srgb_u8(r.clamp(0.0, 1.0)),
+                            linear_to_srgb_u8(g.clamp(0.0, 1.0)),
+                            linear_to_srgb_u8(b.clamp(0.0, 1.0)),
+                        ]
+                    })
+                    .collect();
+                self.do_encode(&srgb, w, h, png::ColorType::Rgb)
+            }
+            (zencodec_types::ChannelType::F32, zencodec_types::ChannelLayout::Rgba) => {
+                use linear_srgb::default::linear_to_srgb_u8;
+                let src = collect_contiguous_bytes(&pixels);
+                let srgb: Vec<u8> = src
+                    .chunks_exact(16)
+                    .flat_map(|c| {
+                        let r = f32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
+                        let g = f32::from_ne_bytes([c[4], c[5], c[6], c[7]]);
+                        let b = f32::from_ne_bytes([c[8], c[9], c[10], c[11]]);
+                        let a = f32::from_ne_bytes([c[12], c[13], c[14], c[15]]);
+                        [
+                            linear_to_srgb_u8(r.clamp(0.0, 1.0)),
+                            linear_to_srgb_u8(g.clamp(0.0, 1.0)),
+                            linear_to_srgb_u8(b.clamp(0.0, 1.0)),
+                            (a.clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                        ]
+                    })
+                    .collect();
+                self.do_encode(&srgb, w, h, png::ColorType::Rgba)
+            }
+            (zencodec_types::ChannelType::F32, zencodec_types::ChannelLayout::Gray) => {
+                use linear_srgb::default::linear_to_srgb_u8;
+                let src = collect_contiguous_bytes(&pixels);
+                let srgb: Vec<u8> = src
+                    .chunks_exact(4)
+                    .map(|c| {
+                        let v = f32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
+                        linear_to_srgb_u8(v.clamp(0.0, 1.0))
+                    })
+                    .collect();
+                self.do_encode(&srgb, w, h, png::ColorType::Grayscale)
+            }
+            _ => Err(PngError::InvalidInput(alloc::format!(
+                "unsupported pixel format: {:?}",
+                desc
+            ))),
+        }
+    }
+
+    fn push_rows(&mut self, _rows: PixelSlice<'_>) -> Result<(), PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support incremental encoding".into(),
+        ))
+    }
+
+    fn finish(self) -> Result<EncodeOutput, PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support incremental encoding".into(),
+        ))
+    }
+
+    fn encode_from(
+        self,
+        _source: &mut dyn FnMut(u32, PixelSliceMut<'_>) -> usize,
+    ) -> Result<EncodeOutput, PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support pull-based encoding".into(),
+        ))
+    }
+}
+
+// ── PngFrameEncoder ──────────────────────────────────────────────────
+
+/// Stub frame encoder (PNG does not support animation encoding).
+pub struct PngFrameEncoder;
+
+impl zencodec_types::FrameEncoder for PngFrameEncoder {
+    type Error = PngError;
+
+    fn push_frame(&mut self, _pixels: PixelSlice<'_>, _duration_ms: u32) -> Result<(), PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support animation encoding".into(),
+        ))
+    }
+
+    fn begin_frame(&mut self, _duration_ms: u32) -> Result<(), PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support animation encoding".into(),
+        ))
+    }
+
+    fn push_rows(&mut self, _rows: PixelSlice<'_>) -> Result<(), PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support animation encoding".into(),
+        ))
+    }
+
+    fn end_frame(&mut self) -> Result<(), PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support animation encoding".into(),
+        ))
+    }
+
+    fn pull_frame(
+        &mut self,
+        _duration_ms: u32,
+        _source: &mut dyn FnMut(u32, PixelSliceMut<'_>) -> usize,
+    ) -> Result<(), PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support animation encoding".into(),
+        ))
+    }
+
+    fn finish(self) -> Result<EncodeOutput, PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support animation encoding".into(),
+        ))
+    }
+}
+
+// ── PngDecoderConfig ─────────────────────────────────────────────────
+
+/// PNG decoder configuration implementing [`DecoderConfig`](zencodec_types::DecoderConfig).
 #[derive(Clone, Debug)]
-pub struct PngDecoding {
+pub struct PngDecoderConfig {
     limits: ResourceLimits,
 }
 
-impl PngDecoding {
+impl PngDecoderConfig {
     /// Create a default PNG decoder config.
     #[must_use]
     pub fn new() -> Self {
@@ -312,236 +440,209 @@ impl PngDecoding {
     }
 }
 
-impl Default for PngDecoding {
+impl Default for PngDecoderConfig {
     fn default() -> Self {
         Self::new()
     }
 }
 
-static DECODE_CAPS: CodecCapabilities = CodecCapabilities::new()
-    .with_decode_icc(true)
-    .with_decode_exif(true)
-    .with_decode_xmp(true)
-    .with_native_gray(true)
-    .with_cheap_probe(true);
-
-impl Decoding for PngDecoding {
+impl zencodec_types::DecoderConfig for PngDecoderConfig {
     type Error = PngError;
     type Job<'a> = PngDecodeJob<'a>;
+
+    fn supported_descriptors() -> &'static [PixelDescriptor] {
+        DECODE_DESCRIPTORS
+    }
 
     fn capabilities() -> &'static CodecCapabilities {
         &DECODE_CAPS
     }
 
-    fn with_limits(mut self, limits: ResourceLimits) -> Self {
-        self.limits = limits;
-        self
-    }
-
     fn job(&self) -> PngDecodeJob<'_> {
         PngDecodeJob {
             config: self,
-            limits: self.limits,
+            limits: None,
         }
     }
 
-    fn probe_header(&self, data: &[u8]) -> Result<ZImageInfo, Self::Error> {
+    fn probe_header(&self, data: &[u8]) -> Result<ImageInfo, Self::Error> {
         let info = crate::decode::probe(data)?;
         Ok(convert_info(&info))
     }
 }
 
-// ── Decode job ──────────────────────────────────────────────────────────────
+// ── PngDecodeJob ─────────────────────────────────────────────────────
 
 /// Per-operation PNG decode job.
 pub struct PngDecodeJob<'a> {
-    config: &'a PngDecoding,
-    limits: ResourceLimits,
+    config: &'a PngDecoderConfig,
+    limits: Option<ResourceLimits>,
 }
 
-impl<'a> DecodingJob<'a> for PngDecodeJob<'a> {
+impl<'a> zencodec_types::DecodeJob<'a> for PngDecodeJob<'a> {
     type Error = PngError;
+    type Decoder = PngDecoder<'a>;
+    type FrameDecoder = PngFrameDecoder;
 
     fn with_stop(self, _stop: &'a dyn Stop) -> Self {
         self // PNG decoding is not cancellable
     }
 
     fn with_limits(mut self, limits: ResourceLimits) -> Self {
-        self.limits = limits;
+        self.limits = Some(limits);
         self
     }
 
-    fn decode(self, data: &[u8]) -> Result<ZDecodeOutput, Self::Error> {
-        // Merge job-level limits with config-level limits (job takes precedence).
-        let max_pixels = self.limits.max_pixels.or(self.config.limits.max_pixels);
-        let max_memory = self
-            .limits
-            .max_memory_bytes
-            .or(self.config.limits.max_memory_bytes);
+    fn output_info(&self, data: &[u8]) -> Result<OutputInfo, PngError> {
+        let info = crate::decode::probe(data)?;
+        let has_alpha = info.has_alpha;
+        let native_format = if has_alpha {
+            PixelDescriptor::RGBA8_SRGB
+        } else {
+            PixelDescriptor::RGB8_SRGB
+        };
+        Ok(OutputInfo::full_decode(info.width, info.height, native_format).with_alpha(has_alpha))
+    }
 
-        let png_limits = if max_pixels.is_some() || max_memory.is_some() {
+    fn decoder(self) -> PngDecoder<'a> {
+        PngDecoder {
+            config: self.config,
+            limits: self.limits,
+        }
+    }
+
+    fn frame_decoder(self, _data: &[u8]) -> Result<PngFrameDecoder, PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support animation decoding via frame_decoder".into(),
+        ))
+    }
+}
+
+// ── PngDecoder ───────────────────────────────────────────────────────
+
+/// Single-image PNG decoder.
+pub struct PngDecoder<'a> {
+    config: &'a PngDecoderConfig,
+    limits: Option<ResourceLimits>,
+}
+
+impl PngDecoder<'_> {
+    fn effective_limits(&self) -> Option<PngLimits> {
+        let limits = self.limits.as_ref().unwrap_or(&self.config.limits);
+        let max_pixels = limits.max_pixels;
+        let max_memory = limits.max_memory_bytes;
+        if max_pixels.is_some() || max_memory.is_some() {
             Some(PngLimits {
                 max_pixels,
                 max_memory_bytes: max_memory,
             })
         } else {
             None
-        };
-
-        let result = crate::decode::decode(data, png_limits.as_ref())?;
-        let info = convert_info(&result.info);
-
-        Ok(ZDecodeOutput::new(result.pixels, info))
-    }
-
-    fn decode_into_rgb8(
-        self,
-        data: &[u8],
-        mut dst: imgref::ImgRefMut<'_, Rgb<u8>>,
-    ) -> Result<ZImageInfo, Self::Error> {
-        let output = self.decode(data)?;
-        let info = output.info().clone();
-        let src = output.into_rgb8();
-        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
-            let n = src_row.len().min(dst_row.len());
-            dst_row[..n].copy_from_slice(&src_row[..n]);
         }
-        Ok(info)
-    }
-
-    fn decode_into_rgba8(
-        self,
-        data: &[u8],
-        mut dst: imgref::ImgRefMut<'_, Rgba<u8>>,
-    ) -> Result<ZImageInfo, Self::Error> {
-        let output = self.decode(data)?;
-        let info = output.info().clone();
-        let src = output.into_rgba8();
-        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
-            let n = src_row.len().min(dst_row.len());
-            dst_row[..n].copy_from_slice(&src_row[..n]);
-        }
-        Ok(info)
-    }
-
-    fn decode_into_gray8(
-        self,
-        data: &[u8],
-        mut dst: imgref::ImgRefMut<'_, Gray<u8>>,
-    ) -> Result<ZImageInfo, Self::Error> {
-        let output = self.decode(data)?;
-        let info = output.info().clone();
-        let src = output.into_gray8();
-        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
-            let n = src_row.len().min(dst_row.len());
-            dst_row[..n].copy_from_slice(&src_row[..n]);
-        }
-        Ok(info)
-    }
-
-    fn decode_into_bgra8(
-        self,
-        data: &[u8],
-        mut dst: imgref::ImgRefMut<'_, rgb::alt::BGRA<u8>>,
-    ) -> Result<ZImageInfo, Self::Error> {
-        let output = self.decode(data)?;
-        let info = output.info().clone();
-        let src = output.into_bgra8();
-        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
-            let n = src_row.len().min(dst_row.len());
-            dst_row[..n].copy_from_slice(&src_row[..n]);
-        }
-        Ok(info)
-    }
-
-    fn decode_into_bgrx8(
-        self,
-        data: &[u8],
-        mut dst: imgref::ImgRefMut<'_, rgb::alt::BGRA<u8>>,
-    ) -> Result<ZImageInfo, Self::Error> {
-        let output = self.decode(data)?;
-        let info = output.info().clone();
-        let src = output.into_bgra8();
-        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
-            for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
-                *d = rgb::alt::BGRA {
-                    b: s.b,
-                    g: s.g,
-                    r: s.r,
-                    a: 255,
-                };
-            }
-        }
-        Ok(info)
-    }
-
-    fn decode_into_rgb_f32(
-        self,
-        data: &[u8],
-        mut dst: imgref::ImgRefMut<'_, Rgb<f32>>,
-    ) -> Result<ZImageInfo, Self::Error> {
-        use linear_srgb::default::srgb_to_linear_fast;
-        let output = self.decode(data)?;
-        let info = output.info().clone();
-        // Use into_rgb_f32() to preserve full source precision (u16 → f32 via /65535)
-        // then linearize. This avoids truncating 16-bit PNG to 8-bit.
-        let src = output.into_rgb_f32();
-        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
-            for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
-                *d = Rgb {
-                    r: srgb_to_linear_fast(s.r),
-                    g: srgb_to_linear_fast(s.g),
-                    b: srgb_to_linear_fast(s.b),
-                };
-            }
-        }
-        Ok(info)
-    }
-
-    fn decode_into_rgba_f32(
-        self,
-        data: &[u8],
-        mut dst: imgref::ImgRefMut<'_, Rgba<f32>>,
-    ) -> Result<ZImageInfo, Self::Error> {
-        use linear_srgb::default::srgb_to_linear_fast;
-        let output = self.decode(data)?;
-        let info = output.info().clone();
-        let src = output.into_rgba_f32();
-        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
-            for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
-                *d = Rgba {
-                    r: srgb_to_linear_fast(s.r),
-                    g: srgb_to_linear_fast(s.g),
-                    b: srgb_to_linear_fast(s.b),
-                    a: s.a,
-                };
-            }
-        }
-        Ok(info)
-    }
-
-    fn decode_into_gray_f32(
-        self,
-        data: &[u8],
-        mut dst: imgref::ImgRefMut<'_, Gray<f32>>,
-    ) -> Result<ZImageInfo, Self::Error> {
-        use linear_srgb::default::srgb_to_linear_fast;
-        let output = self.decode(data)?;
-        let info = output.info().clone();
-        let src = output.into_gray_f32();
-        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
-            for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
-                *d = Gray::new(srgb_to_linear_fast(s.value()));
-            }
-        }
-        Ok(info)
     }
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+impl zencodec_types::Decoder for PngDecoder<'_> {
+    type Error = PngError;
 
-fn convert_info(info: &crate::decode::PngInfo) -> ZImageInfo {
-    let mut zi = ZImageInfo::new(info.width, info.height, ZImageFormat::Png);
+    fn decode(self, data: &[u8]) -> Result<DecodeOutput, PngError> {
+        let png_limits = self.effective_limits();
+        let result = crate::decode::decode(data, png_limits.as_ref())?;
+        let info = convert_info(&result.info);
+        Ok(DecodeOutput::new(result.pixels, info))
+    }
+
+    fn decode_into(self, data: &[u8], mut dst: PixelSliceMut<'_>) -> Result<ImageInfo, PngError> {
+        let desc = dst.descriptor();
+        let output = self.decode(data)?;
+        let info = output.info().clone();
+
+        match (desc.channel_type, desc.layout) {
+            (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Rgb) => {
+                let src = output.into_rgb8();
+                copy_rows_u8(&src, &mut dst);
+            }
+            (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Rgba) => {
+                let src = output.into_rgba8();
+                copy_rows_u8(&src, &mut dst);
+            }
+            (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Gray) => {
+                let src = output.into_gray8();
+                copy_rows_u8(&src, &mut dst);
+            }
+            (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Bgra) => {
+                let src = output.into_bgra8();
+                copy_rows_u8(&src, &mut dst);
+            }
+            (zencodec_types::ChannelType::F32, zencodec_types::ChannelLayout::Rgb) => {
+                decode_into_rgb_f32(output, &mut dst);
+            }
+            (zencodec_types::ChannelType::F32, zencodec_types::ChannelLayout::Rgba) => {
+                decode_into_rgba_f32(output, &mut dst);
+            }
+            (zencodec_types::ChannelType::F32, zencodec_types::ChannelLayout::Gray) => {
+                decode_into_gray_f32(output, &mut dst);
+            }
+            _ => {
+                return Err(PngError::InvalidInput(alloc::format!(
+                    "unsupported decode_into format: {:?}",
+                    desc
+                )));
+            }
+        }
+
+        Ok(info)
+    }
+
+    fn decode_rows(
+        self,
+        _data: &[u8],
+        _sink: &mut dyn FnMut(u32, PixelSlice<'_>),
+    ) -> Result<ImageInfo, PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support row-level decode callback".into(),
+        ))
+    }
+}
+
+// ── PngFrameDecoder ──────────────────────────────────────────────────
+
+/// Stub frame decoder (PNG animation not yet supported via this path).
+pub struct PngFrameDecoder;
+
+impl zencodec_types::FrameDecoder for PngFrameDecoder {
+    type Error = PngError;
+
+    fn next_frame(&mut self) -> Result<Option<DecodeFrame>, PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support animation decoding via frame_decoder".into(),
+        ))
+    }
+
+    fn next_frame_into(
+        &mut self,
+        _dst: PixelSliceMut<'_>,
+        _prior_frame: Option<u32>,
+    ) -> Result<Option<ImageInfo>, PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support animation decoding via frame_decoder".into(),
+        ))
+    }
+
+    fn next_frame_rows(
+        &mut self,
+        _sink: &mut dyn FnMut(u32, PixelSlice<'_>),
+    ) -> Result<Option<ImageInfo>, PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support animation decoding via frame_decoder".into(),
+        ))
+    }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
+    let mut zi = ImageInfo::new(info.width, info.height, ImageFormat::Png);
     if info.has_alpha {
         zi = zi.with_alpha(true);
     }
@@ -561,18 +662,121 @@ fn convert_info(info: &crate::decode::PngInfo) -> ZImageInfo {
     zi
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────────
+/// Collect contiguous bytes from a PixelSlice (handles stride).
+fn collect_contiguous_bytes(pixels: &PixelSlice<'_>) -> Vec<u8> {
+    let h = pixels.rows();
+    let w = pixels.width();
+    let bpp = pixels.descriptor().bytes_per_pixel();
+    let row_bytes = w as usize * bpp;
+
+    let mut out = Vec::with_capacity(row_bytes * h as usize);
+    for y in 0..h {
+        out.extend_from_slice(&pixels.row(y)[..row_bytes]);
+    }
+    out
+}
+
+/// Collect Gray8 pixel bytes (Gray<u8> has padding so we can't use ComponentBytes).
+fn collect_gray8_bytes(pixels: &PixelSlice<'_>) -> Vec<u8> {
+    // Gray<u8> is 1 byte per pixel, so contiguous bytes are already correct
+    collect_contiguous_bytes(pixels)
+}
+
+/// Copy rows from a typed ImgVec into a PixelSliceMut via byte reinterpretation.
+fn copy_rows_u8<P: Copy>(src: &imgref::ImgVec<P>, dst: &mut PixelSliceMut<'_>)
+where
+    [P]: rgb::ComponentBytes<u8>,
+{
+    use rgb::ComponentBytes;
+    for y in 0..src.height().min(dst.rows() as usize) {
+        let src_row = &src.buf()[y * src.stride()..][..src.width()];
+        let src_bytes = src_row.as_bytes();
+        let dst_row = dst.row_mut(y as u32);
+        let n = src_bytes.len().min(dst_row.len());
+        dst_row[..n].copy_from_slice(&src_bytes[..n]);
+    }
+}
+
+/// Decode into linear RGB f32.
+fn decode_into_rgb_f32(output: DecodeOutput, dst: &mut PixelSliceMut<'_>) {
+    use linear_srgb::default::srgb_to_linear_fast;
+
+    // Use into_rgb_f32() to preserve full source precision (u16 → f32 via /65535)
+    let src = output.into_rgb_f32();
+    for y in 0..src.height().min(dst.rows() as usize) {
+        let src_row = &src.buf()[y * src.stride()..][..src.width()];
+        let dst_row = dst.row_mut(y as u32);
+        for (i, s) in src_row.iter().enumerate() {
+            let offset = i * 12;
+            if offset + 12 > dst_row.len() {
+                break;
+            }
+            let r = srgb_to_linear_fast(s.r);
+            let g = srgb_to_linear_fast(s.g);
+            let b = srgb_to_linear_fast(s.b);
+            dst_row[offset..offset + 4].copy_from_slice(&r.to_ne_bytes());
+            dst_row[offset + 4..offset + 8].copy_from_slice(&g.to_ne_bytes());
+            dst_row[offset + 8..offset + 12].copy_from_slice(&b.to_ne_bytes());
+        }
+    }
+}
+
+/// Decode into linear RGBA f32.
+fn decode_into_rgba_f32(output: DecodeOutput, dst: &mut PixelSliceMut<'_>) {
+    use linear_srgb::default::srgb_to_linear_fast;
+
+    let src = output.into_rgba_f32();
+    for y in 0..src.height().min(dst.rows() as usize) {
+        let src_row = &src.buf()[y * src.stride()..][..src.width()];
+        let dst_row = dst.row_mut(y as u32);
+        for (i, s) in src_row.iter().enumerate() {
+            let offset = i * 16;
+            if offset + 16 > dst_row.len() {
+                break;
+            }
+            let r = srgb_to_linear_fast(s.r);
+            let g = srgb_to_linear_fast(s.g);
+            let b = srgb_to_linear_fast(s.b);
+            dst_row[offset..offset + 4].copy_from_slice(&r.to_ne_bytes());
+            dst_row[offset + 4..offset + 8].copy_from_slice(&g.to_ne_bytes());
+            dst_row[offset + 8..offset + 12].copy_from_slice(&b.to_ne_bytes());
+            dst_row[offset + 12..offset + 16].copy_from_slice(&s.a.to_ne_bytes());
+        }
+    }
+}
+
+/// Decode into linear Gray f32.
+fn decode_into_gray_f32(output: DecodeOutput, dst: &mut PixelSliceMut<'_>) {
+    use linear_srgb::default::srgb_to_linear_fast;
+
+    let src = output.into_gray_f32();
+    for y in 0..src.height().min(dst.rows() as usize) {
+        let src_row = &src.buf()[y * src.stride()..][..src.width()];
+        let dst_row = dst.row_mut(y as u32);
+        for (i, s) in src_row.iter().enumerate() {
+            let offset = i * 4;
+            if offset + 4 > dst_row.len() {
+                break;
+            }
+            let v = srgb_to_linear_fast(s.value());
+            dst_row[offset..offset + 4].copy_from_slice(&v.to_ne_bytes());
+        }
+    }
+}
+
+// ── Tests ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloc::vec;
     use imgref::Img;
-    use zencodec_types::{Decoding, Encoding};
+    use rgb::{Gray, Rgb, Rgba};
+    use zencodec_types::{DecodeJob, Decoder, DecoderConfig, EncodeJob, Encoder, EncoderConfig};
 
     #[test]
     fn encoding_rgb8() {
-        let enc = PngEncoding::new();
+        let enc = PngEncoderConfig::new();
         let pixels = vec![
             Rgb {
                 r: 128,
@@ -584,7 +788,7 @@ mod tests {
         let img = Img::new(pixels, 8, 8);
         let output = enc.encode_rgb8(img.as_ref()).unwrap();
         assert!(!output.bytes().is_empty());
-        assert_eq!(output.format(), ZImageFormat::Png);
+        assert_eq!(output.format(), ImageFormat::Png);
         assert_eq!(
             &output.bytes()[0..8],
             &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
@@ -593,7 +797,7 @@ mod tests {
 
     #[test]
     fn encoding_rgba8() {
-        let enc = PngEncoding::new();
+        let enc = PngEncoderConfig::new();
         let pixels = vec![
             Rgba {
                 r: 100,
@@ -610,7 +814,7 @@ mod tests {
 
     #[test]
     fn encoding_gray8() {
-        let enc = PngEncoding::new();
+        let enc = PngEncoderConfig::new();
         let pixels = vec![Gray::new(128u8); 64];
         let img = Img::new(pixels, 8, 8);
         let output = enc.encode_gray8(img.as_ref()).unwrap();
@@ -619,7 +823,7 @@ mod tests {
 
     #[test]
     fn decode_roundtrip() {
-        let enc = PngEncoding::new();
+        let enc = PngEncoderConfig::new();
         let pixels = vec![
             Rgb {
                 r: 200,
@@ -631,40 +835,45 @@ mod tests {
         let img = Img::new(pixels, 8, 8);
         let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
 
-        let dec = PngDecoding::new();
+        let dec = PngDecoderConfig::new();
         let output = dec.decode(encoded.bytes()).unwrap();
         assert_eq!(output.info().width, 8);
         assert_eq!(output.info().height, 8);
-        assert_eq!(output.info().format, ZImageFormat::Png);
+        assert_eq!(output.info().format, ImageFormat::Png);
     }
 
     #[test]
     fn probe_header_info() {
-        let enc = PngEncoding::new();
-        let pixels = vec![Rgb { r: 0, g: 0, b: 0 }; 100];
+        let enc = PngEncoderConfig::new();
+        let pixels = vec![Rgb { r: 0u8, g: 0, b: 0 }; 100];
         let img = Img::new(pixels, 10, 10);
         let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
 
-        let dec = PngDecoding::new();
+        let dec = PngDecoderConfig::new();
         let info = dec.probe_header(encoded.bytes()).unwrap();
         assert_eq!(info.width, 10);
         assert_eq!(info.height, 10);
-        assert_eq!(info.format, ZImageFormat::Png);
+        assert_eq!(info.format, ImageFormat::Png);
     }
 
     #[test]
     fn decode_into_rgb8_roundtrip() {
-        let enc = PngEncoding::new();
-        let pixels = vec![Rgb { r: 128, g: 64, b: 32 }; 64];
+        let enc = PngEncoderConfig::new();
+        let pixels = vec![
+            Rgb {
+                r: 128u8,
+                g: 64,
+                b: 32
+            };
+            64
+        ];
         let img = Img::new(pixels.clone(), 8, 8);
         let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
 
-        let dec = PngDecoding::new();
-        let mut buf = vec![Rgb { r: 0, g: 0, b: 0 }; 64];
+        let dec = PngDecoderConfig::new();
+        let mut buf = vec![Rgb { r: 0u8, g: 0, b: 0 }; 64];
         let mut dst = imgref::ImgVec::new(buf.clone(), 8, 8);
-        let info = dec
-            .decode_into_rgb8(encoded.bytes(), dst.as_mut())
-            .unwrap();
+        let info = dec.decode_into_rgb8(encoded.bytes(), dst.as_mut()).unwrap();
         assert_eq!(info.width, 8);
         assert_eq!(info.height, 8);
         buf = dst.into_buf();
@@ -673,43 +882,102 @@ mod tests {
 
     #[test]
     fn encode_bgra8_roundtrip() {
-        let enc = PngEncoding::new();
+        let enc = PngEncoderConfig::new();
         let pixels = vec![
-            rgb::alt::BGRA { b: 0, g: 0, r: 255, a: 255 },
-            rgb::alt::BGRA { b: 0, g: 255, r: 0, a: 200 },
-            rgb::alt::BGRA { b: 255, g: 0, r: 0, a: 128 },
-            rgb::alt::BGRA { b: 128, g: 128, r: 128, a: 255 },
+            rgb::alt::BGRA {
+                b: 0,
+                g: 0,
+                r: 255,
+                a: 255,
+            },
+            rgb::alt::BGRA {
+                b: 0,
+                g: 255,
+                r: 0,
+                a: 200,
+            },
+            rgb::alt::BGRA {
+                b: 255,
+                g: 0,
+                r: 0,
+                a: 128,
+            },
+            rgb::alt::BGRA {
+                b: 128,
+                g: 128,
+                r: 128,
+                a: 255,
+            },
         ];
         let img = Img::new(pixels, 2, 2);
         let output = enc.encode_bgra8(img.as_ref()).unwrap();
 
-        let dec = PngDecoding::new();
+        let dec = PngDecoderConfig::new();
         let decoded = dec.decode(output.bytes()).unwrap();
         let rgba = decoded.into_rgba8();
         let buf = rgba.buf();
-        assert_eq!(buf[0], Rgba { r: 255, g: 0, b: 0, a: 255 });
-        assert_eq!(buf[1], Rgba { r: 0, g: 255, b: 0, a: 200 });
+        assert_eq!(
+            buf[0],
+            Rgba {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }
+        );
+        assert_eq!(
+            buf[1],
+            Rgba {
+                r: 0,
+                g: 255,
+                b: 0,
+                a: 200
+            }
+        );
     }
 
     #[test]
     fn f32_conversion_all_simd_tiers() {
-        use archmage::testing::{for_each_token_permutation, CompileTimePolicy};
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
         use linear_srgb::default::{linear_to_srgb_u8, srgb_u8_to_linear};
 
         let report = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| {
             // Encode linear f32 → PNG (sRGB u8) → decode to linear f32
             let pixels = vec![
-                Rgb { r: 0.0f32, g: 0.5, b: 1.0 },
-                Rgb { r: 0.25, g: 0.75, b: 0.1 },
-                Rgb { r: 0.0, g: 0.0, b: 0.0 },
-                Rgb { r: 1.0, g: 1.0, b: 1.0 },
+                Rgb {
+                    r: 0.0f32,
+                    g: 0.5,
+                    b: 1.0,
+                },
+                Rgb {
+                    r: 0.25,
+                    g: 0.75,
+                    b: 0.1,
+                },
+                Rgb {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                Rgb {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                },
             ];
             let img = Img::new(pixels.clone(), 2, 2);
-            let enc = PngEncoding::new();
+            let enc = PngEncoderConfig::new();
             let output = enc.encode_rgb_f32(img.as_ref()).unwrap();
 
-            let dec = PngDecoding::new();
-            let mut buf = vec![Rgb { r: 0.0f32, g: 0.0, b: 0.0 }; 4];
+            let dec = PngDecoderConfig::new();
+            let mut buf = vec![
+                Rgb {
+                    r: 0.0f32,
+                    g: 0.0,
+                    b: 0.0
+                };
+                4
+            ];
             let mut dst = imgref::ImgVec::new(buf.clone(), 2, 2);
             dec.decode_into_rgb_f32(output.bytes(), dst.as_mut())
                 .unwrap();
@@ -748,18 +1016,46 @@ mod tests {
         use linear_srgb::default::{linear_to_srgb_u8, srgb_u8_to_linear};
 
         let pixels = vec![
-            Rgba { r: 0.0f32, g: 0.5, b: 1.0, a: 1.0 },
-            Rgba { r: 0.25, g: 0.75, b: 0.1, a: 0.5 },
-            Rgba { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
-            Rgba { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+            Rgba {
+                r: 0.0f32,
+                g: 0.5,
+                b: 1.0,
+                a: 1.0,
+            },
+            Rgba {
+                r: 0.25,
+                g: 0.75,
+                b: 0.1,
+                a: 0.5,
+            },
+            Rgba {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.0,
+            },
+            Rgba {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            },
         ];
         let img = Img::new(pixels.clone(), 2, 2);
-        let enc = PngEncoding::new();
+        let enc = PngEncoderConfig::new();
         let output = enc.encode_rgba_f32(img.as_ref()).unwrap();
 
-        let dec = PngDecoding::new();
+        let dec = PngDecoderConfig::new();
         let mut dst = imgref::ImgVec::new(
-            vec![Rgba { r: 0.0f32, g: 0.0, b: 0.0, a: 0.0 }; 4],
+            vec![
+                Rgba {
+                    r: 0.0f32,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.0
+                };
+                4
+            ],
             2,
             2,
         );
@@ -774,7 +1070,12 @@ mod tests {
             assert!((decoded.r - expected_r).abs() < 1e-5, "r mismatch");
             assert!((decoded.g - expected_g).abs() < 1e-5, "g mismatch");
             assert!((decoded.b - expected_b).abs() < 1e-5, "b mismatch");
-            assert!((decoded.a - expected_a).abs() < 1e-2, "a mismatch: {} vs {}", decoded.a, expected_a);
+            assert!(
+                (decoded.a - expected_a).abs() < 1e-2,
+                "a mismatch: {} vs {}",
+                decoded.a,
+                expected_a
+            );
         }
     }
 
@@ -783,27 +1084,22 @@ mod tests {
         use linear_srgb::default::{linear_to_srgb_u8, srgb_u8_to_linear};
         use zencodec_types::Gray;
 
-        let pixels = vec![
-            Gray(0.0f32),
-            Gray(0.18),
-            Gray(0.5),
-            Gray(1.0),
-        ];
+        let pixels = vec![Gray(0.0f32), Gray(0.18), Gray(0.5), Gray(1.0)];
         let img = Img::new(pixels.clone(), 2, 2);
-        let enc = PngEncoding::new();
+        let enc = PngEncoderConfig::new();
         let output = enc.encode_gray_f32(img.as_ref()).unwrap();
 
-        let dec = PngDecoding::new();
+        let dec = PngDecoderConfig::new();
         let mut dst = imgref::ImgVec::new(vec![Gray(0.0f32); 4], 2, 2);
         dec.decode_into_gray_f32(output.bytes(), dst.as_mut())
             .unwrap();
 
         for (orig, decoded) in pixels.iter().zip(dst.buf().iter()) {
-            let expected = srgb_u8_to_linear(linear_to_srgb_u8(orig.0.clamp(0.0, 1.0)));
+            let expected = srgb_u8_to_linear(linear_to_srgb_u8(orig.value().clamp(0.0, 1.0)));
             assert!(
-                (decoded.0 - expected).abs() < 1e-5,
+                (decoded.value() - expected).abs() < 1e-5,
                 "gray mismatch: {} vs {}",
-                decoded.0,
+                decoded.value(),
                 expected
             );
         }
@@ -816,17 +1112,32 @@ mod tests {
         // Encode known sRGB u8 values, decode to linear f32, verify conversion
         let pixels = vec![
             Rgb { r: 0u8, g: 0, b: 0 },
-            Rgb { r: 128, g: 128, b: 128 },
-            Rgb { r: 255, g: 255, b: 255 },
+            Rgb {
+                r: 128,
+                g: 128,
+                b: 128,
+            },
+            Rgb {
+                r: 255,
+                g: 255,
+                b: 255,
+            },
             Rgb { r: 255, g: 0, b: 0 },
         ];
         let img = Img::new(pixels, 2, 2);
-        let enc = PngEncoding::new();
+        let enc = PngEncoderConfig::new();
         let output = enc.encode_rgb8(img.as_ref()).unwrap();
 
-        let dec = PngDecoding::new();
+        let dec = PngDecoderConfig::new();
         let mut dst = imgref::ImgVec::new(
-            vec![Rgb { r: 0.0f32, g: 0.0, b: 0.0 }; 4],
+            vec![
+                Rgb {
+                    r: 0.0f32,
+                    g: 0.0,
+                    b: 0.0
+                };
+                4
+            ],
             2,
             2,
         );
@@ -849,5 +1160,93 @@ mod tests {
         assert!((buf[3].r - 1.0).abs() < 1e-6);
         assert!(buf[3].g.abs() < 1e-6);
         assert!(buf[3].b.abs() < 1e-6);
+    }
+
+    #[test]
+    fn capabilities_are_correct() {
+        let caps = PngEncoderConfig::capabilities();
+        assert!(caps.encode_icc());
+        assert!(caps.encode_exif());
+        assert!(caps.encode_xmp());
+        assert!(caps.lossless());
+        assert_eq!(caps.effort_range(), Some([0, 10]));
+        assert_eq!(caps.quality_range(), None);
+    }
+
+    #[test]
+    fn effort_getter_setter() {
+        let enc = PngEncoderConfig::new().with_effort(5);
+        assert_eq!(enc.effort(), Some(5));
+        assert_eq!(enc.is_lossless(), Some(true));
+    }
+
+    #[test]
+    fn output_info_matches_decode() {
+        let pixels = vec![Rgb { r: 1u8, g: 2, b: 3 }; 6];
+        let img = Img::new(pixels, 3, 2);
+        let enc = PngEncoderConfig::new();
+        let output = enc.encode_rgb8(img.as_ref()).unwrap();
+
+        let dec = PngDecoderConfig::new();
+        let info = dec.job().output_info(output.bytes()).unwrap();
+        assert_eq!(info.width, 3);
+        assert_eq!(info.height, 2);
+
+        let decoded = dec.decode(output.bytes()).unwrap();
+        assert_eq!(decoded.width(), info.width);
+        assert_eq!(decoded.height(), info.height);
+    }
+
+    #[test]
+    fn four_layer_encode_flow() {
+        let pixels = vec![
+            Rgb::<u8> { r: 255, g: 0, b: 0 },
+            Rgb { r: 0, g: 255, b: 0 },
+            Rgb { r: 0, g: 0, b: 255 },
+            Rgb {
+                r: 128,
+                g: 128,
+                b: 128,
+            },
+        ];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+        let config = PngEncoderConfig::new();
+
+        let slice = PixelSlice::from(img.as_ref());
+        let output = config.job().encoder().encode(slice).unwrap();
+        assert_eq!(output.format(), ImageFormat::Png);
+        assert!(!output.bytes().is_empty());
+    }
+
+    #[test]
+    fn four_layer_decode_flow() {
+        let pixels = vec![
+            Rgb {
+                r: 100u8,
+                g: 200,
+                b: 50
+            };
+            4
+        ];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+        let enc = PngEncoderConfig::new();
+        let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
+
+        let config = PngDecoderConfig::new();
+        let decoded = config.job().decoder().decode(encoded.bytes()).unwrap();
+        assert_eq!(decoded.width(), 2);
+        assert_eq!(decoded.height(), 2);
+    }
+
+    #[test]
+    fn encoding_clone_send_sync() {
+        fn assert_traits<T: Clone + Send + Sync>() {}
+        assert_traits::<PngEncoderConfig>();
+    }
+
+    #[test]
+    fn decoding_clone_send_sync() {
+        fn assert_traits<T: Clone + Send + Sync>() {}
+        assert_traits::<PngDecoderConfig>();
     }
 }
