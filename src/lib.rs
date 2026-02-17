@@ -24,8 +24,8 @@
 //!
 //! # zencodec-types traits
 //!
-//! [`PngEncoding`] implements [`zencodec_types::Encoding`] and [`PngDecoding`]
-//! implements [`zencodec_types::Decoding`] for use with multi-codec dispatchers.
+//! [`PngEncoderConfig`] implements [`zencodec_types::EncoderConfig`] and [`PngDecoderConfig`]
+//! implements [`zencodec_types::DecoderConfig`] for use with multi-codec dispatchers.
 
 #![forbid(unsafe_code)]
 
@@ -44,7 +44,10 @@ pub use encode::{EncodeConfig, encode_gray8, encode_rgb8, encode_rgba8};
 pub use error::PngError;
 #[cfg(feature = "quantize")]
 pub use indexed::{default_quantize_config, encode_indexed_rgba8};
-pub use zencodec::{PngDecodeJob, PngDecoding, PngEncodeJob, PngEncoding};
+pub use zencodec::{
+    PngDecodeJob, PngDecoder, PngDecoderConfig, PngEncodeJob, PngEncoder, PngEncoderConfig,
+    PngFrameDecoder, PngFrameEncoder,
+};
 
 // Re-export png types that appear in our public API.
 pub use png::{Compression, Filter};
