@@ -17,7 +17,6 @@ pub struct EncodeConfig {
     pub filter: png::Filter,
 }
 
-
 impl EncodeConfig {
     /// Set compression level.
     #[must_use]

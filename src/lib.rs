@@ -37,6 +37,8 @@ mod encode;
 mod error;
 #[cfg(feature = "quantize")]
 mod indexed;
+#[cfg(feature = "quantize")]
+mod indexed_writer;
 mod zencodec;
 
 pub use decode::{PngDecodeOutput, PngInfo, PngLimits, decode, probe};
