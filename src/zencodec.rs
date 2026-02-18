@@ -146,9 +146,7 @@ impl zencodec_types::EncoderConfig for PngEncoderConfig {
     fn job(&self) -> PngEncodeJob<'_> {
         PngEncodeJob {
             config: self,
-            icc: None,
-            exif: None,
-            xmp: None,
+            metadata: None,
             limits: None,
         }
     }
@@ -159,33 +157,8 @@ impl zencodec_types::EncoderConfig for PngEncoderConfig {
 /// Per-operation PNG encode job.
 pub struct PngEncodeJob<'a> {
     config: &'a PngEncoderConfig,
-    icc: Option<&'a [u8]>,
-    exif: Option<&'a [u8]>,
-    xmp: Option<&'a [u8]>,
+    metadata: Option<&'a ImageMetadata<'a>>,
     limits: Option<ResourceLimits>,
-}
-
-impl<'a> PngEncodeJob<'a> {
-    /// Set ICC color profile for this encode operation.
-    #[must_use]
-    pub fn with_icc(mut self, icc: &'a [u8]) -> Self {
-        self.icc = Some(icc);
-        self
-    }
-
-    /// Set EXIF metadata for this encode operation.
-    #[must_use]
-    pub fn with_exif(mut self, exif: &'a [u8]) -> Self {
-        self.exif = Some(exif);
-        self
-    }
-
-    /// Set XMP metadata for this encode operation.
-    #[must_use]
-    pub fn with_xmp(mut self, xmp: &'a [u8]) -> Self {
-        self.xmp = Some(xmp);
-        self
-    }
 }
 
 impl<'a> zencodec_types::EncodeJob<'a> for PngEncodeJob<'a> {
@@ -198,15 +171,7 @@ impl<'a> zencodec_types::EncodeJob<'a> for PngEncodeJob<'a> {
     }
 
     fn with_metadata(mut self, meta: &'a ImageMetadata<'a>) -> Self {
-        if let Some(icc) = meta.icc_profile {
-            self.icc = Some(icc);
-        }
-        if let Some(exif) = meta.exif {
-            self.exif = Some(exif);
-        }
-        if let Some(xmp) = meta.xmp {
-            self.xmp = Some(xmp);
-        }
+        self.metadata = Some(meta);
         self
     }
 
@@ -218,9 +183,7 @@ impl<'a> zencodec_types::EncodeJob<'a> for PngEncodeJob<'a> {
     fn encoder(self) -> PngEncoder<'a> {
         PngEncoder {
             config: self.config,
-            icc: self.icc,
-            exif: self.exif,
-            xmp: self.xmp,
+            metadata: self.metadata,
         }
     }
 
@@ -236,9 +199,7 @@ impl<'a> zencodec_types::EncodeJob<'a> for PngEncodeJob<'a> {
 /// Single-image PNG encoder.
 pub struct PngEncoder<'a> {
     config: &'a PngEncoderConfig,
-    icc: Option<&'a [u8]>,
-    exif: Option<&'a [u8]>,
-    xmp: Option<&'a [u8]>,
+    metadata: Option<&'a ImageMetadata<'a>>,
 }
 
 impl<'a> PngEncoder<'a> {
@@ -260,34 +221,16 @@ impl<'a> PngEncoder<'a> {
         color_type: png::ColorType,
         bit_depth: png::BitDepth,
     ) -> Result<EncodeOutput, PngError> {
-        let meta = self.build_metadata();
         let data = crate::encode::encode_raw(
             bytes,
             w,
             h,
             color_type,
             bit_depth,
-            meta.as_ref(),
+            self.metadata,
             &self.config.config,
         )?;
         Ok(EncodeOutput::new(data, ImageFormat::Png))
-    }
-
-    fn build_metadata(&self) -> Option<ImageMetadata<'a>> {
-        if self.icc.is_none() && self.exif.is_none() && self.xmp.is_none() {
-            return None;
-        }
-        let mut meta = ImageMetadata::none();
-        if let Some(icc) = self.icc {
-            meta = meta.with_icc(icc);
-        }
-        if let Some(exif) = self.exif {
-            meta = meta.with_exif(exif);
-        }
-        if let Some(xmp) = self.xmp {
-            meta = meta.with_xmp(xmp);
-        }
-        Some(meta)
     }
 }
 
@@ -1027,6 +970,15 @@ fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
     }
     if let Some(ref xmp) = info.xmp {
         zi = zi.with_xmp(xmp.clone());
+    }
+    if let Some(cicp) = info.cicp {
+        zi = zi.with_cicp(cicp);
+    }
+    if let Some(clli) = info.content_light_level {
+        zi = zi.with_content_light_level(clli);
+    }
+    if let Some(mdcv) = info.mastering_display {
+        zi = zi.with_mastering_display(mdcv);
     }
     zi
 }
@@ -2162,5 +2114,122 @@ mod tests {
         for (orig, dec) in pixels.iter().zip(dst.buf().iter()) {
             assert_eq!(orig, dec);
         }
+    }
+
+    #[test]
+    fn gama_srgb_chrm_roundtrip() {
+        use crate::decode::PngChromaticities;
+
+        let pixels = vec![
+            Rgb::<u8> {
+                r: 128,
+                g: 64,
+                b: 32
+            };
+            4
+        ];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+
+        // sRGB standard chromaticities
+        let chrm = PngChromaticities {
+            white_x: 31270,
+            white_y: 32900,
+            red_x: 64000,
+            red_y: 33000,
+            green_x: 30000,
+            green_y: 60000,
+            blue_x: 15000,
+            blue_y: 6000,
+        };
+
+        let config = crate::encode::EncodeConfig {
+            source_gamma: Some(45455),
+            srgb_intent: Some(0), // Perceptual
+            chromaticities: Some(chrm),
+            ..Default::default()
+        };
+
+        let encoded = crate::encode::encode_rgb8(img.as_ref(), None, &config).unwrap();
+        let decoded = crate::decode::decode(&encoded, None).unwrap();
+
+        assert_eq!(decoded.info.source_gamma, Some(45455));
+        assert_eq!(decoded.info.srgb_intent, Some(0));
+        let dc = decoded.info.chromaticities.expect("cHRM missing");
+        assert_eq!(dc.white_x, 31270);
+        assert_eq!(dc.white_y, 32900);
+        assert_eq!(dc.red_x, 64000);
+        assert_eq!(dc.red_y, 33000);
+        assert_eq!(dc.green_x, 30000);
+        assert_eq!(dc.green_y, 60000);
+        assert_eq!(dc.blue_x, 15000);
+        assert_eq!(dc.blue_y, 6000);
+    }
+
+    #[test]
+    fn cicp_roundtrip() {
+        use zencodec_types::{Cicp, ImageMetadata};
+
+        let pixels = vec![
+            Rgb::<u8> {
+                r: 128,
+                g: 64,
+                b: 32
+            };
+            4
+        ];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+
+        let cicp = Cicp::new(9, 16, 0, true); // BT.2020 primaries, PQ transfer, Identity matrix (PNG requirement)
+        let meta = ImageMetadata::none().with_cicp(cicp);
+        let config = crate::encode::EncodeConfig::default();
+
+        let encoded = crate::encode::encode_rgb8(img.as_ref(), Some(&meta), &config).unwrap();
+        let decoded = crate::decode::decode(&encoded, None).unwrap();
+
+        let dc = decoded.info.cicp.expect("cICP missing");
+        assert_eq!(dc.color_primaries, 9);
+        assert_eq!(dc.transfer_characteristics, 16);
+        assert_eq!(dc.matrix_coefficients, 0);
+        assert!(dc.full_range);
+    }
+
+    #[test]
+    fn clli_mdcv_roundtrip() {
+        use zencodec_types::{ContentLightLevel, ImageMetadata, MasteringDisplay};
+
+        let pixels = vec![
+            Rgb::<u8> {
+                r: 128,
+                g: 64,
+                b: 32
+            };
+            4
+        ];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+
+        let clli = ContentLightLevel::new(1000, 400);
+        let mdcv = MasteringDisplay::new(
+            [[35400, 14600], [8500, 39850], [6550, 2300]], // R, G, B primaries
+            [15635, 16450],                                // white point
+            10000000,                                      // 1000 cd/m²
+            50,                                            // 0.005 cd/m²
+        );
+        let meta = ImageMetadata::none()
+            .with_content_light_level(clli)
+            .with_mastering_display(mdcv);
+        let config = crate::encode::EncodeConfig::default();
+
+        let encoded = crate::encode::encode_rgb8(img.as_ref(), Some(&meta), &config).unwrap();
+        let decoded = crate::decode::decode(&encoded, None).unwrap();
+
+        let dc = decoded.info.content_light_level.expect("cLLi missing");
+        assert_eq!(dc.max_content_light_level, 1000);
+        assert_eq!(dc.max_frame_average_light_level, 400);
+
+        let dm = decoded.info.mastering_display.expect("mDCV missing");
+        assert_eq!(dm.primaries, [[35400, 14600], [8500, 39850], [6550, 2300]]);
+        assert_eq!(dm.white_point, [15635, 16450]);
+        assert_eq!(dm.max_luminance, 10000000);
+        assert_eq!(dm.min_luminance, 50);
     }
 }
