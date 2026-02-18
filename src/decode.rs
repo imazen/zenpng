@@ -76,10 +76,7 @@ pub fn probe(data: &[u8]) -> Result<PngInfo, PngError> {
     let reader = decoder.read_info()?;
     let info = reader.info();
 
-    let has_alpha = matches!(
-        info.color_type,
-        png::ColorType::Rgba | png::ColorType::GrayscaleAlpha
-    );
+    let has_alpha = has_alpha_channel(info);
     let has_animation = info.animation_control.is_some();
     let frame_count = info
         .animation_control
@@ -104,7 +101,7 @@ pub fn probe(data: &[u8]) -> Result<PngInfo, PngError> {
 /// Decode PNG to pixels.
 pub fn decode(data: &[u8], limits: Option<&PngLimits>) -> Result<PngDecodeOutput, PngError> {
     let cursor = Cursor::new(data);
-    let decoder = if let Some(lim) = limits {
+    let mut decoder = if let Some(lim) = limits {
         let png_limits = png::Limits {
             bytes: lim.max_memory_bytes.unwrap_or(64 * 1024 * 1024) as usize,
         };
@@ -113,15 +110,19 @@ pub fn decode(data: &[u8], limits: Option<&PngLimits>) -> Result<PngDecodeOutput
         png::Decoder::new(cursor)
     };
 
+    // Normalize to 8-bit color: expands indexed→RGB/RGBA, sub-8-bit
+    // grayscale→8-bit, strips 16-bit→8-bit, and applies tRNS transparency.
+    // Without this, indexed PNGs return raw packed palette indices and
+    // sub-8-bit grayscale returns packed values, neither of which our
+    // PixelData types can represent.
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+
     let mut reader = decoder.read_info()?;
     let info = reader.info();
 
     let width = info.width;
     let height = info.height;
-    let has_alpha = matches!(
-        info.color_type,
-        png::ColorType::Rgba | png::ColorType::GrayscaleAlpha
-    );
+    let has_alpha = has_alpha_channel(info);
     let has_animation = info.animation_control.is_some();
     let frame_count = info
         .animation_control
@@ -129,6 +130,7 @@ pub fn decode(data: &[u8], limits: Option<&PngLimits>) -> Result<PngDecodeOutput
         .map_or(1, |actl| actl.num_frames);
 
     if let Some(lim) = limits {
+        // Output will be 4 bpp (RGBA) if alpha, 3 bpp (RGB) otherwise
         let bpp: u32 = if has_alpha { 4 } else { 3 };
         lim.validate(width, height, bpp)?;
     }
@@ -175,13 +177,11 @@ pub fn decode(data: &[u8], limits: Option<&PngLimits>) -> Result<PngDecodeOutput
             PixelData::Gray8(ImgVec::new(gray, w, h))
         }
         png::ColorType::Indexed => {
-            if has_alpha {
-                let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&raw_pixels);
-                PixelData::Rgba8(ImgVec::new(rgba.to_vec(), w, h))
-            } else {
-                let rgb: &[Rgb<u8>] = bytemuck::cast_slice(&raw_pixels);
-                PixelData::Rgb8(ImgVec::new(rgb.to_vec(), w, h))
-            }
+            // Should not be reached with normalize_to_color8(), which expands
+            // indexed images to RGB/RGBA. If it somehow does, error cleanly.
+            return Err(PngError::InvalidInput(
+                "indexed PNG was not expanded by decoder transforms".into(),
+            ));
         }
     };
 
@@ -198,6 +198,17 @@ pub fn decode(data: &[u8], limits: Option<&PngLimits>) -> Result<PngDecodeOutput
             xmp,
         },
     })
+}
+
+/// Determine whether a PNG image has an alpha channel.
+///
+/// Checks for native alpha (RGBA, GrayscaleAlpha) and tRNS transparency
+/// on any color type (indexed palette alpha, truecolor/grayscale transparent color).
+fn has_alpha_channel(info: &png::Info<'_>) -> bool {
+    match info.color_type {
+        png::ColorType::Rgba | png::ColorType::GrayscaleAlpha => true,
+        _ => info.trns.is_some(),
+    }
 }
 
 /// Extract XMP from iTXt chunks with keyword "XML:com.adobe.xmp".
