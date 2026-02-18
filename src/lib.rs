@@ -37,12 +37,14 @@ mod encode;
 mod error;
 #[cfg(feature = "quantize")]
 mod indexed;
-#[cfg(feature = "quantize")]
-mod indexed_writer;
+mod png_writer;
 mod zencodec;
 
 pub use decode::{PngDecodeOutput, PngInfo, PngLimits, decode, probe};
-pub use encode::{EncodeConfig, encode_gray8, encode_rgb8, encode_rgba8};
+pub use encode::{
+    EncodeConfig, encode_gray8, encode_gray16, encode_rgb8, encode_rgb16, encode_rgba8,
+    encode_rgba16,
+};
 pub use error::PngError;
 #[cfg(feature = "quantize")]
 pub use indexed::{default_quantize_config, encode_indexed_rgba8};

@@ -9,7 +9,7 @@ use zenquant::{OutputFormat, QuantizeConfig};
 
 use crate::encode::EncodeConfig;
 use crate::error::PngError;
-use crate::indexed_writer;
+use crate::png_writer;
 
 /// Encode RGBA8 pixels to indexed PNG using zenquant for palette quantization.
 ///
@@ -51,9 +51,9 @@ pub fn encode_indexed_rgba8(
         None
     };
 
-    let compression_level = compression_to_zenflate_level(encode_config.compression);
+    let compression_level = crate::encode::compression_to_zenflate_level(encode_config.compression);
 
-    indexed_writer::write_indexed_png(
+    png_writer::write_indexed_png(
         result.indices(),
         width,
         height,
@@ -67,18 +67,6 @@ pub fn encode_indexed_rgba8(
 /// Create a default [`QuantizeConfig`] tuned for PNG output.
 pub fn default_quantize_config() -> QuantizeConfig {
     QuantizeConfig::new(OutputFormat::Png)
-}
-
-/// Map `png::Compression` levels to zenflate compression levels (0-12).
-fn compression_to_zenflate_level(compression: png::Compression) -> u8 {
-    match compression {
-        png::Compression::NoCompression => 0,
-        png::Compression::Fastest => 1,
-        png::Compression::Fast => 4,
-        png::Compression::Balanced => 9,
-        png::Compression::High => 12,
-        _ => 9,
-    }
 }
 
 #[cfg(test)]
