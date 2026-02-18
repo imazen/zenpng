@@ -744,8 +744,7 @@ fn to_gray8(pixels: PixelData) -> imgref::ImgVec<Gray<u8>> {
                 .into_buf()
                 .into_iter()
                 .map(|p| {
-                    let luma =
-                        ((p.r as u16 * 77 + p.g as u16 * 150 + p.b as u16 * 29) >> 8) as u8;
+                    let luma = ((p.r as u16 * 77 + p.g as u16 * 150 + p.b as u16 * 29) >> 8) as u8;
                     Gray::new(luma)
                 })
                 .collect();
@@ -758,8 +757,7 @@ fn to_gray8(pixels: PixelData) -> imgref::ImgVec<Gray<u8>> {
                 .into_buf()
                 .into_iter()
                 .map(|p| {
-                    let luma =
-                        ((p.r as u16 * 77 + p.g as u16 * 150 + p.b as u16 * 29) >> 8) as u8;
+                    let luma = ((p.r as u16 * 77 + p.g as u16 * 150 + p.b as u16 * 29) >> 8) as u8;
                     Gray::new(luma)
                 })
                 .collect();
@@ -924,8 +922,7 @@ fn decode_into_rgba_f32(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
             dst_row[offset..offset + 4].copy_from_slice(&r.to_ne_bytes());
             dst_row[offset + 4..offset + 8].copy_from_slice(&g.to_ne_bytes());
             dst_row[offset + 8..offset + 12].copy_from_slice(&b.to_ne_bytes());
-            dst_row[offset + 12..offset + 16]
-                .copy_from_slice(&(s.a as f32 / 255.0).to_ne_bytes());
+            dst_row[offset + 12..offset + 16].copy_from_slice(&(s.a as f32 / 255.0).to_ne_bytes());
         }
     }
 }
