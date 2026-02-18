@@ -189,41 +189,6 @@ mod tests {
         ImgVec::new(pixels, 4, 4)
     }
 
-    /// Decode a PNG using the `png` crate directly with EXPAND transform,
-    /// returning (width, height, color_type, raw_pixels).
-    fn decode_png_raw(data: &[u8]) -> (u32, u32, png::ColorType) {
-        let decoder = png::Decoder::new(std::io::Cursor::new(data));
-        let reader = decoder.read_info().unwrap();
-        let info = reader.info();
-        let width = info.width;
-        let height = info.height;
-        let color_type = info.color_type;
-        (width, height, color_type)
-    }
-
-    /// Decode PNG and extract metadata via the `png` crate.
-    fn decode_png_metadata(
-        data: &[u8],
-    ) -> (
-        Option<Vec<u8>>,
-        Option<Vec<u8>>,
-        Option<alloc::string::String>,
-    ) {
-        let decoder = png::Decoder::new(std::io::Cursor::new(data));
-        let reader = decoder.read_info().unwrap();
-        let info = reader.info();
-        let icc = info.icc_profile.as_ref().map(|p| p.to_vec());
-        let exif = info.exif_metadata.as_ref().map(|p| p.to_vec());
-        let xmp = info.utf8_text.iter().find_map(|chunk| {
-            if chunk.keyword == "XML:com.adobe.xmp" {
-                chunk.get_text().ok()
-            } else {
-                None
-            }
-        });
-        (icc, exif, xmp)
-    }
-
     #[test]
     fn roundtrip_indexed_png() {
         let img = test_image_4x4();
@@ -236,11 +201,10 @@ mod tests {
         // Verify PNG signature
         assert_eq!(&encoded[..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
 
-        // Decode with png crate and verify dimensions + color type
-        let (w, h, ct) = decode_png_raw(&encoded);
-        assert_eq!(w, 4);
-        assert_eq!(h, 4);
-        assert_eq!(ct, png::ColorType::Indexed);
+        // Full decode roundtrip through zenpng
+        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        assert_eq!(decoded.info.width, 4);
+        assert_eq!(decoded.info.height, 4);
     }
 
     #[test]
@@ -259,22 +223,21 @@ mod tests {
             .with_xmp(xmp_data);
 
         let encoded = encode_indexed_rgba8(img.as_ref(), &config, &quant, Some(&meta)).unwrap();
-        let (w, h, ct) = decode_png_raw(&encoded);
-        assert_eq!(w, 4);
-        assert_eq!(h, 4);
-        assert_eq!(ct, png::ColorType::Indexed);
+        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        assert_eq!(decoded.info.width, 4);
+        assert_eq!(decoded.info.height, 4);
 
-        // Check metadata roundtrip
-        let (icc, exif, xmp) = decode_png_metadata(&encoded);
-
-        let icc = icc.expect("ICC missing");
+        // ICC profile should roundtrip
+        let icc = decoded.info.icc_profile.as_ref().expect("ICC missing");
         assert_eq!(icc.as_slice(), &fake_icc[..]);
 
-        let exif = exif.expect("EXIF missing");
+        // EXIF should roundtrip
+        let exif = decoded.info.exif.as_ref().expect("EXIF missing");
         assert_eq!(exif.as_slice(), exif_data);
 
-        let xmp = xmp.expect("XMP missing");
-        assert_eq!(xmp.as_bytes(), xmp_data);
+        // XMP should roundtrip
+        let xmp = decoded.info.xmp.as_ref().expect("XMP missing");
+        assert_eq!(xmp.as_slice(), xmp_data);
     }
 
     #[test]
@@ -291,9 +254,9 @@ mod tests {
         ] {
             let config = EncodeConfig::default().with_compression(comp);
             let encoded = encode_indexed_rgba8(img.as_ref(), &config, &quant, None).unwrap();
-            let (w, h, _) = decode_png_raw(&encoded);
-            assert_eq!(w, 4);
-            assert_eq!(h, 4);
+            let decoded = crate::decode::decode(&encoded, None).unwrap();
+            assert_eq!(decoded.info.width, 4);
+            assert_eq!(decoded.info.height, 4);
         }
     }
 }
