@@ -7,13 +7,14 @@ use rgb::{Gray, Rgb, Rgba};
 use zencodec_types::ImageMetadata;
 
 use crate::error::PngError;
+use crate::png_writer;
 
 /// PNG encode configuration.
 #[derive(Clone, Debug, Default)]
 pub struct EncodeConfig {
     /// PNG compression level.
     pub compression: png::Compression,
-    /// PNG row filter type.
+    /// PNG row filter type (ignored — multi-strategy selection is always used).
     pub filter: png::Filter,
 }
 
@@ -43,7 +44,15 @@ pub fn encode_rgb8(
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
-    encode_raw(bytes, width, height, png::ColorType::Rgb, metadata, config)
+    encode_raw(
+        bytes,
+        width,
+        height,
+        png::ColorType::Rgb,
+        png::BitDepth::Eight,
+        metadata,
+        config,
+    )
 }
 
 /// Encode RGBA8 pixels to PNG.
@@ -56,7 +65,15 @@ pub fn encode_rgba8(
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
-    encode_raw(bytes, width, height, png::ColorType::Rgba, metadata, config)
+    encode_raw(
+        bytes,
+        width,
+        height,
+        png::ColorType::Rgba,
+        png::BitDepth::Eight,
+        metadata,
+        config,
+    )
 }
 
 /// Encode Gray8 pixels to PNG.
@@ -74,62 +91,152 @@ pub fn encode_gray8(
         width,
         height,
         png::ColorType::Grayscale,
+        png::BitDepth::Eight,
+        metadata,
+        config,
+    )
+}
+
+/// Encode RGB16 pixels to PNG.
+///
+/// Input samples are native-endian u16. The encoder handles byte-swapping
+/// to big-endian as required by the PNG specification.
+pub fn encode_rgb16(
+    img: ImgRef<Rgb<u16>>,
+    metadata: Option<&ImageMetadata<'_>>,
+    config: &EncodeConfig,
+) -> Result<Vec<u8>, PngError> {
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    let (buf, _, _) = img.to_contiguous_buf();
+    let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
+    let be = native_to_be_16(bytes);
+    encode_raw(
+        &be,
+        width,
+        height,
+        png::ColorType::Rgb,
+        png::BitDepth::Sixteen,
+        metadata,
+        config,
+    )
+}
+
+/// Encode RGBA16 pixels to PNG.
+///
+/// Input samples are native-endian u16. The encoder handles byte-swapping
+/// to big-endian as required by the PNG specification.
+pub fn encode_rgba16(
+    img: ImgRef<Rgba<u16>>,
+    metadata: Option<&ImageMetadata<'_>>,
+    config: &EncodeConfig,
+) -> Result<Vec<u8>, PngError> {
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    let (buf, _, _) = img.to_contiguous_buf();
+    let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
+    let be = native_to_be_16(bytes);
+    encode_raw(
+        &be,
+        width,
+        height,
+        png::ColorType::Rgba,
+        png::BitDepth::Sixteen,
+        metadata,
+        config,
+    )
+}
+
+/// Encode Gray16 pixels to PNG.
+///
+/// Input samples are native-endian u16. The encoder handles byte-swapping
+/// to big-endian as required by the PNG specification.
+pub fn encode_gray16(
+    img: ImgRef<Gray<u16>>,
+    metadata: Option<&ImageMetadata<'_>>,
+    config: &EncodeConfig,
+) -> Result<Vec<u8>, PngError> {
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    let (buf, _, _) = img.to_contiguous_buf();
+    let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
+    let be = native_to_be_16(bytes);
+    encode_raw(
+        &be,
+        width,
+        height,
+        png::ColorType::Grayscale,
+        png::BitDepth::Sixteen,
         metadata,
         config,
     )
 }
 
 /// Low-level encode: raw bytes to PNG with metadata and config applied.
+///
+/// Uses zenflate multi-strategy compression for all color types.
 pub(crate) fn encode_raw(
     bytes: &[u8],
     width: u32,
     height: u32,
     color_type: png::ColorType,
+    bit_depth: png::BitDepth,
     metadata: Option<&ImageMetadata<'_>>,
     config: &EncodeConfig,
 ) -> Result<Vec<u8>, PngError> {
-    let mut output = Vec::new();
+    let png_color_type: u8 = match color_type {
+        png::ColorType::Grayscale => 0,
+        png::ColorType::Rgb => 2,
+        png::ColorType::GrayscaleAlpha => 4,
+        png::ColorType::Rgba => 6,
+        _ => {
+            return Err(PngError::InvalidInput(alloc::format!(
+                "unsupported color type for truecolor PNG: {color_type:?}"
+            )));
+        }
+    };
+    let png_bit_depth: u8 = match bit_depth {
+        png::BitDepth::Eight => 8,
+        png::BitDepth::Sixteen => 16,
+        _ => {
+            return Err(PngError::InvalidInput(alloc::format!(
+                "unsupported bit depth for truecolor PNG: {bit_depth:?}"
+            )));
+        }
+    };
+    let level = compression_to_zenflate_level(config.compression);
 
-    let info = make_png_info(width, height, color_type, metadata);
-    let mut encoder = png::Encoder::with_info(&mut output, info)?;
-    encoder.set_compression(config.compression);
-    encoder.set_filter(config.filter);
-
-    let mut writer = encoder.write_header()?;
-    writer.write_image_data(bytes)?;
-    drop(writer);
-
-    Ok(output)
+    png_writer::write_truecolor_png(
+        bytes,
+        width,
+        height,
+        png_color_type,
+        png_bit_depth,
+        metadata,
+        level,
+    )
 }
 
-/// Create a PNG Info struct with metadata applied.
-pub(crate) fn make_png_info<'a>(
-    width: u32,
-    height: u32,
-    color_type: png::ColorType,
-    metadata: Option<&'a ImageMetadata<'a>>,
-) -> png::Info<'a> {
-    let mut info = png::Info::with_size(width, height);
-    info.color_type = color_type;
-    info.bit_depth = png::BitDepth::Eight;
-
-    if let Some(meta) = metadata {
-        if let Some(icc) = meta.icc_profile {
-            info.icc_profile = Some(icc.into());
-        }
-        if let Some(exif) = meta.exif {
-            info.exif_metadata = Some(exif.into());
-        }
-        if let Some(xmp) = meta.xmp {
-            let xmp_str = core::str::from_utf8(xmp).unwrap_or_default();
-            if !xmp_str.is_empty() {
-                info.utf8_text.push(png::text_metadata::ITXtChunk::new(
-                    "XML:com.adobe.xmp",
-                    xmp_str,
-                ));
-            }
-        }
+/// Map `png::Compression` levels to zenflate compression levels (0-12).
+pub(crate) fn compression_to_zenflate_level(compression: png::Compression) -> u8 {
+    match compression {
+        png::Compression::NoCompression => 0,
+        png::Compression::Fastest => 1,
+        png::Compression::Fast => 4,
+        png::Compression::Balanced => 9,
+        png::Compression::High => 12,
+        _ => 9,
     }
+}
 
-    info
+/// Byte-swap native-endian u16 samples to big-endian for PNG.
+fn native_to_be_16(native: &[u8]) -> Vec<u8> {
+    if cfg!(target_endian = "big") {
+        return native.to_vec();
+    }
+    let mut out = native.to_vec();
+    for chunk in out.chunks_exact_mut(2) {
+        chunk.swap(0, 1);
+    }
+    out
 }

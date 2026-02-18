@@ -1,4 +1,4 @@
-//! Low-level indexed PNG writer using zenflate for compression.
+//! Low-level PNG writer using zenflate for compression.
 //!
 //! Bypasses the `png` crate's streaming flate2 API to use zenflate's
 //! buffer-based compression. Multi-strategy filter selection tries 8
@@ -45,8 +45,8 @@ pub(crate) fn write_indexed_png(
     let packed_rows = pack_all_rows(indices, w, h, bit_depth);
     let row_bytes = packed_row_bytes(w, bit_depth);
 
-    // Compress with multi-strategy filter selection
-    let compressed = compress_filtered(&packed_rows, row_bytes, h, compression_level)?;
+    // Compress with multi-strategy filter selection (bpp=1 for indexed)
+    let compressed = compress_filtered(&packed_rows, row_bytes, h, 1, compression_level)?;
 
     // Assemble PNG
     let trns_data = truncate_trns(palette_alpha);
@@ -106,12 +106,103 @@ pub(crate) fn write_indexed_png(
     Ok(out)
 }
 
+/// Encode truecolor/grayscale pixel data into a complete PNG file.
+///
+/// `pixel_bytes` must be raw pixel data with correct byte order (big-endian
+/// for 16-bit). Tries multiple filter strategies and keeps the smallest.
+pub(crate) fn write_truecolor_png(
+    pixel_bytes: &[u8],
+    width: u32,
+    height: u32,
+    color_type: u8,
+    bit_depth: u8,
+    metadata: Option<&ImageMetadata<'_>>,
+    compression_level: u8,
+) -> Result<Vec<u8>, PngError> {
+    let w = width as usize;
+    let h = height as usize;
+
+    let channels: usize = match color_type {
+        0 => 1, // Grayscale
+        2 => 3, // RGB
+        4 => 2, // GrayscaleAlpha
+        6 => 4, // RGBA
+        _ => {
+            return Err(PngError::InvalidInput(alloc::format!(
+                "unsupported PNG color type: {color_type}"
+            )));
+        }
+    };
+    let bytes_per_channel = bit_depth as usize / 8;
+    let bpp = channels * bytes_per_channel;
+    let row_bytes = w * bpp;
+
+    let expected_len = row_bytes * h;
+    if pixel_bytes.len() < expected_len {
+        return Err(PngError::InvalidInput(alloc::format!(
+            "pixel buffer too small: need {expected_len}, got {}",
+            pixel_bytes.len()
+        )));
+    }
+
+    // Compress with multi-strategy filter selection
+    let compressed = compress_filtered(
+        &pixel_bytes[..expected_len],
+        row_bytes,
+        h,
+        bpp,
+        compression_level,
+    )?;
+
+    // Assemble PNG
+    let est = 8 + 25 + (12 + compressed.len()) + 12 + metadata_size_estimate(metadata);
+    let mut out = Vec::with_capacity(est);
+
+    out.extend_from_slice(&PNG_SIGNATURE);
+
+    // IHDR
+    let mut ihdr = [0u8; 13];
+    ihdr[0..4].copy_from_slice(&width.to_be_bytes());
+    ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+    ihdr[8] = bit_depth;
+    ihdr[9] = color_type;
+    // ihdr[10] = 0 compression method
+    // ihdr[11] = 0 filter method
+    // ihdr[12] = 0 interlace method
+    write_chunk(&mut out, b"IHDR", &ihdr);
+
+    // Metadata chunks (before IDAT)
+    if let Some(meta) = metadata {
+        if let Some(icc) = meta.icc_profile {
+            write_iccp_chunk(&mut out, icc)?;
+        }
+        if let Some(exif) = meta.exif {
+            write_exif_chunk(&mut out, exif);
+        }
+        if let Some(xmp) = meta.xmp {
+            let xmp_str = core::str::from_utf8(xmp).unwrap_or_default();
+            if !xmp_str.is_empty() {
+                write_itxt_chunk(&mut out, "XML:com.adobe.xmp", xmp_str);
+            }
+        }
+    }
+
+    // IDAT
+    write_chunk(&mut out, b"IDAT", &compressed);
+
+    // IEND
+    write_chunk(&mut out, b"IEND", &[]);
+
+    Ok(out)
+}
+
 // ---- Compression with multi-strategy filter selection ----
 
 fn compress_filtered(
     packed_rows: &[u8],
     row_bytes: usize,
     height: usize,
+    bpp: usize,
     compression_level: u8,
 ) -> Result<Vec<u8>, PngError> {
     let level = CompressionLevel::new(compression_level.into());
@@ -138,7 +229,14 @@ fn compress_filtered(
 
     for strategy in strategies {
         filtered.clear();
-        filter_image(packed_rows, row_bytes, height, *strategy, &mut filtered);
+        filter_image(
+            packed_rows,
+            row_bytes,
+            height,
+            bpp,
+            *strategy,
+            &mut filtered,
+        );
 
         let compressed_len = compressor
             .zlib_compress(&filtered, &mut compress_buf)
@@ -174,6 +272,7 @@ fn filter_image(
     packed_rows: &[u8],
     row_bytes: usize,
     height: usize,
+    bpp: usize,
     strategy: Strategy,
     out: &mut Vec<u8>,
 ) {
@@ -186,12 +285,12 @@ fn filter_image(
         match strategy {
             Strategy::Single(f) => {
                 out.push(f);
-                apply_filter(f, row, &prev_row, &mut candidates[0]);
+                apply_filter(f, row, &prev_row, bpp, &mut candidates[0]);
                 out.extend_from_slice(&candidates[0]);
             }
             Strategy::Adaptive(heuristic) => {
                 for f in 0..5u8 {
-                    apply_filter(f, row, &prev_row, &mut candidates[f as usize]);
+                    apply_filter(f, row, &prev_row, bpp, &mut candidates[f as usize]);
                 }
                 let best_f = pick_best_filter(&candidates, heuristic);
                 out.push(best_f);
@@ -244,15 +343,16 @@ fn pick_best_filter(candidates: &[Vec<u8>], heuristic: AdaptiveHeuristic) -> u8 
     }
 }
 
-fn apply_filter(filter: u8, row: &[u8], prev_row: &[u8], out: &mut [u8]) {
+fn apply_filter(filter: u8, row: &[u8], prev_row: &[u8], bpp: usize, out: &mut [u8]) {
     let len = row.len();
     match filter {
         0 => out[..len].copy_from_slice(row),
         1 => {
-            // Sub
-            out[0] = row[0];
-            for i in 1..len {
-                out[i] = row[i].wrapping_sub(row[i - 1]);
+            // Sub: first bpp bytes raw, rest subtract left neighbor
+            let b = bpp.min(len);
+            out[..b].copy_from_slice(&row[..b]);
+            for i in bpp..len {
+                out[i] = row[i].wrapping_sub(row[i - bpp]);
             }
         }
         2 => {
@@ -262,18 +362,22 @@ fn apply_filter(filter: u8, row: &[u8], prev_row: &[u8], out: &mut [u8]) {
             }
         }
         3 => {
-            // Average
-            out[0] = row[0].wrapping_sub(prev_row[0] >> 1);
-            for i in 1..len {
-                let avg = ((row[i - 1] as u16 + prev_row[i] as u16) >> 1) as u8;
+            // Average: first bpp bytes use only above, rest use left+above
+            for i in 0..bpp.min(len) {
+                out[i] = row[i].wrapping_sub(prev_row[i] >> 1);
+            }
+            for i in bpp..len {
+                let avg = ((row[i - bpp] as u16 + prev_row[i] as u16) >> 1) as u8;
                 out[i] = row[i].wrapping_sub(avg);
             }
         }
         4 => {
-            // Paeth
-            out[0] = row[0].wrapping_sub(paeth_predictor(0, prev_row[0], 0));
-            for i in 1..len {
-                let pred = paeth_predictor(row[i - 1], prev_row[i], prev_row[i - 1]);
+            // Paeth: first bpp bytes use paeth(0, above, 0), rest use full paeth
+            for i in 0..bpp.min(len) {
+                out[i] = row[i].wrapping_sub(paeth_predictor(0, prev_row[i], 0));
+            }
+            for i in bpp..len {
+                let pred = paeth_predictor(row[i - bpp], prev_row[i], prev_row[i - bpp]);
                 out[i] = row[i].wrapping_sub(pred);
             }
         }
@@ -343,7 +447,7 @@ fn bigrams_score(data: &[u8]) -> usize {
     count
 }
 
-// ---- Bit depth and packing ----
+// ---- Bit depth and packing (indexed only) ----
 
 fn select_bit_depth(n_colors: usize) -> u8 {
     if n_colors <= 2 {

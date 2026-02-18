@@ -5,7 +5,7 @@ use std::io::Cursor;
 use alloc::vec::Vec;
 use imgref::ImgVec;
 use rgb::{Gray, Rgb, Rgba};
-use zencodec_types::PixelData;
+use zencodec_types::{GrayAlpha, PixelData};
 
 use crate::error::PngError;
 
@@ -23,6 +23,8 @@ pub struct PngInfo {
     pub has_animation: bool,
     /// Number of frames.
     pub frame_count: u32,
+    /// Source bit depth per channel (before any transformations).
+    pub bit_depth: u8,
     /// Embedded ICC color profile.
     pub icc_profile: Option<Vec<u8>>,
     /// Embedded EXIF metadata.
@@ -85,6 +87,7 @@ pub fn probe(data: &[u8]) -> Result<PngInfo, PngError> {
     let icc_profile = info.icc_profile.as_ref().map(|p| p.to_vec());
     let exif = info.exif_metadata.as_ref().map(|p| p.to_vec());
     let xmp = extract_xmp_from_itxt(info);
+    let bit_depth = info.bit_depth as u8;
 
     Ok(PngInfo {
         width: info.width,
@@ -92,6 +95,7 @@ pub fn probe(data: &[u8]) -> Result<PngInfo, PngError> {
         has_alpha,
         has_animation,
         frame_count,
+        bit_depth,
         icc_profile,
         exif,
         xmp,
@@ -99,6 +103,9 @@ pub fn probe(data: &[u8]) -> Result<PngInfo, PngError> {
 }
 
 /// Decode PNG to pixels.
+///
+/// Preserves 16-bit depth when present in the source. Expands indexed
+/// and sub-8-bit formats to their natural RGB/RGBA/Gray equivalents.
 pub fn decode(data: &[u8], limits: Option<&PngLimits>) -> Result<PngDecodeOutput, PngError> {
     let cursor = Cursor::new(data);
     let mut decoder = if let Some(lim) = limits {
@@ -110,12 +117,9 @@ pub fn decode(data: &[u8], limits: Option<&PngLimits>) -> Result<PngDecodeOutput
         png::Decoder::new(cursor)
     };
 
-    // Normalize to 8-bit color: expands indexed→RGB/RGBA, sub-8-bit
-    // grayscale→8-bit, strips 16-bit→8-bit, and applies tRNS transparency.
-    // Without this, indexed PNGs return raw packed palette indices and
-    // sub-8-bit grayscale returns packed values, neither of which our
-    // PixelData types can represent.
-    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    // EXPAND only: expands indexed→RGB/RGBA, sub-8-bit grayscale→8-bit,
+    // tRNS→alpha. Crucially does NOT strip 16-bit to 8-bit.
+    decoder.set_transformations(png::Transformations::EXPAND);
 
     let mut reader = decoder.read_info()?;
     let info = reader.info();
@@ -128,11 +132,13 @@ pub fn decode(data: &[u8], limits: Option<&PngLimits>) -> Result<PngDecodeOutput
         .animation_control
         .as_ref()
         .map_or(1, |actl| actl.num_frames);
+    let source_bit_depth = info.bit_depth as u8;
+
+    let (decoded_color_type, decoded_bit_depth) = reader.output_color_type();
 
     if let Some(lim) = limits {
-        // Output will be 4 bpp (RGBA) if alpha, 3 bpp (RGB) otherwise
-        let bpp: u32 = if has_alpha { 4 } else { 3 };
-        lim.validate(width, height, bpp)?;
+        let bpp = output_bytes_per_pixel(decoded_color_type, decoded_bit_depth);
+        lim.validate(width, height, bpp as u32)?;
     }
 
     let icc_profile = info.icc_profile.as_ref().map(|p| p.to_vec());
@@ -147,20 +153,37 @@ pub fn decode(data: &[u8], limits: Option<&PngLimits>) -> Result<PngDecodeOutput
     let output_info = reader.next_frame(&mut raw_pixels)?;
     raw_pixels.truncate(output_info.buffer_size());
 
-    let (decoded_color_type, _bit_depth) = reader.output_color_type();
     let w = width as usize;
     let h = height as usize;
 
-    let pixels = match decoded_color_type {
-        png::ColorType::Rgba => {
+    let pixels = match (decoded_color_type, decoded_bit_depth) {
+        (png::ColorType::Rgba, png::BitDepth::Sixteen) => {
+            let native = be_to_native_16(&raw_pixels);
+            let rgba: &[Rgba<u16>] = bytemuck::cast_slice(&native);
+            PixelData::Rgba16(ImgVec::new(rgba.to_vec(), w, h))
+        }
+        (png::ColorType::Rgba, _) => {
             let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&raw_pixels);
             PixelData::Rgba8(ImgVec::new(rgba.to_vec(), w, h))
         }
-        png::ColorType::Rgb => {
+        (png::ColorType::Rgb, png::BitDepth::Sixteen) => {
+            let native = be_to_native_16(&raw_pixels);
+            let rgb: &[Rgb<u16>] = bytemuck::cast_slice(&native);
+            PixelData::Rgb16(ImgVec::new(rgb.to_vec(), w, h))
+        }
+        (png::ColorType::Rgb, _) => {
             let rgb: &[Rgb<u8>] = bytemuck::cast_slice(&raw_pixels);
             PixelData::Rgb8(ImgVec::new(rgb.to_vec(), w, h))
         }
-        png::ColorType::GrayscaleAlpha => {
+        (png::ColorType::GrayscaleAlpha, png::BitDepth::Sixteen) => {
+            let native = be_to_native_16(&raw_pixels);
+            let ga: &[[u16; 2]] = bytemuck::cast_slice(&native);
+            let pixels: Vec<GrayAlpha<u16>> =
+                ga.iter().map(|&[v, a]| GrayAlpha::new(v, a)).collect();
+            PixelData::GrayAlpha16(ImgVec::new(pixels, w, h))
+        }
+        (png::ColorType::GrayscaleAlpha, _) => {
+            // Expand gray+alpha to RGBA for 8-bit (matches previous behavior)
             let rgba: Vec<Rgba<u8>> = raw_pixels
                 .chunks_exact(2)
                 .map(|ga| Rgba {
@@ -172,12 +195,17 @@ pub fn decode(data: &[u8], limits: Option<&PngLimits>) -> Result<PngDecodeOutput
                 .collect();
             PixelData::Rgba8(ImgVec::new(rgba, w, h))
         }
-        png::ColorType::Grayscale => {
+        (png::ColorType::Grayscale, png::BitDepth::Sixteen) => {
+            let native = be_to_native_16(&raw_pixels);
+            let gray: &[Gray<u16>] = bytemuck::cast_slice(&native);
+            PixelData::Gray16(ImgVec::new(gray.to_vec(), w, h))
+        }
+        (png::ColorType::Grayscale, _) => {
             let gray: Vec<Gray<u8>> = raw_pixels.iter().map(|&g| Gray(g)).collect();
             PixelData::Gray8(ImgVec::new(gray, w, h))
         }
-        png::ColorType::Indexed => {
-            // Should not be reached with normalize_to_color8(), which expands
+        (png::ColorType::Indexed, _) => {
+            // Should not be reached with EXPAND, which expands
             // indexed images to RGB/RGBA. If it somehow does, error cleanly.
             return Err(PngError::InvalidInput(
                 "indexed PNG was not expanded by decoder transforms".into(),
@@ -193,11 +221,40 @@ pub fn decode(data: &[u8], limits: Option<&PngLimits>) -> Result<PngDecodeOutput
             has_alpha,
             has_animation,
             frame_count,
+            bit_depth: source_bit_depth,
             icc_profile,
             exif,
             xmp,
         },
     })
+}
+
+/// Compute output bytes per pixel for a given color type and bit depth.
+fn output_bytes_per_pixel(color_type: png::ColorType, bit_depth: png::BitDepth) -> usize {
+    let channels: usize = match color_type {
+        png::ColorType::Grayscale => 1,
+        png::ColorType::Rgb => 3,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Rgba => 4,
+        png::ColorType::Indexed => 1,
+    };
+    let depth_bytes = match bit_depth {
+        png::BitDepth::Sixteen => 2,
+        _ => 1,
+    };
+    channels * depth_bytes
+}
+
+/// Byte-swap big-endian u16 samples from PNG to native endian.
+fn be_to_native_16(bytes: &[u8]) -> Vec<u8> {
+    if cfg!(target_endian = "big") {
+        return bytes.to_vec();
+    }
+    let mut out = bytes.to_vec();
+    for chunk in out.chunks_exact_mut(2) {
+        chunk.swap(0, 1);
+    }
+    out
 }
 
 /// Determine whether a PNG image has an alpha channel.
