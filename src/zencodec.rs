@@ -111,6 +111,10 @@ impl zencodec_types::EncoderConfig for PngEncoderConfig {
     type Error = PngError;
     type Job<'a> = PngEncodeJob<'a>;
 
+    fn format() -> ImageFormat {
+        ImageFormat::Png
+    }
+
     fn supported_descriptors() -> &'static [PixelDescriptor] {
         ENCODE_DESCRIPTORS
     }
@@ -450,6 +454,10 @@ impl zencodec_types::DecoderConfig for PngDecoderConfig {
     type Error = PngError;
     type Job<'a> = PngDecodeJob<'a>;
 
+    fn format() -> ImageFormat {
+        ImageFormat::Png
+    }
+
     fn supported_descriptors() -> &'static [PixelDescriptor] {
         DECODE_DESCRIPTORS
     }
@@ -556,32 +564,33 @@ impl zencodec_types::Decoder for PngDecoder<'_> {
         let desc = dst.descriptor();
         let output = self.decode(data)?;
         let info = output.info().clone();
+        let pixels = output.into_pixels();
 
         match (desc.channel_type, desc.layout) {
             (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Rgb) => {
-                let src = output.into_rgb8();
+                let src = to_rgb8(pixels);
                 copy_rows_u8(&src, &mut dst);
             }
             (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Rgba) => {
-                let src = output.into_rgba8();
+                let src = to_rgba8(pixels);
                 copy_rows_u8(&src, &mut dst);
             }
             (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Gray) => {
-                let src = output.into_gray8();
+                let src = to_gray8(pixels);
                 copy_rows_u8(&src, &mut dst);
             }
             (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Bgra) => {
-                let src = output.into_bgra8();
+                let src = to_bgra8(pixels);
                 copy_rows_u8(&src, &mut dst);
             }
             (zencodec_types::ChannelType::F32, zencodec_types::ChannelLayout::Rgb) => {
-                decode_into_rgb_f32(output, &mut dst);
+                decode_into_rgb_f32(pixels, &mut dst);
             }
             (zencodec_types::ChannelType::F32, zencodec_types::ChannelLayout::Rgba) => {
-                decode_into_rgba_f32(output, &mut dst);
+                decode_into_rgba_f32(pixels, &mut dst);
             }
             (zencodec_types::ChannelType::F32, zencodec_types::ChannelLayout::Gray) => {
-                decode_into_gray_f32(output, &mut dst);
+                decode_into_gray_f32(pixels, &mut dst);
             }
             _ => {
                 return Err(PngError::InvalidInput(alloc::format!(
@@ -636,6 +645,182 @@ impl zencodec_types::FrameDecoder for PngFrameDecoder {
         Err(PngError::InvalidInput(
             "PNG does not support animation decoding via frame_decoder".into(),
         ))
+    }
+}
+
+// ── Pixel conversion helpers ─────────────────────────────────────────
+//
+// PNG decoder produces Rgb8, Rgba8, or Gray8. These helpers convert
+// to any requested target format. Transfer function handling is done
+// by the caller (decode_into f32 paths apply srgb_u8_to_linear).
+
+use rgb::{Gray, Rgb, Rgba};
+use zencodec_types::PixelData;
+
+/// Convert native PNG pixel data to Rgb8.
+fn to_rgb8(pixels: PixelData) -> imgref::ImgVec<Rgb<u8>> {
+    match pixels {
+        PixelData::Rgb8(img) => img,
+        PixelData::Rgba8(img) => {
+            let w = img.width();
+            let h = img.height();
+            let buf: Vec<Rgb<u8>> = img
+                .into_buf()
+                .into_iter()
+                .map(|p| Rgb {
+                    r: p.r,
+                    g: p.g,
+                    b: p.b,
+                })
+                .collect();
+            imgref::ImgVec::new(buf, w, h)
+        }
+        PixelData::Gray8(img) => {
+            let w = img.width();
+            let h = img.height();
+            let buf: Vec<Rgb<u8>> = img
+                .into_buf()
+                .into_iter()
+                .map(|p| {
+                    let v = p.value();
+                    Rgb { r: v, g: v, b: v }
+                })
+                .collect();
+            imgref::ImgVec::new(buf, w, h)
+        }
+        other => unreachable!("PNG decoder produced unexpected format: {other:?}"),
+    }
+}
+
+/// Convert native PNG pixel data to Rgba8.
+fn to_rgba8(pixels: PixelData) -> imgref::ImgVec<Rgba<u8>> {
+    match pixels {
+        PixelData::Rgba8(img) => img,
+        PixelData::Rgb8(img) => {
+            let w = img.width();
+            let h = img.height();
+            let buf: Vec<Rgba<u8>> = img
+                .into_buf()
+                .into_iter()
+                .map(|p| Rgba {
+                    r: p.r,
+                    g: p.g,
+                    b: p.b,
+                    a: 255,
+                })
+                .collect();
+            imgref::ImgVec::new(buf, w, h)
+        }
+        PixelData::Gray8(img) => {
+            let w = img.width();
+            let h = img.height();
+            let buf: Vec<Rgba<u8>> = img
+                .into_buf()
+                .into_iter()
+                .map(|p| {
+                    let v = p.value();
+                    Rgba {
+                        r: v,
+                        g: v,
+                        b: v,
+                        a: 255,
+                    }
+                })
+                .collect();
+            imgref::ImgVec::new(buf, w, h)
+        }
+        other => unreachable!("PNG decoder produced unexpected format: {other:?}"),
+    }
+}
+
+/// Convert native PNG pixel data to Gray8.
+fn to_gray8(pixels: PixelData) -> imgref::ImgVec<Gray<u8>> {
+    match pixels {
+        PixelData::Gray8(img) => img,
+        PixelData::Rgb8(img) => {
+            let w = img.width();
+            let h = img.height();
+            let buf: Vec<Gray<u8>> = img
+                .into_buf()
+                .into_iter()
+                .map(|p| {
+                    let luma =
+                        ((p.r as u16 * 77 + p.g as u16 * 150 + p.b as u16 * 29) >> 8) as u8;
+                    Gray::new(luma)
+                })
+                .collect();
+            imgref::ImgVec::new(buf, w, h)
+        }
+        PixelData::Rgba8(img) => {
+            let w = img.width();
+            let h = img.height();
+            let buf: Vec<Gray<u8>> = img
+                .into_buf()
+                .into_iter()
+                .map(|p| {
+                    let luma =
+                        ((p.r as u16 * 77 + p.g as u16 * 150 + p.b as u16 * 29) >> 8) as u8;
+                    Gray::new(luma)
+                })
+                .collect();
+            imgref::ImgVec::new(buf, w, h)
+        }
+        other => unreachable!("PNG decoder produced unexpected format: {other:?}"),
+    }
+}
+
+/// Convert native PNG pixel data to Bgra8.
+fn to_bgra8(pixels: PixelData) -> imgref::ImgVec<rgb::alt::BGRA<u8>> {
+    match pixels {
+        PixelData::Rgba8(img) => {
+            let w = img.width();
+            let h = img.height();
+            let buf: Vec<rgb::alt::BGRA<u8>> = img
+                .into_buf()
+                .into_iter()
+                .map(|p| rgb::alt::BGRA {
+                    b: p.b,
+                    g: p.g,
+                    r: p.r,
+                    a: p.a,
+                })
+                .collect();
+            imgref::ImgVec::new(buf, w, h)
+        }
+        PixelData::Rgb8(img) => {
+            let w = img.width();
+            let h = img.height();
+            let buf: Vec<rgb::alt::BGRA<u8>> = img
+                .into_buf()
+                .into_iter()
+                .map(|p| rgb::alt::BGRA {
+                    b: p.b,
+                    g: p.g,
+                    r: p.r,
+                    a: 255,
+                })
+                .collect();
+            imgref::ImgVec::new(buf, w, h)
+        }
+        PixelData::Gray8(img) => {
+            let w = img.width();
+            let h = img.height();
+            let buf: Vec<rgb::alt::BGRA<u8>> = img
+                .into_buf()
+                .into_iter()
+                .map(|p| {
+                    let v = p.value();
+                    rgb::alt::BGRA {
+                        b: v,
+                        g: v,
+                        r: v,
+                        a: 255,
+                    }
+                })
+                .collect();
+            imgref::ImgVec::new(buf, w, h)
+        }
+        other => unreachable!("PNG decoder produced unexpected format: {other:?}"),
     }
 }
 
@@ -698,11 +883,10 @@ where
 }
 
 /// Decode into linear RGB f32.
-fn decode_into_rgb_f32(output: DecodeOutput, dst: &mut PixelSliceMut<'_>) {
-    use linear_srgb::default::srgb_to_linear_fast;
+fn decode_into_rgb_f32(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
+    use linear_srgb::default::srgb_u8_to_linear;
 
-    // Use into_rgb_f32() to preserve full source precision (u16 → f32 via /65535)
-    let src = output.into_rgb_f32();
+    let src = to_rgb8(pixels);
     for y in 0..src.height().min(dst.rows() as usize) {
         let src_row = &src.buf()[y * src.stride()..][..src.width()];
         let dst_row = dst.row_mut(y as u32);
@@ -711,9 +895,9 @@ fn decode_into_rgb_f32(output: DecodeOutput, dst: &mut PixelSliceMut<'_>) {
             if offset + 12 > dst_row.len() {
                 break;
             }
-            let r = srgb_to_linear_fast(s.r);
-            let g = srgb_to_linear_fast(s.g);
-            let b = srgb_to_linear_fast(s.b);
+            let r = srgb_u8_to_linear(s.r);
+            let g = srgb_u8_to_linear(s.g);
+            let b = srgb_u8_to_linear(s.b);
             dst_row[offset..offset + 4].copy_from_slice(&r.to_ne_bytes());
             dst_row[offset + 4..offset + 8].copy_from_slice(&g.to_ne_bytes());
             dst_row[offset + 8..offset + 12].copy_from_slice(&b.to_ne_bytes());
@@ -722,10 +906,10 @@ fn decode_into_rgb_f32(output: DecodeOutput, dst: &mut PixelSliceMut<'_>) {
 }
 
 /// Decode into linear RGBA f32.
-fn decode_into_rgba_f32(output: DecodeOutput, dst: &mut PixelSliceMut<'_>) {
-    use linear_srgb::default::srgb_to_linear_fast;
+fn decode_into_rgba_f32(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
+    use linear_srgb::default::srgb_u8_to_linear;
 
-    let src = output.into_rgba_f32();
+    let src = to_rgba8(pixels);
     for y in 0..src.height().min(dst.rows() as usize) {
         let src_row = &src.buf()[y * src.stride()..][..src.width()];
         let dst_row = dst.row_mut(y as u32);
@@ -734,22 +918,23 @@ fn decode_into_rgba_f32(output: DecodeOutput, dst: &mut PixelSliceMut<'_>) {
             if offset + 16 > dst_row.len() {
                 break;
             }
-            let r = srgb_to_linear_fast(s.r);
-            let g = srgb_to_linear_fast(s.g);
-            let b = srgb_to_linear_fast(s.b);
+            let r = srgb_u8_to_linear(s.r);
+            let g = srgb_u8_to_linear(s.g);
+            let b = srgb_u8_to_linear(s.b);
             dst_row[offset..offset + 4].copy_from_slice(&r.to_ne_bytes());
             dst_row[offset + 4..offset + 8].copy_from_slice(&g.to_ne_bytes());
             dst_row[offset + 8..offset + 12].copy_from_slice(&b.to_ne_bytes());
-            dst_row[offset + 12..offset + 16].copy_from_slice(&s.a.to_ne_bytes());
+            dst_row[offset + 12..offset + 16]
+                .copy_from_slice(&(s.a as f32 / 255.0).to_ne_bytes());
         }
     }
 }
 
 /// Decode into linear Gray f32.
-fn decode_into_gray_f32(output: DecodeOutput, dst: &mut PixelSliceMut<'_>) {
-    use linear_srgb::default::srgb_to_linear_fast;
+fn decode_into_gray_f32(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
+    use linear_srgb::default::srgb_u8_to_linear;
 
-    let src = output.into_gray_f32();
+    let src = to_gray8(pixels);
     for y in 0..src.height().min(dst.rows() as usize) {
         let src_row = &src.buf()[y * src.stride()..][..src.width()];
         let dst_row = dst.row_mut(y as u32);
@@ -758,7 +943,7 @@ fn decode_into_gray_f32(output: DecodeOutput, dst: &mut PixelSliceMut<'_>) {
             if offset + 4 > dst_row.len() {
                 break;
             }
-            let v = srgb_to_linear_fast(s.value());
+            let v = srgb_u8_to_linear(s.value());
             dst_row[offset..offset + 4].copy_from_slice(&v.to_ne_bytes());
         }
     }
@@ -914,7 +1099,7 @@ mod tests {
 
         let dec = PngDecoderConfig::new();
         let decoded = dec.decode(output.bytes()).unwrap();
-        let rgba = decoded.into_rgba8();
+        let rgba = to_rgba8(decoded.into_pixels());
         let buf = rgba.buf();
         assert_eq!(
             buf[0],
