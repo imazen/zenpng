@@ -6,8 +6,9 @@ use rgb::{Gray, Rgb, Rgba};
 
 use zencodec_types::ImageMetadata;
 
+use crate::decode::PngChromaticities;
 use crate::error::PngError;
-use crate::png_writer;
+use crate::png_writer::{self, PngWriteMetadata};
 
 /// PNG encode configuration.
 #[derive(Clone, Debug, Default)]
@@ -16,6 +17,12 @@ pub struct EncodeConfig {
     pub compression: png::Compression,
     /// PNG row filter type (ignored — multi-strategy selection is always used).
     pub filter: png::Filter,
+    /// Source gamma for gAMA chunk (scaled by 100000, e.g. 45455 = 1/2.2).
+    pub source_gamma: Option<u32>,
+    /// sRGB rendering intent for sRGB chunk (0-3).
+    pub srgb_intent: Option<u8>,
+    /// Chromaticities for cHRM chunk.
+    pub chromaticities: Option<PngChromaticities>,
 }
 
 impl EncodeConfig {
@@ -206,13 +213,18 @@ pub(crate) fn encode_raw(
     };
     let level = compression_to_zenflate_level(config.compression);
 
+    let mut write_meta = PngWriteMetadata::from_metadata(metadata);
+    write_meta.source_gamma = config.source_gamma;
+    write_meta.srgb_intent = config.srgb_intent;
+    write_meta.chromaticities = config.chromaticities;
+
     png_writer::write_truecolor_png(
         bytes,
         width,
         height,
         png_color_type,
         png_bit_depth,
-        metadata,
+        &write_meta,
         level,
     )
 }
