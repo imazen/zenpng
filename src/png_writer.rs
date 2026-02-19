@@ -225,6 +225,7 @@ fn compress_filtered(
     let mut filtered = Vec::with_capacity(filtered_size);
     let compress_bound = Compressor::zlib_compress_bound(filtered_size);
     let mut compress_buf = vec![0u8; compress_bound];
+    let mut verify_buf = vec![0u8; filtered_size];
 
     let strategies: &[Strategy] = &[
         Strategy::Single(0), // None
@@ -252,6 +253,18 @@ fn compress_filtered(
             .zlib_compress(&filtered, &mut compress_buf)
             .map_err(|e| PngError::InvalidInput(alloc::format!("compression failed: {e}")))?;
 
+        // Verify decompression roundtrip (catches rare zenflate compression bugs)
+        {
+            let mut decompressor = zenflate::Decompressor::new();
+            if decompressor
+                .zlib_decompress(&compress_buf[..compressed_len], &mut verify_buf)
+                .is_err()
+            {
+                // This strategy produced corrupt compressed output — skip it
+                continue;
+            }
+        }
+
         let dominated = best_compressed
             .as_ref()
             .is_some_and(|b| compressed_len >= b.len());
@@ -265,13 +278,13 @@ fn compress_filtered(
 
 // ---- Filter strategies ----
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Strategy {
     Single(u8),
     Adaptive(AdaptiveHeuristic),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum AdaptiveHeuristic {
     MinSum,
     Entropy,

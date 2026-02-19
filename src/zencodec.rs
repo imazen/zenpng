@@ -2356,4 +2356,74 @@ mod tests {
             .expect("re-encoded should have iCCP");
         assert_eq!(icc, rt_icc);
     }
+
+    #[test]
+    fn test_clic_0d154_roundtrip() {
+        // This 1024x1024 RGB image triggered a zenflate compression bug
+        // at L4 with adaptive MinSum filtering (corrupt deflate stream).
+        // The decompression verification in compress_filtered now catches this.
+        let path = "/home/lilith/work/codec-corpus/clic2025-1024/0d154749c7771f58e89ad343653ec4e20d6f037da829f47f5598e5d0a4ab61f0.png";
+        let data = match std::fs::read(path) {
+            Ok(d) => d,
+            Err(_) => return, // skip if corpus not available
+        };
+        let decoded = crate::decode::decode(&data, None).unwrap();
+        let info = &decoded.info;
+        let rgb_pixels = match &decoded.pixels {
+            zencodec_types::PixelData::Rgb8(img) => img,
+            other => panic!("expected Rgb8, got {:?}", other.descriptor()),
+        };
+
+        for (name, comp) in [
+            ("Fastest", png::Compression::Fastest),
+            ("Fast", png::Compression::Fast),
+            ("Balanced", png::Compression::Balanced),
+            ("High", png::Compression::High),
+        ] {
+            let config = crate::EncodeConfig {
+                source_gamma: info.source_gamma,
+                srgb_intent: info.srgb_intent,
+                chromaticities: info.chromaticities,
+                compression: comp,
+                ..Default::default()
+            };
+            let encoded = crate::encode::encode_rgb8(
+                rgb_pixels.as_ref(), None, &config,
+            ).unwrap();
+            match crate::decode::decode(&encoded, None) {
+                Ok(_) => {}
+                Err(e) => panic!("{name}: full PNG re-decode failed: {e}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_large_rgb8_roundtrip() {
+        // Test with a 1024x1024 gradient image to catch compression bugs at ~3MiB
+        let width = 1024usize;
+        let height = 1024usize;
+        let pixels: Vec<rgb::Rgb<u8>> = (0..width * height)
+            .map(|i| {
+                let x = i % width;
+                let y = i / width;
+                rgb::Rgb {
+                    r: (x & 0xFF) as u8,
+                    g: (y & 0xFF) as u8,
+                    b: ((x + y) & 0xFF) as u8,
+                }
+            })
+            .collect();
+        let img = imgref::ImgVec::new(pixels, width, height);
+        let config = crate::EncodeConfig::default();
+        let encoded =
+            crate::encode::encode_rgb8(img.as_ref(), None, &config).unwrap();
+        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        match &decoded.pixels {
+            zencodec_types::PixelData::Rgb8(dec_img) => {
+                assert_eq!(dec_img.width(), width);
+                assert_eq!(dec_img.height(), height);
+            }
+            other => panic!("expected Rgb8, got {:?}", other.descriptor()),
+        }
+    }
 }
