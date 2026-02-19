@@ -52,6 +52,7 @@ pub fn encode_indexed_rgba8(
     };
 
     let compression_level = encode_config.compression.to_zenflate_level();
+    let use_zopfli = encode_config.compression.use_zopfli();
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = encode_config.source_gamma;
@@ -66,6 +67,7 @@ pub fn encode_indexed_rgba8(
         alpha,
         &write_meta,
         compression_level,
+        use_zopfli,
     )
 }
 
@@ -144,6 +146,7 @@ pub fn encode_rgba8_auto(
         };
 
         let compression_level = encode_config.compression.to_zenflate_level();
+        let use_zopfli = encode_config.compression.use_zopfli();
 
         let mut write_meta = PngWriteMetadata::from_metadata(metadata);
         write_meta.source_gamma = encode_config.source_gamma;
@@ -158,6 +161,7 @@ pub fn encode_rgba8_auto(
             alpha,
             &write_meta,
             compression_level,
+            use_zopfli,
         )?;
 
         Ok(AutoEncodeResult {
