@@ -9,14 +9,15 @@ use zencodec_types::ImageMetadata;
 use crate::decode::PngChromaticities;
 use crate::error::PngError;
 use crate::png_writer::{self, PngWriteMetadata};
+use crate::types::{Compression, Filter};
 
 /// PNG encode configuration.
 #[derive(Clone, Debug, Default)]
 pub struct EncodeConfig {
     /// PNG compression level.
-    pub compression: png::Compression,
-    /// PNG row filter type (ignored — multi-strategy selection is always used).
-    pub filter: png::Filter,
+    pub compression: Compression,
+    /// PNG row filter strategy.
+    pub filter: Filter,
     /// Source gamma for gAMA chunk (scaled by 100000, e.g. 45455 = 1/2.2).
     pub source_gamma: Option<u32>,
     /// sRGB rendering intent for sRGB chunk (0-3).
@@ -28,16 +29,55 @@ pub struct EncodeConfig {
 impl EncodeConfig {
     /// Set compression level.
     #[must_use]
-    pub fn with_compression(mut self, compression: png::Compression) -> Self {
+    pub fn with_compression(mut self, compression: Compression) -> Self {
         self.compression = compression;
         self
     }
 
-    /// Set row filter type.
+    /// Set row filter strategy.
     #[must_use]
-    pub fn with_filter(mut self, filter: png::Filter) -> Self {
+    pub fn with_filter(mut self, filter: Filter) -> Self {
         self.filter = filter;
         self
+    }
+}
+
+/// PNG color type (internal, maps to PNG spec values).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)] // GrayscaleAlpha not yet used in encode, but kept for completeness
+pub(crate) enum ColorType {
+    Grayscale,
+    Rgb,
+    GrayscaleAlpha,
+    Rgba,
+}
+
+impl ColorType {
+    /// PNG spec color type byte.
+    pub(crate) fn to_png_byte(self) -> u8 {
+        match self {
+            ColorType::Grayscale => 0,
+            ColorType::Rgb => 2,
+            ColorType::GrayscaleAlpha => 4,
+            ColorType::Rgba => 6,
+        }
+    }
+}
+
+/// PNG bit depth (internal).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BitDepth {
+    Eight,
+    Sixteen,
+}
+
+impl BitDepth {
+    /// PNG spec bit depth value.
+    pub(crate) fn to_png_byte(self) -> u8 {
+        match self {
+            BitDepth::Eight => 8,
+            BitDepth::Sixteen => 16,
+        }
     }
 }
 
@@ -51,15 +91,7 @@ pub fn encode_rgb8(
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
-    encode_raw(
-        bytes,
-        width,
-        height,
-        png::ColorType::Rgb,
-        png::BitDepth::Eight,
-        metadata,
-        config,
-    )
+    encode_raw(bytes, width, height, ColorType::Rgb, BitDepth::Eight, metadata, config)
 }
 
 /// Encode RGBA8 pixels to PNG.
@@ -72,15 +104,7 @@ pub fn encode_rgba8(
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
-    encode_raw(
-        bytes,
-        width,
-        height,
-        png::ColorType::Rgba,
-        png::BitDepth::Eight,
-        metadata,
-        config,
-    )
+    encode_raw(bytes, width, height, ColorType::Rgba, BitDepth::Eight, metadata, config)
 }
 
 /// Encode Gray8 pixels to PNG.
@@ -93,15 +117,7 @@ pub fn encode_gray8(
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: Vec<u8> = buf.iter().map(|g| g.value()).collect();
-    encode_raw(
-        &bytes,
-        width,
-        height,
-        png::ColorType::Grayscale,
-        png::BitDepth::Eight,
-        metadata,
-        config,
-    )
+    encode_raw(&bytes, width, height, ColorType::Grayscale, BitDepth::Eight, metadata, config)
 }
 
 /// Encode RGB16 pixels to PNG.
@@ -118,15 +134,7 @@ pub fn encode_rgb16(
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
     let be = native_to_be_16(bytes);
-    encode_raw(
-        &be,
-        width,
-        height,
-        png::ColorType::Rgb,
-        png::BitDepth::Sixteen,
-        metadata,
-        config,
-    )
+    encode_raw(&be, width, height, ColorType::Rgb, BitDepth::Sixteen, metadata, config)
 }
 
 /// Encode RGBA16 pixels to PNG.
@@ -143,15 +151,7 @@ pub fn encode_rgba16(
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
     let be = native_to_be_16(bytes);
-    encode_raw(
-        &be,
-        width,
-        height,
-        png::ColorType::Rgba,
-        png::BitDepth::Sixteen,
-        metadata,
-        config,
-    )
+    encode_raw(&be, width, height, ColorType::Rgba, BitDepth::Sixteen, metadata, config)
 }
 
 /// Encode Gray16 pixels to PNG.
@@ -168,15 +168,7 @@ pub fn encode_gray16(
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
     let be = native_to_be_16(bytes);
-    encode_raw(
-        &be,
-        width,
-        height,
-        png::ColorType::Grayscale,
-        png::BitDepth::Sixteen,
-        metadata,
-        config,
-    )
+    encode_raw(&be, width, height, ColorType::Grayscale, BitDepth::Sixteen, metadata, config)
 }
 
 /// Low-level encode: raw bytes to PNG with metadata and config applied.
@@ -186,32 +178,12 @@ pub(crate) fn encode_raw(
     bytes: &[u8],
     width: u32,
     height: u32,
-    color_type: png::ColorType,
-    bit_depth: png::BitDepth,
+    color_type: ColorType,
+    bit_depth: BitDepth,
     metadata: Option<&ImageMetadata<'_>>,
     config: &EncodeConfig,
 ) -> Result<Vec<u8>, PngError> {
-    let png_color_type: u8 = match color_type {
-        png::ColorType::Grayscale => 0,
-        png::ColorType::Rgb => 2,
-        png::ColorType::GrayscaleAlpha => 4,
-        png::ColorType::Rgba => 6,
-        _ => {
-            return Err(PngError::InvalidInput(alloc::format!(
-                "unsupported color type for truecolor PNG: {color_type:?}"
-            )));
-        }
-    };
-    let png_bit_depth: u8 = match bit_depth {
-        png::BitDepth::Eight => 8,
-        png::BitDepth::Sixteen => 16,
-        _ => {
-            return Err(PngError::InvalidInput(alloc::format!(
-                "unsupported bit depth for truecolor PNG: {bit_depth:?}"
-            )));
-        }
-    };
-    let level = compression_to_zenflate_level(config.compression);
+    let level = config.compression.to_zenflate_level();
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = config.source_gamma;
@@ -222,23 +194,11 @@ pub(crate) fn encode_raw(
         bytes,
         width,
         height,
-        png_color_type,
-        png_bit_depth,
+        color_type.to_png_byte(),
+        bit_depth.to_png_byte(),
         &write_meta,
         level,
     )
-}
-
-/// Map `png::Compression` levels to zenflate compression levels (0-12).
-pub(crate) fn compression_to_zenflate_level(compression: png::Compression) -> u8 {
-    match compression {
-        png::Compression::NoCompression => 0,
-        png::Compression::Fastest => 1,
-        png::Compression::Fast => 4,
-        png::Compression::Balanced => 9,
-        png::Compression::High => 12,
-        _ => 9,
-    }
 }
 
 /// Byte-swap native-endian u16 samples to big-endian for PNG.

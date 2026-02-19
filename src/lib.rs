@@ -38,6 +38,7 @@ mod error;
 #[cfg(feature = "quantize")]
 mod indexed;
 mod png_writer;
+mod types;
 mod zencodec;
 
 pub use decode::{PngChromaticities, PngDecodeOutput, PngInfo, PngLimits, decode, probe};
@@ -53,5 +54,4 @@ pub use zencodec::{
     PngFrameDecoder, PngFrameEncoder,
 };
 
-// Re-export png types that appear in our public API.
-pub use png::{Compression, Filter};
+pub use types::{Compression, Filter};

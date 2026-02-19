@@ -86,14 +86,14 @@ impl PngEncoderConfig {
 
     /// Set PNG compression level directly.
     #[must_use]
-    pub fn with_compression(mut self, compression: png::Compression) -> Self {
+    pub fn with_compression(mut self, compression: crate::Compression) -> Self {
         self.config.compression = compression;
         self
     }
 
-    /// Set PNG row filter type directly.
+    /// Set PNG row filter strategy directly.
     #[must_use]
-    pub fn with_filter(mut self, filter: png::Filter) -> Self {
+    pub fn with_filter(mut self, filter: crate::Filter) -> Self {
         self.config.filter = filter;
         self
     }
@@ -105,11 +105,12 @@ impl Default for PngEncoderConfig {
     }
 }
 
-fn effort_to_compression(effort: i32) -> png::Compression {
+fn effort_to_compression(effort: i32) -> crate::Compression {
+    use crate::Compression;
     match effort {
-        ..=2 => png::Compression::Fast,
-        3..=7 => png::Compression::Balanced,
-        _ => png::Compression::High,
+        ..=2 => Compression::Fast,
+        3..=7 => Compression::Balanced,
+        _ => Compression::Best,
     }
 }
 
@@ -208,9 +209,9 @@ impl<'a> PngEncoder<'a> {
         bytes: &[u8],
         w: u32,
         h: u32,
-        color_type: png::ColorType,
+        color_type: crate::encode::ColorType,
     ) -> Result<EncodeOutput, PngError> {
-        self.do_encode_with_depth(bytes, w, h, color_type, png::BitDepth::Eight)
+        self.do_encode_with_depth(bytes, w, h, color_type, crate::encode::BitDepth::Eight)
     }
 
     fn do_encode_with_depth(
@@ -218,8 +219,8 @@ impl<'a> PngEncoder<'a> {
         bytes: &[u8],
         w: u32,
         h: u32,
-        color_type: png::ColorType,
-        bit_depth: png::BitDepth,
+        color_type: crate::encode::ColorType,
+        bit_depth: crate::encode::BitDepth,
     ) -> Result<EncodeOutput, PngError> {
         let data = crate::encode::encode_raw(
             bytes,
@@ -245,16 +246,16 @@ impl zencodec_types::Encoder for PngEncoder<'_> {
         match (desc.channel_type, desc.layout) {
             (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Rgb) => {
                 let bytes = collect_contiguous_bytes(&pixels);
-                self.do_encode(&bytes, w, h, png::ColorType::Rgb)
+                self.do_encode(&bytes, w, h, crate::encode::ColorType::Rgb)
             }
             (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Rgba) => {
                 let bytes = collect_contiguous_bytes(&pixels);
-                self.do_encode(&bytes, w, h, png::ColorType::Rgba)
+                self.do_encode(&bytes, w, h, crate::encode::ColorType::Rgba)
             }
             (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Gray) => {
                 // Gray<u8> needs .value() extraction (not byte-contiguous via ComponentBytes)
                 let bytes = collect_gray8_bytes(&pixels);
-                self.do_encode(&bytes, w, h, png::ColorType::Grayscale)
+                self.do_encode(&bytes, w, h, crate::encode::ColorType::Grayscale)
             }
             (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Bgra) => {
                 // BGRA → RGBA swizzle
@@ -263,17 +264,17 @@ impl zencodec_types::Encoder for PngEncoder<'_> {
                     .chunks_exact(4)
                     .flat_map(|c| [c[2], c[1], c[0], c[3]])
                     .collect();
-                self.do_encode(&rgba, w, h, png::ColorType::Rgba)
+                self.do_encode(&rgba, w, h, crate::encode::ColorType::Rgba)
             }
             (zencodec_types::ChannelType::U16, zencodec_types::ChannelLayout::Rgb) => {
                 let bytes = collect_contiguous_bytes(&pixels);
                 let be = native_to_be_16(&bytes);
-                self.do_encode_with_depth(&be, w, h, png::ColorType::Rgb, png::BitDepth::Sixteen)
+                self.do_encode_with_depth(&be, w, h, crate::encode::ColorType::Rgb, crate::encode::BitDepth::Sixteen)
             }
             (zencodec_types::ChannelType::U16, zencodec_types::ChannelLayout::Rgba) => {
                 let bytes = collect_contiguous_bytes(&pixels);
                 let be = native_to_be_16(&bytes);
-                self.do_encode_with_depth(&be, w, h, png::ColorType::Rgba, png::BitDepth::Sixteen)
+                self.do_encode_with_depth(&be, w, h, crate::encode::ColorType::Rgba, crate::encode::BitDepth::Sixteen)
             }
             (zencodec_types::ChannelType::U16, zencodec_types::ChannelLayout::Gray) => {
                 let bytes = collect_contiguous_bytes(&pixels);
@@ -282,8 +283,8 @@ impl zencodec_types::Encoder for PngEncoder<'_> {
                     &be,
                     w,
                     h,
-                    png::ColorType::Grayscale,
-                    png::BitDepth::Sixteen,
+                    crate::encode::ColorType::Grayscale,
+                    crate::encode::BitDepth::Sixteen,
                 )
             }
             (zencodec_types::ChannelType::F32, zencodec_types::ChannelLayout::Rgb) => {
@@ -302,7 +303,7 @@ impl zencodec_types::Encoder for PngEncoder<'_> {
                         ]
                     })
                     .collect();
-                self.do_encode(&srgb, w, h, png::ColorType::Rgb)
+                self.do_encode(&srgb, w, h, crate::encode::ColorType::Rgb)
             }
             (zencodec_types::ChannelType::F32, zencodec_types::ChannelLayout::Rgba) => {
                 use linear_srgb::default::linear_to_srgb_u8;
@@ -322,7 +323,7 @@ impl zencodec_types::Encoder for PngEncoder<'_> {
                         ]
                     })
                     .collect();
-                self.do_encode(&srgb, w, h, png::ColorType::Rgba)
+                self.do_encode(&srgb, w, h, crate::encode::ColorType::Rgba)
             }
             (zencodec_types::ChannelType::F32, zencodec_types::ChannelLayout::Gray) => {
                 use linear_srgb::default::linear_to_srgb_u8;
@@ -334,7 +335,7 @@ impl zencodec_types::Encoder for PngEncoder<'_> {
                         linear_to_srgb_u8(v.clamp(0.0, 1.0))
                     })
                     .collect();
-                self.do_encode(&srgb, w, h, png::ColorType::Grayscale)
+                self.do_encode(&srgb, w, h, crate::encode::ColorType::Grayscale)
             }
             _ => Err(PngError::InvalidInput(alloc::format!(
                 "unsupported pixel format: {:?}",
@@ -2375,10 +2376,10 @@ mod tests {
         };
 
         for (name, comp) in [
-            ("Fastest", png::Compression::Fastest),
-            ("Fast", png::Compression::Fast),
-            ("Balanced", png::Compression::Balanced),
-            ("High", png::Compression::High),
+            ("Fastest", crate::Compression::Fastest),
+            ("Fast", crate::Compression::Fast),
+            ("Balanced", crate::Compression::Balanced),
+            ("High", crate::Compression::High),
         ] {
             let config = crate::EncodeConfig {
                 source_gamma: info.source_gamma,
