@@ -184,6 +184,7 @@ pub(crate) fn encode_raw(
     config: &EncodeConfig,
 ) -> Result<Vec<u8>, PngError> {
     let level = config.compression.to_zenflate_level();
+    let use_zopfli = config.compression.use_zopfli();
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = config.source_gamma;
@@ -198,6 +199,7 @@ pub(crate) fn encode_raw(
         bit_depth.to_png_byte(),
         &write_meta,
         level,
+        use_zopfli,
     )
 }
 

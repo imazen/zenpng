@@ -17,6 +17,7 @@
 /// | `Balanced` | 6 | Lazy (default) |
 /// | `High` | 9 | Double lazy |
 /// | `Best` | 12 | Near-optimal |
+/// | `Crush` | 12+zopfli | Near-optimal filter eval, zopfli final compression |
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Compression {
@@ -31,8 +32,13 @@ pub enum Compression {
     Balanced,
     /// High compression. Best ratio before the slower near-optimal parser.
     High,
-    /// Maximum compression. Near-optimal parser, ~3x slower than `Balanced`.
+    /// Maximum compression with zenflate. Near-optimal parser, ~3x slower than `Balanced`.
     Best,
+    /// Ultra compression. Uses zenflate near-optimal for filter selection, then
+    /// zopfli for final DEFLATE compression. ~50x slower than `Balanced`, but
+    /// produces the smallest files. Requires the `zopfli` feature; falls back
+    /// to `Best` if the feature is not enabled.
+    Crush,
 }
 
 impl Compression {
@@ -44,8 +50,13 @@ impl Compression {
             Compression::Fast => 4,
             Compression::Balanced => 6,
             Compression::High => 9,
-            Compression::Best => 12,
+            Compression::Best | Compression::Crush => 12,
         }
+    }
+
+    /// Whether this level uses zopfli for final compression.
+    pub(crate) fn use_zopfli(self) -> bool {
+        matches!(self, Compression::Crush) && cfg!(feature = "zopfli")
     }
 }
 

@@ -44,8 +44,8 @@ fn main() {
         name: String,
         source_size: usize,
         raw_pixels: usize,
-        // zenpng levels: Fastest(L1), Fast(L4), Balanced(L6), High(L9), Best(L12)
-        zenpng_sizes: [(usize, f64); 5], // (size, seconds)
+        // zenpng levels: Fastest(L1), Fast(L4), Balanced(L6), High(L9), Best(L12), Crush(zopfli)
+        zenpng_sizes: [(usize, f64); 6], // (size, seconds)
         // External tools (on source PNG): oxipng -o2, oxipng -o4, oxipng -omax,
         //   optipng -o2, optipng -o5, zopflipng, pngcrush, ect -3, ect -9
         external_sizes: Vec<(String, usize, f64)>, // (name, size, seconds)
@@ -85,9 +85,10 @@ fn main() {
             ("Balanced", zenpng::Compression::Balanced),
             ("High", zenpng::Compression::High),
             ("Best", zenpng::Compression::Best),
+            ("Crush", zenpng::Compression::Crush),
         ];
 
-        let mut zenpng_sizes = [(0usize, 0.0f64); 5];
+        let mut zenpng_sizes = [(0usize, 0.0f64); 6];
         for (idx, (level_name, comp)) in levels.iter().enumerate() {
             let config = zenpng::EncodeConfig {
                 compression: *comp,
@@ -198,7 +199,7 @@ fn main() {
     let mut total_source = 0usize;
     let mut total_raw = 0usize;
 
-    let level_names = ["zenpng-Fastest", "zenpng-Fast", "zenpng-Balanced", "zenpng-High", "zenpng-Best"];
+    let level_names = ["zenpng-Fastest", "zenpng-Fast", "zenpng-Balanced", "zenpng-High", "zenpng-Best", "zenpng-Crush"];
 
     for r in &results {
         total_source += r.source_size;

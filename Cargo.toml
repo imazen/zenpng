@@ -20,6 +20,7 @@ zencodec-types = { path = "../zencodec-types" }
 zenquant = { path = "../zenquant", optional = true }
 zenflate = { path = "../zenflate" }
 linear-srgb = "0.5.5"
+zopfli = { version = "0.8", optional = true }
 
 [dev-dependencies]
 archmage = { version = "0.8.4", features = ["std"] }
@@ -27,8 +28,10 @@ codec-corpus = "1.0.1"
 flate2 = "1"
 libdeflater = "1.25"
 miniz_oxide = "0.8"
+zopfli = "0.8"
 
 [features]
 default = ["quantize"]
 quantize = ["dep:zenquant"]
 unchecked = ["zenflate/unchecked"]
+zopfli = ["dep:zopfli"]

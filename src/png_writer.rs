@@ -57,6 +57,7 @@ impl<'a> PngWriteMetadata<'a> {
 ///
 /// Returns the raw PNG bytes. Tries multiple filter strategies and keeps
 /// the one that compresses smallest.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn write_indexed_png(
     indices: &[u8],
     width: u32,
@@ -65,6 +66,7 @@ pub(crate) fn write_indexed_png(
     palette_alpha: Option<&[u8]>,
     write_meta: &PngWriteMetadata<'_>,
     compression_level: u8,
+    use_zopfli: bool,
 ) -> Result<Vec<u8>, PngError> {
     let w = width as usize;
     let h = height as usize;
@@ -86,7 +88,7 @@ pub(crate) fn write_indexed_png(
     let row_bytes = packed_row_bytes(w, bit_depth);
 
     // Compress with multi-strategy filter selection (bpp=1 for indexed)
-    let compressed = compress_filtered(&packed_rows, row_bytes, h, 1, compression_level)?;
+    let compressed = compress_filtered(&packed_rows, row_bytes, h, 1, compression_level, use_zopfli)?;
 
     // Assemble PNG
     let trns_data = truncate_trns(palette_alpha);
@@ -133,6 +135,7 @@ pub(crate) fn write_indexed_png(
 ///
 /// `pixel_bytes` must be raw pixel data with correct byte order (big-endian
 /// for 16-bit). Tries multiple filter strategies and keeps the smallest.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn write_truecolor_png(
     pixel_bytes: &[u8],
     width: u32,
@@ -141,6 +144,7 @@ pub(crate) fn write_truecolor_png(
     bit_depth: u8,
     write_meta: &PngWriteMetadata<'_>,
     compression_level: u8,
+    use_zopfli: bool,
 ) -> Result<Vec<u8>, PngError> {
     let w = width as usize;
     let h = height as usize;
@@ -175,6 +179,7 @@ pub(crate) fn write_truecolor_png(
         h,
         bpp,
         compression_level,
+        use_zopfli,
     )?;
 
     // Assemble PNG
@@ -214,6 +219,7 @@ fn compress_filtered(
     height: usize,
     bpp: usize,
     compression_level: u8,
+    use_zopfli: bool,
 ) -> Result<Vec<u8>, PngError> {
     let filtered_size = (row_bytes + 1) * height;
     let mut best_compressed: Option<Vec<u8>> = None;
@@ -241,7 +247,7 @@ fn compress_filtered(
     // At Best (L12), also try a second brute-force config with higher eval.
     let mut strategies: Vec<Strategy> = base_strategies.to_vec();
     if compression_level >= 10 {
-        // Best: per-row brute-force with context, L1 and L4 eval
+        // Best/Crush: per-row brute-force with context, L1 and L4 eval
         strategies.push(Strategy::BruteForce { context_rows: 10, eval_level: 1 });
         strategies.push(Strategy::BruteForce { context_rows: 10, eval_level: 4 });
     } else if compression_level >= 9 {
@@ -267,6 +273,10 @@ fn compress_filtered(
         .map(|&l| Compressor::new(CompressionLevel::new(l)))
         .collect();
 
+    // For zopfli mode: save top N filtered streams for a second pass
+    #[cfg(feature = "zopfli")]
+    let mut zopfli_candidates: Vec<(usize, Vec<u8>)> = Vec::new(); // (zenflate_size, filtered_data)
+
     for strategy in &strategies {
         filtered.clear();
         filter_image(
@@ -278,7 +288,8 @@ fn compress_filtered(
             &mut filtered,
         );
 
-        // Try each final compression level
+        // Try each final compression level with zenflate
+        let mut best_for_strategy = usize::MAX;
         for compressor in &mut compressors {
             let compressed_len = compressor
                 .zlib_compress(&filtered, &mut compress_buf)
@@ -295,6 +306,8 @@ fn compress_filtered(
                 }
             }
 
+            best_for_strategy = best_for_strategy.min(compressed_len);
+
             let dominated = best_compressed
                 .as_ref()
                 .is_some_and(|b| compressed_len >= b.len());
@@ -302,9 +315,49 @@ fn compress_filtered(
                 best_compressed = Some(compress_buf[..compressed_len].to_vec());
             }
         }
+
+        // Save filtered data for zopfli second pass
+        #[cfg(feature = "zopfli")]
+        if use_zopfli && best_for_strategy < usize::MAX {
+            zopfli_candidates.push((best_for_strategy, filtered.clone()));
+        }
     }
 
+    // Second pass: compress top candidates with zopfli
+    #[cfg(feature = "zopfli")]
+    if use_zopfli && !zopfli_candidates.is_empty() {
+        // Sort by zenflate size, take top 3
+        zopfli_candidates.sort_by_key(|(size, _)| *size);
+        zopfli_candidates.truncate(3);
+
+        for (_zenflate_size, filtered_data) in &zopfli_candidates {
+            let zopfli_compressed = compress_with_zopfli(filtered_data);
+            let dominated = best_compressed
+                .as_ref()
+                .is_some_and(|b| zopfli_compressed.len() >= b.len());
+            if !dominated {
+                best_compressed = Some(zopfli_compressed);
+            }
+        }
+    }
+
+    #[cfg(not(feature = "zopfli"))]
+    let _ = use_zopfli;
+
     best_compressed.ok_or_else(|| PngError::InvalidInput("no filter strategies tried".to_string()))
+}
+
+#[cfg(feature = "zopfli")]
+fn compress_with_zopfli(data: &[u8]) -> Vec<u8> {
+    let options = zopfli::Options {
+        iteration_count: core::num::NonZeroU64::new(15).unwrap(),
+        ..Default::default()
+    };
+    let mut output = Vec::new();
+    // zopfli outputs raw deflate; we need zlib wrapping
+    zopfli::compress(options, zopfli::Format::Zlib, data, &mut output)
+        .expect("zopfli compression failed");
+    output
 }
 
 // ---- Filter strategies ----
