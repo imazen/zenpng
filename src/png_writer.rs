@@ -350,7 +350,7 @@ fn compress_filtered(
 #[cfg(feature = "zopfli")]
 fn compress_with_zopfli(data: &[u8]) -> Vec<u8> {
     let options = zopfli::Options {
-        iteration_count: core::num::NonZeroU64::new(15).unwrap(),
+        iteration_count: core::num::NonZeroU64::new(50).unwrap(),
         ..Default::default()
     };
     let mut output = Vec::new();
