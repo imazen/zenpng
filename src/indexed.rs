@@ -467,4 +467,39 @@ mod tests {
         assert_eq!(decoded.info.width, 16);
         assert_eq!(decoded.info.height, 16);
     }
+
+    #[test]
+    fn auto_encode_quality_loss_is_reasonable() {
+        // 64x64 gradient: enough colors to stress quantizer, but small enough for fast test
+        let mut pixels = Vec::with_capacity(64 * 64);
+        for y in 0..64u32 {
+            for x in 0..64u32 {
+                pixels.push(Rgba {
+                    r: (x * 4).min(255) as u8,
+                    g: (y * 4).min(255) as u8,
+                    b: ((x + y) * 2).min(255) as u8,
+                    a: 255,
+                });
+            }
+        }
+        let img = ImgVec::new(pixels, 64, 64);
+        let config = EncodeConfig::default();
+        let quant = default_quantize_config();
+
+        // With generous threshold, should use indexed
+        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.10, None).unwrap();
+        assert!(result.indexed, "64x64 gradient with 0.10 threshold should use indexed");
+
+        // Quality loss for a smooth gradient into 256 colors should be small
+        assert!(
+            result.quality_loss < 0.05,
+            "quality loss {:.6} unexpectedly high for smooth gradient",
+            result.quality_loss
+        );
+
+        // Indexed should decode correctly
+        let decoded = crate::decode::decode(&result.data, None).unwrap();
+        assert_eq!(decoded.info.width, 64);
+        assert_eq!(decoded.info.height, 64);
+    }
 }
