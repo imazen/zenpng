@@ -215,9 +215,6 @@ fn compress_filtered(
     bpp: usize,
     compression_level: u8,
 ) -> Result<Vec<u8>, PngError> {
-    let level = CompressionLevel::new(compression_level.into());
-    let mut compressor = Compressor::new(level);
-
     let filtered_size = (row_bytes + 1) * height;
     let mut best_compressed: Option<Vec<u8>> = None;
 
@@ -240,16 +237,35 @@ fn compress_filtered(
         Strategy::Adaptive(AdaptiveHeuristic::BigEnt),
     ];
 
-    // At high compression levels, also try brute-force filter selection
-    let brute_strategy;
-    let strategies: Vec<Strategy> = if compression_level >= 9 {
-        brute_strategy = Strategy::BruteForce { context_rows: 10 };
-        let mut s: Vec<Strategy> = base_strategies.to_vec();
-        s.push(brute_strategy);
-        s
+    // Tiered brute-force: context_rows and eval_level scale with effort.
+    // At Best (L12), also try a second brute-force config with higher eval.
+    let mut strategies: Vec<Strategy> = base_strategies.to_vec();
+    if compression_level >= 10 {
+        // Best: per-row brute-force with context, L1 and L4 eval
+        strategies.push(Strategy::BruteForce { context_rows: 10, eval_level: 1 });
+        strategies.push(Strategy::BruteForce { context_rows: 10, eval_level: 4 });
+    } else if compression_level >= 9 {
+        // High: per-row brute-force with moderate context
+        strategies.push(Strategy::BruteForce { context_rows: 8, eval_level: 1 });
+    } else if compression_level >= 6 {
+        // Balanced: per-row brute-force with smaller context
+        strategies.push(Strategy::BruteForce { context_rows: 3, eval_level: 1 });
+    }
+
+    // At Best level (L10+), try near-optimal levels 10-12 for each strategy.
+    // Different levels use different parsing strategies and may find better
+    // block boundaries. At lower levels, just use the target level.
+    let final_levels: &[u32] = if compression_level >= 10 {
+        &[10, 11, 12]
     } else {
-        base_strategies.to_vec()
+        &[compression_level as u32]
     };
+
+    // Create compressors for each final level
+    let mut compressors: Vec<Compressor> = final_levels
+        .iter()
+        .map(|&l| Compressor::new(CompressionLevel::new(l)))
+        .collect();
 
     for strategy in &strategies {
         filtered.clear();
@@ -262,27 +278,29 @@ fn compress_filtered(
             &mut filtered,
         );
 
-        let compressed_len = compressor
-            .zlib_compress(&filtered, &mut compress_buf)
-            .map_err(|e| PngError::InvalidInput(alloc::format!("compression failed: {e}")))?;
+        // Try each final compression level
+        for compressor in &mut compressors {
+            let compressed_len = compressor
+                .zlib_compress(&filtered, &mut compress_buf)
+                .map_err(|e| PngError::InvalidInput(alloc::format!("compression failed: {e}")))?;
 
-        // Verify decompression roundtrip (catches rare zenflate compression bugs)
-        {
-            let mut decompressor = zenflate::Decompressor::new();
-            if decompressor
-                .zlib_decompress(&compress_buf[..compressed_len], &mut verify_buf)
-                .is_err()
+            // Verify decompression roundtrip
             {
-                // This strategy produced corrupt compressed output — skip it
-                continue;
+                let mut decompressor = zenflate::Decompressor::new();
+                if decompressor
+                    .zlib_decompress(&compress_buf[..compressed_len], &mut verify_buf)
+                    .is_err()
+                {
+                    continue;
+                }
             }
-        }
 
-        let dominated = best_compressed
-            .as_ref()
-            .is_some_and(|b| compressed_len >= b.len());
-        if !dominated {
-            best_compressed = Some(compress_buf[..compressed_len].to_vec());
+            let dominated = best_compressed
+                .as_ref()
+                .is_some_and(|b| compressed_len >= b.len());
+            if !dominated {
+                best_compressed = Some(compress_buf[..compressed_len].to_vec());
+            }
         }
     }
 
@@ -296,10 +314,10 @@ enum Strategy {
     Single(u8),
     Adaptive(AdaptiveHeuristic),
     /// Per-row brute-force with trailing context: for each row, try all 5
-    /// filters, compress (context + candidate) with fast DEFLATE, pick
-    /// smallest. `context_rows` controls how many prior filtered rows to
+    /// filters, compress (context + candidate) with DEFLATE at `eval_level`,
+    /// pick smallest. `context_rows` controls how many prior filtered rows to
     /// include as DEFLATE context (capped at DEFLATE's 32 KiB window).
-    BruteForce { context_rows: usize },
+    BruteForce { context_rows: usize, eval_level: u32 },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -319,8 +337,8 @@ fn filter_image(
     out: &mut Vec<u8>,
 ) {
     match strategy {
-        Strategy::BruteForce { context_rows } => {
-            filter_image_brute(packed_rows, row_bytes, height, bpp, context_rows, out);
+        Strategy::BruteForce { context_rows, eval_level } => {
+            filter_image_brute(packed_rows, row_bytes, height, bpp, context_rows, eval_level, out);
         }
         _ => {
             filter_image_heuristic(packed_rows, row_bytes, height, bpp, strategy, out);
@@ -376,6 +394,7 @@ fn filter_image_brute(
     height: usize,
     bpp: usize,
     context_rows: usize,
+    eval_level: u32,
     out: &mut Vec<u8>,
 ) {
     let filtered_row_size = row_bytes + 1; // filter byte + row data
@@ -387,8 +406,7 @@ fn filter_image_brute(
         .max(1);
     let max_context = context_rows * filtered_row_size;
 
-    // Eval compressor at L1 (hash-table greedy, very fast)
-    let eval_level = CompressionLevel::new(1);
+    let eval_level = CompressionLevel::new(eval_level);
     let mut eval_compressor = Compressor::new(eval_level);
 
     let eval_max_input = max_context + filtered_row_size;
