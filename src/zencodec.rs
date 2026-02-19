@@ -2232,4 +2232,128 @@ mod tests {
         assert_eq!(dm.max_luminance, 10000000);
         assert_eq!(dm.min_luminance, 50);
     }
+
+    // ── Real-file roundtrip tests ────────────────────────────────────
+
+    /// Decode a real PNG with gAMA+cHRM (no sRGB), re-encode preserving
+    /// the color metadata, decode again, and verify exact roundtrip.
+    #[test]
+    fn real_file_gama_chrm_roundtrip() {
+        use zencodec_types::PixelData;
+
+        let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png";
+        let data = std::fs::read(path).expect("frymire.png not found");
+
+        // Decode original
+        let orig = crate::decode::decode(&data, None).unwrap();
+        let gamma = orig
+            .info
+            .source_gamma
+            .expect("frymire.png should have gAMA");
+        let chrm = orig
+            .info
+            .chromaticities
+            .expect("frymire.png should have cHRM");
+        assert!(
+            orig.info.srgb_intent.is_none(),
+            "frymire.png should NOT have sRGB"
+        );
+
+        // gamma=0.45454 (raw u32=45454)
+        assert_eq!(gamma, 45454);
+
+        // Re-encode with same metadata
+        let config = crate::encode::EncodeConfig {
+            source_gamma: Some(gamma),
+            chromaticities: Some(chrm),
+            ..Default::default()
+        };
+        let PixelData::Rgb8(ref pixels) = orig.pixels else {
+            panic!("frymire.png should decode as RGB8");
+        };
+        let encoded = crate::encode::encode_rgb8(pixels.as_ref(), None, &config).unwrap();
+
+        // Decode re-encoded
+        let rt = crate::decode::decode(&encoded, None).unwrap();
+        assert_eq!(rt.info.source_gamma, Some(gamma));
+        let rt_chrm = rt.info.chromaticities.expect("re-encoded should have cHRM");
+        assert_eq!(rt_chrm, chrm);
+        assert!(rt.info.srgb_intent.is_none());
+    }
+
+    /// Decode a real PNG with sRGB+gAMA+cHRM, re-encode, verify roundtrip.
+    #[test]
+    fn real_file_srgb_roundtrip() {
+        use zencodec_types::PixelData;
+
+        let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/red-night.png";
+        let data = std::fs::read(path).expect("red-night.png not found");
+
+        let orig = crate::decode::decode(&data, None).unwrap();
+        let intent = orig
+            .info
+            .srgb_intent
+            .expect("red-night.png should have sRGB");
+        let gamma = orig
+            .info
+            .source_gamma
+            .expect("red-night.png should have gAMA");
+        let chrm = orig
+            .info
+            .chromaticities
+            .expect("red-night.png should have cHRM");
+
+        assert_eq!(intent, 0); // Perceptual
+
+        // Re-encode with all color metadata
+        let config = crate::encode::EncodeConfig {
+            source_gamma: Some(gamma),
+            srgb_intent: Some(intent),
+            chromaticities: Some(chrm),
+            ..Default::default()
+        };
+        let PixelData::Rgba8(ref pixels) = orig.pixels else {
+            panic!("red-night.png should decode as RGBA8");
+        };
+        let encoded = crate::encode::encode_rgba8(pixels.as_ref(), None, &config).unwrap();
+
+        let rt = crate::decode::decode(&encoded, None).unwrap();
+        assert_eq!(rt.info.srgb_intent, Some(0));
+        assert_eq!(rt.info.source_gamma, Some(gamma));
+        assert_eq!(rt.info.chromaticities, Some(chrm));
+    }
+
+    /// Decode a real PNG with iCCP (Adobe RGB), re-encode preserving the
+    /// ICC profile, verify the profile roundtrips.
+    #[test]
+    fn real_file_icc_roundtrip() {
+        use zencodec_types::PixelData;
+
+        let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/shirt_transparent.png";
+        let data = std::fs::read(path).expect("shirt_transparent.png not found");
+
+        let orig = crate::decode::decode(&data, None).unwrap();
+        let icc = orig
+            .info
+            .icc_profile
+            .as_ref()
+            .expect("shirt_transparent.png should have iCCP");
+        assert!(!icc.is_empty());
+
+        // Re-encode with ICC profile
+        let meta = zencodec_types::ImageMetadata::none().with_icc(icc);
+        let config = crate::encode::EncodeConfig::default();
+        let PixelData::Rgba8(ref pixels) = orig.pixels else {
+            panic!("shirt_transparent.png should decode as RGBA8");
+        };
+        let encoded = crate::encode::encode_rgba8(pixels.as_ref(), Some(&meta), &config).unwrap();
+
+        let rt = crate::decode::decode(&encoded, None).unwrap();
+        let rt_icc = rt
+            .info
+            .icc_profile
+            .as_ref()
+            .expect("re-encoded should have iCCP");
+        assert_eq!(icc, rt_icc);
+    }
 }
