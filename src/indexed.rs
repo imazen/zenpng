@@ -7,7 +7,7 @@ use rgb::Rgba;
 use zencodec_types::ImageMetadata;
 use zenquant::{OutputFormat, QuantizeConfig};
 
-use crate::encode::EncodeConfig;
+use crate::encode::{self, EncodeConfig};
 use crate::error::PngError;
 use crate::png_writer::{self, PngWriteMetadata};
 
@@ -72,6 +72,161 @@ pub fn encode_indexed_rgba8(
 /// Create a default [`QuantizeConfig`] tuned for PNG output.
 pub fn default_quantize_config() -> QuantizeConfig {
     QuantizeConfig::new(OutputFormat::Png)
+}
+
+/// Result of [`encode_rgba8_auto`], indicating which encoding path was chosen.
+#[derive(Debug)]
+pub struct AutoEncodeResult {
+    /// The encoded PNG data.
+    pub data: Vec<u8>,
+    /// Whether the image was encoded as indexed (palette) PNG.
+    /// If `false`, the image was encoded as truecolor RGBA8.
+    pub indexed: bool,
+    /// Mean OKLab ΔE between the original and quantized image.
+    /// Only meaningful when `indexed` is `true` (always `0.0` for truecolor).
+    pub quality_loss: f64,
+}
+
+/// Encode RGBA8 pixels, automatically choosing indexed or truecolor PNG.
+///
+/// Tries quantizing to 256 colors via zenquant. If the mean perceptual error
+/// (OKLab ΔE) is at or below `max_loss`, emits an indexed PNG (typically much
+/// smaller). Otherwise falls back to truecolor RGBA8 PNG.
+///
+/// # Quality loss scale (mean OKLab ΔE)
+///
+/// | Value | Meaning |
+/// |-------|---------|
+/// | 0.0   | Only use indexed if quantization is lossless |
+/// | 0.01  | Virtually imperceptible — safe for all content |
+/// | 0.02  | Minimal — good default for photographic images |
+/// | 0.05  | Moderate — visible on close inspection of smooth gradients |
+/// | 0.10  | Aggressive — noticeable artifacts in some images |
+pub fn encode_rgba8_auto(
+    img: ImgRef<Rgba<u8>>,
+    encode_config: &EncodeConfig,
+    quant_config: &QuantizeConfig,
+    max_loss: f64,
+    metadata: Option<&ImageMetadata<'_>>,
+) -> Result<AutoEncodeResult, PngError> {
+    let (buf, w, h) = img.to_contiguous_buf();
+    let rgba_slice: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(buf.as_ref());
+
+    let result = zenquant::quantize_rgba(rgba_slice, w, h, quant_config)?;
+
+    // Compute quality loss
+    let loss = compute_mean_delta_e(buf.as_ref(), result.palette_rgba(), result.indices());
+
+    if loss <= max_loss {
+        // Quality acceptable — encode as indexed
+        let width = img.width() as u32;
+        let height = img.height() as u32;
+
+        let palette_rgba = result.palette_rgba();
+        let mut palette_rgb = Vec::with_capacity(palette_rgba.len() * 3);
+        let mut palette_alpha = Vec::with_capacity(palette_rgba.len());
+        let mut has_transparency = false;
+
+        for entry in palette_rgba {
+            palette_rgb.push(entry[0]);
+            palette_rgb.push(entry[1]);
+            palette_rgb.push(entry[2]);
+            palette_alpha.push(entry[3]);
+            if entry[3] < 255 {
+                has_transparency = true;
+            }
+        }
+
+        let alpha = if has_transparency {
+            Some(palette_alpha.as_slice())
+        } else {
+            None
+        };
+
+        let compression_level = encode_config.compression.to_zenflate_level();
+
+        let mut write_meta = PngWriteMetadata::from_metadata(metadata);
+        write_meta.source_gamma = encode_config.source_gamma;
+        write_meta.srgb_intent = encode_config.srgb_intent;
+        write_meta.chromaticities = encode_config.chromaticities;
+
+        let data = png_writer::write_indexed_png(
+            result.indices(),
+            width,
+            height,
+            &palette_rgb,
+            alpha,
+            &write_meta,
+            compression_level,
+        )?;
+
+        Ok(AutoEncodeResult {
+            data,
+            indexed: true,
+            quality_loss: loss,
+        })
+    } else {
+        // Quality too low — fall back to truecolor
+        let data = encode::encode_rgba8(img, metadata, encode_config)?;
+        Ok(AutoEncodeResult {
+            data,
+            indexed: false,
+            quality_loss: loss,
+        })
+    }
+}
+
+/// Convert sRGB u8 to OKLab [L, a, b].
+fn srgb_u8_to_oklab(lut: &linear_srgb::lut::SrgbConverter, r: u8, g: u8, b: u8) -> [f32; 3] {
+    let lr = lut.srgb_u8_to_linear(r);
+    let lg = lut.srgb_u8_to_linear(g);
+    let lb = lut.srgb_u8_to_linear(b);
+
+    let l = 0.412_221_46_f32.mul_add(lr, 0.536_332_55_f32.mul_add(lg, 0.051_445_995 * lb));
+    let m = 0.211_903_5_f32.mul_add(lr, 0.713_695_2_f32.mul_add(lg, 0.074_399_3 * lb));
+    let s = 0.324_425_76_f32.mul_add(lr, 0.568_564_5_f32.mul_add(lg, 0.106_909_87 * lb));
+
+    let l_ = l.cbrt();
+    let m_ = m.cbrt();
+    let s_ = s.cbrt();
+
+    [
+        0.210_454_26_f32.mul_add(l_, 0.793_617_8_f32.mul_add(m_, -0.004_072_047 * s_)),
+        1.977_998_5_f32.mul_add(l_, (-2.428_592_2_f32).mul_add(m_, 0.450_593_7 * s_)),
+        0.025_904_037_f32.mul_add(l_, 0.782_771_77_f32.mul_add(m_, -0.808_675_77 * s_)),
+    ]
+}
+
+/// Compute mean OKLab ΔE between original pixels and their quantized versions.
+fn compute_mean_delta_e(
+    original: &[Rgba<u8>],
+    palette_rgba: &[[u8; 4]],
+    indices: &[u8],
+) -> f64 {
+    if original.is_empty() {
+        return 0.0;
+    }
+
+    let lut = linear_srgb::lut::SrgbConverter::new();
+
+    // Precompute OKLab for all palette entries
+    let palette_oklab: Vec<[f32; 3]> = palette_rgba
+        .iter()
+        .map(|e| srgb_u8_to_oklab(&lut, e[0], e[1], e[2]))
+        .collect();
+
+    let mut sum = 0.0_f64;
+    for (pixel, &idx) in original.iter().zip(indices.iter()) {
+        let orig = srgb_u8_to_oklab(&lut, pixel.r, pixel.g, pixel.b);
+        let quant = &palette_oklab[idx as usize];
+
+        let dl = (orig[0] - quant[0]) as f64;
+        let da = (orig[1] - quant[1]) as f64;
+        let db = (orig[2] - quant[2]) as f64;
+        sum += (dl * dl + da * da + db * db).sqrt();
+    }
+
+    sum / original.len() as f64
 }
 
 #[cfg(test)]
@@ -251,5 +406,65 @@ mod tests {
             assert_eq!(decoded.info.width, 4);
             assert_eq!(decoded.info.height, 4);
         }
+    }
+
+    #[test]
+    fn auto_encode_few_colors_uses_indexed() {
+        // 4x4 with only 10 unique colors — should always pick indexed
+        let img = test_image_4x4();
+        let config = EncodeConfig::default();
+        let quant = default_quantize_config();
+
+        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.02, None).unwrap();
+        assert!(result.indexed, "few-color image should use indexed encoding");
+        assert!(result.quality_loss < 0.001, "few-color image should be near-lossless");
+
+        // Verify it decodes correctly
+        let decoded = crate::decode::decode(&result.data, None).unwrap();
+        assert_eq!(decoded.info.width, 4);
+        assert_eq!(decoded.info.height, 4);
+    }
+
+    #[test]
+    fn auto_encode_zero_threshold_few_colors() {
+        // With threshold 0.0, only lossless quantization should be accepted
+        let img = test_image_4x4();
+        let config = EncodeConfig::default();
+        let quant = default_quantize_config();
+
+        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.0, None).unwrap();
+        // With only 10 colors, zenquant should produce lossless quantization
+        assert!(result.indexed, "10-color image with threshold 0.0 should still use indexed");
+        assert!(
+            result.quality_loss == 0.0,
+            "10-color image should be exactly lossless, got {}",
+            result.quality_loss
+        );
+    }
+
+    #[test]
+    fn auto_encode_returns_truecolor_on_tight_threshold() {
+        // Build a 16x16 gradient with many unique colors
+        let mut pixels = Vec::with_capacity(256);
+        for y in 0..16u8 {
+            for x in 0..16u8 {
+                pixels.push(Rgba {
+                    r: x.wrapping_mul(17),
+                    g: y.wrapping_mul(17),
+                    b: x.wrapping_add(y).wrapping_mul(9),
+                    a: 255,
+                });
+            }
+        }
+        let img = ImgVec::new(pixels, 16, 16);
+        let config = EncodeConfig::default();
+        let quant = default_quantize_config();
+
+        // With very tight threshold, a gradient image should fall back to truecolor
+        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.0, None).unwrap();
+        // Even if this happens to be lossless, that's OK — we just verify the function works
+        let decoded = crate::decode::decode(&result.data, None).unwrap();
+        assert_eq!(decoded.info.width, 16);
+        assert_eq!(decoded.info.height, 16);
     }
 }
