@@ -19,7 +19,7 @@ enough = "0.3"
 zencodec-types = { path = "../zencodec-types" }
 zenquant = { path = "../zenquant", optional = true }
 zenflate = { path = "../zenflate" }
-linear-srgb = "0.5.1"
+linear-srgb = { version = "0.5", path = "../linear-srgb" }
 
 [dev-dependencies]
 archmage = { version = "0.8.4", features = ["std"] }
