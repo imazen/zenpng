@@ -243,7 +243,7 @@ fn compress_filtered(
     // At high compression levels, also try brute-force filter selection
     let brute_strategy;
     let strategies: Vec<Strategy> = if compression_level >= 9 {
-        brute_strategy = Strategy::BruteForce { window_lines: 4 };
+        brute_strategy = Strategy::BruteForce { context_rows: 10 };
         let mut s: Vec<Strategy> = base_strategies.to_vec();
         s.push(brute_strategy);
         s
@@ -295,10 +295,11 @@ fn compress_filtered(
 enum Strategy {
     Single(u8),
     Adaptive(AdaptiveHeuristic),
-    /// Try all 5 filters for groups of `window_lines` rows, compress each
-    /// group with a fast DEFLATE level, and keep the filter that compresses
-    /// smallest. Expensive but produces near-optimal per-row filter choices.
-    BruteForce { window_lines: usize },
+    /// Per-row brute-force with trailing context: for each row, try all 5
+    /// filters, compress (context + candidate) with fast DEFLATE, pick
+    /// smallest. `context_rows` controls how many prior filtered rows to
+    /// include as DEFLATE context (capped at DEFLATE's 32 KiB window).
+    BruteForce { context_rows: usize },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -318,8 +319,8 @@ fn filter_image(
     out: &mut Vec<u8>,
 ) {
     match strategy {
-        Strategy::BruteForce { window_lines } => {
-            filter_image_brute(packed_rows, row_bytes, height, bpp, window_lines, out);
+        Strategy::BruteForce { context_rows } => {
+            filter_image_brute(packed_rows, row_bytes, height, bpp, context_rows, out);
         }
         _ => {
             filter_image_heuristic(packed_rows, row_bytes, height, bpp, strategy, out);
@@ -362,59 +363,68 @@ fn filter_image_heuristic(
     }
 }
 
-/// Brute-force filter selection: process rows in groups of `window_lines`,
-/// try all 5 filters uniformly on each group, compress each variant with
-/// fast DEFLATE, and keep the filter that produces the smallest output.
+/// Per-row brute-force filter selection with trailing context.
+///
+/// For each row, tries all 5 PNG filters, compresses (context + candidate)
+/// with fast DEFLATE, and picks the filter producing the smallest output.
+/// The trailing context (previous `context_rows` filtered rows) lets the
+/// evaluation compressor exploit cross-row patterns, matching how the final
+/// full-stream compression will see the data.
 fn filter_image_brute(
     packed_rows: &[u8],
     row_bytes: usize,
     height: usize,
     bpp: usize,
-    window_lines: usize,
+    context_rows: usize,
     out: &mut Vec<u8>,
 ) {
-    let window_lines = window_lines.max(1).min(height);
     let filtered_row_size = row_bytes + 1; // filter byte + row data
 
-    // Fast compressor for evaluation (L1 = hash-table greedy, very fast)
+    // Cap context to DEFLATE's 32 KiB sliding window
+    let max_context_bytes = 32 * 1024;
+    let context_rows = context_rows
+        .min(max_context_bytes / filtered_row_size)
+        .max(1);
+    let max_context = context_rows * filtered_row_size;
+
+    // Eval compressor at L1 (hash-table greedy, very fast)
     let eval_level = CompressionLevel::new(1);
     let mut eval_compressor = Compressor::new(eval_level);
 
-    // Buffer for one group of filtered rows (per filter candidate)
-    let group_filtered_size = filtered_row_size * window_lines;
-    let compress_bound = Compressor::zlib_compress_bound(group_filtered_size);
+    let eval_max_input = max_context + filtered_row_size;
+    let compress_bound = Compressor::zlib_compress_bound(eval_max_input);
     let mut compress_buf = vec![0u8; compress_bound];
-    let mut group_bufs: Vec<Vec<u8>> = (0..5).map(|_| Vec::with_capacity(group_filtered_size)).collect();
-    let mut candidate_row = vec![0u8; row_bytes];
 
-    let mut y = 0;
-    while y < height {
-        let group_end = (y + window_lines).min(height);
-        // Build filtered output for each of the 5 filters applied to this group
-        for f in 0..5u8 {
-            group_bufs[f as usize].clear();
-            // Need the correct prev_row for the first row of this group
-            let mut prev_row = if y == 0 {
-                vec![0u8; row_bytes]
-            } else {
-                packed_rows[(y - 1) * row_bytes..y * row_bytes].to_vec()
-            };
+    // Candidate buffers for each filter's filtered row data
+    let mut candidate_data: Vec<Vec<u8>> = (0..5).map(|_| vec![0u8; row_bytes]).collect();
 
-            for gy in y..group_end {
-                let row = &packed_rows[gy * row_bytes..(gy + 1) * row_bytes];
-                apply_filter(f, row, &prev_row, bpp, &mut candidate_row);
-                group_bufs[f as usize].push(f);
-                group_bufs[f as usize].extend_from_slice(&candidate_row);
-                prev_row.copy_from_slice(row);
-            }
-        }
+    let mut eval_buf = Vec::with_capacity(eval_max_input);
+    let mut prev_row = vec![0u8; row_bytes];
 
-        // Compress each candidate and pick the smallest
+    for y in 0..height {
+        let row = &packed_rows[y * row_bytes..(y + 1) * row_bytes];
+
+        // Get trailing context from already-committed filtered output
+        let context_start = if out.len() > max_context {
+            out.len() - max_context
+        } else {
+            0
+        };
+        let context = &out[context_start..];
+
+        // Try all 5 filters, evaluate with context
         let mut best_f = 0u8;
         let mut best_size = usize::MAX;
+
         for f in 0..5u8 {
-            let data = &group_bufs[f as usize];
-            if let Ok(len) = eval_compressor.zlib_compress(data, &mut compress_buf) {
+            apply_filter(f, row, &prev_row, bpp, &mut candidate_data[f as usize]);
+
+            eval_buf.clear();
+            eval_buf.extend_from_slice(context);
+            eval_buf.push(f);
+            eval_buf.extend_from_slice(&candidate_data[f as usize]);
+
+            if let Ok(len) = eval_compressor.zlib_compress(&eval_buf, &mut compress_buf) {
                 if len < best_size {
                     best_size = len;
                     best_f = f;
@@ -422,10 +432,11 @@ fn filter_image_brute(
             }
         }
 
-        // Emit the winning group
-        out.extend_from_slice(&group_bufs[best_f as usize]);
+        // Emit winning filter
+        out.push(best_f);
+        out.extend_from_slice(&candidate_data[best_f as usize]);
 
-        y = group_end;
+        prev_row.copy_from_slice(row);
     }
 }
 
