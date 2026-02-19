@@ -227,7 +227,8 @@ fn compress_filtered(
     let mut compress_buf = vec![0u8; compress_bound];
     let mut verify_buf = vec![0u8; filtered_size];
 
-    let strategies: &[Strategy] = &[
+    // Base strategies: 5 single-filter + 4 adaptive heuristics
+    let base_strategies: &[Strategy] = &[
         Strategy::Single(0), // None
         Strategy::Single(1), // Sub
         Strategy::Single(2), // Up
@@ -236,9 +237,21 @@ fn compress_filtered(
         Strategy::Adaptive(AdaptiveHeuristic::MinSum),
         Strategy::Adaptive(AdaptiveHeuristic::Entropy),
         Strategy::Adaptive(AdaptiveHeuristic::Bigrams),
+        Strategy::Adaptive(AdaptiveHeuristic::BigEnt),
     ];
 
-    for strategy in strategies {
+    // At high compression levels, also try brute-force filter selection
+    let brute_strategy;
+    let strategies: Vec<Strategy> = if compression_level >= 9 {
+        brute_strategy = Strategy::BruteForce { window_lines: 4 };
+        let mut s: Vec<Strategy> = base_strategies.to_vec();
+        s.push(brute_strategy);
+        s
+    } else {
+        base_strategies.to_vec()
+    };
+
+    for strategy in &strategies {
         filtered.clear();
         filter_image(
             packed_rows,
@@ -282,6 +295,10 @@ fn compress_filtered(
 enum Strategy {
     Single(u8),
     Adaptive(AdaptiveHeuristic),
+    /// Try all 5 filters for groups of `window_lines` rows, compress each
+    /// group with a fast DEFLATE level, and keep the filter that compresses
+    /// smallest. Expensive but produces near-optimal per-row filter choices.
+    BruteForce { window_lines: usize },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -289,9 +306,28 @@ enum AdaptiveHeuristic {
     MinSum,
     Entropy,
     Bigrams,
+    BigEnt,
 }
 
 fn filter_image(
+    packed_rows: &[u8],
+    row_bytes: usize,
+    height: usize,
+    bpp: usize,
+    strategy: Strategy,
+    out: &mut Vec<u8>,
+) {
+    match strategy {
+        Strategy::BruteForce { window_lines } => {
+            filter_image_brute(packed_rows, row_bytes, height, bpp, window_lines, out);
+        }
+        _ => {
+            filter_image_heuristic(packed_rows, row_bytes, height, bpp, strategy, out);
+        }
+    }
+}
+
+fn filter_image_heuristic(
     packed_rows: &[u8],
     row_bytes: usize,
     height: usize,
@@ -319,9 +355,77 @@ fn filter_image(
                 out.push(best_f);
                 out.extend_from_slice(&candidates[best_f as usize]);
             }
+            Strategy::BruteForce { .. } => unreachable!(),
         }
 
         prev_row.copy_from_slice(row);
+    }
+}
+
+/// Brute-force filter selection: process rows in groups of `window_lines`,
+/// try all 5 filters uniformly on each group, compress each variant with
+/// fast DEFLATE, and keep the filter that produces the smallest output.
+fn filter_image_brute(
+    packed_rows: &[u8],
+    row_bytes: usize,
+    height: usize,
+    bpp: usize,
+    window_lines: usize,
+    out: &mut Vec<u8>,
+) {
+    let window_lines = window_lines.max(1).min(height);
+    let filtered_row_size = row_bytes + 1; // filter byte + row data
+
+    // Fast compressor for evaluation (L1 = hash-table greedy, very fast)
+    let eval_level = CompressionLevel::new(1);
+    let mut eval_compressor = Compressor::new(eval_level);
+
+    // Buffer for one group of filtered rows (per filter candidate)
+    let group_filtered_size = filtered_row_size * window_lines;
+    let compress_bound = Compressor::zlib_compress_bound(group_filtered_size);
+    let mut compress_buf = vec![0u8; compress_bound];
+    let mut group_bufs: Vec<Vec<u8>> = (0..5).map(|_| Vec::with_capacity(group_filtered_size)).collect();
+    let mut candidate_row = vec![0u8; row_bytes];
+
+    let mut y = 0;
+    while y < height {
+        let group_end = (y + window_lines).min(height);
+        // Build filtered output for each of the 5 filters applied to this group
+        for f in 0..5u8 {
+            group_bufs[f as usize].clear();
+            // Need the correct prev_row for the first row of this group
+            let mut prev_row = if y == 0 {
+                vec![0u8; row_bytes]
+            } else {
+                packed_rows[(y - 1) * row_bytes..y * row_bytes].to_vec()
+            };
+
+            for gy in y..group_end {
+                let row = &packed_rows[gy * row_bytes..(gy + 1) * row_bytes];
+                apply_filter(f, row, &prev_row, bpp, &mut candidate_row);
+                group_bufs[f as usize].push(f);
+                group_bufs[f as usize].extend_from_slice(&candidate_row);
+                prev_row.copy_from_slice(row);
+            }
+        }
+
+        // Compress each candidate and pick the smallest
+        let mut best_f = 0u8;
+        let mut best_size = usize::MAX;
+        for f in 0..5u8 {
+            let data = &group_bufs[f as usize];
+            if let Ok(len) = eval_compressor.zlib_compress(data, &mut compress_buf) {
+                if len < best_size {
+                    best_size = len;
+                    best_f = f;
+                }
+            }
+        }
+
+        // Emit the winning group
+        out.extend_from_slice(&group_bufs[best_f as usize]);
+
+        y = group_end;
     }
 }
 
@@ -356,6 +460,18 @@ fn pick_best_filter(candidates: &[Vec<u8>], heuristic: AdaptiveHeuristic) -> u8 
             let mut best_score = usize::MAX;
             for f in 0..5u8 {
                 let score = bigrams_score(&candidates[f as usize]);
+                if score < best_score {
+                    best_score = score;
+                    best = f;
+                }
+            }
+            best
+        }
+        AdaptiveHeuristic::BigEnt => {
+            let mut best = 0u8;
+            let mut best_score = f64::MAX;
+            for f in 0..5u8 {
+                let score = bigram_entropy_score(&candidates[f as usize]);
                 if score < best_score {
                     best_score = score;
                     best = f;
@@ -468,6 +584,33 @@ fn bigrams_score(data: &[u8]) -> usize {
         }
     }
     count
+}
+
+/// Shannon entropy of byte-pair bigrams.
+///
+/// Unlike `bigrams_score` which counts unique bigrams, this computes the
+/// actual entropy of the bigram distribution. Better at distinguishing
+/// between filtered rows that have similar unique-bigram counts but
+/// different frequency distributions.
+fn bigram_entropy_score(data: &[u8]) -> f64 {
+    if data.len() < 2 {
+        return 0.0;
+    }
+    let mut counts = vec![0u32; 65536];
+    let n = data.len() - 1;
+    for pair in data.windows(2) {
+        let key = (pair[0] as usize) << 8 | pair[1] as usize;
+        counts[key] += 1;
+    }
+    let len = n as f64;
+    let mut entropy = 0.0f64;
+    for &c in &counts {
+        if c > 0 {
+            let p = c as f64 / len;
+            entropy -= p * p.log2();
+        }
+    }
+    entropy
 }
 
 // ---- Bit depth and packing (indexed only) ----
