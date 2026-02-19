@@ -4,13 +4,9 @@
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum PngError {
-    /// PNG decoding error from the underlying `png` crate.
+    /// PNG decoding error from the underlying decoder.
     #[error("PNG decode error: {0}")]
     Decode(#[from] png::DecodingError),
-
-    /// PNG encoding error from the underlying `png` crate.
-    #[error("PNG encode error: {0}")]
-    Encode(#[from] png::EncodingError),
 
     /// Invalid input (dimensions, buffer size, etc.).
     #[error("invalid input: {0}")]

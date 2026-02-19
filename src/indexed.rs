@@ -51,7 +51,7 @@ pub fn encode_indexed_rgba8(
         None
     };
 
-    let compression_level = crate::encode::compression_to_zenflate_level(encode_config.compression);
+    let compression_level = encode_config.compression.to_zenflate_level();
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = encode_config.source_gamma;
@@ -239,11 +239,11 @@ mod tests {
         let quant = default_quantize_config();
 
         for comp in [
-            png::Compression::NoCompression,
-            png::Compression::Fastest,
-            png::Compression::Fast,
-            png::Compression::Balanced,
-            png::Compression::High,
+            crate::Compression::None,
+            crate::Compression::Fastest,
+            crate::Compression::Fast,
+            crate::Compression::Balanced,
+            crate::Compression::High,
         ] {
             let config = EncodeConfig::default().with_compression(comp);
             let encoded = encode_indexed_rgba8(img.as_ref(), &config, &quant, None).unwrap();
