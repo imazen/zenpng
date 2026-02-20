@@ -10,7 +10,6 @@ keywords = ["png", "image", "encoder", "decoder", "codec"]
 repository = "https://github.com/imazen/zenpng"
 
 [dependencies]
-png = "0.18"
 thiserror = { version = "2.0", default-features = false }
 rgb = { version = "0.8", default-features = false, features = ["as-bytes"] }
 imgref = "1.12"
@@ -23,6 +22,7 @@ linear-srgb = "0.5.5"
 zopfli = { version = "0.8", optional = true }
 
 [dev-dependencies]
+png = "0.18"
 archmage = { version = "0.8.4", features = ["std"] }
 codec-corpus = "1.0.1"
 flate2 = "1"

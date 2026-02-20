@@ -924,24 +924,29 @@ pub(crate) fn post_process_row(
         0 => {
             // Grayscale
             if ihdr.is_sub_byte() {
-                // Sub-8-bit: unpack and scale to 8-bit
-                let mut gray_pixels = Vec::with_capacity(width);
-                unpack_sub_byte_gray(raw, width, ihdr.bit_depth, &mut gray_pixels);
-
                 if let Some(ref trns) = ancillary.trns {
-                    // tRNS for grayscale: 2 bytes specifying the transparent gray value
+                    // tRNS value is in original bit depth range
                     let trns_val = if trns.len() >= 2 {
                         u16::from_be_bytes([trns[0], trns[1]])
                     } else {
                         0
                     };
-                    // Expand to RGBA8
-                    for &g in &gray_pixels {
-                        let original_val = g as u16; // already scaled
-                        let alpha = if original_val == trns_val { 0 } else { 255 };
+                    // Unpack, compare raw values against tRNS, then scale
+                    let pixels_per_byte = 8 / ihdr.bit_depth as usize;
+                    let mask = (1u8 << ihdr.bit_depth) - 1;
+                    for x in 0..width {
+                        let byte_idx = x / pixels_per_byte;
+                        let bit_offset =
+                            (pixels_per_byte - 1 - x % pixels_per_byte) * ihdr.bit_depth as usize;
+                        let raw_val = (raw[byte_idx] >> bit_offset) & mask;
+                        let alpha = if raw_val as u16 == trns_val { 0u8 } else { 255 };
+                        let g = scale_to_8bit(raw_val, ihdr.bit_depth);
                         out.extend_from_slice(&[g, g, g, alpha]);
                     }
                 } else {
+                    // Sub-8-bit without tRNS: unpack and scale to 8-bit
+                    let mut gray_pixels = Vec::with_capacity(width);
+                    unpack_sub_byte_gray(raw, width, ihdr.bit_depth, &mut gray_pixels);
                     out.extend_from_slice(&gray_pixels);
                 }
             } else if ihdr.bit_depth == 16 {
@@ -1703,5 +1708,332 @@ fn build_pixel_data(
             ihdr.color_type,
             ihdr.bit_depth
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chunk_parser_validates_signature() {
+        let result = decode_png(b"not a png", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn unfilter_none() {
+        let mut row = vec![10, 20, 30];
+        let prev = vec![0, 0, 0];
+        unfilter_row(0, &mut row, &prev, 1).unwrap();
+        assert_eq!(row, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn unfilter_sub() {
+        // Sub: each byte adds the byte bpp positions to the left
+        let mut row = vec![10, 5, 3];
+        let prev = vec![0, 0, 0];
+        unfilter_row(1, &mut row, &prev, 1).unwrap();
+        assert_eq!(row, vec![10, 15, 18]);
+    }
+
+    #[test]
+    fn unfilter_up() {
+        let mut row = vec![10, 20, 30];
+        let prev = vec![5, 10, 15];
+        unfilter_row(2, &mut row, &prev, 1).unwrap();
+        assert_eq!(row, vec![15, 30, 45]);
+    }
+
+    #[test]
+    fn unfilter_average() {
+        let mut row = vec![10, 5, 3];
+        let prev = vec![0, 0, 0];
+        unfilter_row(3, &mut row, &prev, 1).unwrap();
+        // i=0: row[0] += prev[0] >> 1 = 10 + 0 = 10
+        // i=1: row[1] += floor((row[0] + prev[1]) / 2) = 5 + 5 = 10
+        // i=2: row[2] += floor((row[1] + prev[2]) / 2) = 3 + 5 = 8
+        assert_eq!(row, vec![10, 10, 8]);
+    }
+
+    #[test]
+    fn unfilter_paeth() {
+        let mut row = vec![10, 5, 3];
+        let prev = vec![0, 0, 0];
+        unfilter_row(4, &mut row, &prev, 1).unwrap();
+        // i=0: paeth(0, 0, 0) = 0, so 10 + 0 = 10
+        // i=1: paeth(10, 0, 0) = 10, so 5 + 10 = 15
+        // i=2: paeth(15, 0, 0) = 15, so 3 + 15 = 18
+        assert_eq!(row, vec![10, 15, 18]);
+    }
+
+    #[test]
+    fn ihdr_validates_color_type_bit_depth() {
+        // Valid: Gray 8-bit
+        assert!(Ihdr::parse(&make_ihdr(1, 1, 8, 0, 0)).is_ok());
+        // Valid: Indexed 4-bit
+        assert!(Ihdr::parse(&make_ihdr(1, 1, 4, 3, 0)).is_ok());
+        // Invalid: RGB 4-bit
+        assert!(Ihdr::parse(&make_ihdr(1, 1, 4, 2, 0)).is_err());
+        // Invalid: Indexed 16-bit
+        assert!(Ihdr::parse(&make_ihdr(1, 1, 16, 3, 0)).is_err());
+    }
+
+    fn make_ihdr(w: u32, h: u32, bit_depth: u8, color_type: u8, interlace: u8) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&w.to_be_bytes());
+        data.extend_from_slice(&h.to_be_bytes());
+        data.push(bit_depth);
+        data.push(color_type);
+        data.push(0); // compression
+        data.push(0); // filter
+        data.push(interlace);
+        data
+    }
+
+    #[test]
+    fn scale_to_8bit_values() {
+        assert_eq!(scale_to_8bit(0, 1), 0);
+        assert_eq!(scale_to_8bit(1, 1), 255);
+        assert_eq!(scale_to_8bit(0, 2), 0);
+        assert_eq!(scale_to_8bit(1, 2), 85);
+        assert_eq!(scale_to_8bit(3, 2), 255);
+        assert_eq!(scale_to_8bit(0, 4), 0);
+        assert_eq!(scale_to_8bit(15, 4), 255);
+    }
+
+    /// Compare our decoder's pixel output against the reference png crate
+    /// for every PNGSuite file.
+    #[test]
+    fn pngsuite_comparison() {
+        let suite_dir = "/home/lilith/work/codec-corpus/pngsuite";
+        if !std::path::Path::new(suite_dir).exists() {
+            eprintln!("Skipping PNGSuite comparison: directory not found");
+            return;
+        }
+
+        let mut tested = 0;
+        let mut skipped = 0;
+        let mut failures = Vec::new();
+
+        for entry in std::fs::read_dir(suite_dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("png") {
+                continue;
+            }
+
+            let filename = path.file_name().unwrap().to_str().unwrap().to_string();
+
+            // Skip files that are intentionally corrupt (start with 'x')
+            if filename.starts_with('x') {
+                skipped += 1;
+                continue;
+            }
+
+            let data = std::fs::read(&path).unwrap();
+
+            // Decode with our decoder
+            let our_result = decode_png(&data, None);
+
+            // Decode with reference png crate
+            let ref_result = decode_with_png_crate(&data);
+
+            match (our_result, ref_result) {
+                (Ok(ours), Ok(reference)) => {
+                    // Compare pixel data
+                    let our_bytes = pixel_data_to_bytes(&ours.pixels);
+                    let ref_bytes = pixel_data_to_bytes(&reference.pixels);
+
+                    if our_bytes != ref_bytes {
+                        // Check if it's a format difference we can explain
+                        let our_desc = format_pixel_data(&ours.pixels);
+                        let ref_desc = format_pixel_data(&reference.pixels);
+                        failures.push(alloc::format!(
+                            "{}: pixel mismatch (ours={}, ref={}, our_len={}, ref_len={})",
+                            filename,
+                            our_desc,
+                            ref_desc,
+                            our_bytes.len(),
+                            ref_bytes.len()
+                        ));
+                    } else {
+                        tested += 1;
+                    }
+                }
+                (Err(e), Ok(_)) => {
+                    failures.push(alloc::format!(
+                        "{}: we failed but ref succeeded: {}",
+                        filename,
+                        e
+                    ));
+                }
+                (Ok(_), Err(_)) => {
+                    // We succeeded where ref failed — that's fine
+                    tested += 1;
+                }
+                (Err(_), Err(_)) => {
+                    // Both failed — that's fine
+                    skipped += 1;
+                }
+            }
+        }
+
+        eprintln!(
+            "PNGSuite: {} matched, {} skipped, {} failures",
+            tested,
+            skipped,
+            failures.len()
+        );
+        if !failures.is_empty() {
+            for f in &failures {
+                eprintln!("  FAIL: {}", f);
+            }
+            panic!(
+                "{} PNGSuite comparison failures (see stderr)",
+                failures.len()
+            );
+        }
+    }
+
+    /// Decode using the reference png crate.
+    fn decode_with_png_crate(data: &[u8]) -> Result<PngDecodeOutput, String> {
+        use std::io::Cursor;
+
+        let cursor = Cursor::new(data);
+        let mut decoder = png::Decoder::new(cursor);
+        decoder.set_transformations(png::Transformations::EXPAND);
+        let mut reader = decoder.read_info().map_err(|e| e.to_string())?;
+        let w = reader.info().width as usize;
+        let h = reader.info().height as usize;
+        let src_bit_depth = reader.info().bit_depth as u8;
+
+        let (ct, bd) = reader.output_color_type();
+        let buffer_size = reader.output_buffer_size().ok_or("no buffer size")?;
+        let mut raw_pixels = vec![0u8; buffer_size];
+        let output_info = reader
+            .next_frame(&mut raw_pixels)
+            .map_err(|e| e.to_string())?;
+        raw_pixels.truncate(output_info.buffer_size());
+
+        // Convert to native endian for 16-bit
+        let pixels = match (ct, bd) {
+            (png::ColorType::Rgba, png::BitDepth::Sixteen) => {
+                let native = be_to_native_16_ref(&raw_pixels);
+                let rgba: &[Rgba<u16>] = bytemuck::cast_slice(&native);
+                PixelData::Rgba16(ImgVec::new(rgba.to_vec(), w, h))
+            }
+            (png::ColorType::Rgba, _) => {
+                let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&raw_pixels);
+                PixelData::Rgba8(ImgVec::new(rgba.to_vec(), w, h))
+            }
+            (png::ColorType::Rgb, png::BitDepth::Sixteen) => {
+                let native = be_to_native_16_ref(&raw_pixels);
+                let rgb: &[Rgb<u16>] = bytemuck::cast_slice(&native);
+                PixelData::Rgb16(ImgVec::new(rgb.to_vec(), w, h))
+            }
+            (png::ColorType::Rgb, _) => {
+                let rgb: &[Rgb<u8>] = bytemuck::cast_slice(&raw_pixels);
+                PixelData::Rgb8(ImgVec::new(rgb.to_vec(), w, h))
+            }
+            (png::ColorType::GrayscaleAlpha, png::BitDepth::Sixteen) => {
+                let native = be_to_native_16_ref(&raw_pixels);
+                let ga: &[[u16; 2]] = bytemuck::cast_slice(&native);
+                let pixels: Vec<GrayAlpha<u16>> =
+                    ga.iter().map(|&[v, a]| GrayAlpha::new(v, a)).collect();
+                PixelData::GrayAlpha16(ImgVec::new(pixels, w, h))
+            }
+            (png::ColorType::GrayscaleAlpha, _) => {
+                // GA8 → RGBA8 (matches our decoder behavior)
+                let rgba: Vec<Rgba<u8>> = raw_pixels
+                    .chunks_exact(2)
+                    .map(|ga| Rgba {
+                        r: ga[0],
+                        g: ga[0],
+                        b: ga[0],
+                        a: ga[1],
+                    })
+                    .collect();
+                PixelData::Rgba8(ImgVec::new(rgba, w, h))
+            }
+            (png::ColorType::Grayscale, png::BitDepth::Sixteen) => {
+                let native = be_to_native_16_ref(&raw_pixels);
+                let gray: &[Gray<u16>] = bytemuck::cast_slice(&native);
+                PixelData::Gray16(ImgVec::new(gray.to_vec(), w, h))
+            }
+            (png::ColorType::Grayscale, _) => {
+                let gray: Vec<Gray<u8>> = raw_pixels.iter().map(|&g| Gray(g)).collect();
+                PixelData::Gray8(ImgVec::new(gray, w, h))
+            }
+            (png::ColorType::Indexed, _) => {
+                return Err("indexed not expanded".into());
+            }
+        };
+
+        let info = PngInfo {
+            width: w as u32,
+            height: h as u32,
+            has_alpha: false,
+            has_animation: false,
+            frame_count: 1,
+            bit_depth: src_bit_depth,
+            icc_profile: None,
+            exif: None,
+            xmp: None,
+            source_gamma: None,
+            srgb_intent: None,
+            chromaticities: None,
+            cicp: None,
+            content_light_level: None,
+            mastering_display: None,
+        };
+
+        Ok(PngDecodeOutput { pixels, info })
+    }
+
+    fn be_to_native_16_ref(bytes: &[u8]) -> Vec<u8> {
+        if cfg!(target_endian = "big") {
+            return bytes.to_vec();
+        }
+        let mut out = bytes.to_vec();
+        for chunk in out.chunks_exact_mut(2) {
+            chunk.swap(0, 1);
+        }
+        out
+    }
+
+    fn pixel_data_to_bytes(pixels: &PixelData) -> Vec<u8> {
+        use rgb::ComponentBytes;
+        match pixels {
+            PixelData::Rgb8(img) => img.buf().as_bytes().to_vec(),
+            PixelData::Rgba8(img) => img.buf().as_bytes().to_vec(),
+            PixelData::Gray8(img) => img.buf().as_bytes().to_vec(),
+            PixelData::Rgb16(img) => bytemuck::cast_slice::<Rgb<u16>, u8>(img.buf()).to_vec(),
+            PixelData::Rgba16(img) => bytemuck::cast_slice::<Rgba<u16>, u8>(img.buf()).to_vec(),
+            PixelData::Gray16(img) => bytemuck::cast_slice::<Gray<u16>, u8>(img.buf()).to_vec(),
+            PixelData::GrayAlpha16(img) => {
+                let mut bytes = Vec::with_capacity(img.buf().len() * 4);
+                for ga in img.buf() {
+                    bytes.extend_from_slice(&ga.v.to_ne_bytes());
+                    bytes.extend_from_slice(&ga.a.to_ne_bytes());
+                }
+                bytes
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn format_pixel_data(pixels: &PixelData) -> &'static str {
+        match pixels {
+            PixelData::Rgb8(_) => "Rgb8",
+            PixelData::Rgba8(_) => "Rgba8",
+            PixelData::Gray8(_) => "Gray8",
+            PixelData::Rgb16(_) => "Rgb16",
+            PixelData::Rgba16(_) => "Rgba16",
+            PixelData::Gray16(_) => "Gray16",
+            PixelData::GrayAlpha16(_) => "GrayAlpha16",
+            _ => "Other",
+        }
     }
 }
