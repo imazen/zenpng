@@ -16,7 +16,10 @@ fn main() {
         ("Crush", zenpng::Compression::Crush),
     ];
 
-    println!("{:<10} {:>10} {:>8} {:>10}", "Level", "Size", "Time", "MiB/s");
+    println!(
+        "{:<10} {:>10} {:>8} {:>10}",
+        "Level", "Size", "Time", "MiB/s"
+    );
     println!("{}", "-".repeat(42));
 
     let raw_mib = match &decoded.pixels {
@@ -36,8 +39,12 @@ fn main() {
 
         let start = std::time::Instant::now();
         let encoded = match &decoded.pixels {
-            zencodec_types::PixelData::Rgb8(img) => zenpng::encode_rgb8(img.as_ref(), None, &config),
-            zencodec_types::PixelData::Rgba8(img) => zenpng::encode_rgba8(img.as_ref(), None, &config),
+            zencodec_types::PixelData::Rgb8(img) => {
+                zenpng::encode_rgb8(img.as_ref(), None, &config)
+            }
+            zencodec_types::PixelData::Rgba8(img) => {
+                zenpng::encode_rgba8(img.as_ref(), None, &config)
+            }
             _ => panic!("unsupported"),
         };
         let elapsed = start.elapsed().as_secs_f64();
@@ -45,7 +52,13 @@ fn main() {
         match encoded {
             Ok(data) => {
                 let speed = raw_mib / elapsed;
-                println!("{:<10} {:>10} {:>7.2}s {:>8.1}", name, data.len(), elapsed, speed);
+                println!(
+                    "{:<10} {:>10} {:>7.2}s {:>8.1}",
+                    name,
+                    data.len(),
+                    elapsed,
+                    speed
+                );
             }
             Err(e) => println!("{:<10} ERR: {e}", name),
         }

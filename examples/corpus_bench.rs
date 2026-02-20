@@ -125,11 +125,13 @@ fn compress_flate2(data: &[u8], level: u32) -> (usize, f64) {
     let fl = flate2::Compression::new(level.min(9));
     let mut comp = flate2::Compress::new(fl, true); // true = zlib
     let mut out = vec![0u8; data.len() + 4096];
-    comp.compress(data, &mut out, flate2::FlushCompress::Finish).unwrap();
+    comp.compress(data, &mut out, flate2::FlushCompress::Finish)
+        .unwrap();
     let _ = comp.total_out();
     comp.reset();
     let start = Instant::now();
-    comp.compress(data, &mut out, flate2::FlushCompress::Finish).unwrap();
+    comp.compress(data, &mut out, flate2::FlushCompress::Finish)
+        .unwrap();
     let len = comp.total_out() as usize;
     (len, start.elapsed().as_secs_f64())
 }
@@ -231,7 +233,12 @@ fn main() {
         println!("{}", "-".repeat(48));
         print_row("zenflate", zen_total, total_raw, zen_time);
         print_row("libdeflate", lib_total, total_raw, lib_time);
-        print_row(&format!("flate2 {fl2_label}"), fl2_total, total_raw, fl2_time);
+        print_row(
+            &format!("flate2 {fl2_label}"),
+            fl2_total,
+            total_raw,
+            fl2_time,
+        );
         print_row(
             &format!("miniz {fl2_label}"),
             mox_total,

@@ -147,6 +147,7 @@ impl zencodec_types::EncoderConfig for PngEncoderConfig {
     fn job(&self) -> PngEncodeJob<'_> {
         PngEncodeJob {
             config: self,
+            stop: None,
             metadata: None,
             limits: None,
         }
@@ -158,6 +159,7 @@ impl zencodec_types::EncoderConfig for PngEncoderConfig {
 /// Per-operation PNG encode job.
 pub struct PngEncodeJob<'a> {
     config: &'a PngEncoderConfig,
+    stop: Option<&'a dyn Stop>,
     metadata: Option<&'a ImageMetadata<'a>>,
     limits: Option<ResourceLimits>,
 }
@@ -167,8 +169,9 @@ impl<'a> zencodec_types::EncodeJob<'a> for PngEncodeJob<'a> {
     type Encoder = PngEncoder<'a>;
     type FrameEncoder = PngFrameEncoder;
 
-    fn with_stop(self, _stop: &'a dyn Stop) -> Self {
-        self // PNG encoding is not cancellable
+    fn with_stop(mut self, stop: &'a dyn Stop) -> Self {
+        self.stop = Some(stop);
+        self
     }
 
     fn with_metadata(mut self, meta: &'a ImageMetadata<'a>) -> Self {
@@ -184,7 +187,9 @@ impl<'a> zencodec_types::EncodeJob<'a> for PngEncodeJob<'a> {
     fn encoder(self) -> PngEncoder<'a> {
         PngEncoder {
             config: self.config,
+            stop: self.stop,
             metadata: self.metadata,
+            limits: self.limits,
         }
     }
 
@@ -200,7 +205,9 @@ impl<'a> zencodec_types::EncodeJob<'a> for PngEncodeJob<'a> {
 /// Single-image PNG encoder.
 pub struct PngEncoder<'a> {
     config: &'a PngEncoderConfig,
+    stop: Option<&'a dyn Stop>,
     metadata: Option<&'a ImageMetadata<'a>>,
+    limits: Option<ResourceLimits>,
 }
 
 impl<'a> PngEncoder<'a> {
@@ -222,6 +229,32 @@ impl<'a> PngEncoder<'a> {
         color_type: crate::encode::ColorType,
         bit_depth: crate::encode::BitDepth,
     ) -> Result<EncodeOutput, PngError> {
+        // Pre-flight stop check
+        if let Some(stop) = self.stop {
+            stop.check()
+                .map_err(|_| PngError::InvalidInput("cancelled".into()))?;
+        }
+        // Pre-flight limit checks
+        if let Some(ref limits) = self.limits {
+            limits
+                .check_dimensions(w, h)
+                .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+            let channels: u64 = match color_type {
+                crate::encode::ColorType::Grayscale => 1,
+                crate::encode::ColorType::Rgb => 3,
+                crate::encode::ColorType::GrayscaleAlpha => 2,
+                crate::encode::ColorType::Rgba => 4,
+            };
+            let depth_bytes: u64 = match bit_depth {
+                crate::encode::BitDepth::Eight => 1,
+                crate::encode::BitDepth::Sixteen => 2,
+            };
+            let bpp = channels * depth_bytes;
+            let estimated_mem = w as u64 * h as u64 * bpp;
+            limits
+                .check_memory(estimated_mem)
+                .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+        }
         let data = crate::encode::encode_raw(
             bytes,
             w,
@@ -269,12 +302,24 @@ impl zencodec_types::Encoder for PngEncoder<'_> {
             (zencodec_types::ChannelType::U16, zencodec_types::ChannelLayout::Rgb) => {
                 let bytes = collect_contiguous_bytes(&pixels);
                 let be = native_to_be_16(&bytes);
-                self.do_encode_with_depth(&be, w, h, crate::encode::ColorType::Rgb, crate::encode::BitDepth::Sixteen)
+                self.do_encode_with_depth(
+                    &be,
+                    w,
+                    h,
+                    crate::encode::ColorType::Rgb,
+                    crate::encode::BitDepth::Sixteen,
+                )
             }
             (zencodec_types::ChannelType::U16, zencodec_types::ChannelLayout::Rgba) => {
                 let bytes = collect_contiguous_bytes(&pixels);
                 let be = native_to_be_16(&bytes);
-                self.do_encode_with_depth(&be, w, h, crate::encode::ColorType::Rgba, crate::encode::BitDepth::Sixteen)
+                self.do_encode_with_depth(
+                    &be,
+                    w,
+                    h,
+                    crate::encode::ColorType::Rgba,
+                    crate::encode::BitDepth::Sixteen,
+                )
             }
             (zencodec_types::ChannelType::U16, zencodec_types::ChannelLayout::Gray) => {
                 let bytes = collect_contiguous_bytes(&pixels);
@@ -458,6 +503,7 @@ impl zencodec_types::DecoderConfig for PngDecoderConfig {
     fn job(&self) -> PngDecodeJob<'_> {
         PngDecodeJob {
             config: self,
+            stop: None,
             limits: None,
         }
     }
@@ -473,6 +519,7 @@ impl zencodec_types::DecoderConfig for PngDecoderConfig {
 /// Per-operation PNG decode job.
 pub struct PngDecodeJob<'a> {
     config: &'a PngDecoderConfig,
+    stop: Option<&'a dyn Stop>,
     limits: Option<ResourceLimits>,
 }
 
@@ -481,8 +528,9 @@ impl<'a> zencodec_types::DecodeJob<'a> for PngDecodeJob<'a> {
     type Decoder = PngDecoder<'a>;
     type FrameDecoder = PngFrameDecoder;
 
-    fn with_stop(self, _stop: &'a dyn Stop) -> Self {
-        self // PNG decoding is not cancellable
+    fn with_stop(mut self, stop: &'a dyn Stop) -> Self {
+        self.stop = Some(stop);
+        self
     }
 
     fn with_limits(mut self, limits: ResourceLimits) -> Self {
@@ -506,6 +554,7 @@ impl<'a> zencodec_types::DecodeJob<'a> for PngDecodeJob<'a> {
     fn decoder(self) -> PngDecoder<'a> {
         PngDecoder {
             config: self.config,
+            stop: self.stop,
             limits: self.limits,
         }
     }
@@ -522,6 +571,7 @@ impl<'a> zencodec_types::DecodeJob<'a> for PngDecodeJob<'a> {
 /// Single-image PNG decoder.
 pub struct PngDecoder<'a> {
     config: &'a PngDecoderConfig,
+    stop: Option<&'a dyn Stop>,
     limits: Option<ResourceLimits>,
 }
 
@@ -545,6 +595,11 @@ impl zencodec_types::Decoder for PngDecoder<'_> {
     type Error = PngError;
 
     fn decode(self, data: &[u8]) -> Result<DecodeOutput, PngError> {
+        // Pre-flight stop check
+        if let Some(stop) = self.stop {
+            stop.check()
+                .map_err(|_| PngError::InvalidInput("cancelled".into()))?;
+        }
         let png_limits = self.effective_limits();
         let result = crate::decode::decode(data, png_limits.as_ref())?;
         let info = convert_info(&result.info);
@@ -2388,9 +2443,7 @@ mod tests {
                 compression: comp,
                 ..Default::default()
             };
-            let encoded = crate::encode::encode_rgb8(
-                rgb_pixels.as_ref(), None, &config,
-            ).unwrap();
+            let encoded = crate::encode::encode_rgb8(rgb_pixels.as_ref(), None, &config).unwrap();
             match crate::decode::decode(&encoded, None) {
                 Ok(_) => {}
                 Err(e) => panic!("{name}: full PNG re-decode failed: {e}"),
@@ -2416,8 +2469,7 @@ mod tests {
             .collect();
         let img = imgref::ImgVec::new(pixels, width, height);
         let config = crate::EncodeConfig::default();
-        let encoded =
-            crate::encode::encode_rgb8(img.as_ref(), None, &config).unwrap();
+        let encoded = crate::encode::encode_rgb8(img.as_ref(), None, &config).unwrap();
         let decoded = crate::decode::decode(&encoded, None).unwrap();
         match &decoded.pixels {
             zencodec_types::PixelData::Rgb8(dec_img) => {
