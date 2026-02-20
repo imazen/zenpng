@@ -52,12 +52,7 @@ pub fn encode_indexed_rgba8(
     };
 
     let compression_level = encode_config.compression.to_zenflate_level();
-    let opts = png_writer::CompressOptions {
-        use_zopfli: encode_config.compression.use_zopfli(),
-        deadline: encode_config
-            .time_limit_ms
-            .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms as u64)),
-    };
+    let opts = encode_config.compress_options();
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = encode_config.source_gamma;
@@ -151,12 +146,7 @@ pub fn encode_rgba8_auto(
         };
 
         let compression_level = encode_config.compression.to_zenflate_level();
-        let opts = png_writer::CompressOptions {
-            use_zopfli: encode_config.compression.use_zopfli(),
-            deadline: encode_config
-                .time_limit_ms
-                .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms as u64)),
-        };
+        let opts = encode_config.compress_options();
 
         let mut write_meta = PngWriteMetadata::from_metadata(metadata);
         write_meta.source_gamma = encode_config.source_gamma;

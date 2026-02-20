@@ -24,6 +24,10 @@ pub(crate) struct CompressOptions {
     /// When set, the encoder skips strategies and adjusts zopfli iterations
     /// to finish within this time. Applies to both Best and Crush levels.
     pub deadline: Option<std::time::Instant>,
+    /// Budget mode: progressively escalate through compression tiers
+    /// instead of jumping straight to the target level. The deadline
+    /// controls how far we get.
+    pub is_budget: bool,
 }
 
 /// All metadata to embed when writing a PNG file.
@@ -225,6 +229,84 @@ pub(crate) fn write_truecolor_png(
 
 // ---- Compression with multi-strategy filter selection ----
 
+/// Heuristic strategies to screen in Phase 1.
+const HEURISTIC_STRATEGIES: &[Strategy] = &[
+    Strategy::Single(0), // None
+    Strategy::Single(1), // Sub
+    Strategy::Single(2), // Up
+    Strategy::Single(3), // Average
+    Strategy::Single(4), // Paeth
+    Strategy::Adaptive(AdaptiveHeuristic::MinSum),
+    Strategy::Adaptive(AdaptiveHeuristic::Entropy),
+    Strategy::Adaptive(AdaptiveHeuristic::Bigrams),
+    Strategy::Adaptive(AdaptiveHeuristic::BigEnt),
+];
+
+/// Check if we've passed the deadline.
+fn past_deadline(opts: &CompressOptions) -> bool {
+    opts.deadline
+        .is_some_and(|dl| std::time::Instant::now() >= dl)
+}
+
+/// Try compressing `filtered` data with all `compressors`, updating `best_compressed`
+/// if a smaller result is found. Returns the best compressed size for this particular
+/// filtered stream (used for ranking candidates).
+fn try_compress(
+    filtered: &[u8],
+    compressors: &mut [Compressor],
+    compress_buf: &mut [u8],
+    verify_buf: &mut [u8],
+    best_compressed: &mut Option<Vec<u8>>,
+) -> Result<usize, PngError> {
+    let mut best_for_stream = usize::MAX;
+    for compressor in compressors.iter_mut() {
+        let compressed_len = compressor
+            .zlib_compress(filtered, compress_buf)
+            .map_err(|e| PngError::InvalidInput(alloc::format!("compression failed: {e}")))?;
+
+        // Verify decompression roundtrip
+        {
+            let mut decompressor = zenflate::Decompressor::new();
+            if decompressor
+                .zlib_decompress(&compress_buf[..compressed_len], verify_buf)
+                .is_err()
+            {
+                continue;
+            }
+        }
+
+        best_for_stream = best_for_stream.min(compressed_len);
+
+        let dominated = best_compressed
+            .as_ref()
+            .is_some_and(|b| compressed_len >= b.len());
+        if !dominated {
+            *best_compressed = Some(compress_buf[..compressed_len].to_vec());
+        }
+    }
+    Ok(best_for_stream)
+}
+
+/// Progressive adaptive compression engine.
+///
+/// Instead of a flat loop over all strategies × all levels, works in phases:
+///
+/// **Phase 1 (Screen):** Try all heuristic strategies with a cheap L1 compressor
+/// to rank them. Cost: ~1ms per strategy. This gets us a valid result immediately.
+///
+/// **Phase 2 (Refine):** Compress the top 3 filtered streams at the target
+/// compression level(s). For L10+, tries L10/L11/L12. This is where 90%+ of
+/// final quality comes from.
+///
+/// **Phase 3 (Brute-force):** Per-row brute-force filter selection with DEFLATE
+/// context evaluation. Only for level >= 6. Expensive (~3-4s per config on
+/// 1024×1024) but can beat heuristics on complex images.
+///
+/// **Phase 4 (Zopfli):** Adaptive zopfli compression on the best candidates.
+/// Only for Crush/Budget with the `zopfli` feature enabled.
+///
+/// Each phase checks the deadline before starting. `Budget(ms)` gets the best
+/// result achievable within the time limit.
 fn compress_filtered(
     packed_rows: &[u8],
     row_bytes: usize,
@@ -242,122 +324,193 @@ fn compress_filtered(
     let mut compress_buf = vec![0u8; compress_bound];
     let mut verify_buf = vec![0u8; filtered_size];
 
-    // Base strategies: 5 single-filter + 4 adaptive heuristics
-    let base_strategies: &[Strategy] = &[
-        Strategy::Single(0), // None
-        Strategy::Single(1), // Sub
-        Strategy::Single(2), // Up
-        Strategy::Single(3), // Average
-        Strategy::Single(4), // Paeth
-        Strategy::Adaptive(AdaptiveHeuristic::MinSum),
-        Strategy::Adaptive(AdaptiveHeuristic::Entropy),
-        Strategy::Adaptive(AdaptiveHeuristic::Bigrams),
-        Strategy::Adaptive(AdaptiveHeuristic::BigEnt),
-    ];
-
-    // Tiered brute-force: context_rows and eval_level scale with effort.
-    // At Best (L12), also try a second brute-force config with higher eval.
-    let mut strategies: Vec<Strategy> = base_strategies.to_vec();
-    if compression_level >= 10 {
-        // Best/Crush: per-row brute-force with context, L1 and L4 eval
-        strategies.push(Strategy::BruteForce {
-            context_rows: 10,
-            eval_level: 1,
-        });
-        strategies.push(Strategy::BruteForce {
-            context_rows: 10,
-            eval_level: 4,
-        });
-    } else if compression_level >= 9 {
-        // High: per-row brute-force with moderate context
-        strategies.push(Strategy::BruteForce {
-            context_rows: 8,
-            eval_level: 1,
-        });
-    } else if compression_level >= 6 {
-        // Balanced: per-row brute-force with smaller context
-        strategies.push(Strategy::BruteForce {
-            context_rows: 3,
-            eval_level: 1,
-        });
-    }
-
-    // At Best level (L10+), try near-optimal levels 10-12 for each strategy.
-    // Different levels use different parsing strategies and may find better
-    // block boundaries. At lower levels, just use the target level.
-    let final_levels: &[u32] = if compression_level >= 10 {
-        &[10, 11, 12]
+    // For L0-1, screening IS the final compression — no Phase 2 needed.
+    // For L2+, screen at L1 then refine the best candidates at the target level.
+    let screen_level = if compression_level <= 1 {
+        compression_level as u32
     } else {
-        &[compression_level as u32]
+        1
     };
 
-    // Create compressors for each final level
-    let mut compressors: Vec<Compressor> = final_levels
-        .iter()
-        .map(|&l| Compressor::new(CompressionLevel::new(l)))
-        .collect();
+    // Refinement tiers: which compression levels to try in Phase 2.
+    //
+    // Budget mode escalates through tiers progressively — L4, L6, L9,
+    // then L10/11/12 — checking the deadline between each. This way a
+    // tight budget gets a quick L4 result, while a generous budget reaches
+    // near-optimal.
+    //
+    // Non-budget modes jump straight to the target level(s).
+    let refine_tiers: &[u32] = if opts.is_budget {
+        &[4, 6, 9, 10, 11, 12]
+    } else if compression_level >= 10 {
+        &[10, 11, 12]
+    } else {
+        // Return a static slice for the target level. For levels 2-9
+        // this is a single entry matching the requested compression.
+        match compression_level {
+            2 => &[2],
+            3 => &[3],
+            4 => &[4],
+            5 => &[5],
+            6 => &[6],
+            7 => &[7],
+            8 => &[8],
+            9 => &[9],
+            _ => &[1], // L0-1 won't reach here (needs_refine is false)
+        }
+    };
 
-    // For zopfli mode: save top N filtered streams for a second pass
-    #[cfg(feature = "zopfli")]
-    let mut zopfli_candidates: Vec<(usize, Vec<u8>)> = Vec::new(); // (zenflate_size, filtered_data)
+    let needs_refine = compression_level >= 2 || opts.is_budget;
 
-    for strategy in &strategies {
-        // Check deadline — skip remaining strategies if time is up.
-        // This makes Best level time-aware when a deadline is set.
-        if let Some(dl) = opts.deadline {
-            if std::time::Instant::now() >= dl {
-                break;
-            }
+    // Budget mode enables all phases regardless of the nominal compression_level,
+    // since the deadline controls how far we actually get.
+    let can_brute_force = compression_level >= 6 || opts.is_budget;
+
+    // Brute-force configs: (context_rows, eval_level)
+    let brute_configs: &[(usize, u32)] = if opts.is_budget {
+        &[(10, 1), (10, 4)]
+    } else {
+        match compression_level {
+            10.. => &[(10, 1), (10, 4)],
+            9 => &[(8, 1)],
+            6..=8 => &[(3, 1)],
+            _ => &[],
+        }
+    };
+
+    // ---- Phase 1: Screen all heuristic strategies ----
+    // Use a cheap compressor to rank strategies by compressed size.
+    let mut screen_compressor = Compressor::new(CompressionLevel::new(screen_level));
+    // (screen_size, filtered_data) — sorted later to pick top candidates
+    let mut screen_results: Vec<(usize, Vec<u8>)> = Vec::with_capacity(HEURISTIC_STRATEGIES.len());
+
+    for strategy in HEURISTIC_STRATEGIES {
+        if past_deadline(&opts) {
+            break;
         }
 
         filtered.clear();
-        filter_image(
-            packed_rows,
-            row_bytes,
-            height,
-            bpp,
-            *strategy,
-            &mut filtered,
-        );
+        filter_image(packed_rows, row_bytes, height, bpp, *strategy, &mut filtered);
 
-        // Try each final compression level with zenflate
-        let mut best_for_strategy = usize::MAX;
-        for compressor in &mut compressors {
-            let compressed_len = compressor
-                .zlib_compress(&filtered, &mut compress_buf)
-                .map_err(|e| PngError::InvalidInput(alloc::format!("compression failed: {e}")))?;
+        let compressed_len = screen_compressor
+            .zlib_compress(&filtered, &mut compress_buf)
+            .map_err(|e| PngError::InvalidInput(alloc::format!("compression failed: {e}")))?;
 
-            // Verify decompression roundtrip
-            {
-                let mut decompressor = zenflate::Decompressor::new();
-                if decompressor
-                    .zlib_decompress(&compress_buf[..compressed_len], &mut verify_buf)
-                    .is_err()
-                {
-                    continue;
-                }
-            }
+        // Verify decompression roundtrip
+        let valid = {
+            let mut decompressor = zenflate::Decompressor::new();
+            decompressor
+                .zlib_decompress(&compress_buf[..compressed_len], &mut verify_buf)
+                .is_ok()
+        };
 
-            best_for_strategy = best_for_strategy.min(compressed_len);
-
+        if valid {
+            // If screen level IS the target level, this is already a final result
             let dominated = best_compressed
                 .as_ref()
                 .is_some_and(|b| compressed_len >= b.len());
             if !dominated {
                 best_compressed = Some(compress_buf[..compressed_len].to_vec());
             }
-        }
-
-        // Save filtered data for zopfli second pass
-        #[cfg(feature = "zopfli")]
-        if opts.use_zopfli && best_for_strategy < usize::MAX {
-            zopfli_candidates.push((best_for_strategy, filtered.clone()));
+            screen_results.push((compressed_len, filtered.clone()));
         }
     }
 
-    // Second pass: compress top candidates with zopfli
+    // Sort by screen size — best first
+    screen_results.sort_by_key(|(size, _)| *size);
+
+    // Early return: L0-1 don't need refinement, or deadline hit
+    if !needs_refine || past_deadline(&opts) {
+        return best_compressed
+            .ok_or_else(|| PngError::InvalidInput("no filter strategies tried".to_string()));
+    }
+
+    // ---- Phase 2: Refine top 3 at target level(s) ----
+    //
+    // Iterate tier-by-tier so we can deadline-check between tiers.
+    // In Budget mode this means we get L4 results quickly, then L6, L9, etc.
+    // In non-Budget mode there are typically 1-3 levels so the overhead is minimal.
+    let top_n = screen_results.len().min(3);
+
+    // Track the best zenflate size per candidate for zopfli ranking later
     #[cfg(feature = "zopfli")]
-    if opts.use_zopfli && !zopfli_candidates.is_empty() {
+    let mut zopfli_candidates: Vec<(usize, Vec<u8>)> = Vec::new();
+
+    for &tier_level in refine_tiers {
+        if past_deadline(&opts) {
+            break;
+        }
+
+        let mut tier_compressor = Compressor::new(CompressionLevel::new(tier_level));
+
+        for (_, filtered_data) in &screen_results[..top_n] {
+            let _best_size = try_compress(
+                filtered_data,
+                core::slice::from_mut(&mut tier_compressor),
+                &mut compress_buf,
+                &mut verify_buf,
+                &mut best_compressed,
+            )?;
+
+            #[cfg(feature = "zopfli")]
+            if opts.use_zopfli && _best_size < usize::MAX {
+                // Only add to zopfli candidates at the highest tier we reach
+                // (avoid duplicates — we'll deduplicate by taking top 3 by size later)
+                zopfli_candidates.push((_best_size, filtered_data.clone()));
+            }
+        }
+    }
+
+    // ---- Phase 3: Brute-force ----
+    // Brute-force filtering is expensive (~3-4s per config), so compress at
+    // the highest tiers only. We already have lower-tier results from Phase 2.
+    if can_brute_force && !past_deadline(&opts) {
+        let brute_levels: &[u32] = if compression_level >= 10 || opts.is_budget {
+            &[10, 11, 12]
+        } else {
+            &[compression_level as u32]
+        };
+        let mut brute_compressors: Vec<Compressor> = brute_levels
+            .iter()
+            .map(|&l| Compressor::new(CompressionLevel::new(l)))
+            .collect();
+
+        for &(context_rows, eval_level) in brute_configs {
+            if past_deadline(&opts) {
+                break;
+            }
+
+            filtered.clear();
+            filter_image(
+                packed_rows,
+                row_bytes,
+                height,
+                bpp,
+                Strategy::BruteForce {
+                    context_rows,
+                    eval_level,
+                },
+                &mut filtered,
+            );
+
+            let _best_size = try_compress(
+                &filtered,
+                &mut brute_compressors,
+                &mut compress_buf,
+                &mut verify_buf,
+                &mut best_compressed,
+            )?;
+
+            #[cfg(feature = "zopfli")]
+            if opts.use_zopfli && _best_size < usize::MAX {
+                zopfli_candidates.push((_best_size, filtered.clone()));
+            }
+        }
+    }
+
+    // ---- Phase 4: Zopfli ----
+    #[cfg(feature = "zopfli")]
+    if opts.use_zopfli && !zopfli_candidates.is_empty() && !past_deadline(&opts) {
         // Sort by zenflate size, take top 3
         zopfli_candidates.sort_by_key(|(size, _)| *size);
         zopfli_candidates.truncate(3);
