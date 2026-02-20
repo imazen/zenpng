@@ -4,9 +4,9 @@
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum PngError {
-    /// PNG decoding error from the underlying decoder.
+    /// PNG decoding error.
     #[error("PNG decode error: {0}")]
-    Decode(#[from] png::DecodingError),
+    Decode(alloc::string::String),
 
     /// Invalid input (dimensions, buffer size, etc.).
     #[error("invalid input: {0}")]

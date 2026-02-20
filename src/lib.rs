@@ -1,8 +1,8 @@
 //! PNG encoding and decoding with zencodec-types trait integration.
 //!
-//! Wraps the `png` crate (0.18) with typed pixel buffers (`imgref` + `rgb`),
-//! metadata roundtrip (ICC/EXIF/XMP), and optional palette quantization
-//! via `zenquant`.
+//! Uses `zenflate` for both compression and decompression, typed pixel buffers
+//! (`imgref` + `rgb`), metadata roundtrip (ICC/EXIF/XMP), and optional palette
+//! quantization via `zenquant`.
 //!
 //! # Quick start
 //!
@@ -37,6 +37,7 @@ mod encode;
 mod error;
 #[cfg(feature = "quantize")]
 mod indexed;
+mod png_reader;
 mod png_writer;
 mod types;
 mod zencodec;
