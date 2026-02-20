@@ -14,9 +14,9 @@ use std::process::Command;
 use std::time::Instant;
 
 fn main() {
-    let dir = std::env::args().nth(1).unwrap_or_else(|| {
-        "/home/lilith/work/codec-corpus/clic2025-1024".to_string()
-    });
+    let dir = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "/home/lilith/work/codec-corpus/clic2025-1024".to_string());
 
     let out_dir = PathBuf::from("/mnt/v/output/zenpng/crusher_bench");
     std::fs::create_dir_all(&out_dir).unwrap();
@@ -147,10 +147,7 @@ fn main() {
 
         // --- optipng ---
         if let Some(ref tool) = optipng {
-            for (label, args) in [
-                ("optipng -o2", vec!["-o2"]),
-                ("optipng -o5", vec!["-o5"]),
-            ] {
+            for (label, args) in [("optipng -o2", vec!["-o2"]), ("optipng -o5", vec!["-o5"])] {
                 if let Some((size, secs)) = run_tool_optipng(tool, &args, &src_path, &out_dir) {
                     external_sizes.push((label.to_string(), size, secs));
                 }
@@ -195,11 +192,19 @@ fn main() {
     println!();
 
     // Aggregate results
-    let mut totals: std::collections::BTreeMap<String, (usize, f64)> = std::collections::BTreeMap::new();
+    let mut totals: std::collections::BTreeMap<String, (usize, f64)> =
+        std::collections::BTreeMap::new();
     let mut total_source = 0usize;
     let mut total_raw = 0usize;
 
-    let level_names = ["zenpng-Fastest", "zenpng-Fast", "zenpng-Balanced", "zenpng-High", "zenpng-Best", "zenpng-Crush"];
+    let level_names = [
+        "zenpng-Fastest",
+        "zenpng-Fast",
+        "zenpng-Balanced",
+        "zenpng-High",
+        "zenpng-Best",
+        "zenpng-Crush",
+    ];
 
     for r in &results {
         total_source += r.source_size;
@@ -218,15 +223,23 @@ fn main() {
     }
 
     let total_raw_mib = total_raw as f64 / 1_048_576.0;
-    println!("{} images, {:.1} MiB raw pixels, {:.1} MiB source PNGs",
-             results.len(), total_raw_mib, total_source as f64 / 1_048_576.0);
+    println!(
+        "{} images, {:.1} MiB raw pixels, {:.1} MiB source PNGs",
+        results.len(),
+        total_raw_mib,
+        total_source as f64 / 1_048_576.0
+    );
     println!();
 
     // Sort by size
-    let mut sorted: Vec<(String, usize, f64)> = totals.into_iter().map(|(k, (s, t))| (k, s, t)).collect();
+    let mut sorted: Vec<(String, usize, f64)> =
+        totals.into_iter().map(|(k, (s, t))| (k, s, t)).collect();
     sorted.sort_by_key(|x| x.1);
 
-    println!("{:<20} {:>12} {:>8} {:>10} {:>8}", "Encoder", "Total bytes", "Ratio", "Speed", "vs best");
+    println!(
+        "{:<20} {:>12} {:>8} {:>10} {:>8}",
+        "Encoder", "Total bytes", "Ratio", "Speed", "vs best"
+    );
     println!("{}", "-".repeat(62));
 
     let best_size = sorted.first().map(|x| x.1).unwrap_or(1);
@@ -234,8 +247,10 @@ fn main() {
         let ratio = *size as f64 / total_raw as f64 * 100.0;
         let speed = total_raw_mib / secs;
         let vs_best = *size as f64 / best_size as f64 * 100.0;
-        println!("{:<20} {:>12} {:>7.2}% {:>8.0} MiB/s {:>6.1}%",
-                 name, size, ratio, speed, vs_best);
+        println!(
+            "{:<20} {:>12} {:>7.2}% {:>8.0} MiB/s {:>6.1}%",
+            name, size, ratio, speed, vs_best
+        );
     }
 
     // Per-image detail table
@@ -260,7 +275,11 @@ fn main() {
         }
     }
     for name in &ext_names {
-        let short = name.replace("oxipng ", "oxi").replace("optipng ", "opt").replace("zopflipng", "zopfli").replace("pngcrush", "crush");
+        let short = name
+            .replace("oxipng ", "oxi")
+            .replace("optipng ", "opt")
+            .replace("zopflipng", "zopfli")
+            .replace("pngcrush", "crush");
         print!("{:>10}", short);
     }
     println!();
@@ -332,21 +351,20 @@ fn collect_pngs(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn which(name: &str) -> Option<String> {
-    Command::new("which")
-        .arg(name)
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
-            } else {
-                None
-            }
-        })
+    Command::new("which").arg(name).output().ok().and_then(|o| {
+        if o.status.success() {
+            Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+        } else {
+            None
+        }
+    })
 }
 
 fn which_local(name: &str) -> Option<String> {
-    let local = format!("{}/.local/bin/{name}", std::env::var("HOME").unwrap_or_default());
+    let local = format!(
+        "{}/.local/bin/{name}",
+        std::env::var("HOME").unwrap_or_default()
+    );
     if Path::new(&local).exists() {
         Some(local)
     } else {
@@ -361,7 +379,8 @@ fn run_tool(tool: &str, args: &[&str], src: &str, out_dir: &Path) -> Option<(usi
     let start = Instant::now();
     let status = Command::new(tool)
         .args(args)
-        .arg("--strip").arg("safe")
+        .arg("--strip")
+        .arg("safe")
         .arg(&tmp)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

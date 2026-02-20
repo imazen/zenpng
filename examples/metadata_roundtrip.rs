@@ -111,7 +111,9 @@ fn main() {
         }
     }
 
-    println!("Tested: {tested} / {total} PNGs with color metadata (skipped {skipped_format} unsupported formats)");
+    println!(
+        "Tested: {tested} / {total} PNGs with color metadata (skipped {skipped_format} unsupported formats)"
+    );
     println!("  gAMA: {with_gama}");
     println!("  sRGB: {with_srgb}");
     println!("  cHRM: {with_chrm}");
@@ -166,9 +168,9 @@ fn reencode(
         PixelData::Rgb16(img) => zenpng::encode_rgb16(img.as_ref(), meta, config),
         PixelData::Rgba16(img) => zenpng::encode_rgba16(img.as_ref(), meta, config),
         PixelData::Gray16(img) => zenpng::encode_gray16(img.as_ref(), meta, config),
-        PixelData::GrayAlpha8(_) | PixelData::GrayAlpha16(_) => {
-            Err(zenpng::PngError::InvalidInput("GrayAlpha not supported".into()))
-        }
+        PixelData::GrayAlpha8(_) | PixelData::GrayAlpha16(_) => Err(
+            zenpng::PngError::InvalidInput("GrayAlpha not supported".into()),
+        ),
         other => Err(zenpng::PngError::InvalidInput(format!(
             "unsupported pixel format for re-encode: {other:?}"
         ))),
@@ -202,10 +204,7 @@ fn verify_metadata(orig: &PngInfo, rt: &PngInfo) -> Result<(), String> {
         ));
     }
     if orig.cicp != rt.cicp {
-        return Err(format!(
-            "cICP mismatch: {:?} vs {:?}",
-            orig.cicp, rt.cicp
-        ));
+        return Err(format!("cICP mismatch: {:?} vs {:?}", orig.cicp, rt.cicp));
     }
     if orig.content_light_level != rt.content_light_level {
         return Err(format!(

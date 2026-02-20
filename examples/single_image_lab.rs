@@ -11,7 +11,10 @@ fn main() {
         "/home/lilith/work/codec-corpus/clic2025-1024/0d154749c7771f58e89ad343653ec4e20d6f037da829f47f5598e5d0a4ab61f0.png".to_string()
     });
 
-    eprintln!("Loading {}", Path::new(&path).file_stem().unwrap().to_string_lossy());
+    eprintln!(
+        "Loading {}",
+        Path::new(&path).file_stem().unwrap().to_string_lossy()
+    );
 
     let source = std::fs::read(&path).unwrap();
     let decoded = zenpng::decode(&source, None).unwrap();
@@ -28,13 +31,21 @@ fn main() {
     };
     let row_bytes = w * bpp;
 
-    println!("Image: {}x{}, bpp={bpp}, {:.1} KiB raw", w, h, pixel_bytes.len() as f64 / 1024.0);
+    println!(
+        "Image: {}x{}, bpp={bpp}, {:.1} KiB raw",
+        w,
+        h,
+        pixel_bytes.len() as f64 / 1024.0
+    );
     println!("Source PNG: {} bytes", source.len());
     println!();
 
     // === Part 1: Filter strategy comparison ===
     println!("=== Filter strategies (final compress: zenflate L12) ===");
-    println!("{:<45} {:>10} {:>10} {:>8}", "strategy", "zf-L12", "zopfli", "zf/zop%");
+    println!(
+        "{:<45} {:>10} {:>10} {:>8}",
+        "strategy", "zf-L12", "zopfli", "zf/zop%"
+    );
     println!("{}", "-".repeat(78));
 
     // Single filters
@@ -92,7 +103,10 @@ fn main() {
     // === Part 3: Filter histogram — what does each brute-force pick? ===
     println!();
     println!("=== Filter choice histogram (BruteForce ctx=10) ===");
-    println!("{:<30} {:>6} {:>6} {:>6} {:>6} {:>6}", "eval", "None", "Sub", "Up", "Avg", "Paeth");
+    println!(
+        "{:<30} {:>6} {:>6} {:>6} {:>6} {:>6}",
+        "eval", "None", "Sub", "Up", "Avg", "Paeth"
+    );
     for eval in [1, 4, 6, 9, 12] {
         let filtered = filter_brute_force(&pixel_bytes, row_bytes, h, bpp, 10, eval);
         let mut counts = [0u32; 5];
@@ -102,9 +116,15 @@ fn main() {
                 counts[filter_byte as usize] += 1;
             }
         }
-        println!("{:<30} {:>6} {:>6} {:>6} {:>6} {:>6}",
+        println!(
+            "{:<30} {:>6} {:>6} {:>6} {:>6} {:>6}",
             format!("eval=L{eval}"),
-            counts[0], counts[1], counts[2], counts[3], counts[4]);
+            counts[0],
+            counts[1],
+            counts[2],
+            counts[3],
+            counts[4]
+        );
     }
 }
 
@@ -128,7 +148,13 @@ fn print_sizes(name: &str, filtered: &[u8]) {
     println!("{:<45} {:>10} {:>10} {:>+8.3}", name, zf_best, zop, gap);
 }
 
-fn filter_single(pixel_bytes: &[u8], row_bytes: usize, height: usize, bpp: usize, filter: u8) -> Vec<u8> {
+fn filter_single(
+    pixel_bytes: &[u8],
+    row_bytes: usize,
+    height: usize,
+    bpp: usize,
+    filter: u8,
+) -> Vec<u8> {
     let mut out = Vec::with_capacity((row_bytes + 1) * height);
     let mut prev_row = vec![0u8; row_bytes];
     let mut filtered_row = vec![0u8; row_bytes];
@@ -144,9 +170,20 @@ fn filter_single(pixel_bytes: &[u8], row_bytes: usize, height: usize, bpp: usize
 }
 
 #[derive(Clone, Copy)]
-enum Heuristic { MinSum, Entropy, Bigrams, BigEnt }
+enum Heuristic {
+    MinSum,
+    Entropy,
+    Bigrams,
+    BigEnt,
+}
 
-fn filter_adaptive(pixel_bytes: &[u8], row_bytes: usize, height: usize, bpp: usize, heuristic: Heuristic) -> Vec<u8> {
+fn filter_adaptive(
+    pixel_bytes: &[u8],
+    row_bytes: usize,
+    height: usize,
+    bpp: usize,
+    heuristic: Heuristic,
+) -> Vec<u8> {
     let mut out = Vec::with_capacity((row_bytes + 1) * height);
     let mut prev_row = vec![0u8; row_bytes];
     let mut candidates: Vec<Vec<u8>> = (0..5).map(|_| vec![0u8; row_bytes]).collect();
@@ -158,28 +195,31 @@ fn filter_adaptive(pixel_bytes: &[u8], row_bytes: usize, height: usize, bpp: usi
         }
 
         let best_f = match heuristic {
-            Heuristic::MinSum => {
-                (0..5u8).min_by_key(|&f| {
-                    candidates[f as usize].iter().map(|&b| (b as i8).unsigned_abs() as u64).sum::<u64>()
-                }).unwrap()
-            }
-            Heuristic::Entropy => {
-                (0..5u8).min_by(|&a, &b| {
+            Heuristic::MinSum => (0..5u8)
+                .min_by_key(|&f| {
+                    candidates[f as usize]
+                        .iter()
+                        .map(|&b| (b as i8).unsigned_abs() as u64)
+                        .sum::<u64>()
+                })
+                .unwrap(),
+            Heuristic::Entropy => (0..5u8)
+                .min_by(|&a, &b| {
                     entropy_score(&candidates[a as usize])
                         .partial_cmp(&entropy_score(&candidates[b as usize]))
                         .unwrap()
-                }).unwrap()
-            }
-            Heuristic::Bigrams => {
-                (0..5u8).min_by_key(|&f| bigrams_score(&candidates[f as usize])).unwrap()
-            }
-            Heuristic::BigEnt => {
-                (0..5u8).min_by(|&a, &b| {
+                })
+                .unwrap(),
+            Heuristic::Bigrams => (0..5u8)
+                .min_by_key(|&f| bigrams_score(&candidates[f as usize]))
+                .unwrap(),
+            Heuristic::BigEnt => (0..5u8)
+                .min_by(|&a, &b| {
                     bigram_entropy_score(&candidates[a as usize])
                         .partial_cmp(&bigram_entropy_score(&candidates[b as usize]))
                         .unwrap()
-                }).unwrap()
-            }
+                })
+                .unwrap(),
         };
 
         out.push(best_f);
@@ -190,8 +230,12 @@ fn filter_adaptive(pixel_bytes: &[u8], row_bytes: usize, height: usize, bpp: usi
 }
 
 fn filter_brute_force(
-    pixel_bytes: &[u8], row_bytes: usize, height: usize, bpp: usize,
-    context_rows: usize, eval_level: u32,
+    pixel_bytes: &[u8],
+    row_bytes: usize,
+    height: usize,
+    bpp: usize,
+    context_rows: usize,
+    eval_level: u32,
 ) -> Vec<u8> {
     let filtered_row_size = row_bytes + 1;
     let max_context_bytes = 32 * 1024;
@@ -200,9 +244,8 @@ fn filter_brute_force(
         .max(1);
     let max_context = context_rows * filtered_row_size;
 
-    let mut eval_compressor = zenflate::Compressor::new(
-        zenflate::CompressionLevel::new(eval_level),
-    );
+    let mut eval_compressor =
+        zenflate::Compressor::new(zenflate::CompressionLevel::new(eval_level));
 
     let eval_max_input = max_context + filtered_row_size;
     let compress_bound = zenflate::Compressor::zlib_compress_bound(eval_max_input);
@@ -214,7 +257,11 @@ fn filter_brute_force(
 
     for y in 0..height {
         let row = &pixel_bytes[y * row_bytes..(y + 1) * row_bytes];
-        let context_start = if out.len() > max_context { out.len() - max_context } else { 0 };
+        let context_start = if out.len() > max_context {
+            out.len() - max_context
+        } else {
+            0
+        };
         let context = &out[context_start..];
 
         let mut best_f = 0u8;
@@ -247,20 +294,28 @@ fn apply_filter(filter: u8, row: &[u8], prev_row: &[u8], bpp: usize, out: &mut [
         0 => out.copy_from_slice(row),
         1 => {
             out[..bpp].copy_from_slice(&row[..bpp]);
-            for i in bpp..row.len() { out[i] = row[i].wrapping_sub(row[i - bpp]); }
+            for i in bpp..row.len() {
+                out[i] = row[i].wrapping_sub(row[i - bpp]);
+            }
         }
         2 => {
-            for i in 0..row.len() { out[i] = row[i].wrapping_sub(prev_row[i]); }
+            for i in 0..row.len() {
+                out[i] = row[i].wrapping_sub(prev_row[i]);
+            }
         }
         3 => {
-            for i in 0..bpp { out[i] = row[i].wrapping_sub(prev_row[i] / 2); }
+            for i in 0..bpp {
+                out[i] = row[i].wrapping_sub(prev_row[i] / 2);
+            }
             for i in bpp..row.len() {
                 let avg = ((row[i - bpp] as u16 + prev_row[i] as u16) / 2) as u8;
                 out[i] = row[i].wrapping_sub(avg);
             }
         }
         4 => {
-            for i in 0..bpp { out[i] = row[i].wrapping_sub(paeth(0, prev_row[i], 0)); }
+            for i in 0..bpp {
+                out[i] = row[i].wrapping_sub(paeth(0, prev_row[i], 0));
+            }
             for i in bpp..row.len() {
                 out[i] = row[i].wrapping_sub(paeth(row[i - bpp], prev_row[i], prev_row[i - bpp]));
             }
@@ -274,12 +329,20 @@ fn paeth(a: u8, b: u8, c: u8) -> u8 {
     let pa = (p - a as i16).unsigned_abs();
     let pb = (p - b as i16).unsigned_abs();
     let pc = (p - c as i16).unsigned_abs();
-    if pa <= pb && pa <= pc { a } else if pb <= pc { b } else { c }
+    if pa <= pb && pa <= pc {
+        a
+    } else if pb <= pc {
+        b
+    } else {
+        c
+    }
 }
 
 fn entropy_score(data: &[u8]) -> f64 {
     let mut counts = [0u32; 256];
-    for &b in data { counts[b as usize] += 1; }
+    for &b in data {
+        counts[b as usize] += 1;
+    }
     let len = data.len() as f64;
     let mut entropy = 0.0f64;
     for &c in &counts {
@@ -292,18 +355,25 @@ fn entropy_score(data: &[u8]) -> f64 {
 }
 
 fn bigrams_score(data: &[u8]) -> usize {
-    if data.len() < 2 { return 0; }
+    if data.len() < 2 {
+        return 0;
+    }
     let mut seen = vec![false; 65536];
     let mut count = 0;
     for pair in data.windows(2) {
         let key = (pair[0] as usize) << 8 | pair[1] as usize;
-        if !seen[key] { seen[key] = true; count += 1; }
+        if !seen[key] {
+            seen[key] = true;
+            count += 1;
+        }
     }
     count
 }
 
 fn bigram_entropy_score(data: &[u8]) -> f64 {
-    if data.len() < 2 { return 0.0; }
+    if data.len() < 2 {
+        return 0.0;
+    }
     let mut counts = vec![0u32; 65536];
     let n = data.len() - 1;
     for pair in data.windows(2) {
