@@ -18,6 +18,7 @@
 /// | `High` | 9 | Double lazy |
 /// | `Best` | 12 | Near-optimal |
 /// | `Crush` | 12+zopfli | Near-optimal filter eval, zopfli final compression |
+/// | `Budget(ms)` | adaptive | Best result within wall-clock budget |
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Compression {
@@ -39,6 +40,11 @@ pub enum Compression {
     /// produces the smallest files. Requires the `zopfli` feature; falls back
     /// to `Best` if the feature is not enabled.
     Crush,
+    /// Best result within a wall-clock time budget (milliseconds).
+    /// Internally uses the same progressive engine as other levels, enabling
+    /// all strategies (including zopfli when the feature is enabled) and
+    /// letting the deadline control how far to go.
+    Budget(u32),
 }
 
 impl Compression {
@@ -50,13 +56,21 @@ impl Compression {
             Compression::Fast => 4,
             Compression::Balanced => 6,
             Compression::High => 9,
-            Compression::Best | Compression::Crush => 12,
+            Compression::Best | Compression::Crush | Compression::Budget(_) => 12,
         }
     }
 
     /// Whether this level uses zopfli for final compression.
     pub(crate) fn use_zopfli(self) -> bool {
-        matches!(self, Compression::Crush) && cfg!(feature = "zopfli")
+        matches!(self, Compression::Crush | Compression::Budget(_)) && cfg!(feature = "zopfli")
+    }
+
+    /// Return the explicit time budget in milliseconds, if any.
+    pub(crate) fn budget_ms(self) -> Option<u32> {
+        match self {
+            Compression::Budget(ms) => Some(ms),
+            _ => None,
+        }
     }
 }
 

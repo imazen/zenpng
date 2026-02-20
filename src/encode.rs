@@ -45,6 +45,18 @@ impl EncodeConfig {
         self.filter = filter;
         self
     }
+
+    /// Build compression options from this config's compression level and time budget.
+    pub(crate) fn compress_options(&self) -> png_writer::CompressOptions {
+        let budget_ms = self.compression.budget_ms().or(self.time_limit_ms);
+        png_writer::CompressOptions {
+            use_zopfli: self.compression.use_zopfli(),
+            deadline: budget_ms.map(|ms| {
+                std::time::Instant::now() + std::time::Duration::from_millis(ms as u64)
+            }),
+            is_budget: self.compression.budget_ms().is_some(),
+        }
+    }
 }
 
 /// PNG color type (internal, maps to PNG spec values).
@@ -237,12 +249,7 @@ pub(crate) fn encode_raw(
     config: &EncodeConfig,
 ) -> Result<Vec<u8>, PngError> {
     let level = config.compression.to_zenflate_level();
-    let opts = png_writer::CompressOptions {
-        use_zopfli: config.compression.use_zopfli(),
-        deadline: config
-            .time_limit_ms
-            .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms as u64)),
-    };
+    let opts = config.compress_options();
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = config.source_gamma;
