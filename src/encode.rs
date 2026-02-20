@@ -51,9 +51,8 @@ impl EncodeConfig {
         let budget_ms = self.compression.budget_ms().or(self.time_limit_ms);
         png_writer::CompressOptions {
             use_zopfli: self.compression.use_zopfli(),
-            deadline: budget_ms.map(|ms| {
-                std::time::Instant::now() + std::time::Duration::from_millis(ms as u64)
-            }),
+            deadline: budget_ms
+                .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms as u64)),
             is_budget: self.compression.budget_ms().is_some(),
         }
     }
