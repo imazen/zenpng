@@ -24,6 +24,11 @@ pub struct EncodeConfig {
     pub srgb_intent: Option<u8>,
     /// Chromaticities for cHRM chunk.
     pub chromaticities: Option<PngChromaticities>,
+    /// Time budget in milliseconds for the entire encode operation.
+    /// For `Crush`, calibrates zopfli iterations to fit within this budget.
+    /// For `Best`, skips filter strategies when time runs out.
+    /// If `None`, uses fixed iterations (no time limit).
+    pub time_limit_ms: Option<u32>,
 }
 
 impl EncodeConfig {
@@ -91,7 +96,15 @@ pub fn encode_rgb8(
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
-    encode_raw(bytes, width, height, ColorType::Rgb, BitDepth::Eight, metadata, config)
+    encode_raw(
+        bytes,
+        width,
+        height,
+        ColorType::Rgb,
+        BitDepth::Eight,
+        metadata,
+        config,
+    )
 }
 
 /// Encode RGBA8 pixels to PNG.
@@ -104,7 +117,15 @@ pub fn encode_rgba8(
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
-    encode_raw(bytes, width, height, ColorType::Rgba, BitDepth::Eight, metadata, config)
+    encode_raw(
+        bytes,
+        width,
+        height,
+        ColorType::Rgba,
+        BitDepth::Eight,
+        metadata,
+        config,
+    )
 }
 
 /// Encode Gray8 pixels to PNG.
@@ -117,7 +138,15 @@ pub fn encode_gray8(
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: Vec<u8> = buf.iter().map(|g| g.value()).collect();
-    encode_raw(&bytes, width, height, ColorType::Grayscale, BitDepth::Eight, metadata, config)
+    encode_raw(
+        &bytes,
+        width,
+        height,
+        ColorType::Grayscale,
+        BitDepth::Eight,
+        metadata,
+        config,
+    )
 }
 
 /// Encode RGB16 pixels to PNG.
@@ -134,7 +163,15 @@ pub fn encode_rgb16(
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
     let be = native_to_be_16(bytes);
-    encode_raw(&be, width, height, ColorType::Rgb, BitDepth::Sixteen, metadata, config)
+    encode_raw(
+        &be,
+        width,
+        height,
+        ColorType::Rgb,
+        BitDepth::Sixteen,
+        metadata,
+        config,
+    )
 }
 
 /// Encode RGBA16 pixels to PNG.
@@ -151,7 +188,15 @@ pub fn encode_rgba16(
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
     let be = native_to_be_16(bytes);
-    encode_raw(&be, width, height, ColorType::Rgba, BitDepth::Sixteen, metadata, config)
+    encode_raw(
+        &be,
+        width,
+        height,
+        ColorType::Rgba,
+        BitDepth::Sixteen,
+        metadata,
+        config,
+    )
 }
 
 /// Encode Gray16 pixels to PNG.
@@ -168,7 +213,15 @@ pub fn encode_gray16(
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
     let be = native_to_be_16(bytes);
-    encode_raw(&be, width, height, ColorType::Grayscale, BitDepth::Sixteen, metadata, config)
+    encode_raw(
+        &be,
+        width,
+        height,
+        ColorType::Grayscale,
+        BitDepth::Sixteen,
+        metadata,
+        config,
+    )
 }
 
 /// Low-level encode: raw bytes to PNG with metadata and config applied.
@@ -184,7 +237,12 @@ pub(crate) fn encode_raw(
     config: &EncodeConfig,
 ) -> Result<Vec<u8>, PngError> {
     let level = config.compression.to_zenflate_level();
-    let use_zopfli = config.compression.use_zopfli();
+    let opts = png_writer::CompressOptions {
+        use_zopfli: config.compression.use_zopfli(),
+        deadline: config
+            .time_limit_ms
+            .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms as u64)),
+    };
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = config.source_gamma;
@@ -199,7 +257,7 @@ pub(crate) fn encode_raw(
         bit_depth.to_png_byte(),
         &write_meta,
         level,
-        use_zopfli,
+        opts,
     )
 }
 

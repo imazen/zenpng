@@ -52,7 +52,12 @@ pub fn encode_indexed_rgba8(
     };
 
     let compression_level = encode_config.compression.to_zenflate_level();
-    let use_zopfli = encode_config.compression.use_zopfli();
+    let opts = png_writer::CompressOptions {
+        use_zopfli: encode_config.compression.use_zopfli(),
+        deadline: encode_config
+            .time_limit_ms
+            .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms as u64)),
+    };
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = encode_config.source_gamma;
@@ -67,7 +72,7 @@ pub fn encode_indexed_rgba8(
         alpha,
         &write_meta,
         compression_level,
-        use_zopfli,
+        opts,
     )
 }
 
@@ -146,7 +151,12 @@ pub fn encode_rgba8_auto(
         };
 
         let compression_level = encode_config.compression.to_zenflate_level();
-        let use_zopfli = encode_config.compression.use_zopfli();
+        let opts = png_writer::CompressOptions {
+            use_zopfli: encode_config.compression.use_zopfli(),
+            deadline: encode_config
+                .time_limit_ms
+                .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms as u64)),
+        };
 
         let mut write_meta = PngWriteMetadata::from_metadata(metadata);
         write_meta.source_gamma = encode_config.source_gamma;
@@ -161,7 +171,7 @@ pub fn encode_rgba8_auto(
             alpha,
             &write_meta,
             compression_level,
-            use_zopfli,
+            opts,
         )?;
 
         Ok(AutoEncodeResult {
@@ -202,11 +212,7 @@ fn srgb_u8_to_oklab(lut: &linear_srgb::lut::SrgbConverter, r: u8, g: u8, b: u8) 
 }
 
 /// Compute mean OKLab ΔE between original pixels and their quantized versions.
-fn compute_mean_delta_e(
-    original: &[Rgba<u8>],
-    palette_rgba: &[[u8; 4]],
-    indices: &[u8],
-) -> f64 {
+fn compute_mean_delta_e(original: &[Rgba<u8>], palette_rgba: &[[u8; 4]], indices: &[u8]) -> f64 {
     if original.is_empty() {
         return 0.0;
     }
@@ -420,8 +426,14 @@ mod tests {
         let quant = default_quantize_config();
 
         let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.02, None).unwrap();
-        assert!(result.indexed, "few-color image should use indexed encoding");
-        assert!(result.quality_loss < 0.001, "few-color image should be near-lossless");
+        assert!(
+            result.indexed,
+            "few-color image should use indexed encoding"
+        );
+        assert!(
+            result.quality_loss < 0.001,
+            "few-color image should be near-lossless"
+        );
 
         // Verify it decodes correctly
         let decoded = crate::decode::decode(&result.data, None).unwrap();
@@ -438,7 +450,10 @@ mod tests {
 
         let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.0, None).unwrap();
         // With only 10 colors, zenquant should produce lossless quantization
-        assert!(result.indexed, "10-color image with threshold 0.0 should still use indexed");
+        assert!(
+            result.indexed,
+            "10-color image with threshold 0.0 should still use indexed"
+        );
         assert!(
             result.quality_loss == 0.0,
             "10-color image should be exactly lossless, got {}",
@@ -492,7 +507,10 @@ mod tests {
 
         // With generous threshold, should use indexed
         let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.10, None).unwrap();
-        assert!(result.indexed, "64x64 gradient with 0.10 threshold should use indexed");
+        assert!(
+            result.indexed,
+            "64x64 gradient with 0.10 threshold should use indexed"
+        );
 
         // Quality loss for a smooth gradient into 256 colors should be small
         assert!(

@@ -14,6 +14,18 @@ use zenflate::{CompressionLevel, Compressor, crc32};
 use crate::decode::PngChromaticities;
 use crate::error::PngError;
 
+/// Compression options passed through the pipeline.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CompressOptions {
+    /// Whether to use zopfli for final compression (Crush level).
+    #[allow(dead_code)] // read only with `zopfli` feature
+    pub use_zopfli: bool,
+    /// Absolute deadline for the entire encode operation.
+    /// When set, the encoder skips strategies and adjusts zopfli iterations
+    /// to finish within this time. Applies to both Best and Crush levels.
+    pub deadline: Option<std::time::Instant>,
+}
+
 /// All metadata to embed when writing a PNG file.
 ///
 /// Aggregates both codec-generic metadata (`ImageMetadata`) and PNG-specific
@@ -66,7 +78,7 @@ pub(crate) fn write_indexed_png(
     palette_alpha: Option<&[u8]>,
     write_meta: &PngWriteMetadata<'_>,
     compression_level: u8,
-    use_zopfli: bool,
+    opts: CompressOptions,
 ) -> Result<Vec<u8>, PngError> {
     let w = width as usize;
     let h = height as usize;
@@ -88,7 +100,7 @@ pub(crate) fn write_indexed_png(
     let row_bytes = packed_row_bytes(w, bit_depth);
 
     // Compress with multi-strategy filter selection (bpp=1 for indexed)
-    let compressed = compress_filtered(&packed_rows, row_bytes, h, 1, compression_level, use_zopfli)?;
+    let compressed = compress_filtered(&packed_rows, row_bytes, h, 1, compression_level, opts)?;
 
     // Assemble PNG
     let trns_data = truncate_trns(palette_alpha);
@@ -144,7 +156,7 @@ pub(crate) fn write_truecolor_png(
     bit_depth: u8,
     write_meta: &PngWriteMetadata<'_>,
     compression_level: u8,
-    use_zopfli: bool,
+    opts: CompressOptions,
 ) -> Result<Vec<u8>, PngError> {
     let w = width as usize;
     let h = height as usize;
@@ -179,7 +191,7 @@ pub(crate) fn write_truecolor_png(
         h,
         bpp,
         compression_level,
-        use_zopfli,
+        opts,
     )?;
 
     // Assemble PNG
@@ -219,7 +231,7 @@ fn compress_filtered(
     height: usize,
     bpp: usize,
     compression_level: u8,
-    use_zopfli: bool,
+    opts: CompressOptions,
 ) -> Result<Vec<u8>, PngError> {
     let filtered_size = (row_bytes + 1) * height;
     let mut best_compressed: Option<Vec<u8>> = None;
@@ -248,14 +260,26 @@ fn compress_filtered(
     let mut strategies: Vec<Strategy> = base_strategies.to_vec();
     if compression_level >= 10 {
         // Best/Crush: per-row brute-force with context, L1 and L4 eval
-        strategies.push(Strategy::BruteForce { context_rows: 10, eval_level: 1 });
-        strategies.push(Strategy::BruteForce { context_rows: 10, eval_level: 4 });
+        strategies.push(Strategy::BruteForce {
+            context_rows: 10,
+            eval_level: 1,
+        });
+        strategies.push(Strategy::BruteForce {
+            context_rows: 10,
+            eval_level: 4,
+        });
     } else if compression_level >= 9 {
         // High: per-row brute-force with moderate context
-        strategies.push(Strategy::BruteForce { context_rows: 8, eval_level: 1 });
+        strategies.push(Strategy::BruteForce {
+            context_rows: 8,
+            eval_level: 1,
+        });
     } else if compression_level >= 6 {
         // Balanced: per-row brute-force with smaller context
-        strategies.push(Strategy::BruteForce { context_rows: 3, eval_level: 1 });
+        strategies.push(Strategy::BruteForce {
+            context_rows: 3,
+            eval_level: 1,
+        });
     }
 
     // At Best level (L10+), try near-optimal levels 10-12 for each strategy.
@@ -278,6 +302,14 @@ fn compress_filtered(
     let mut zopfli_candidates: Vec<(usize, Vec<u8>)> = Vec::new(); // (zenflate_size, filtered_data)
 
     for strategy in &strategies {
+        // Check deadline — skip remaining strategies if time is up.
+        // This makes Best level time-aware when a deadline is set.
+        if let Some(dl) = opts.deadline {
+            if std::time::Instant::now() >= dl {
+                break;
+            }
+        }
+
         filtered.clear();
         filter_image(
             packed_rows,
@@ -318,54 +350,120 @@ fn compress_filtered(
 
         // Save filtered data for zopfli second pass
         #[cfg(feature = "zopfli")]
-        if use_zopfli && best_for_strategy < usize::MAX {
+        if opts.use_zopfli && best_for_strategy < usize::MAX {
             zopfli_candidates.push((best_for_strategy, filtered.clone()));
         }
     }
 
-    // Second pass: compress top candidates with zopfli (in parallel)
+    // Second pass: compress top candidates with zopfli
     #[cfg(feature = "zopfli")]
-    if use_zopfli && !zopfli_candidates.is_empty() {
+    if opts.use_zopfli && !zopfli_candidates.is_empty() {
         // Sort by zenflate size, take top 3
         zopfli_candidates.sort_by_key(|(size, _)| *size);
         zopfli_candidates.truncate(3);
 
-        // Compress all candidates in parallel using scoped threads
-        let zopfli_results: Vec<Vec<u8>> = std::thread::scope(|s| {
-            let handles: Vec<_> = zopfli_candidates
-                .iter()
-                .map(|(_size, data)| s.spawn(|| compress_with_zopfli(data)))
-                .collect();
-            handles.into_iter().map(|h| h.join().unwrap()).collect()
-        });
-
-        for zopfli_compressed in zopfli_results {
-            let dominated = best_compressed
-                .as_ref()
-                .is_some_and(|b| zopfli_compressed.len() >= b.len());
-            if !dominated {
-                best_compressed = Some(zopfli_compressed);
-            }
+        let best = zopfli_adaptive(&zopfli_candidates, opts.deadline, &mut best_compressed);
+        if let Some(b) = best {
+            best_compressed = Some(b);
         }
     }
-
-    #[cfg(not(feature = "zopfli"))]
-    let _ = use_zopfli;
 
     best_compressed.ok_or_else(|| PngError::InvalidInput("no filter strategies tried".to_string()))
 }
 
+/// Adaptive zopfli compression with time budgeting.
+///
+/// Strategy:
+/// 1. Calibrate: compress top candidate with 5 iterations, measure wall time.
+/// 2. From calibration, estimate iterations that fit in remaining budget.
+/// 3. If we can afford more iterations, run them in parallel on top candidates.
+/// 4. Always keep the best result found at any stage.
 #[cfg(feature = "zopfli")]
-fn compress_with_zopfli(data: &[u8]) -> Vec<u8> {
+fn zopfli_adaptive(
+    candidates: &[(usize, Vec<u8>)],
+    deadline: Option<std::time::Instant>,
+    current_best: &mut Option<Vec<u8>>,
+) -> Option<Vec<u8>> {
+    use std::time::Instant;
+
+    let mut best: Option<Vec<u8>> = None;
+    let mut update_best = |compressed: Vec<u8>| {
+        let dominated = best.as_ref().is_some_and(|b| compressed.len() >= b.len())
+            || current_best
+                .as_ref()
+                .is_some_and(|b| compressed.len() >= b.len());
+        if !dominated {
+            best = Some(compressed);
+        }
+    };
+
+    // Phase 1: Calibration — compress best candidate with 5 iterations.
+    let calibration_iters = 5u64;
+    let cal_start = Instant::now();
+    let cal_result = compress_with_zopfli_n(&candidates[0].1, calibration_iters);
+    let cal_elapsed = cal_start.elapsed();
+    update_best(cal_result);
+
+    // Estimate time per iteration from calibration.
+    let ms_per_iter = cal_elapsed.as_secs_f64() * 1000.0 / calibration_iters as f64;
+
+    // Phase 2: Determine max affordable iterations.
+    let max_iters = if let Some(dl) = deadline {
+        let remaining_ms = dl.saturating_duration_since(Instant::now()).as_secs_f64() * 1000.0;
+        if remaining_ms < ms_per_iter * 2.0 {
+            // Not enough time for even a meaningful run — skip
+            return best;
+        }
+        // Divide remaining time across candidates running in parallel.
+        // With N threads, wall time = time for one candidate.
+        let n_candidates = candidates.len().min(3) as f64;
+        let parallel_factor = n_candidates.min(num_cpus() as f64);
+        let ms_per_candidate = remaining_ms * parallel_factor / n_candidates;
+        let iters = (ms_per_candidate / ms_per_iter).floor() as u64;
+        iters.clamp(5, 100)
+    } else {
+        // No time limit — use fixed 50 iterations
+        50u64
+    };
+
+    if max_iters <= calibration_iters {
+        return best;
+    }
+
+    // Phase 3: Run top candidates in parallel with calculated iterations.
+    let zopfli_results: Vec<Vec<u8>> = std::thread::scope(|s| {
+        let handles: Vec<_> = candidates
+            .iter()
+            .map(|(_size, data)| s.spawn(|| compress_with_zopfli_n(data, max_iters)))
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+
+    for compressed in zopfli_results {
+        update_best(compressed);
+    }
+
+    best
+}
+
+#[cfg(feature = "zopfli")]
+fn compress_with_zopfli_n(data: &[u8], iterations: u64) -> Vec<u8> {
     let options = zopfli::Options {
-        iteration_count: core::num::NonZeroU64::new(50).unwrap(),
+        iteration_count: core::num::NonZeroU64::new(iterations.max(1)).unwrap(),
         ..Default::default()
     };
     let mut output = Vec::new();
-    // zopfli outputs raw deflate; we need zlib wrapping
     zopfli::compress(options, zopfli::Format::Zlib, data, &mut output)
         .expect("zopfli compression failed");
     output
+}
+
+/// Best-effort CPU count for parallel zopfli.
+#[cfg(feature = "zopfli")]
+fn num_cpus() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
 }
 
 // ---- Filter strategies ----
@@ -378,7 +476,10 @@ enum Strategy {
     /// filters, compress (context + candidate) with DEFLATE at `eval_level`,
     /// pick smallest. `context_rows` controls how many prior filtered rows to
     /// include as DEFLATE context (capped at DEFLATE's 32 KiB window).
-    BruteForce { context_rows: usize, eval_level: u32 },
+    BruteForce {
+        context_rows: usize,
+        eval_level: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -398,8 +499,19 @@ fn filter_image(
     out: &mut Vec<u8>,
 ) {
     match strategy {
-        Strategy::BruteForce { context_rows, eval_level } => {
-            filter_image_brute(packed_rows, row_bytes, height, bpp, context_rows, eval_level, out);
+        Strategy::BruteForce {
+            context_rows,
+            eval_level,
+        } => {
+            filter_image_brute(
+                packed_rows,
+                row_bytes,
+                height,
+                bpp,
+                context_rows,
+                eval_level,
+                out,
+            );
         }
         _ => {
             filter_image_heuristic(packed_rows, row_bytes, height, bpp, strategy, out);
