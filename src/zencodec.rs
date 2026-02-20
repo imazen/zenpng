@@ -659,12 +659,42 @@ impl zencodec_types::Decoder for PngDecoder<'_> {
 
     fn decode_rows(
         self,
-        _data: &[u8],
-        _sink: &mut dyn FnMut(u32, PixelSlice<'_>),
+        data: &[u8],
+        sink: &mut dyn FnMut(u32, PixelSlice<'_>),
     ) -> Result<ImageInfo, PngError> {
-        Err(PngError::InvalidInput(
-            "PNG does not support row-level decode callback".into(),
-        ))
+        // Pre-flight stop check
+        if let Some(stop) = self.stop {
+            stop.check()
+                .map_err(|_| PngError::InvalidInput("cancelled".into()))?;
+        }
+        let png_limits = self.effective_limits();
+
+        // Use our streaming decoder
+        let result = crate::decode::decode(data, png_limits.as_ref())?;
+        let info = convert_info(&result.info);
+        let w = result.info.width;
+        let h = result.info.height;
+
+        // Determine the pixel descriptor for the decoded data
+        let descriptor = pixel_descriptor_for_data(&result.pixels);
+        let bpp = descriptor.bytes_per_pixel();
+        let stride = w as usize * bpp;
+
+        // Get the raw pixel bytes and yield row by row
+        let pixel_bytes = pixel_data_bytes(&result.pixels);
+        for y in 0..h {
+            let row_start = y as usize * stride;
+            let row_end = row_start + stride;
+            if row_end <= pixel_bytes.len() {
+                if let Ok(row_slice) =
+                    PixelSlice::new(&pixel_bytes[row_start..row_end], w, 1, stride, descriptor)
+                {
+                    sink(y, row_slice);
+                }
+            }
+        }
+
+        Ok(info)
     }
 }
 
@@ -1390,6 +1420,51 @@ fn decode_into_gray16(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
             }
             dst_row[offset..offset + 2].copy_from_slice(&s.value().to_ne_bytes());
         }
+    }
+}
+
+// ── decode_rows helpers ──────────────────────────────────────────────
+
+/// Get the PixelDescriptor for decoded PixelData.
+fn pixel_descriptor_for_data(pixels: &PixelData) -> PixelDescriptor {
+    match pixels {
+        PixelData::Rgb8(_) => PixelDescriptor::RGB8_SRGB,
+        PixelData::Rgba8(_) => PixelDescriptor::RGBA8_SRGB,
+        PixelData::Gray8(_) => PixelDescriptor::GRAY8_SRGB,
+        PixelData::Rgb16(_) => PixelDescriptor::RGB16_SRGB,
+        PixelData::Rgba16(_) => PixelDescriptor::RGBA16_SRGB,
+        PixelData::Gray16(_) => PixelDescriptor::GRAY16_SRGB,
+        PixelData::GrayAlpha16(_) => PixelDescriptor::new(
+            zencodec_types::ChannelType::U16,
+            zencodec_types::ChannelLayout::GrayAlpha,
+            zencodec_types::AlphaMode::Straight,
+            zencodec_types::TransferFunction::Srgb,
+        ),
+        _ => PixelDescriptor::RGBA8_SRGB, // fallback
+    }
+}
+
+/// Get raw pixel bytes from PixelData (borrows the underlying buffer).
+/// For GrayAlpha16, returns an empty slice (caller must handle separately).
+fn pixel_data_bytes(pixels: &PixelData) -> Vec<u8> {
+    use rgb::ComponentBytes;
+    match pixels {
+        PixelData::Rgb8(img) => img.buf().as_bytes().to_vec(),
+        PixelData::Rgba8(img) => img.buf().as_bytes().to_vec(),
+        PixelData::Gray8(img) => img.buf().as_bytes().to_vec(),
+        PixelData::Rgb16(img) => bytemuck::cast_slice::<Rgb<u16>, u8>(img.buf()).to_vec(),
+        PixelData::Rgba16(img) => bytemuck::cast_slice::<Rgba<u16>, u8>(img.buf()).to_vec(),
+        PixelData::Gray16(img) => bytemuck::cast_slice::<Gray<u16>, u8>(img.buf()).to_vec(),
+        PixelData::GrayAlpha16(img) => {
+            // GrayAlpha<u16> is not Pod, manually serialize
+            let mut bytes = Vec::with_capacity(img.buf().len() * 4);
+            for ga in img.buf() {
+                bytes.extend_from_slice(&ga.v.to_ne_bytes());
+                bytes.extend_from_slice(&ga.a.to_ne_bytes());
+            }
+            bytes
+        }
+        _ => Vec::new(),
     }
 }
 
