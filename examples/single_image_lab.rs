@@ -77,14 +77,16 @@ fn main() {
     let filtered_l12 = filter_brute_force(&pixel_bytes, row_bytes, h, bpp, 10, 12);
     print_sizes("BruteForce(ctx=10, eval=L12)", &filtered_l12);
 
-    // === Part 2b: Zopfli iteration count sweep ===
+    // === Part 2b: Zopfli iteration count sweep with timing ===
     println!();
     println!("=== Zopfli iteration sweep (BruteForce ctx=10, eval=L1) ===");
     let filtered_best = filter_brute_force(&pixel_bytes, row_bytes, h, bpp, 10, 1);
     #[cfg(feature = "zopfli")]
-    for iters in [5, 15, 30, 50, 100] {
+    for iters in [5, 10, 15, 20, 25, 30, 50] {
+        let start = std::time::Instant::now();
         let size = compress_zopfli(&filtered_best, iters);
-        println!("  zopfli iter={:<4} {:>10}", iters, size);
+        let elapsed = start.elapsed().as_secs_f64();
+        println!("  zopfli iter={:<4} {:>10}  {:.2}s", iters, size, elapsed);
     }
 
     // === Part 3: Filter histogram — what does each brute-force pick? ===
