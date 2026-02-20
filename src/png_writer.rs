@@ -390,7 +390,14 @@ fn compress_filtered(
         }
 
         filtered.clear();
-        filter_image(packed_rows, row_bytes, height, bpp, *strategy, &mut filtered);
+        filter_image(
+            packed_rows,
+            row_bytes,
+            height,
+            bpp,
+            *strategy,
+            &mut filtered,
+        );
 
         let compressed_len = screen_compressor
             .zlib_compress(&filtered, &mut compress_buf)

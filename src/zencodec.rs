@@ -563,7 +563,6 @@ impl<'a> zencodec_types::DecodeJob<'a> for PngDecodeJob<'a> {
             "PNG does not support animation decoding via frame_decoder".into(),
         ))
     }
-
 }
 
 // ── PngDecoder ───────────────────────────────────────────────────────
