@@ -323,15 +323,23 @@ fn compress_filtered(
         }
     }
 
-    // Second pass: compress top candidates with zopfli
+    // Second pass: compress top candidates with zopfli (in parallel)
     #[cfg(feature = "zopfli")]
     if use_zopfli && !zopfli_candidates.is_empty() {
         // Sort by zenflate size, take top 3
         zopfli_candidates.sort_by_key(|(size, _)| *size);
         zopfli_candidates.truncate(3);
 
-        for (_zenflate_size, filtered_data) in &zopfli_candidates {
-            let zopfli_compressed = compress_with_zopfli(filtered_data);
+        // Compress all candidates in parallel using scoped threads
+        let zopfli_results: Vec<Vec<u8>> = std::thread::scope(|s| {
+            let handles: Vec<_> = zopfli_candidates
+                .iter()
+                .map(|(_size, data)| s.spawn(|| compress_with_zopfli(data)))
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+
+        for zopfli_compressed in zopfli_results {
             let dominated = best_compressed
                 .as_ref()
                 .is_some_and(|b| zopfli_compressed.len() >= b.len());
