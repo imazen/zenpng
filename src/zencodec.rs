@@ -527,7 +527,6 @@ impl<'a> zencodec_types::DecodeJob<'a> for PngDecodeJob<'a> {
     type Error = PngError;
     type Decoder = PngDecoder<'a>;
     type FrameDecoder = PngFrameDecoder;
-
     fn with_stop(mut self, stop: &'a dyn Stop) -> Self {
         self.stop = Some(stop);
         self
@@ -564,6 +563,7 @@ impl<'a> zencodec_types::DecodeJob<'a> for PngDecodeJob<'a> {
             "PNG does not support animation decoding via frame_decoder".into(),
         ))
     }
+
 }
 
 // ── PngDecoder ───────────────────────────────────────────────────────
