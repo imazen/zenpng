@@ -105,9 +105,13 @@ fn compress_zenflate(data: &[u8], level: u32) -> (usize, f64) {
     let bound = zenflate::Compressor::zlib_compress_bound(data.len());
     let mut out = vec![0u8; bound];
     // warmup
-    let _ = c.zlib_compress(data, &mut out).unwrap();
+    let _ = c
+        .zlib_compress(data, &mut out, zenflate::Unstoppable)
+        .unwrap();
     let start = Instant::now();
-    let len = c.zlib_compress(data, &mut out).unwrap();
+    let len = c
+        .zlib_compress(data, &mut out, zenflate::Unstoppable)
+        .unwrap();
     (len, start.elapsed().as_secs_f64())
 }
 

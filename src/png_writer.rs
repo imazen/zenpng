@@ -261,7 +261,7 @@ fn try_compress(
     let mut best_for_stream = usize::MAX;
     for compressor in compressors.iter_mut() {
         let compressed_len = compressor
-            .zlib_compress(filtered, compress_buf)
+            .zlib_compress(filtered, compress_buf, Unstoppable)
             .map_err(|e| PngError::InvalidInput(alloc::format!("compression failed: {e}")))?;
 
         // Verify decompression roundtrip
@@ -400,7 +400,7 @@ fn compress_filtered(
         );
 
         let compressed_len = screen_compressor
-            .zlib_compress(&filtered, &mut compress_buf)
+            .zlib_compress(&filtered, &mut compress_buf, Unstoppable)
             .map_err(|e| PngError::InvalidInput(alloc::format!("compression failed: {e}")))?;
 
         // Verify decompression roundtrip
@@ -779,7 +779,9 @@ fn filter_image_brute(
             eval_buf.push(f);
             eval_buf.extend_from_slice(&candidate_data[f as usize]);
 
-            if let Ok(len) = eval_compressor.zlib_compress(&eval_buf, &mut compress_buf) {
+            if let Ok(len) =
+                eval_compressor.zlib_compress(&eval_buf, &mut compress_buf, Unstoppable)
+            {
                 if len < best_size {
                     best_size = len;
                     best_f = f;
@@ -1186,7 +1188,7 @@ fn write_iccp_chunk(out: &mut Vec<u8>, icc_profile: &[u8]) -> Result<(), PngErro
     let bound = Compressor::zlib_compress_bound(icc_profile.len());
     let mut compressed = vec![0u8; bound];
     let compressed_len = compressor
-        .zlib_compress(icc_profile, &mut compressed)
+        .zlib_compress(icc_profile, &mut compressed, Unstoppable)
         .map_err(|e| PngError::InvalidInput(alloc::format!("ICC compression failed: {e}")))?;
 
     let mut chunk_data = Vec::with_capacity(keyword.len() + 1 + compressed_len);
