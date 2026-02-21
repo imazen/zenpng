@@ -668,34 +668,29 @@ impl zencodec_types::Decoder for PngDecoder<'_> {
     fn decode_rows(
         self,
         data: &[u8],
-        sink: &mut dyn FnMut(u32, PixelSlice<'_>),
+        sink: &mut dyn zencodec_types::DecodeRowSink,
     ) -> Result<ImageInfo, PngError> {
         let cancel: &dyn Stop = self.stop.unwrap_or(&enough::Unstoppable);
         cancel.check()?;
         let png_limits = self.effective_limits();
 
-        // Use our streaming decoder
+        // Full decode, then write rows to sink
         let result = crate::decode::decode(data, png_limits.as_ref(), cancel)?;
         let info = convert_info(&result.info);
         let w = result.info.width;
         let h = result.info.height;
 
-        // Determine the pixel descriptor for the decoded data
         let descriptor = pixel_descriptor_for_data(&result.pixels);
         let bpp = descriptor.bytes_per_pixel();
-        let stride = w as usize * bpp;
+        let row_bytes = w as usize * bpp;
 
-        // Get the raw pixel bytes and yield row by row
         let pixel_bytes = pixel_data_bytes(&result.pixels);
         for y in 0..h {
-            let row_start = y as usize * stride;
-            let row_end = row_start + stride;
-            if row_end <= pixel_bytes.len() {
-                if let Ok(row_slice) =
-                    PixelSlice::new(&pixel_bytes[row_start..row_end], w, 1, stride, descriptor)
-                {
-                    sink(y, row_slice);
-                }
+            let src_start = y as usize * row_bytes;
+            let src_end = src_start + row_bytes;
+            if src_end <= pixel_bytes.len() {
+                let buf = sink.demand(y, 1, row_bytes);
+                buf[..row_bytes].copy_from_slice(&pixel_bytes[src_start..src_end]);
             }
         }
 
@@ -729,7 +724,7 @@ impl zencodec_types::FrameDecoder for PngFrameDecoder {
 
     fn next_frame_rows(
         &mut self,
-        _sink: &mut dyn FnMut(u32, PixelSlice<'_>),
+        _sink: &mut dyn zencodec_types::DecodeRowSink,
     ) -> Result<Option<ImageInfo>, PngError> {
         Err(PngError::InvalidInput(
             "PNG does not support animation decoding via frame_decoder".into(),
