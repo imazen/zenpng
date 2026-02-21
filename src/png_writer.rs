@@ -36,6 +36,26 @@ impl Budget for Unlimited {
     }
 }
 
+/// Combined stop signal: checks cancel first (hard `Cancelled`), then budget
+/// exhaustion (graceful `TimedOut`). When budget expires, zenzop gracefully
+/// stops at the next squeeze iteration boundary and returns best-so-far.
+#[cfg(feature = "zopfli")]
+struct BudgetStop<'a> {
+    cancel: &'a dyn Stop,
+    budget: &'a dyn Budget,
+}
+
+#[cfg(feature = "zopfli")]
+impl Stop for BudgetStop<'_> {
+    fn check(&self) -> Result<(), enough::StopReason> {
+        self.cancel.check()?;
+        if self.budget.is_exhausted() {
+            return Err(enough::StopReason::TimedOut);
+        }
+        Ok(())
+    }
+}
+
 /// Compression options passed through the pipeline.
 pub(crate) struct CompressOptions<'a> {
     /// Whether to use zopfli for final compression (Crush level).
@@ -561,7 +581,7 @@ fn compress_filtered(
         zopfli_candidates.sort_by_key(|(size, _)| *size);
         zopfli_candidates.truncate(3);
 
-        let best = zopfli_adaptive(&zopfli_candidates, opts.budget, &mut best_compressed);
+        let best = zopfli_adaptive(&zopfli_candidates, opts.budget, opts.cancel, &mut best_compressed)?;
         if let Some(b) = best {
             best_compressed = Some(b);
         }
@@ -581,9 +601,14 @@ fn compress_filtered(
 fn zopfli_adaptive(
     candidates: &[(usize, Vec<u8>)],
     budget: &dyn Budget,
+    cancel: &dyn Stop,
     current_best: &mut Option<Vec<u8>>,
-) -> Option<Vec<u8>> {
+) -> Result<Option<Vec<u8>>, PngError> {
     use std::time::Instant;
+
+    // Combined stop: cancel (hard Cancelled) + budget (graceful TimedOut).
+    // When budget expires, zenzop gracefully returns best-so-far instead of erroring.
+    let stop = BudgetStop { cancel, budget };
 
     let mut best: Option<Vec<u8>> = None;
     let mut update_best = |compressed: Vec<u8>| {
@@ -599,7 +624,7 @@ fn zopfli_adaptive(
     // Phase 1: Calibration — compress best candidate with 5 iterations.
     let calibration_iters = 5u64;
     let cal_start = Instant::now();
-    let cal_result = compress_with_zopfli_n(&candidates[0].1, calibration_iters);
+    let cal_result = compress_with_zopfli_n(&candidates[0].1, calibration_iters, &stop)?;
     let cal_elapsed = cal_start.elapsed();
     update_best(cal_result);
 
@@ -607,11 +632,13 @@ fn zopfli_adaptive(
     let ms_per_iter = cal_elapsed.as_secs_f64() * 1000.0 / calibration_iters as f64;
 
     // Phase 2: Determine max affordable iterations.
+    // Calibration gives us a target, but the BudgetStop provides a hard backstop —
+    // if calibration overestimates, zenzop will gracefully stop when budget expires.
     let max_iters = if let Some(remaining_ns) = budget.remaining_ns() {
         let remaining_ms = remaining_ns as f64 / 1_000_000.0;
         if remaining_ms < ms_per_iter * 2.0 {
             // Not enough time for even a meaningful run — skip
-            return best;
+            return Ok(best);
         }
         // Divide remaining time across candidates running in parallel.
         // With N threads, wall time = time for one candidate.
@@ -626,35 +653,52 @@ fn zopfli_adaptive(
     };
 
     if max_iters <= calibration_iters {
-        return best;
+        return Ok(best);
     }
 
     // Phase 3: Run top candidates in parallel with calculated iterations.
-    let zopfli_results: Vec<Vec<u8>> = std::thread::scope(|s| {
+    // All threads share the combined stop — budget expiry gracefully stops
+    // all threads, cancellation hard-aborts them.
+    let zopfli_results: Vec<Result<Vec<u8>, PngError>> = std::thread::scope(|s| {
         let handles: Vec<_> = candidates
             .iter()
-            .map(|(_size, data)| s.spawn(|| compress_with_zopfli_n(data, max_iters)))
+            .map(|(_size, data)| s.spawn(|| compress_with_zopfli_n(data, max_iters, &stop)))
             .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
 
-    for compressed in zopfli_results {
-        update_best(compressed);
+    for result in zopfli_results {
+        update_best(result?);
     }
 
-    best
+    Ok(best)
 }
 
 #[cfg(feature = "zopfli")]
-fn compress_with_zopfli_n(data: &[u8], iterations: u64) -> Vec<u8> {
-    let options = zopfli::Options {
+fn compress_with_zopfli_n(data: &[u8], iterations: u64, stop: &dyn Stop) -> Result<Vec<u8>, PngError> {
+    use std::io::Write;
+    let options = zenzop::Options {
         iteration_count: core::num::NonZeroU64::new(iterations.max(1)).unwrap(),
         ..Default::default()
     };
-    let mut output = Vec::new();
-    zopfli::compress(options, zopfli::Format::Zlib, data, &mut output)
-        .expect("zopfli compression failed");
-    output
+    let mut encoder = zenzop::ZlibEncoder::with_stop(
+        options, Vec::new(), stop,
+    ).map_err(|e| zenzop_err(e, stop))?;
+    encoder.write_all(data).map_err(|e| zenzop_err(e, stop))?;
+    let result = encoder.finish().map_err(|e| zenzop_err(e, stop))?;
+    Ok(result.into_inner())
+}
+
+/// Convert a zenzop I/O error to a `PngError`.
+///
+/// Zenzop only returns errors for `Cancelled` stops — budget exhaustion (`TimedOut`)
+/// is handled gracefully and returns `Ok` with suboptimal-but-valid output.
+#[cfg(feature = "zopfli")]
+fn zenzop_err(e: std::io::Error, stop: &dyn Stop) -> PngError {
+    if let Err(reason) = stop.check() {
+        return PngError::Stopped(reason);
+    }
+    PngError::InvalidInput(alloc::format!("zopfli compression failed: {e}"))
 }
 
 /// Best-effort CPU count for parallel zopfli.
