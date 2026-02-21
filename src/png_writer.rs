@@ -1335,3 +1335,203 @@ fn metadata_size_estimate(meta: &PngWriteMetadata<'_>) -> usize {
     }
     size
 }
+
+#[cfg(all(test, feature = "zopfli"))]
+mod zopfli_tests {
+    use super::*;
+    use core::sync::atomic::{AtomicI64, Ordering};
+
+    /// Budget that expires after a fixed number of `remaining_ns()` calls.
+    /// Deterministic — no wall-clock dependency.
+    struct CallCountBudget(AtomicI64);
+
+    impl CallCountBudget {
+        fn new(calls: i64) -> Self {
+            Self(AtomicI64::new(calls))
+        }
+    }
+
+    impl Budget for CallCountBudget {
+        fn remaining_ns(&self) -> Option<u64> {
+            let prev = self.0.fetch_sub(1, Ordering::Relaxed);
+            if prev <= 0 {
+                Some(0)
+            } else {
+                // Report 1 second remaining so zopfli_adaptive's Phase 2
+                // calculates a reasonable iteration count.
+                Some(1_000_000_000)
+            }
+        }
+    }
+
+    /// Stop that fires `Cancelled` after a fixed number of `check()` calls.
+    struct CallCountCancel(AtomicI64);
+
+    impl CallCountCancel {
+        fn new(calls: i64) -> Self {
+            Self(AtomicI64::new(calls))
+        }
+    }
+
+    impl Stop for CallCountCancel {
+        fn check(&self) -> Result<(), enough::StopReason> {
+            let prev = self.0.fetch_sub(1, Ordering::Relaxed);
+            if prev <= 0 {
+                Err(enough::StopReason::Cancelled)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    /// Generate compressible test data (repeating pattern).
+    fn test_data() -> Vec<u8> {
+        let pattern: Vec<u8> = (0..=255).collect();
+        pattern.repeat(8) // 2048 bytes, compresses well
+    }
+
+    fn verify_zlib(compressed: &[u8], expected: &[u8]) {
+        let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(compressed)
+            .expect("decompression failed — zlib stream is invalid");
+        assert_eq!(decompressed, expected);
+    }
+
+    // ---- compress_with_zopfli_n tests ----
+
+    #[test]
+    fn zopfli_unlimited_returns_valid_output() {
+        let data = test_data();
+        let stop = enough::Unstoppable;
+        let result = compress_with_zopfli_n(&data, 5, &stop).unwrap();
+        verify_zlib(&result, &data);
+    }
+
+    #[test]
+    fn zopfli_budget_expiry_returns_valid_output() {
+        // BudgetStop with a budget that expires after 2 squeeze iterations.
+        // Zenzop should gracefully stop and return best-so-far.
+        let data = test_data();
+        let cancel = enough::Unstoppable;
+        let budget = CallCountBudget::new(2);
+        let stop = BudgetStop {
+            cancel: &cancel,
+            budget: &budget,
+        };
+        let result = compress_with_zopfli_n(&data, 50, &stop).unwrap();
+        verify_zlib(&result, &data);
+    }
+
+    #[test]
+    fn zopfli_cancel_returns_stopped() {
+        // Cancel after a few check() calls — zenzop should error.
+        let data = test_data();
+        let cancel = CallCountCancel::new(2);
+        let result = compress_with_zopfli_n(&data, 50, &cancel);
+        assert!(
+            matches!(result, Err(PngError::Stopped(enough::StopReason::Cancelled))),
+            "expected Stopped(Cancelled), got {result:?}",
+        );
+    }
+
+    #[test]
+    fn budget_stop_cancel_takes_priority() {
+        // Both cancel and budget would fire — cancel should win.
+        let cancel = CallCountCancel::new(0); // fires immediately
+        let budget = CallCountBudget::new(0); // also exhausted
+        let stop = BudgetStop {
+            cancel: &cancel,
+            budget: &budget,
+        };
+        let result = stop.check();
+        assert!(matches!(result, Err(enough::StopReason::Cancelled)));
+    }
+
+    #[test]
+    fn budget_stop_budget_fires_timed_out() {
+        // Cancel is fine but budget is exhausted — should get TimedOut.
+        let cancel = enough::Unstoppable;
+        let budget = CallCountBudget::new(0); // exhausted
+        let stop = BudgetStop {
+            cancel: &cancel,
+            budget: &budget,
+        };
+        let result = stop.check();
+        assert!(matches!(result, Err(enough::StopReason::TimedOut)));
+    }
+
+    #[test]
+    fn budget_stop_neither_fires() {
+        // Both cancel and budget are fine — should get Ok.
+        let cancel = enough::Unstoppable;
+        let budget = CallCountBudget::new(100);
+        let stop = BudgetStop {
+            cancel: &cancel,
+            budget: &budget,
+        };
+        assert!(stop.check().is_ok());
+    }
+
+    // ---- zopfli_adaptive tests ----
+
+    #[test]
+    fn zopfli_adaptive_unlimited_returns_valid() {
+        let data = test_data();
+        let compressed_size = {
+            let c = compress_with_zopfli_n(&data, 5, &enough::Unstoppable).unwrap();
+            c.len()
+        };
+        let candidates = vec![(compressed_size, data.clone())];
+        let cancel = enough::Unstoppable;
+        let mut current_best = None;
+
+        let result =
+            zopfli_adaptive(&candidates, &Unlimited, &cancel, &mut current_best).unwrap();
+
+        assert!(result.is_some(), "should find a result");
+        verify_zlib(result.as_ref().unwrap(), &data);
+    }
+
+    #[test]
+    fn zopfli_adaptive_budget_expiry_returns_valid() {
+        // Give enough calls for calibration (5 iterations ≈ 5 checks)
+        // plus Phase 2 budget query, then expire during Phase 3.
+        let data = test_data();
+        let compressed_size = {
+            let c = compress_with_zopfli_n(&data, 5, &enough::Unstoppable).unwrap();
+            c.len()
+        };
+        let candidates = vec![(compressed_size, data.clone())];
+        // ~7 calls for calibration + Phase 2 query, then a few more for Phase 3
+        // before expiry. The exact count doesn't matter much — what matters is
+        // that the result is valid even when budget expires mid-compression.
+        let budget = CallCountBudget::new(10);
+        let cancel = enough::Unstoppable;
+        let mut current_best = None;
+
+        let result =
+            zopfli_adaptive(&candidates, &budget, &cancel, &mut current_best).unwrap();
+
+        // Should have at least the calibration result.
+        assert!(result.is_some(), "should have calibration result");
+        verify_zlib(result.as_ref().unwrap(), &data);
+    }
+
+    #[test]
+    fn zopfli_adaptive_cancel_returns_stopped() {
+        let data = test_data();
+        let compressed_size = {
+            let c = compress_with_zopfli_n(&data, 5, &enough::Unstoppable).unwrap();
+            c.len()
+        };
+        let candidates = vec![(compressed_size, data.clone())];
+        // Cancel fires after 2 checks — should abort during calibration.
+        let cancel = CallCountCancel::new(2);
+        let mut current_best = None;
+
+        let result = zopfli_adaptive(&candidates, &Unlimited, &cancel, &mut current_best);
+        assert!(
+            matches!(result, Err(PngError::Stopped(enough::StopReason::Cancelled))),
+            "expected Stopped(Cancelled), got {result:?}",
+        );
+    }
+}
