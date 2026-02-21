@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 use enough::Stop;
 use zencodec_types::{Cicp, ContentLightLevel, ImageMetadata, MasteringDisplay};
-use zenflate::{CompressionLevel, Compressor, Unstoppable, crc32};
+use zenflate::{crc32, CompressionLevel, Compressor, Unstoppable};
 
 use crate::decode::PngChromaticities;
 use crate::error::PngError;
@@ -420,6 +420,18 @@ fn compress_filtered(
         }
     };
 
+    // Block-wise brute-force configs: (context_rows, eval_level)
+    // Only at L9+ where the extra cost is justified by quality gains.
+    let block_brute_configs: &[(usize, u32)] = if opts.is_budget {
+        &[(10, 1)]
+    } else {
+        match compression_level {
+            10.. => &[(10, 1)],
+            9 => &[(8, 1)],
+            _ => &[],
+        }
+    };
+
     // ---- Phase 1: Screen all heuristic strategies ----
     // Use a cheap compressor to rank strategies by compressed size.
     let mut screen_compressor = Compressor::new(CompressionLevel::new(screen_level));
@@ -572,6 +584,42 @@ fn compress_filtered(
                 zopfli_candidates.push((_best_size, filtered.clone()));
             }
         }
+
+        // Block-wise brute-force: runs after per-row so it has that result
+        // as a baseline to beat.
+        for &(context_rows, eval_level) in block_brute_configs {
+            if opts.budget.is_exhausted() {
+                break;
+            }
+
+            filtered.clear();
+            filter_image(
+                packed_rows,
+                row_bytes,
+                height,
+                bpp,
+                Strategy::BruteForceBlock {
+                    context_rows,
+                    eval_level,
+                },
+                opts.cancel,
+                &mut filtered,
+            );
+
+            let _best_size = try_compress(
+                &filtered,
+                &mut brute_compressors,
+                &mut compress_buf,
+                &mut verify_buf,
+                &mut best_compressed,
+                opts.cancel,
+            )?;
+
+            #[cfg(feature = "zopfli")]
+            if opts.use_zopfli && _best_size < usize::MAX {
+                zopfli_candidates.push((_best_size, filtered.clone()));
+            }
+        }
     }
 
     // ---- Phase 4: Zopfli ----
@@ -581,7 +629,12 @@ fn compress_filtered(
         zopfli_candidates.sort_by_key(|(size, _)| *size);
         zopfli_candidates.truncate(3);
 
-        let best = zopfli_adaptive(&zopfli_candidates, opts.budget, opts.cancel, &mut best_compressed)?;
+        let best = zopfli_adaptive(
+            &zopfli_candidates,
+            opts.budget,
+            opts.cancel,
+            &mut best_compressed,
+        )?;
         if let Some(b) = best {
             best_compressed = Some(b);
         }
@@ -675,15 +728,18 @@ fn zopfli_adaptive(
 }
 
 #[cfg(feature = "zopfli")]
-fn compress_with_zopfli_n(data: &[u8], iterations: u64, stop: &dyn Stop) -> Result<Vec<u8>, PngError> {
+fn compress_with_zopfli_n(
+    data: &[u8],
+    iterations: u64,
+    stop: &dyn Stop,
+) -> Result<Vec<u8>, PngError> {
     use std::io::Write;
     let options = zenzop::Options {
         iteration_count: core::num::NonZeroU64::new(iterations.max(1)).unwrap(),
         ..Default::default()
     };
-    let mut encoder = zenzop::ZlibEncoder::with_stop(
-        options, Vec::new(), stop,
-    ).map_err(|e| zenzop_err(e, stop))?;
+    let mut encoder = zenzop::ZlibEncoder::with_stop(options, Vec::new(), stop)
+        .map_err(|e| zenzop_err(e, stop))?;
     encoder.write_all(data).map_err(|e| zenzop_err(e, stop))?;
     let result = encoder.finish().map_err(|e| zenzop_err(e, stop))?;
     Ok(result.into_inner())
@@ -723,6 +779,13 @@ enum Strategy {
         context_rows: usize,
         eval_level: u32,
     },
+    /// Block-wise brute-force: evaluates all 5^B filter combinations for
+    /// groups of B rows simultaneously. Finds better local optima than
+    /// per-row greedy by considering cross-row DEFLATE interactions.
+    BruteForceBlock {
+        context_rows: usize,
+        eval_level: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -748,6 +811,21 @@ fn filter_image(
             eval_level,
         } => {
             filter_image_brute(
+                packed_rows,
+                row_bytes,
+                height,
+                bpp,
+                context_rows,
+                eval_level,
+                cancel,
+                out,
+            );
+        }
+        Strategy::BruteForceBlock {
+            context_rows,
+            eval_level,
+        } => {
+            filter_image_blockwise(
                 packed_rows,
                 row_bytes,
                 height,
@@ -792,7 +870,7 @@ fn filter_image_heuristic(
                 out.push(best_f);
                 out.extend_from_slice(&candidates[best_f as usize]);
             }
-            Strategy::BruteForce { .. } => unreachable!(),
+            Strategy::BruteForce { .. } | Strategy::BruteForceBlock { .. } => unreachable!(),
         }
 
         prev_row.copy_from_slice(row);
@@ -875,6 +953,216 @@ fn filter_image_brute(
         out.extend_from_slice(&candidate_data[best_f as usize]);
 
         prev_row.copy_from_slice(row);
+    }
+}
+
+/// Pre-compute all 5 filter outputs for every row.
+///
+/// Layout: flat buffer with `[row0_f0, row0_f1, ..., row0_f4, row1_f0, ...]`.
+/// Each entry is `row_bytes` long. Total size: `5 * height * row_bytes`.
+fn precompute_all_filters(
+    packed_rows: &[u8],
+    row_bytes: usize,
+    height: usize,
+    bpp: usize,
+) -> Vec<u8> {
+    let mut buf = vec![0u8; 5 * height * row_bytes];
+    let mut prev_row = vec![0u8; row_bytes];
+
+    for y in 0..height {
+        let row = &packed_rows[y * row_bytes..(y + 1) * row_bytes];
+        for f in 0..5u8 {
+            let offset = (y * 5 + f as usize) * row_bytes;
+            apply_filter(f, row, &prev_row, bpp, &mut buf[offset..offset + row_bytes]);
+        }
+        prev_row.copy_from_slice(row);
+    }
+    buf
+}
+
+/// Index into a precomputed filter buffer.
+#[inline]
+fn precomputed_row(buf: &[u8], row_bytes: usize, row: usize, filter: usize) -> &[u8] {
+    let offset = (row * 5 + filter) * row_bytes;
+    &buf[offset..offset + row_bytes]
+}
+
+/// Pick block size B in [2, 5] based on image size and evaluation budget.
+///
+/// Filters ~20 rows with MinSum heuristic, then picks B so that the total
+/// number of evaluations `5^B * ceil(height/B)` stays under a budget.
+fn learn_block_size(height: usize) -> usize {
+    // Budget: 200K evals for large images, 50K for small (<=64 rows)
+    let budget = if height <= 64 { 50_000 } else { 200_000 };
+
+    // Try B from 5 down to 2, pick the largest that fits budget
+    for b in (2..=5).rev() {
+        let blocks = height.div_ceil(b);
+        let pow5 = 5usize.pow(b as u32);
+        let evals = pow5 * blocks;
+        if evals <= budget {
+            return b;
+        }
+    }
+    2 // fallback
+}
+
+/// Block-wise brute-force filter selection.
+///
+/// Evaluates all 5^B filter combinations for groups of B rows simultaneously,
+/// finding better local optima than per-row greedy selection.
+#[allow(clippy::too_many_arguments)]
+fn filter_image_blockwise(
+    packed_rows: &[u8],
+    row_bytes: usize,
+    height: usize,
+    bpp: usize,
+    context_rows: usize,
+    eval_level: u32,
+    cancel: &dyn Stop,
+    out: &mut Vec<u8>,
+) {
+    if height == 0 {
+        return;
+    }
+
+    let block_size = learn_block_size(height);
+    let filtered_row_size = row_bytes + 1; // filter byte + row data
+
+    // Cap context to DEFLATE's 32 KiB sliding window
+    let max_context_bytes = 32 * 1024;
+    let context_rows = context_rows
+        .min(max_context_bytes / filtered_row_size)
+        .max(1);
+    let max_context = context_rows * filtered_row_size;
+
+    let eval_level = CompressionLevel::new(eval_level);
+    let mut eval_compressor = Compressor::new(eval_level);
+
+    let eval_max_input = max_context + block_size * filtered_row_size;
+    let compress_bound = Compressor::zlib_compress_bound(eval_max_input);
+    let mut compress_buf = vec![0u8; compress_bound];
+
+    // Pre-compute all filter variants if they fit in 64 MB
+    let total_precompute = 5 * height * row_bytes;
+    let precomputed = if total_precompute <= 64 * 1024 * 1024 {
+        Some(precompute_all_filters(packed_rows, row_bytes, height, bpp))
+    } else {
+        None
+    };
+
+    // Scratch space for per-block filter computation when not precomputed
+    let mut block_filters: Vec<u8> = if precomputed.is_none() {
+        vec![0u8; 5 * block_size * row_bytes]
+    } else {
+        Vec::new()
+    };
+
+    let mut eval_buf = Vec::with_capacity(eval_max_input);
+
+    let mut block_start = 0;
+    while block_start < height {
+        // Check cancel between blocks
+        if cancel.check().is_err() {
+            // Fill remaining rows with filter 0 (None)
+            for y in block_start..height {
+                out.push(0);
+                if let Some(ref pc) = precomputed {
+                    out.extend_from_slice(precomputed_row(pc, row_bytes, y, 0));
+                } else {
+                    out.extend_from_slice(&packed_rows[y * row_bytes..(y + 1) * row_bytes]);
+                }
+            }
+            return;
+        }
+
+        let actual_block = block_size.min(height - block_start);
+        let combos = 5usize.pow(actual_block as u32);
+
+        // Compute filter variants for this block if not precomputed
+        if precomputed.is_none() {
+            let mut prev_row = vec![0u8; row_bytes];
+            if block_start > 0 {
+                prev_row.copy_from_slice(
+                    &packed_rows[(block_start - 1) * row_bytes..block_start * row_bytes],
+                );
+            }
+            for i in 0..actual_block {
+                let y = block_start + i;
+                let row = &packed_rows[y * row_bytes..(y + 1) * row_bytes];
+                for f in 0..5u8 {
+                    let offset = (i * 5 + f as usize) * row_bytes;
+                    apply_filter(
+                        f,
+                        row,
+                        &prev_row,
+                        bpp,
+                        &mut block_filters[offset..offset + row_bytes],
+                    );
+                }
+                prev_row.copy_from_slice(row);
+            }
+        }
+
+        // Get trailing context from already-committed filtered output
+        let context_start = if out.len() > max_context {
+            out.len() - max_context
+        } else {
+            0
+        };
+        let context = &out[context_start..];
+
+        let mut best_combo = 0usize;
+        let mut best_size = usize::MAX;
+
+        for combo in 0..combos {
+            // Decode combo into per-row filter choices
+            eval_buf.clear();
+            eval_buf.extend_from_slice(context);
+
+            let mut c = combo;
+            for i in 0..actual_block {
+                let f = (c % 5) as u8;
+                c /= 5;
+
+                eval_buf.push(f);
+                if let Some(ref pc) = precomputed {
+                    eval_buf.extend_from_slice(precomputed_row(
+                        pc,
+                        row_bytes,
+                        block_start + i,
+                        f as usize,
+                    ));
+                } else {
+                    let offset = (i * 5 + f as usize) * row_bytes;
+                    eval_buf.extend_from_slice(&block_filters[offset..offset + row_bytes]);
+                }
+            }
+
+            if let Ok(len) = eval_compressor.zlib_compress(&eval_buf, &mut compress_buf, cancel) {
+                if len < best_size {
+                    best_size = len;
+                    best_combo = combo;
+                }
+            }
+        }
+
+        // Commit winning combination
+        let mut c = best_combo;
+        for i in 0..actual_block {
+            let f = (c % 5) as u8;
+            c /= 5;
+
+            out.push(f);
+            if let Some(ref pc) = precomputed {
+                out.extend_from_slice(precomputed_row(pc, row_bytes, block_start + i, f as usize));
+            } else {
+                let offset = (i * 5 + f as usize) * row_bytes;
+                out.extend_from_slice(&block_filters[offset..offset + row_bytes]);
+            }
+        }
+
+        block_start += actual_block;
     }
 }
 
@@ -1428,7 +1716,10 @@ mod zopfli_tests {
         let cancel = CallCountCancel::new(2);
         let result = compress_with_zopfli_n(&data, 50, &cancel);
         assert!(
-            matches!(result, Err(PngError::Stopped(enough::StopReason::Cancelled))),
+            matches!(
+                result,
+                Err(PngError::Stopped(enough::StopReason::Cancelled))
+            ),
             "expected Stopped(Cancelled), got {result:?}",
         );
     }
@@ -1484,8 +1775,7 @@ mod zopfli_tests {
         let cancel = enough::Unstoppable;
         let mut current_best = None;
 
-        let result =
-            zopfli_adaptive(&candidates, &Unlimited, &cancel, &mut current_best).unwrap();
+        let result = zopfli_adaptive(&candidates, &Unlimited, &cancel, &mut current_best).unwrap();
 
         assert!(result.is_some(), "should find a result");
         verify_zlib(result.as_ref().unwrap(), &data);
@@ -1508,8 +1798,7 @@ mod zopfli_tests {
         let cancel = enough::Unstoppable;
         let mut current_best = None;
 
-        let result =
-            zopfli_adaptive(&candidates, &budget, &cancel, &mut current_best).unwrap();
+        let result = zopfli_adaptive(&candidates, &budget, &cancel, &mut current_best).unwrap();
 
         // Should have at least the calibration result.
         assert!(result.is_some(), "should have calibration result");
@@ -1530,7 +1819,10 @@ mod zopfli_tests {
 
         let result = zopfli_adaptive(&candidates, &Unlimited, &cancel, &mut current_best);
         assert!(
-            matches!(result, Err(PngError::Stopped(enough::StopReason::Cancelled))),
+            matches!(
+                result,
+                Err(PngError::Stopped(enough::StopReason::Cancelled))
+            ),
             "expected Stopped(Cancelled), got {result:?}",
         );
     }
@@ -1565,8 +1857,7 @@ mod zopfli_tests {
             let cancel = enough::Unstoppable;
             let mut current_best = Some(zenflate_result.clone());
 
-            let result =
-                zopfli_adaptive(&candidates, &budget, &cancel, &mut current_best).unwrap();
+            let result = zopfli_adaptive(&candidates, &budget, &cancel, &mut current_best).unwrap();
 
             if let Some(ref better) = result {
                 assert!(
@@ -1588,7 +1879,10 @@ mod zopfli_tests {
         let patterns: Vec<Vec<u8>> = vec![
             (0..=255u8).collect::<Vec<_>>().repeat(8),
             (0..=255u8).rev().collect::<Vec<_>>().repeat(8),
-            (0..=255u8).flat_map(|b| [b, b]).collect::<Vec<_>>().repeat(4),
+            (0..=255u8)
+                .flat_map(|b| [b, b])
+                .collect::<Vec<_>>()
+                .repeat(4),
         ];
 
         let candidates: Vec<(usize, Vec<u8>)> = patterns
@@ -1614,8 +1908,7 @@ mod zopfli_tests {
             let cancel = enough::Unstoppable;
             let mut current_best = Some(zenflate_best.clone());
 
-            let result =
-                zopfli_adaptive(&candidates, &budget, &cancel, &mut current_best).unwrap();
+            let result = zopfli_adaptive(&candidates, &budget, &cancel, &mut current_best).unwrap();
 
             if let Some(ref better) = result {
                 assert!(
@@ -1625,8 +1918,8 @@ mod zopfli_tests {
                     better.len(),
                 );
                 // Verify it decompresses to one of the candidate patterns.
-                let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(better)
-                    .expect("invalid zlib");
+                let decompressed =
+                    miniz_oxide::inflate::decompress_to_vec_zlib(better).expect("invalid zlib");
                 assert!(
                     patterns.iter().any(|p| *p == decompressed),
                     "budget_calls={budget_calls}: decompressed data doesn't match any candidate",
