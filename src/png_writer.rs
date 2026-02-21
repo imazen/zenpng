@@ -1534,4 +1534,104 @@ mod zopfli_tests {
             "expected Stopped(Cancelled), got {result:?}",
         );
     }
+
+    // ---- non-regression tests ----
+
+    /// Compress data with zenflate at the given level, return the zlib stream.
+    fn zenflate_baseline(data: &[u8], level: u32) -> Vec<u8> {
+        let mut compressor = Compressor::new(CompressionLevel::new(level));
+        let bound = Compressor::zlib_compress_bound(data.len());
+        let mut buf = vec![0u8; bound];
+        let len = compressor
+            .zlib_compress(data, &mut buf, enough::Unstoppable)
+            .unwrap();
+        buf[..len].to_vec()
+    }
+
+    /// Property: zopfli_adaptive must NEVER return a result larger than
+    /// the zenflate baseline passed as current_best. Sweep all budget
+    /// values from immediate expiry through generous.
+    #[test]
+    fn zopfli_adaptive_never_regresses_vs_zenflate() {
+        let data = test_data();
+        let zenflate_result = zenflate_baseline(&data, 12);
+        let zenflate_size = zenflate_result.len();
+        let candidates = vec![(zenflate_size, data.clone())];
+
+        // Sweep: budget expires at various points — from before calibration
+        // starts to well after the parallel phase finishes.
+        for budget_calls in 0..=50 {
+            let budget = CallCountBudget::new(budget_calls);
+            let cancel = enough::Unstoppable;
+            let mut current_best = Some(zenflate_result.clone());
+
+            let result =
+                zopfli_adaptive(&candidates, &budget, &cancel, &mut current_best).unwrap();
+
+            if let Some(ref better) = result {
+                assert!(
+                    better.len() < zenflate_size,
+                    "budget_calls={budget_calls}: zopfli ({}) must be strictly smaller \
+                     than zenflate ({zenflate_size})",
+                    better.len(),
+                );
+                verify_zlib(better, &data);
+            }
+            // None means zenflate won — no regression possible.
+        }
+    }
+
+    /// Same property but with multiple candidates, testing the parallel phase.
+    #[test]
+    fn zopfli_adaptive_multi_candidate_never_regresses() {
+        // Three different filter outputs (simulated with different data patterns).
+        let patterns: Vec<Vec<u8>> = vec![
+            (0..=255u8).collect::<Vec<_>>().repeat(8),
+            (0..=255u8).rev().collect::<Vec<_>>().repeat(8),
+            (0..=255u8).flat_map(|b| [b, b]).collect::<Vec<_>>().repeat(4),
+        ];
+
+        let candidates: Vec<(usize, Vec<u8>)> = patterns
+            .iter()
+            .map(|p| {
+                let baseline = zenflate_baseline(p, 12);
+                (baseline.len(), p.clone())
+            })
+            .collect();
+
+        // Use the smallest zenflate result as current_best (realistic scenario).
+        let best_pattern_idx = candidates
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (size, _))| *size)
+            .unwrap()
+            .0;
+        let zenflate_best = zenflate_baseline(&patterns[best_pattern_idx], 12);
+        let zenflate_best_size = zenflate_best.len();
+
+        for budget_calls in [0, 1, 3, 5, 8, 12, 20, 50] {
+            let budget = CallCountBudget::new(budget_calls);
+            let cancel = enough::Unstoppable;
+            let mut current_best = Some(zenflate_best.clone());
+
+            let result =
+                zopfli_adaptive(&candidates, &budget, &cancel, &mut current_best).unwrap();
+
+            if let Some(ref better) = result {
+                assert!(
+                    better.len() < zenflate_best_size,
+                    "budget_calls={budget_calls}: zopfli ({}) must be strictly smaller \
+                     than zenflate ({zenflate_best_size})",
+                    better.len(),
+                );
+                // Verify it decompresses to one of the candidate patterns.
+                let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(better)
+                    .expect("invalid zlib");
+                assert!(
+                    patterns.iter().any(|p| *p == decompressed),
+                    "budget_calls={budget_calls}: decompressed data doesn't match any candidate",
+                );
+            }
+        }
+    }
 }
