@@ -6,10 +6,25 @@ use rgb::{Gray, Rgb, Rgba};
 
 use zencodec_types::ImageMetadata;
 
+use enough::Stop;
+
 use crate::decode::PngChromaticities;
 use crate::error::PngError;
-use crate::png_writer::{self, PngWriteMetadata};
+use crate::png_writer::{self, Budget, PngWriteMetadata, Unlimited};
 use crate::types::{Compression, Filter};
+
+/// Budget backed by a deadline `Instant`.
+pub(crate) struct DeadlineBudget(pub(crate) std::time::Instant);
+
+impl Budget for DeadlineBudget {
+    fn remaining_ns(&self) -> Option<u64> {
+        Some(
+            self.0
+                .saturating_duration_since(std::time::Instant::now())
+                .as_nanos() as u64,
+        )
+    }
+}
 
 /// PNG encode configuration.
 #[derive(Clone, Debug, Default)]
@@ -46,14 +61,17 @@ impl EncodeConfig {
         self
     }
 
-    /// Build compression options from this config's compression level and time budget.
-    pub(crate) fn compress_options(&self) -> png_writer::CompressOptions {
-        let budget_ms = self.compression.budget_ms().or(self.time_limit_ms);
+    /// Build compression options from this config, external budget, and cancel signal.
+    pub(crate) fn compress_options<'a>(
+        &self,
+        budget: &'a dyn Budget,
+        cancel: &'a dyn Stop,
+    ) -> png_writer::CompressOptions<'a> {
         png_writer::CompressOptions {
             use_zopfli: self.compression.use_zopfli(),
-            deadline: budget_ms
-                .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms as u64)),
             is_budget: self.compression.budget_ms().is_some(),
+            budget,
+            cancel,
         }
     }
 }
@@ -107,6 +125,7 @@ pub fn encode_rgb8(
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
+    let budget = make_budget(config);
     encode_raw(
         bytes,
         width,
@@ -115,6 +134,8 @@ pub fn encode_rgb8(
         BitDepth::Eight,
         metadata,
         config,
+        &*budget,
+        &enough::Unstoppable,
     )
 }
 
@@ -128,6 +149,7 @@ pub fn encode_rgba8(
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
+    let budget = make_budget(config);
     encode_raw(
         bytes,
         width,
@@ -136,6 +158,8 @@ pub fn encode_rgba8(
         BitDepth::Eight,
         metadata,
         config,
+        &*budget,
+        &enough::Unstoppable,
     )
 }
 
@@ -149,6 +173,7 @@ pub fn encode_gray8(
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: Vec<u8> = buf.iter().map(|g| g.value()).collect();
+    let budget = make_budget(config);
     encode_raw(
         &bytes,
         width,
@@ -157,6 +182,8 @@ pub fn encode_gray8(
         BitDepth::Eight,
         metadata,
         config,
+        &*budget,
+        &enough::Unstoppable,
     )
 }
 
@@ -174,6 +201,7 @@ pub fn encode_rgb16(
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
     let be = native_to_be_16(bytes);
+    let budget = make_budget(config);
     encode_raw(
         &be,
         width,
@@ -182,6 +210,8 @@ pub fn encode_rgb16(
         BitDepth::Sixteen,
         metadata,
         config,
+        &*budget,
+        &enough::Unstoppable,
     )
 }
 
@@ -199,6 +229,7 @@ pub fn encode_rgba16(
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
     let be = native_to_be_16(bytes);
+    let budget = make_budget(config);
     encode_raw(
         &be,
         width,
@@ -207,6 +238,8 @@ pub fn encode_rgba16(
         BitDepth::Sixteen,
         metadata,
         config,
+        &*budget,
+        &enough::Unstoppable,
     )
 }
 
@@ -224,6 +257,7 @@ pub fn encode_gray16(
     let (buf, _, _) = img.to_contiguous_buf();
     let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
     let be = native_to_be_16(bytes);
+    let budget = make_budget(config);
     encode_raw(
         &be,
         width,
@@ -232,12 +266,26 @@ pub fn encode_gray16(
         BitDepth::Sixteen,
         metadata,
         config,
+        &*budget,
+        &enough::Unstoppable,
     )
+}
+
+/// Create a budget from the config's time limit.
+fn make_budget(config: &EncodeConfig) -> Box<dyn Budget> {
+    let budget_ms = config.compression.budget_ms().or(config.time_limit_ms);
+    match budget_ms {
+        Some(ms) => Box::new(DeadlineBudget(
+            std::time::Instant::now() + std::time::Duration::from_millis(ms as u64),
+        )),
+        None => Box::new(Unlimited),
+    }
 }
 
 /// Low-level encode: raw bytes to PNG with metadata and config applied.
 ///
 /// Uses zenflate multi-strategy compression for all color types.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_raw(
     bytes: &[u8],
     width: u32,
@@ -246,9 +294,11 @@ pub(crate) fn encode_raw(
     bit_depth: BitDepth,
     metadata: Option<&ImageMetadata<'_>>,
     config: &EncodeConfig,
+    budget: &dyn Budget,
+    cancel: &dyn Stop,
 ) -> Result<Vec<u8>, PngError> {
     let level = config.compression.to_zenflate_level();
-    let opts = config.compress_options();
+    let opts = config.compress_options(budget, cancel);
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = config.source_gamma;

@@ -1,3 +1,5 @@
+use enough::Unstoppable;
+
 /// Time each compression level on a single image.
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
@@ -5,7 +7,7 @@ fn main() {
     });
 
     let source = std::fs::read(&path).unwrap();
-    let decoded = zenpng::decode(&source, None).unwrap();
+    let decoded = zenpng::decode(&source, None, &Unstoppable).unwrap();
 
     let levels = [
         ("Fastest", zenpng::Compression::Fastest),

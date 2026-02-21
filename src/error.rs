@@ -16,8 +16,18 @@ pub enum PngError {
     #[error("limit exceeded: {0}")]
     LimitExceeded(alloc::string::String),
 
+    /// Operation stopped by cooperative cancellation.
+    #[error("stopped: {0}")]
+    Stopped(enough::StopReason),
+
     /// Quantization error.
     #[cfg(feature = "quantize")]
     #[error("quantize error: {0}")]
     Quantize(#[from] zenquant::QuantizeError),
+}
+
+impl From<enough::StopReason> for PngError {
+    fn from(reason: enough::StopReason) -> Self {
+        PngError::Stopped(reason)
+    }
 }

@@ -13,8 +13,9 @@ use zencodec_types::{
 };
 
 use crate::decode::PngLimits;
-use crate::encode::EncodeConfig;
+use crate::encode::{DeadlineBudget, EncodeConfig};
 use crate::error::PngError;
+use crate::png_writer::{Budget, Unlimited};
 
 // ── Capabilities ─────────────────────────────────────────────────────
 
@@ -229,11 +230,9 @@ impl<'a> PngEncoder<'a> {
         color_type: crate::encode::ColorType,
         bit_depth: crate::encode::BitDepth,
     ) -> Result<EncodeOutput, PngError> {
+        let cancel: &dyn Stop = self.stop.unwrap_or(&enough::Unstoppable);
         // Pre-flight stop check
-        if let Some(stop) = self.stop {
-            stop.check()
-                .map_err(|_| PngError::InvalidInput("cancelled".into()))?;
-        }
+        cancel.check()?;
         // Pre-flight limit checks
         if let Some(ref limits) = self.limits {
             limits
@@ -255,6 +254,16 @@ impl<'a> PngEncoder<'a> {
                 .check_memory(estimated_mem)
                 .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
         }
+        let config = &self.config.config;
+        let budget: Box<dyn Budget> = {
+            let budget_ms = config.compression.budget_ms().or(config.time_limit_ms);
+            match budget_ms {
+                Some(ms) => Box::new(DeadlineBudget(
+                    std::time::Instant::now() + std::time::Duration::from_millis(ms as u64),
+                )),
+                None => Box::new(Unlimited),
+            }
+        };
         let data = crate::encode::encode_raw(
             bytes,
             w,
@@ -262,7 +271,9 @@ impl<'a> PngEncoder<'a> {
             color_type,
             bit_depth,
             self.metadata,
-            &self.config.config,
+            config,
+            &*budget,
+            cancel,
         )?;
         Ok(EncodeOutput::new(data, ImageFormat::Png))
     }
@@ -594,13 +605,10 @@ impl zencodec_types::Decoder for PngDecoder<'_> {
     type Error = PngError;
 
     fn decode(self, data: &[u8]) -> Result<DecodeOutput, PngError> {
-        // Pre-flight stop check
-        if let Some(stop) = self.stop {
-            stop.check()
-                .map_err(|_| PngError::InvalidInput("cancelled".into()))?;
-        }
+        let cancel: &dyn Stop = self.stop.unwrap_or(&enough::Unstoppable);
+        cancel.check()?;
         let png_limits = self.effective_limits();
-        let result = crate::decode::decode(data, png_limits.as_ref())?;
+        let result = crate::decode::decode(data, png_limits.as_ref(), cancel)?;
         let info = convert_info(&result.info);
         Ok(DecodeOutput::new(result.pixels, info))
     }
@@ -662,15 +670,12 @@ impl zencodec_types::Decoder for PngDecoder<'_> {
         data: &[u8],
         sink: &mut dyn FnMut(u32, PixelSlice<'_>),
     ) -> Result<ImageInfo, PngError> {
-        // Pre-flight stop check
-        if let Some(stop) = self.stop {
-            stop.check()
-                .map_err(|_| PngError::InvalidInput("cancelled".into()))?;
-        }
+        let cancel: &dyn Stop = self.stop.unwrap_or(&enough::Unstoppable);
+        cancel.check()?;
         let png_limits = self.effective_limits();
 
         // Use our streaming decoder
-        let result = crate::decode::decode(data, png_limits.as_ref())?;
+        let result = crate::decode::decode(data, png_limits.as_ref(), cancel)?;
         let info = convert_info(&result.info);
         let w = result.info.width;
         let h = result.info.height;
@@ -1990,7 +1995,7 @@ mod tests {
         );
 
         // Decode and verify exact values
-        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
         assert_eq!(decoded.info.width, 2);
         assert_eq!(decoded.info.height, 2);
         assert_eq!(decoded.info.bit_depth, 16);
@@ -2042,7 +2047,7 @@ mod tests {
         let encoded =
             crate::encode::encode_rgba16(img.as_ref(), None, &EncodeConfig::default()).unwrap();
 
-        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
         assert_eq!(decoded.info.bit_depth, 16);
 
         match &decoded.pixels {
@@ -2067,7 +2072,7 @@ mod tests {
         let encoded =
             crate::encode::encode_gray16(img.as_ref(), None, &EncodeConfig::default()).unwrap();
 
-        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
         assert_eq!(decoded.info.bit_depth, 16);
 
         match &decoded.pixels {
@@ -2108,7 +2113,7 @@ mod tests {
             crate::encode::encode_rgb16(img.as_ref(), Some(&meta), &EncodeConfig::default())
                 .unwrap();
 
-        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
         assert_eq!(
             decoded.info.icc_profile.as_deref(),
             Some(fake_icc.as_slice())
@@ -2139,7 +2144,7 @@ mod tests {
         let encoded =
             crate::encode::encode_rgb8(img.as_ref(), None, &EncodeConfig::default()).unwrap();
 
-        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
         assert_eq!(decoded.info.width, 2);
         assert_eq!(decoded.info.height, 2);
 
@@ -2187,7 +2192,7 @@ mod tests {
         let encoded =
             crate::encode::encode_rgba8(img.as_ref(), None, &EncodeConfig::default()).unwrap();
 
-        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
         match &decoded.pixels {
             PixelData::Rgba8(img) => {
                 let buf = img.buf();
@@ -2207,7 +2212,7 @@ mod tests {
         let encoded =
             crate::encode::encode_gray8(img.as_ref(), None, &EncodeConfig::default()).unwrap();
 
-        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
         match &decoded.pixels {
             PixelData::Gray8(img) => {
                 let buf = img.buf();
@@ -2280,7 +2285,7 @@ mod tests {
         };
 
         let encoded = crate::encode::encode_rgb8(img.as_ref(), None, &config).unwrap();
-        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
 
         assert_eq!(decoded.info.source_gamma, Some(45455));
         assert_eq!(decoded.info.srgb_intent, Some(0));
@@ -2314,7 +2319,7 @@ mod tests {
         let config = crate::encode::EncodeConfig::default();
 
         let encoded = crate::encode::encode_rgb8(img.as_ref(), Some(&meta), &config).unwrap();
-        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
 
         let dc = decoded.info.cicp.expect("cICP missing");
         assert_eq!(dc.color_primaries, 9);
@@ -2350,7 +2355,7 @@ mod tests {
         let config = crate::encode::EncodeConfig::default();
 
         let encoded = crate::encode::encode_rgb8(img.as_ref(), Some(&meta), &config).unwrap();
-        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
 
         let dc = decoded.info.content_light_level.expect("cLLi missing");
         assert_eq!(dc.max_content_light_level, 1000);
@@ -2375,7 +2380,7 @@ mod tests {
         let data = std::fs::read(path).expect("frymire.png not found");
 
         // Decode original
-        let orig = crate::decode::decode(&data, None).unwrap();
+        let orig = crate::decode::decode(&data, None, &enough::Unstoppable).unwrap();
         let gamma = orig
             .info
             .source_gamma
@@ -2404,7 +2409,7 @@ mod tests {
         let encoded = crate::encode::encode_rgb8(pixels.as_ref(), None, &config).unwrap();
 
         // Decode re-encoded
-        let rt = crate::decode::decode(&encoded, None).unwrap();
+        let rt = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
         assert_eq!(rt.info.source_gamma, Some(gamma));
         let rt_chrm = rt.info.chromaticities.expect("re-encoded should have cHRM");
         assert_eq!(rt_chrm, chrm);
@@ -2419,7 +2424,7 @@ mod tests {
         let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/red-night.png";
         let data = std::fs::read(path).expect("red-night.png not found");
 
-        let orig = crate::decode::decode(&data, None).unwrap();
+        let orig = crate::decode::decode(&data, None, &enough::Unstoppable).unwrap();
         let intent = orig
             .info
             .srgb_intent
@@ -2447,7 +2452,7 @@ mod tests {
         };
         let encoded = crate::encode::encode_rgba8(pixels.as_ref(), None, &config).unwrap();
 
-        let rt = crate::decode::decode(&encoded, None).unwrap();
+        let rt = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
         assert_eq!(rt.info.srgb_intent, Some(0));
         assert_eq!(rt.info.source_gamma, Some(gamma));
         assert_eq!(rt.info.chromaticities, Some(chrm));
@@ -2462,7 +2467,7 @@ mod tests {
         let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/shirt_transparent.png";
         let data = std::fs::read(path).expect("shirt_transparent.png not found");
 
-        let orig = crate::decode::decode(&data, None).unwrap();
+        let orig = crate::decode::decode(&data, None, &enough::Unstoppable).unwrap();
         let icc = orig
             .info
             .icc_profile
@@ -2478,7 +2483,7 @@ mod tests {
         };
         let encoded = crate::encode::encode_rgba8(pixels.as_ref(), Some(&meta), &config).unwrap();
 
-        let rt = crate::decode::decode(&encoded, None).unwrap();
+        let rt = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
         let rt_icc = rt
             .info
             .icc_profile
@@ -2497,7 +2502,7 @@ mod tests {
             Ok(d) => d,
             Err(_) => return, // skip if corpus not available
         };
-        let decoded = crate::decode::decode(&data, None).unwrap();
+        let decoded = crate::decode::decode(&data, None, &enough::Unstoppable).unwrap();
         let info = &decoded.info;
         let rgb_pixels = match &decoded.pixels {
             zencodec_types::PixelData::Rgb8(img) => img,
@@ -2518,7 +2523,7 @@ mod tests {
                 ..Default::default()
             };
             let encoded = crate::encode::encode_rgb8(rgb_pixels.as_ref(), None, &config).unwrap();
-            match crate::decode::decode(&encoded, None) {
+            match crate::decode::decode(&encoded, None, &enough::Unstoppable) {
                 Ok(_) => {}
                 Err(e) => panic!("{name}: full PNG re-decode failed: {e}"),
             }
@@ -2544,13 +2549,109 @@ mod tests {
         let img = imgref::ImgVec::new(pixels, width, height);
         let config = crate::EncodeConfig::default();
         let encoded = crate::encode::encode_rgb8(img.as_ref(), None, &config).unwrap();
-        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
         match &decoded.pixels {
             zencodec_types::PixelData::Rgb8(dec_img) => {
                 assert_eq!(dec_img.width(), width);
                 assert_eq!(dec_img.height(), height);
             }
             other => panic!("expected Rgb8, got {:?}", other.descriptor()),
+        }
+    }
+
+    #[test]
+    fn immediate_cancel_encode_returns_stopped() {
+        use enough::{Stop, StopReason};
+
+        /// A Stop that always says "stop now".
+        struct AlreadyCancelled;
+        impl Stop for AlreadyCancelled {
+            fn check(&self) -> Result<(), StopReason> {
+                Err(StopReason::Cancelled)
+            }
+        }
+
+        let config = PngEncoderConfig::new();
+        let job = zencodec_types::EncoderConfig::job(&config);
+        let job = zencodec_types::EncodeJob::with_stop(job, &AlreadyCancelled);
+        let encoder = zencodec_types::EncodeJob::encoder(job);
+
+        // Create a small 2x2 RGB8 image
+        let pixels = [0u8; 12]; // 2x2 RGB
+        let desc = PixelDescriptor::RGB8_SRGB;
+        let slice = PixelSlice::new(&pixels, 2, 2, 6, desc).unwrap();
+
+        let result = zencodec_types::Encoder::encode(encoder, slice);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PngError::Stopped(reason) => {
+                assert_eq!(reason, StopReason::Cancelled);
+            }
+            other => panic!("expected PngError::Stopped, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn zero_budget_encode_still_succeeds() {
+        // A zero-budget encode should still succeed by returning a fast L1 result
+        let config = crate::EncodeConfig {
+            time_limit_ms: Some(0),
+            ..Default::default()
+        };
+
+        let pixels = vec![
+            rgb::Rgba {
+                r: 255u8,
+                g: 0,
+                b: 0,
+                a: 255,
+            };
+            16
+        ];
+        let img = imgref::ImgVec::new(pixels, 4, 4);
+        let result = crate::encode::encode_rgba8(img.as_ref(), None, &config);
+        assert!(result.is_ok(), "zero-budget encode should still succeed");
+
+        // Verify it decodes
+        let encoded = result.unwrap();
+        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
+        assert_eq!(decoded.info.width, 4);
+        assert_eq!(decoded.info.height, 4);
+    }
+
+    #[test]
+    fn immediate_cancel_decode_returns_stopped() {
+        use enough::{Stop, StopReason};
+
+        struct AlreadyCancelled;
+        impl Stop for AlreadyCancelled {
+            fn check(&self) -> Result<(), StopReason> {
+                Err(StopReason::Cancelled)
+            }
+        }
+
+        // First encode a valid PNG
+        let pixels = vec![
+            rgb::Rgba {
+                r: 128u8,
+                g: 64,
+                b: 32,
+                a: 255,
+            };
+            16
+        ];
+        let img = imgref::ImgVec::new(pixels, 4, 4);
+        let config = crate::EncodeConfig::default();
+        let encoded = crate::encode::encode_rgba8(img.as_ref(), None, &config).unwrap();
+
+        // Now try to decode with immediate cancel
+        let result = crate::decode::decode(&encoded, None, &AlreadyCancelled);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PngError::Stopped(reason) => {
+                assert_eq!(reason, StopReason::Cancelled);
+            }
+            other => panic!("expected PngError::Stopped, got: {other}"),
         }
     }
 }

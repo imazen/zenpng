@@ -6,6 +6,7 @@
 /// re-encodes with the same metadata, decodes again, and verifies exact match.
 use std::path::{Path, PathBuf};
 
+use enough::Unstoppable;
 use zencodec_types::{ImageMetadata, PixelData};
 use zenpng::{EncodeConfig, PngInfo};
 
@@ -42,7 +43,7 @@ fn main() {
             }
         };
 
-        let orig = match zenpng::decode(&data, None) {
+        let orig = match zenpng::decode(&data, None, &Unstoppable) {
             Ok(o) => o,
             Err(e) => {
                 eprintln!("SKIP {name}: decode error: {e}");
@@ -97,7 +98,7 @@ fn main() {
         };
 
         // Decode re-encoded
-        let rt = match zenpng::decode(&encoded, None) {
+        let rt = match zenpng::decode(&encoded, None, &Unstoppable) {
             Ok(r) => r,
             Err(e) => {
                 failures.push(format!("{name}: re-decode failed: {e}"));

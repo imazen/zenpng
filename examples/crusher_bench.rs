@@ -8,6 +8,7 @@
 ///  5. Report comparative sizes
 ///
 /// Usage: cargo run --release --example crusher_bench [-- /path/to/png/dir]
+use enough::Unstoppable;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -62,7 +63,7 @@ fn main() {
         let source_size = source_data.len();
 
         // Decode
-        let decoded = match zenpng::decode(&source_data, None) {
+        let decoded = match zenpng::decode(&source_data, None, &Unstoppable) {
             Ok(d) => d,
             Err(e) => {
                 eprintln!("  SKIP: decode error: {e}");
