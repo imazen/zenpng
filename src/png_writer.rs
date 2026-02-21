@@ -9,7 +9,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use zencodec_types::{Cicp, ContentLightLevel, ImageMetadata, MasteringDisplay};
-use zenflate::{CompressionLevel, Compressor, crc32};
+use zenflate::{CompressionLevel, Compressor, Unstoppable, crc32};
 
 use crate::decode::PngChromaticities;
 use crate::error::PngError;
@@ -268,7 +268,7 @@ fn try_compress(
         {
             let mut decompressor = zenflate::Decompressor::new();
             if decompressor
-                .zlib_decompress(&compress_buf[..compressed_len], verify_buf)
+                .zlib_decompress(&compress_buf[..compressed_len], verify_buf, Unstoppable)
                 .is_err()
             {
                 continue;
@@ -407,7 +407,11 @@ fn compress_filtered(
         let valid = {
             let mut decompressor = zenflate::Decompressor::new();
             decompressor
-                .zlib_decompress(&compress_buf[..compressed_len], &mut verify_buf)
+                .zlib_decompress(
+                    &compress_buf[..compressed_len],
+                    &mut verify_buf,
+                    Unstoppable,
+                )
                 .is_ok()
         };
 

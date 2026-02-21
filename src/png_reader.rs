@@ -5,7 +5,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use zenflate::crc32;
+use zenflate::{Unstoppable, crc32};
 
 use crate::error::PngError;
 
@@ -362,10 +362,10 @@ impl PngAncillary {
         let max_output = 1024 * 1024; // 1 MB limit for ICC profiles
         let mut output = vec![0u8; max_output];
         let mut decompressor = zenflate::Decompressor::new();
-        let written = decompressor
-            .zlib_decompress(compressed, &mut output)
+        let outcome = decompressor
+            .zlib_decompress(compressed, &mut output, Unstoppable)
             .map_err(|e| PngError::Decode(alloc::format!("iCCP decompression failed: {e:?}")))?;
-        output.truncate(written);
+        output.truncate(outcome.output_written);
         self.icc_profile = Some(output);
         Ok(())
     }
@@ -415,8 +415,8 @@ impl PngAncillary {
             let max_output = 4 * 1024 * 1024; // 4 MB limit for XMP
             let mut output = vec![0u8; max_output];
             let mut decompressor = zenflate::Decompressor::new();
-            if let Ok(written) = decompressor.zlib_decompress(text_data, &mut output) {
-                output.truncate(written);
+            if let Ok(outcome) = decompressor.zlib_decompress(text_data, &mut output, Unstoppable) {
+                output.truncate(outcome.output_written);
                 if !output.is_empty() {
                     self.xmp = Some(output);
                 }
