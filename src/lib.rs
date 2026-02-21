@@ -8,12 +8,13 @@
 //!
 //! ```no_run
 //! use zenpng::{decode, probe, encode_rgb8, EncodeConfig};
+//! use enough::Unstoppable;
 //! use imgref::ImgVec;
 //! use rgb::Rgb;
 //!
 //! // Decode
 //! let data: &[u8] = &[]; // your PNG bytes
-//! let output = decode(data, None)?;
+//! let output = decode(data, None, &Unstoppable)?;
 //! println!("{}x{}", output.info.width, output.info.height);
 //!
 //! // Encode

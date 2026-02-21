@@ -7,9 +7,9 @@ use rgb::Rgba;
 use zencodec_types::ImageMetadata;
 use zenquant::{OutputFormat, QuantizeConfig};
 
-use crate::encode::{self, EncodeConfig};
+use crate::encode::{self, DeadlineBudget, EncodeConfig};
 use crate::error::PngError;
-use crate::png_writer::{self, PngWriteMetadata};
+use crate::png_writer::{self, Budget, PngWriteMetadata, Unlimited};
 
 /// Encode RGBA8 pixels to indexed PNG using zenquant for palette quantization.
 ///
@@ -52,7 +52,8 @@ pub fn encode_indexed_rgba8(
     };
 
     let compression_level = encode_config.compression.to_zenflate_level();
-    let opts = encode_config.compress_options();
+    let budget = make_budget_from_config(encode_config);
+    let opts = encode_config.compress_options(&*budget, &enough::Unstoppable);
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = encode_config.source_gamma;
@@ -146,7 +147,8 @@ pub fn encode_rgba8_auto(
         };
 
         let compression_level = encode_config.compression.to_zenflate_level();
-        let opts = encode_config.compress_options();
+        let budget = make_budget_from_config(encode_config);
+        let opts = encode_config.compress_options(&*budget, &enough::Unstoppable);
 
         let mut write_meta = PngWriteMetadata::from_metadata(metadata);
         write_meta.source_gamma = encode_config.source_gamma;
@@ -177,6 +179,17 @@ pub fn encode_rgba8_auto(
             indexed: false,
             quality_loss: loss,
         })
+    }
+}
+
+/// Create a budget from the encode config's time limit.
+fn make_budget_from_config(config: &EncodeConfig) -> Box<dyn Budget> {
+    let budget_ms = config.compression.budget_ms().or(config.time_limit_ms);
+    match budget_ms {
+        Some(ms) => Box::new(DeadlineBudget(
+            std::time::Instant::now() + std::time::Duration::from_millis(ms as u64),
+        )),
+        None => Box::new(Unlimited),
     }
 }
 
@@ -350,7 +363,7 @@ mod tests {
         assert_eq!(&encoded[..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
 
         // Full decode roundtrip through zenpng
-        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
         assert_eq!(decoded.info.width, 4);
         assert_eq!(decoded.info.height, 4);
     }
@@ -371,7 +384,7 @@ mod tests {
             .with_xmp(xmp_data);
 
         let encoded = encode_indexed_rgba8(img.as_ref(), &config, &quant, Some(&meta)).unwrap();
-        let decoded = crate::decode::decode(&encoded, None).unwrap();
+        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
         assert_eq!(decoded.info.width, 4);
         assert_eq!(decoded.info.height, 4);
 
@@ -402,7 +415,7 @@ mod tests {
         ] {
             let config = EncodeConfig::default().with_compression(comp);
             let encoded = encode_indexed_rgba8(img.as_ref(), &config, &quant, None).unwrap();
-            let decoded = crate::decode::decode(&encoded, None).unwrap();
+            let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
             assert_eq!(decoded.info.width, 4);
             assert_eq!(decoded.info.height, 4);
         }
@@ -426,7 +439,7 @@ mod tests {
         );
 
         // Verify it decodes correctly
-        let decoded = crate::decode::decode(&result.data, None).unwrap();
+        let decoded = crate::decode::decode(&result.data, None, &enough::Unstoppable).unwrap();
         assert_eq!(decoded.info.width, 4);
         assert_eq!(decoded.info.height, 4);
     }
@@ -472,7 +485,7 @@ mod tests {
         // With very tight threshold, a gradient image should fall back to truecolor
         let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.0, None).unwrap();
         // Even if this happens to be lossless, that's OK — we just verify the function works
-        let decoded = crate::decode::decode(&result.data, None).unwrap();
+        let decoded = crate::decode::decode(&result.data, None, &enough::Unstoppable).unwrap();
         assert_eq!(decoded.info.width, 16);
         assert_eq!(decoded.info.height, 16);
     }
@@ -510,7 +523,7 @@ mod tests {
         );
 
         // Indexed should decode correctly
-        let decoded = crate::decode::decode(&result.data, None).unwrap();
+        let decoded = crate::decode::decode(&result.data, None, &enough::Unstoppable).unwrap();
         assert_eq!(decoded.info.width, 64);
         assert_eq!(decoded.info.height, 64);
     }

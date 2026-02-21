@@ -1,6 +1,7 @@
 //! PNG decoding and probing.
 
 use alloc::vec::Vec;
+use enough::Stop;
 use zencodec_types::{Cicp, ContentLightLevel, MasteringDisplay, PixelData};
 
 use crate::error::PngError;
@@ -110,6 +111,13 @@ pub fn probe(data: &[u8]) -> Result<PngInfo, PngError> {
 ///
 /// Preserves 16-bit depth when present in the source. Expands indexed
 /// and sub-8-bit formats to their natural RGB/RGBA/Gray equivalents.
-pub fn decode(data: &[u8], limits: Option<&PngLimits>) -> Result<PngDecodeOutput, PngError> {
-    crate::png_reader::decode_png(data, limits)
+///
+/// The `cancel` signal is checked between rows; pass `&Unstoppable` when
+/// cancellation is not needed.
+pub fn decode(
+    data: &[u8],
+    limits: Option<&PngLimits>,
+    cancel: &dyn Stop,
+) -> Result<PngDecodeOutput, PngError> {
+    crate::png_reader::decode_png(data, limits, cancel)
 }

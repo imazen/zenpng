@@ -5,6 +5,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+use enough::Stop;
 use zenflate::{Unstoppable, crc32};
 
 use crate::error::PngError;
@@ -1256,6 +1257,7 @@ fn adam7_pass_size(width: u32, height: u32, pass: usize) -> (u32, u32) {
 pub(crate) fn decode_interlaced(
     data: &'_ [u8],
     limits: Option<&crate::decode::PngLimits>,
+    cancel: &dyn Stop,
 ) -> Result<(Ihdr, PngAncillary, Vec<u8>, OutputFormat), PngError> {
     // Validate signature
     if data.len() < 8 || data[..8] != PNG_SIGNATURE {
@@ -1329,6 +1331,7 @@ pub(crate) fn decode_interlaced(
         let mut row_buf = Vec::new();
 
         for pass_y in 0..ph as usize {
+            cancel.check()?;
             // Fill decompressor until we have a full stride
             loop {
                 let available = decompressor.peek().len();
@@ -1568,12 +1571,13 @@ use crate::decode::PngDecodeOutput;
 pub(crate) fn decode_png(
     data: &[u8],
     limits: Option<&crate::decode::PngLimits>,
+    cancel: &dyn Stop,
 ) -> Result<PngDecodeOutput, PngError> {
     // Check for interlacing first
     if data.len() >= 29 && data[..8] == PNG_SIGNATURE {
         let interlace = data[28]; // IHDR interlace byte
         if interlace == 1 {
-            return decode_interlaced_to_output(data, limits);
+            return decode_interlaced_to_output(data, limits, cancel);
         }
     }
 
@@ -1592,6 +1596,7 @@ pub(crate) fn decode_png(
 
     while let Some(result) = reader.next_raw_row() {
         let raw = result?;
+        cancel.check()?;
         raw_copy[..raw.len()].copy_from_slice(raw);
         post_process_row(
             &raw_copy[..raw.len()],
@@ -1614,8 +1619,9 @@ pub(crate) fn decode_png(
 fn decode_interlaced_to_output(
     data: &[u8],
     limits: Option<&crate::decode::PngLimits>,
+    cancel: &dyn Stop,
 ) -> Result<PngDecodeOutput, PngError> {
-    let (ihdr, ancillary, pixels, _fmt) = decode_interlaced(data, limits)?;
+    let (ihdr, ancillary, pixels, _fmt) = decode_interlaced(data, limits, cancel)?;
     let w = ihdr.width as usize;
     let h = ihdr.height as usize;
     let info = build_png_info(&ihdr, &ancillary);
@@ -1717,7 +1723,7 @@ mod tests {
 
     #[test]
     fn chunk_parser_validates_signature() {
-        let result = decode_png(b"not a png", None);
+        let result = decode_png(b"not a png", None, &Unstoppable);
         assert!(result.is_err());
     }
 
@@ -1835,7 +1841,7 @@ mod tests {
             let data = std::fs::read(&path).unwrap();
 
             // Decode with our decoder
-            let our_result = decode_png(&data, None);
+            let our_result = decode_png(&data, None, &Unstoppable);
 
             // Decode with reference png crate
             let ref_result = decode_with_png_crate(&data);

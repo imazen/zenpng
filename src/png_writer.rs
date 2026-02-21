@@ -8,26 +8,47 @@ use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use enough::Stop;
 use zencodec_types::{Cicp, ContentLightLevel, ImageMetadata, MasteringDisplay};
 use zenflate::{CompressionLevel, Compressor, Unstoppable, crc32};
 
 use crate::decode::PngChromaticities;
 use crate::error::PngError;
 
+/// Time-aware budget for compression. Returns remaining time so the
+/// compressor can calibrate iteration counts (e.g., zopfli).
+pub(crate) trait Budget: Send + Sync {
+    /// Remaining nanoseconds, or `None` if unlimited.
+    fn remaining_ns(&self) -> Option<u64>;
+
+    /// Whether the budget is exhausted.
+    fn is_exhausted(&self) -> bool {
+        self.remaining_ns().is_some_and(|ns| ns == 0)
+    }
+}
+
+/// Unlimited budget — never exhausted.
+pub(crate) struct Unlimited;
+
+impl Budget for Unlimited {
+    fn remaining_ns(&self) -> Option<u64> {
+        None
+    }
+}
+
 /// Compression options passed through the pipeline.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct CompressOptions {
+pub(crate) struct CompressOptions<'a> {
     /// Whether to use zopfli for final compression (Crush level).
     #[allow(dead_code)] // read only with `zopfli` feature
     pub use_zopfli: bool,
-    /// Absolute deadline for the entire encode operation.
-    /// When set, the encoder skips strategies and adjusts zopfli iterations
-    /// to finish within this time. Applies to both Best and Crush levels.
-    pub deadline: Option<std::time::Instant>,
     /// Budget mode: progressively escalate through compression tiers
-    /// instead of jumping straight to the target level. The deadline
+    /// instead of jumping straight to the target level. The budget
     /// controls how far we get.
     pub is_budget: bool,
+    /// Soft time budget — checked between strategies, returns best-so-far when exhausted.
+    pub budget: &'a dyn Budget,
+    /// Hard cancel — passed into zenflate, aborts mid-compression.
+    pub cancel: &'a dyn Stop,
 }
 
 /// All metadata to embed when writing a PNG file.
@@ -82,7 +103,7 @@ pub(crate) fn write_indexed_png(
     palette_alpha: Option<&[u8]>,
     write_meta: &PngWriteMetadata<'_>,
     compression_level: u8,
-    opts: CompressOptions,
+    opts: CompressOptions<'_>,
 ) -> Result<Vec<u8>, PngError> {
     let w = width as usize;
     let h = height as usize;
@@ -160,7 +181,7 @@ pub(crate) fn write_truecolor_png(
     bit_depth: u8,
     write_meta: &PngWriteMetadata<'_>,
     compression_level: u8,
-    opts: CompressOptions,
+    opts: CompressOptions<'_>,
 ) -> Result<Vec<u8>, PngError> {
     let w = width as usize;
     let h = height as usize;
@@ -242,12 +263,6 @@ const HEURISTIC_STRATEGIES: &[Strategy] = &[
     Strategy::Adaptive(AdaptiveHeuristic::BigEnt),
 ];
 
-/// Check if we've passed the deadline.
-fn past_deadline(opts: &CompressOptions) -> bool {
-    opts.deadline
-        .is_some_and(|dl| std::time::Instant::now() >= dl)
-}
-
 /// Try compressing `filtered` data with all `compressors`, updating `best_compressed`
 /// if a smaller result is found. Returns the best compressed size for this particular
 /// filtered stream (used for ranking candidates).
@@ -257,12 +272,19 @@ fn try_compress(
     compress_buf: &mut [u8],
     verify_buf: &mut [u8],
     best_compressed: &mut Option<Vec<u8>>,
+    cancel: &dyn Stop,
 ) -> Result<usize, PngError> {
     let mut best_for_stream = usize::MAX;
     for compressor in compressors.iter_mut() {
-        let compressed_len = compressor
-            .zlib_compress(filtered, compress_buf, Unstoppable)
-            .map_err(|e| PngError::InvalidInput(alloc::format!("compression failed: {e}")))?;
+        let compressed_len = match compressor.zlib_compress(filtered, compress_buf, cancel) {
+            Ok(len) => len,
+            Err(zenflate::CompressionError::Stopped(reason)) => return Err(reason.into()),
+            Err(e) => {
+                return Err(PngError::InvalidInput(alloc::format!(
+                    "compression failed: {e}"
+                )));
+            }
+        };
 
         // Verify decompression roundtrip
         {
@@ -313,7 +335,7 @@ fn compress_filtered(
     height: usize,
     bpp: usize,
     compression_level: u8,
-    opts: CompressOptions,
+    opts: CompressOptions<'_>,
 ) -> Result<Vec<u8>, PngError> {
     let filtered_size = (row_bytes + 1) * height;
     let mut best_compressed: Option<Vec<u8>> = None;
@@ -384,8 +406,10 @@ fn compress_filtered(
     // (screen_size, filtered_data) — sorted later to pick top candidates
     let mut screen_results: Vec<(usize, Vec<u8>)> = Vec::with_capacity(HEURISTIC_STRATEGIES.len());
 
-    for strategy in HEURISTIC_STRATEGIES {
-        if past_deadline(&opts) {
+    for (i, strategy) in HEURISTIC_STRATEGIES.iter().enumerate() {
+        // Always try at least one strategy (even with zero budget),
+        // but check budget before subsequent strategies.
+        if i > 0 && opts.budget.is_exhausted() {
             break;
         }
 
@@ -396,12 +420,20 @@ fn compress_filtered(
             height,
             bpp,
             *strategy,
+            opts.cancel,
             &mut filtered,
         );
 
-        let compressed_len = screen_compressor
-            .zlib_compress(&filtered, &mut compress_buf, Unstoppable)
-            .map_err(|e| PngError::InvalidInput(alloc::format!("compression failed: {e}")))?;
+        let compressed_len =
+            match screen_compressor.zlib_compress(&filtered, &mut compress_buf, opts.cancel) {
+                Ok(len) => len,
+                Err(zenflate::CompressionError::Stopped(reason)) => return Err(reason.into()),
+                Err(e) => {
+                    return Err(PngError::InvalidInput(alloc::format!(
+                        "compression failed: {e}"
+                    )));
+                }
+            };
 
         // Verify decompression roundtrip
         let valid = {
@@ -431,7 +463,7 @@ fn compress_filtered(
     screen_results.sort_by_key(|(size, _)| *size);
 
     // Early return: L0-1 don't need refinement, or deadline hit
-    if !needs_refine || past_deadline(&opts) {
+    if !needs_refine || opts.budget.is_exhausted() {
         return best_compressed
             .ok_or_else(|| PngError::InvalidInput("no filter strategies tried".to_string()));
     }
@@ -448,7 +480,7 @@ fn compress_filtered(
     let mut zopfli_candidates: Vec<(usize, Vec<u8>)> = Vec::new();
 
     for &tier_level in refine_tiers {
-        if past_deadline(&opts) {
+        if opts.budget.is_exhausted() {
             break;
         }
 
@@ -461,6 +493,7 @@ fn compress_filtered(
                 &mut compress_buf,
                 &mut verify_buf,
                 &mut best_compressed,
+                opts.cancel,
             )?;
 
             #[cfg(feature = "zopfli")]
@@ -475,7 +508,7 @@ fn compress_filtered(
     // ---- Phase 3: Brute-force ----
     // Brute-force filtering is expensive (~3-4s per config), so compress at
     // the highest tiers only. We already have lower-tier results from Phase 2.
-    if can_brute_force && !past_deadline(&opts) {
+    if can_brute_force && !opts.budget.is_exhausted() {
         let brute_levels: &[u32] = if compression_level >= 10 || opts.is_budget {
             &[10, 11, 12]
         } else {
@@ -487,7 +520,7 @@ fn compress_filtered(
             .collect();
 
         for &(context_rows, eval_level) in brute_configs {
-            if past_deadline(&opts) {
+            if opts.budget.is_exhausted() {
                 break;
             }
 
@@ -501,6 +534,7 @@ fn compress_filtered(
                     context_rows,
                     eval_level,
                 },
+                opts.cancel,
                 &mut filtered,
             );
 
@@ -510,6 +544,7 @@ fn compress_filtered(
                 &mut compress_buf,
                 &mut verify_buf,
                 &mut best_compressed,
+                opts.cancel,
             )?;
 
             #[cfg(feature = "zopfli")]
@@ -521,12 +556,12 @@ fn compress_filtered(
 
     // ---- Phase 4: Zopfli ----
     #[cfg(feature = "zopfli")]
-    if opts.use_zopfli && !zopfli_candidates.is_empty() && !past_deadline(&opts) {
+    if opts.use_zopfli && !zopfli_candidates.is_empty() && !opts.budget.is_exhausted() {
         // Sort by zenflate size, take top 3
         zopfli_candidates.sort_by_key(|(size, _)| *size);
         zopfli_candidates.truncate(3);
 
-        let best = zopfli_adaptive(&zopfli_candidates, opts.deadline, &mut best_compressed);
+        let best = zopfli_adaptive(&zopfli_candidates, opts.budget, &mut best_compressed);
         if let Some(b) = best {
             best_compressed = Some(b);
         }
@@ -545,7 +580,7 @@ fn compress_filtered(
 #[cfg(feature = "zopfli")]
 fn zopfli_adaptive(
     candidates: &[(usize, Vec<u8>)],
-    deadline: Option<std::time::Instant>,
+    budget: &dyn Budget,
     current_best: &mut Option<Vec<u8>>,
 ) -> Option<Vec<u8>> {
     use std::time::Instant;
@@ -572,8 +607,8 @@ fn zopfli_adaptive(
     let ms_per_iter = cal_elapsed.as_secs_f64() * 1000.0 / calibration_iters as f64;
 
     // Phase 2: Determine max affordable iterations.
-    let max_iters = if let Some(dl) = deadline {
-        let remaining_ms = dl.saturating_duration_since(Instant::now()).as_secs_f64() * 1000.0;
+    let max_iters = if let Some(remaining_ns) = budget.remaining_ns() {
+        let remaining_ms = remaining_ns as f64 / 1_000_000.0;
         if remaining_ms < ms_per_iter * 2.0 {
             // Not enough time for even a meaningful run — skip
             return best;
@@ -660,6 +695,7 @@ fn filter_image(
     height: usize,
     bpp: usize,
     strategy: Strategy,
+    cancel: &dyn Stop,
     out: &mut Vec<u8>,
 ) {
     match strategy {
@@ -674,6 +710,7 @@ fn filter_image(
                 bpp,
                 context_rows,
                 eval_level,
+                cancel,
                 out,
             );
         }
@@ -725,6 +762,7 @@ fn filter_image_heuristic(
 /// The trailing context (previous `context_rows` filtered rows) lets the
 /// evaluation compressor exploit cross-row patterns, matching how the final
 /// full-stream compression will see the data.
+#[allow(clippy::too_many_arguments)]
 fn filter_image_brute(
     packed_rows: &[u8],
     row_bytes: usize,
@@ -732,6 +770,7 @@ fn filter_image_brute(
     bpp: usize,
     context_rows: usize,
     eval_level: u32,
+    cancel: &dyn Stop,
     out: &mut Vec<u8>,
 ) {
     let filtered_row_size = row_bytes + 1; // filter byte + row data
@@ -779,9 +818,7 @@ fn filter_image_brute(
             eval_buf.push(f);
             eval_buf.extend_from_slice(&candidate_data[f as usize]);
 
-            if let Ok(len) =
-                eval_compressor.zlib_compress(&eval_buf, &mut compress_buf, Unstoppable)
-            {
+            if let Ok(len) = eval_compressor.zlib_compress(&eval_buf, &mut compress_buf, cancel) {
                 if len < best_size {
                     best_size = len;
                     best_f = f;

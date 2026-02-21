@@ -2,6 +2,7 @@
 ///
 /// Tries many filter/compression combos and reports sizes.
 /// Usage: cargo run --release --features zopfli --example single_image_lab [-- /path/to/image.png]
+use enough::Unstoppable;
 use std::io::Write as _;
 use std::path::Path;
 
@@ -17,7 +18,7 @@ fn main() {
     );
 
     let source = std::fs::read(&path).unwrap();
-    let decoded = zenpng::decode(&source, None).unwrap();
+    let decoded = zenpng::decode(&source, None, &Unstoppable).unwrap();
     let (w, h) = (decoded.info.width as usize, decoded.info.height as usize);
 
     let (pixel_bytes, bpp): (Vec<u8>, usize) = match &decoded.pixels {

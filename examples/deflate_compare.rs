@@ -4,6 +4,7 @@
 /// zenflate L10/L11/L12, libdeflate-C L12, flate2 best, and zopfli → report sizes.
 ///
 /// Usage: cargo run --release --example deflate_compare [-- /path/to/png/dir]
+use enough::Unstoppable;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -47,7 +48,7 @@ fn main() {
         eprintln!("[{}/{}] {short}...", i + 1, paths.len());
 
         let source = std::fs::read(path).unwrap();
-        let decoded = match zenpng::decode(&source, None) {
+        let decoded = match zenpng::decode(&source, None, &Unstoppable) {
             Ok(d) => d,
             Err(e) => {
                 eprintln!("  SKIP: {e}");
