@@ -2649,4 +2649,177 @@ mod tests {
         eprintln!("Total diffs: {} of {} bytes", diffs, our_bytes.len());
         assert_eq!(diffs, 0, "Pixel data should match");
     }
+
+    /// Compare streaming vs batch decompressor output byte-by-byte for a file
+    /// that produces "unknown filter type" errors (output divergence).
+    #[test]
+    #[ignore]
+    fn debug_streaming_divergence() {
+        let path = "/mnt/v/output/corpus-builder/png-8/wm_upload_wikimedia_org_13efdd48e85b970e.png";
+        let data = match std::fs::read(path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Skipping: {}", e);
+                return;
+            }
+        };
+
+        // Extract IDAT data
+        let mut pos = 8usize;
+        let mut idat_data = Vec::new();
+        while pos + 12 <= data.len() {
+            let length =
+                u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
+            let chunk_type: [u8; 4] = data[pos + 4..pos + 8].try_into().unwrap();
+            let data_end = pos + 8 + length;
+            if data_end + 4 > data.len() {
+                break;
+            }
+            if &chunk_type == b"IDAT" {
+                idat_data.extend_from_slice(&data[pos + 8..data_end]);
+            } else if &chunk_type == b"IEND" {
+                break;
+            }
+            pos = data_end + 4;
+        }
+        eprintln!("IDAT: {} bytes compressed", idat_data.len());
+
+        // Batch decompress (reference)
+        let mut batch_output = vec![0u8; 128 * 1024 * 1024];
+        let mut batch = zenflate::Decompressor::new();
+        let batch_result =
+            batch.zlib_decompress(&idat_data, &mut batch_output, zencodec_types::Unstoppable);
+        let batch_len = match &batch_result {
+            Ok(outcome) => {
+                eprintln!("Batch: OK, {} bytes", outcome.output_written);
+                outcome.output_written
+            }
+            Err(e) => {
+                eprintln!("Batch: FAILED {:?}", e);
+                // Check how much output was written before failure
+                // by scanning for the last non-zero byte
+                let last_nonzero = batch_output.iter().rposition(|&b| b != 0).unwrap_or(0);
+                eprintln!("  Batch wrote up to ~{} bytes before failure", last_nonzero);
+                last_nonzero + 1
+            }
+        };
+
+        // Streaming decompress
+        struct SliceSource<'a> {
+            data: &'a [u8],
+            pos: usize,
+        }
+        impl zenflate::InputSource for SliceSource<'_> {
+            type Error = std::io::Error;
+            fn fill_buf(&mut self) -> Result<&[u8], Self::Error> {
+                Ok(&self.data[self.pos..])
+            }
+            fn consume(&mut self, amt: usize) {
+                self.pos += amt;
+            }
+        }
+
+        let source = SliceSource {
+            data: &idat_data,
+            pos: 0,
+        };
+        let mut stream = zenflate::StreamDecompressor::zlib(source, 65536);
+        let mut stream_output = Vec::with_capacity(batch_len);
+        let mut stream_err = None;
+        loop {
+            if stream.is_done() {
+                break;
+            }
+            match stream.fill() {
+                Ok(_) => {}
+                Err(e) => {
+                    stream_err = Some(alloc::format!("{:?}", e));
+                    break;
+                }
+            }
+            let peeked = stream.peek();
+            stream_output.extend_from_slice(peeked);
+            stream.advance(peeked.len());
+        }
+        eprintln!(
+            "Stream: {} bytes, err={:?}",
+            stream_output.len(),
+            stream_err
+        );
+
+        // Compare byte-by-byte
+        let cmp_len = batch_len.min(stream_output.len());
+        let mut first_diff = None;
+        for i in 0..cmp_len {
+            if batch_output[i] != stream_output[i] {
+                first_diff = Some(i);
+                break;
+            }
+        }
+
+        if let Some(diff_pos) = first_diff {
+            eprintln!("\nFIRST DIVERGENCE at byte {}", diff_pos);
+            eprintln!("  batch[{}..]: {:?}", diff_pos, &batch_output[diff_pos..diff_pos + 20.min(batch_len - diff_pos)]);
+            eprintln!("  stream[{}..]: {:?}", diff_pos, &stream_output[diff_pos..diff_pos + 20.min(stream_output.len() - diff_pos)]);
+            // Check which row this falls in (stride = 12316 for this file)
+            let stride = 12316;
+            let row = diff_pos / stride;
+            let col = diff_pos % stride;
+            eprintln!("  Row {}, col {} (stride={})", row, col, stride);
+        } else if batch_len != stream_output.len() {
+            eprintln!("Same up to {} bytes, but lengths differ: batch={} stream={}", cmp_len, batch_len, stream_output.len());
+        } else {
+            eprintln!("IDENTICAL: {} bytes match perfectly", batch_len);
+        }
+    }
+
+    /// Test all previously-failing corpus files after fastloop refill fix.
+    #[test]
+    #[ignore]
+    fn debug_remaining_we_fail() {
+        let files = [
+            "/mnt/v/output/corpus-builder/png-8/wm_upload_wikimedia_org_13efdd48e85b970e.png",
+            "/mnt/v/output/corpus-builder/png-24-32/wm_upload_wikimedia_org_45634e241d7821a3.png",
+            "/mnt/v/output/corpus-builder/png-24-32/wm_upload_wikimedia_org_72ec2889934b6b15.png",
+            "/mnt/v/output/corpus-builder/png-24-32/wm_upload_wikimedia_org_a119af42024ad225.png",
+            "/mnt/v/output/corpus-builder/png-24-32/wm_upload_wikimedia_org_a23d1e831e128dff.png",
+            "/mnt/v/output/corpus-builder/png-24-32/wm_upload_wikimedia_org_c8a458b0cef3d942.png",
+        ];
+        let mut failures = Vec::new();
+        for path in &files {
+            let name = path.rsplit('/').next().unwrap();
+            let data = match std::fs::read(path) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("{name}: SKIP ({e})");
+                    continue;
+                }
+            };
+            let our = decode_png(&data, None, &zencodec_types::Unstoppable);
+            let reference = decode_with_png_crate(&data);
+            match (&our, &reference) {
+                (Ok(o), Ok(r)) => {
+                    let ob = pixel_data_to_bytes(&o.pixels);
+                    let rb = pixel_data_to_bytes(&r.pixels);
+                    if ob == rb {
+                        eprintln!("{name}: OK ({} bytes)", ob.len());
+                    } else {
+                        eprintln!("{name}: PIXEL MISMATCH (ours={} ref={})", ob.len(), rb.len());
+                        failures.push(name);
+                    }
+                }
+                (Err(e), Ok(_)) => {
+                    eprintln!("{name}: WE FAIL: {e}");
+                    failures.push(name);
+                }
+                (Ok(_), Err(e)) => {
+                    eprintln!("{name}: THEY FAIL: {e}");
+                }
+                (Err(e1), Err(e2)) => {
+                    eprintln!("{name}: BOTH FAIL: us={e1} them={e2}");
+                }
+            }
+        }
+        assert!(failures.is_empty(), "Failures: {failures:?}");
+    }
 }
