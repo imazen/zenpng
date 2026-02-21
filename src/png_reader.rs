@@ -2102,7 +2102,16 @@ mod tests {
             let mut corpus_skipped = 0u32;
             let mut corpus_both_err = 0u32;
 
-            for path in &pngs {
+            let progress_interval = if pngs.len() > 1000 { pngs.len() / 20 } else { usize::MAX };
+
+            for (idx, path) in pngs.iter().enumerate() {
+                if idx > 0 && idx % progress_interval == 0 {
+                    eprintln!(
+                        "  [{}/{}] {} matched, {} failures so far",
+                        idx, pngs.len(), corpus_tested, failures.len()
+                    );
+                }
+
                 let filename = path.strip_prefix(dir_path).unwrap_or(path);
                 let filename_str = filename.display().to_string();
 
@@ -2182,6 +2191,206 @@ mod tests {
                 "{} corpus comparison failures (see stderr)",
                 failures.len()
             );
+        }
+    }
+
+    /// Mass-test against corpus-builder scraped PNGs (85K+ files).
+    /// Run with: cargo test --release corpus_builder -- --nocapture --ignored
+    ///
+    /// Results are written to /mnt/v/output/zenpng/corpus_results.jsonl
+    /// for resumption and targeted debugging. Already-tested files are skipped.
+    #[test]
+    #[ignore]
+    fn corpus_builder_comparison() {
+        use std::io::Write;
+
+        let corpus_dirs: Vec<(&str, &str)> = vec![
+            ("png-8", "/mnt/v/output/corpus-builder/png-8"),
+            ("png-24-32", "/mnt/v/output/corpus-builder/png-24-32"),
+            ("apng", "/mnt/v/output/corpus-builder/apng"),
+            ("repro", "/mnt/v/output/corpus-builder/repro-images"),
+        ];
+
+        let results_dir = std::path::Path::new("/mnt/v/output/zenpng");
+        std::fs::create_dir_all(results_dir).unwrap();
+        let results_path = results_dir.join("corpus_results.jsonl");
+
+        // Load already-tested paths for resumption
+        let mut done: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if results_path.exists() {
+            if let Ok(contents) = std::fs::read_to_string(&results_path) {
+                for line in contents.lines() {
+                    if let Some(path_start) = line.find("\"path\":\"") {
+                        let rest = &line[path_start + 8..];
+                        if let Some(end) = rest.find('"') {
+                            done.insert(rest[..end].to_string());
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("Loaded {} already-tested results", done.len());
+
+        let mut results_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&results_path)
+            .unwrap();
+
+        let mut total_tested = 0u32;
+        let mut total_we_fail = 0u32;
+        let mut total_both_err = 0u32;
+        let mut total_pixel_mismatch = 0u32;
+        let mut total_skipped = 0u32;
+        let mut total_timeout = 0u32;
+
+        let timeout_dur = std::time::Duration::from_secs(30);
+
+        for (corpus_name, dir) in &corpus_dirs {
+            let dir_path = std::path::Path::new(dir);
+            if !dir_path.exists() {
+                eprintln!("Corpus '{}' not found at {}, skipping", corpus_name, dir);
+                continue;
+            }
+
+            let pngs = collect_pngs(dir_path);
+            eprintln!("Corpus '{}': {} PNG files found", corpus_name, pngs.len());
+
+            let mut corpus_tested = 0u32;
+            let mut corpus_we_fail = 0u32;
+            let mut corpus_both_err = 0u32;
+            let progress_interval = if pngs.len() > 500 { pngs.len() / 20 } else { usize::MAX };
+
+            for (idx, path) in pngs.iter().enumerate() {
+                if idx > 0 && idx % progress_interval == 0 {
+                    eprintln!(
+                        "  [{}/{}] {} ok, {} we-fail, {} mismatch, {} timeout",
+                        idx, pngs.len(), corpus_tested, corpus_we_fail,
+                        total_pixel_mismatch, total_timeout
+                    );
+                }
+
+                let path_str = path.display().to_string();
+
+                // Skip already-tested files
+                if done.contains(&path_str) {
+                    total_skipped += 1;
+                    continue;
+                }
+
+                let data = match std::fs::read(path) {
+                    Ok(d) => d,
+                    Err(_) => continue,
+                };
+
+                // Skip very large files (>50MB)
+                if data.len() > 50_000_000 {
+                    let _ = writeln!(results_file,
+                        "{{\"path\":\"{}\",\"corpus\":\"{}\",\"result\":\"skipped\",\"reason\":\"too_large\",\"size\":{}}}",
+                        path_str, corpus_name, data.len());
+                    corpus_we_fail += 1;
+                    continue;
+                }
+
+                // Decode with hard thread-based timeout: spawn a thread, abandon
+                // it if it doesn't finish within the deadline. The streaming
+                // decompressor doesn't check Stop during fill(), so cooperative
+                // cancellation can't break infinite loops in the fastloop.
+                let data_clone = data.clone();
+                let handle = std::thread::spawn(move || {
+                    decode_png(&data_clone, None, &Unstoppable)
+                });
+                let deadline = std::time::Instant::now() + timeout_dur;
+                let our_result = loop {
+                    if handle.is_finished() {
+                        break handle.join().unwrap();
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        // Abandon the thread — it'll be cleaned up on process exit
+                        let _ = writeln!(results_file,
+                            "{{\"path\":\"{}\",\"corpus\":\"{}\",\"result\":\"timeout\",\"size\":{}}}",
+                            path_str, corpus_name, data.len());
+                        total_timeout += 1;
+                        corpus_we_fail += 1;
+                        break Err(PngError::Decode("timeout".into()));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                };
+                if our_result.as_ref().is_err_and(|e| alloc::format!("{e}").contains("timeout")) {
+                    continue;
+                }
+
+                let ref_result = decode_with_png_crate(&data);
+
+                let result_str = match (&our_result, &ref_result) {
+                    (Ok(ours), Ok(reference)) => {
+                        let our_bytes = pixel_data_to_bytes(&ours.pixels);
+                        let ref_bytes = pixel_data_to_bytes(&reference.pixels);
+
+                        if our_bytes != ref_bytes {
+                            total_pixel_mismatch += 1;
+                            alloc::format!(
+                                "{{\"path\":\"{}\",\"corpus\":\"{}\",\"result\":\"pixel_mismatch\",\"ours\":\"{}\",\"ref\":\"{}\",\"our_len\":{},\"ref_len\":{}}}",
+                                path_str, corpus_name,
+                                format_pixel_data(&ours.pixels),
+                                format_pixel_data(&reference.pixels),
+                                our_bytes.len(), ref_bytes.len()
+                            )
+                        } else {
+                            corpus_tested += 1;
+                            alloc::format!(
+                                "{{\"path\":\"{}\",\"corpus\":\"{}\",\"result\":\"ok\"}}",
+                                path_str, corpus_name
+                            )
+                        }
+                    }
+                    (Err(e), Ok(_)) => {
+                        corpus_we_fail += 1;
+                        let err_msg = alloc::format!("{}", e).replace('"', "'");
+                        alloc::format!(
+                            "{{\"path\":\"{}\",\"corpus\":\"{}\",\"result\":\"we_fail\",\"error\":\"{}\"}}",
+                            path_str, corpus_name, err_msg
+                        )
+                    }
+                    (Ok(_), Err(_)) => {
+                        corpus_tested += 1;
+                        alloc::format!(
+                            "{{\"path\":\"{}\",\"corpus\":\"{}\",\"result\":\"ok_ref_fail\"}}",
+                            path_str, corpus_name
+                        )
+                    }
+                    (Err(_), Err(_)) => {
+                        corpus_both_err += 1;
+                        alloc::format!(
+                            "{{\"path\":\"{}\",\"corpus\":\"{}\",\"result\":\"both_fail\"}}",
+                            path_str, corpus_name
+                        )
+                    }
+                };
+
+                let _ = writeln!(results_file, "{}", result_str);
+            }
+
+            eprintln!(
+                "  {} ok, {} we-fail, {} both-err",
+                corpus_tested, corpus_we_fail, corpus_both_err
+            );
+            total_tested += corpus_tested;
+            total_we_fail += corpus_we_fail;
+            total_both_err += corpus_both_err;
+        }
+
+        drop(results_file);
+
+        eprintln!(
+            "\n=== TOTAL: {} ok, {} we-fail, {} both-err, {} pixel-mismatch, {} timeout, {} skipped(resumed) ===",
+            total_tested, total_we_fail, total_both_err,
+            total_pixel_mismatch, total_timeout, total_skipped
+        );
+        eprintln!("Results written to {}", results_path.display());
+
+        if total_pixel_mismatch > 0 {
+            panic!("{} pixel mismatches (see {})", total_pixel_mismatch, results_path.display());
         }
     }
 }
