@@ -2784,6 +2784,9 @@ mod tests {
             "/mnt/v/output/corpus-builder/png-24-32/wm_upload_wikimedia_org_a119af42024ad225.png",
             "/mnt/v/output/corpus-builder/png-24-32/wm_upload_wikimedia_org_a23d1e831e128dff.png",
             "/mnt/v/output/corpus-builder/png-24-32/wm_upload_wikimedia_org_c8a458b0cef3d942.png",
+            "/mnt/v/output/corpus-builder/repro-images/libvips_libvips/1567/76076711-703ab580-5fb0-11ea-8562-27cd30e8e653.png",
+            "/mnt/v/output/corpus-builder/repro-images/libvips_libvips/3123/199550258-f3b4ad36-10f2-47d8-af1f-9972b62b99be.png",
+            "/mnt/v/output/corpus-builder/repro-images/libvips_libvips/3144/200133882-34bc8d61-4dbd-42de-a88a-0eaa1dae99ac.png",
         ];
         let mut failures = Vec::new();
         for path in &files {

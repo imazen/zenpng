@@ -384,7 +384,7 @@ fn compress_filtered(
     // Non-budget modes jump straight to the target level(s).
     let refine_tiers: &[u32] = if opts.is_budget {
         &[4, 6, 9, 10, 11, 12]
-    } else if compression_level >= 10 {
+    } else if compression_level >= 11 {
         &[10, 11, 12]
     } else {
         // Return a static slice for the target level. For levels 2-9
@@ -398,6 +398,7 @@ fn compress_filtered(
             7 => &[7],
             8 => &[8],
             9 => &[9],
+            10 => &[10],
             _ => &[1], // L0-1 won't reach here (needs_refine is false)
         }
     };
@@ -413,9 +414,10 @@ fn compress_filtered(
         &[(10, 1), (10, 4)]
     } else {
         match compression_level {
-            10.. => &[(10, 1), (10, 4)],
-            9 => &[(8, 1)],
-            6..=8 => &[(3, 1)],
+            11.. => &[(10, 1), (10, 4)],
+            10 => &[(10, 1)],
+            8..=9 => &[(8, 1)],
+            6..=7 => &[(3, 1)],
             _ => &[],
         }
     };
@@ -541,7 +543,7 @@ fn compress_filtered(
     // Brute-force filtering is expensive (~3-4s per config), so compress at
     // the highest tiers only. We already have lower-tier results from Phase 2.
     if can_brute_force && !opts.budget.is_exhausted() {
-        let brute_levels: &[u32] = if compression_level >= 10 || opts.is_budget {
+        let brute_levels: &[u32] = if compression_level >= 11 || opts.is_budget {
             &[10, 11, 12]
         } else {
             &[compression_level as u32]

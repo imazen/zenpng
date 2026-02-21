@@ -411,7 +411,9 @@ mod tests {
             crate::Compression::Fastest,
             crate::Compression::Fast,
             crate::Compression::Balanced,
+            crate::Compression::Thorough,
             crate::Compression::High,
+            crate::Compression::Aggressive,
         ] {
             let config = EncodeConfig::default().with_compression(comp);
             let encoded = encode_indexed_rgba8(img.as_ref(), &config, &quant, None).unwrap();
