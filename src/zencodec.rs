@@ -109,8 +109,11 @@ impl Default for PngEncoderConfig {
 fn effort_to_compression(effort: i32) -> crate::Compression {
     use crate::Compression;
     match effort {
-        ..=2 => Compression::Fast,
-        3..=7 => Compression::Balanced,
+        ..=1 => Compression::Fast,
+        2..=3 => Compression::Balanced,
+        4..=5 => Compression::Thorough,
+        6..=7 => Compression::High,
+        8 => Compression::Aggressive,
         _ => Compression::Best,
     }
 }
@@ -2508,7 +2511,9 @@ mod tests {
             ("Fastest", crate::Compression::Fastest),
             ("Fast", crate::Compression::Fast),
             ("Balanced", crate::Compression::Balanced),
+            ("Thorough", crate::Compression::Thorough),
             ("High", crate::Compression::High),
+            ("Aggressive", crate::Compression::Aggressive),
         ] {
             let config = crate::EncodeConfig {
                 source_gamma: info.source_gamma,

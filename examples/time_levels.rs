@@ -13,7 +13,9 @@ fn main() {
         ("Fastest", zenpng::Compression::Fastest),
         ("Fast", zenpng::Compression::Fast),
         ("Balanced", zenpng::Compression::Balanced),
+        ("Thorough", zenpng::Compression::Thorough),
         ("High", zenpng::Compression::High),
+        ("Aggressive", zenpng::Compression::Aggressive),
         ("Best", zenpng::Compression::Best),
         ("Crush", zenpng::Compression::Crush),
     ];

@@ -15,8 +15,10 @@
 /// | `Fastest` | 1 | Hash table |
 /// | `Fast` | 4 | Greedy |
 /// | `Balanced` | 6 | Lazy (default) |
-/// | `High` | 9 | Double lazy |
-/// | `Best` | 12 | Near-optimal |
+/// | `Thorough` | 8 | Double lazy + deeper brute-force |
+/// | `High` | 9 | Double lazy + block-wise filter selection |
+/// | `Aggressive` | 10 | Near-optimal (2-pass) |
+/// | `Best` | 12 | Near-optimal multi-pass + dual configs |
 /// | `Crush` | 12+zopfli | Near-optimal filter eval, zopfli final compression |
 /// | `Budget(ms)` | adaptive | Best result within wall-clock budget |
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -31,8 +33,12 @@ pub enum Compression {
     /// Balanced compression (default). Good trade-off for most images.
     #[default]
     Balanced,
-    /// High compression. Best ratio before the slower near-optimal parser.
+    /// Thorough compression. Double-lazy DEFLATE with deeper brute-force context.
+    Thorough,
+    /// High compression. Double-lazy DEFLATE with block-wise filter selection.
     High,
+    /// Aggressive compression. Near-optimal DEFLATE (2-pass) entry point.
+    Aggressive,
     /// Maximum compression with zenflate. Near-optimal parser, ~3x slower than `Balanced`.
     Best,
     /// Ultra compression. Uses zenflate near-optimal for filter selection, then
@@ -55,7 +61,9 @@ impl Compression {
             Compression::Fastest => 1,
             Compression::Fast => 4,
             Compression::Balanced => 6,
+            Compression::Thorough => 8,
             Compression::High => 9,
+            Compression::Aggressive => 10,
             Compression::Best | Compression::Crush | Compression::Budget(_) => 12,
         }
     }
