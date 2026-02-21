@@ -279,7 +279,21 @@ impl PngAncillary {
                 self.palette = Some(chunk.data.to_vec());
             }
             b"tRNS" => {
-                self.trns = Some(chunk.data.to_vec());
+                if !chunk.data.is_empty() {
+                    // For indexed color, tRNS must not exceed palette entries.
+                    // If oversized, discard data but preserve the chunk's presence
+                    // so we still output RGBA format (with all alpha=255).
+                    if let Some(ref palette) = self.palette {
+                        let max_entries = palette.len() / 3;
+                        if chunk.data.len() > max_entries {
+                            self.trns = Some(Vec::new());
+                        } else {
+                            self.trns = Some(chunk.data.to_vec());
+                        }
+                    } else {
+                        self.trns = Some(chunk.data.to_vec());
+                    }
+                }
             }
             b"iCCP" => {
                 // iCCP is ancillary — ignore parse failures (e.g., broken profiles)
@@ -2392,5 +2406,247 @@ mod tests {
         if total_pixel_mismatch > 0 {
             panic!("{} pixel mismatches (see {})", total_pixel_mismatch, results_path.display());
         }
+    }
+
+    /// Targeted test: compare zenflate batch vs streaming decompressor on
+    /// a file that the streaming decompressor rejects with BadData.
+    #[test]
+    #[ignore]
+    fn streaming_vs_batch_decompressor() {
+        use zencodec_types::Unstoppable;
+
+        let test_files = [
+            "/mnt/v/output/corpus-builder/png-8/g8_dff1977698eea27b.png",
+            "/mnt/v/output/corpus-builder/png-8/g8_f977635ec6266135.png",
+            "/mnt/v/output/corpus-builder/png-8/google_hudsonvalleyseed_com_56490ab04e5742ee.png",
+        ];
+
+        for path in &test_files {
+            let data = match std::fs::read(path) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("Skipping {}: {}", path, e);
+                    continue;
+                }
+            };
+
+            // Extract IHDR and concatenated IDAT data
+            let mut pos = 8usize;
+            let mut idat_data = Vec::new();
+            let mut ihdr_data = None;
+            while pos + 12 <= data.len() {
+                let length = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
+                let chunk_type: [u8; 4] = data[pos + 4..pos + 8].try_into().unwrap();
+                let data_start = pos + 8;
+                let data_end = data_start + length;
+                if data_end + 4 > data.len() {
+                    break;
+                }
+                if &chunk_type == b"IHDR" {
+                    ihdr_data = Some(data[data_start..data_end].to_vec());
+                } else if &chunk_type == b"IDAT" {
+                    idat_data.extend_from_slice(&data[data_start..data_end]);
+                } else if &chunk_type == b"IEND" {
+                    break;
+                }
+                pos = data_end + 4;
+            }
+
+            let ihdr = ihdr_data.unwrap();
+            let w = u32::from_be_bytes(ihdr[0..4].try_into().unwrap());
+            let h = u32::from_be_bytes(ihdr[4..8].try_into().unwrap());
+            let depth = ihdr[8];
+            let ctype = ihdr[9];
+            let channels: usize = match ctype {
+                0 => 1,
+                2 => 3,
+                3 => 1,
+                4 => 2,
+                6 => 4,
+                _ => panic!("unknown color type"),
+            };
+            let stride = 1 + w as usize * channels * (depth as usize / 8).max(1);
+            let expected_size = stride * h as usize;
+
+            eprintln!(
+                "\n{}: {}x{} depth={} ctype={}, IDAT={} bytes, expected decompressed={}",
+                path, w, h, depth, ctype, idat_data.len(), expected_size
+            );
+
+            // Test 1: Batch decompressor (whole-buffer)
+            let mut output = vec![0u8; expected_size + 65536]; // extra space
+            let mut batch = zenflate::Decompressor::new();
+            let batch_result = batch.zlib_decompress(&idat_data, &mut output, Unstoppable);
+            match &batch_result {
+                Ok(outcome) => eprintln!("  Batch: OK, {} bytes output", outcome.output_written),
+                Err(e) => eprintln!("  Batch: FAILED: {:?}", e),
+            }
+
+            // Test 2: Streaming decompressor
+            struct SliceSource<'a> {
+                data: &'a [u8],
+                pos: usize,
+            }
+            impl zenflate::InputSource for SliceSource<'_> {
+                type Error = std::io::Error;
+                fn fill_buf(&mut self) -> Result<&[u8], Self::Error> {
+                    Ok(&self.data[self.pos..])
+                }
+                fn consume(&mut self, amt: usize) {
+                    self.pos += amt;
+                }
+            }
+
+            let source = SliceSource {
+                data: &idat_data,
+                pos: 0,
+            };
+            let mut stream = zenflate::StreamDecompressor::zlib(source, stride * 2);
+            let mut total_output = 0usize;
+            let mut stream_err = None;
+            loop {
+                if stream.is_done() {
+                    break;
+                }
+                match stream.fill() {
+                    Ok(_) => {}
+                    Err(e) => {
+                        stream_err = Some(alloc::format!("{:?}", e));
+                        break;
+                    }
+                }
+                let peeked = stream.peek().len();
+                total_output += peeked;
+                stream.advance(peeked);
+            }
+            match &stream_err {
+                None => eprintln!("  Stream(zlib): OK, {} bytes output", total_output),
+                Some(e) => eprintln!("  Stream(zlib): FAILED at {} bytes: {}", total_output, e),
+            }
+
+            // Test 2b: Raw deflate streaming (skip zlib header 2 bytes, footer 4 bytes)
+            let raw_deflate = &idat_data[2..idat_data.len() - 4];
+            let source = SliceSource {
+                data: raw_deflate,
+                pos: 0,
+            };
+            let mut stream = zenflate::StreamDecompressor::deflate(source, stride * 2);
+            let mut total_output = 0usize;
+            let mut stream_err = None;
+            loop {
+                if stream.is_done() {
+                    break;
+                }
+                match stream.fill() {
+                    Ok(_) => {}
+                    Err(e) => {
+                        stream_err = Some(alloc::format!("{:?}", e));
+                        break;
+                    }
+                }
+                let peeked = stream.peek().len();
+                total_output += peeked;
+                stream.advance(peeked);
+            }
+            match &stream_err {
+                None => eprintln!("  Stream(raw): OK, {} bytes output", total_output),
+                Some(e) => eprintln!("  Stream(raw): FAILED at {} bytes: {}", total_output, e),
+            }
+
+            // Test 3: Streaming with small chunk source (simulates IDAT chunks)
+            struct ChunkedSource<'a> {
+                data: &'a [u8],
+                pos: usize,
+                chunk_size: usize,
+            }
+            impl zenflate::InputSource for ChunkedSource<'_> {
+                type Error = std::io::Error;
+                fn fill_buf(&mut self) -> Result<&[u8], Self::Error> {
+                    let end = (self.pos + self.chunk_size).min(self.data.len());
+                    Ok(&self.data[self.pos..end])
+                }
+                fn consume(&mut self, amt: usize) {
+                    self.pos += amt;
+                }
+            }
+
+            for chunk_size in [256, 512, 1024, 4096, 8192] {
+                let source = ChunkedSource {
+                    data: &idat_data,
+                    pos: 0,
+                    chunk_size,
+                };
+                let mut stream = zenflate::StreamDecompressor::zlib(source, stride * 2);
+                let mut total = 0usize;
+                let mut err = None;
+                loop {
+                    if stream.is_done() {
+                        break;
+                    }
+                    match stream.fill() {
+                        Ok(_) => {}
+                        Err(e) => {
+                            err = Some(alloc::format!("{:?}", e));
+                            break;
+                        }
+                    }
+                    let p = stream.peek().len();
+                    total += p;
+                    stream.advance(p);
+                }
+                match &err {
+                    None => eprintln!("  Stream(chunk={}): OK, {} bytes", chunk_size, total),
+                    Some(e) => eprintln!(
+                        "  Stream(chunk={}): FAILED at {} bytes: {}",
+                        chunk_size, total, e
+                    ),
+                }
+            }
+
+            // Verify batch succeeded
+            assert!(
+                batch_result.is_ok(),
+                "Batch decompressor should succeed on {}",
+                path
+            );
+        }
+    }
+
+    /// Compare pixel output for a specific file that showed a pixel mismatch.
+    #[test]
+    #[ignore]
+    fn debug_pixel_mismatch() {
+        let path = "/mnt/v/output/corpus-builder/repro-images/image-rs_image-png/346/177061203-3c6b1002-fb61-4f86-97f6-f0470cb03d84.png";
+        let data = match std::fs::read(path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Skipping: {}", e);
+                return;
+            }
+        };
+
+        let our = decode_png(&data, None, &zencodec_types::Unstoppable).unwrap();
+        let our_bytes = pixel_data_to_bytes(&our.pixels);
+        eprintln!("Our format: {}, {} bytes", format_pixel_data(&our.pixels), our_bytes.len());
+        eprintln!("Our first 32 bytes: {:?}", &our_bytes[..32.min(our_bytes.len())]);
+
+        let reference = decode_with_png_crate(&data).unwrap();
+        let ref_bytes = pixel_data_to_bytes(&reference.pixels);
+        eprintln!("Ref format: {}, {} bytes", format_pixel_data(&reference.pixels), ref_bytes.len());
+        eprintln!("Ref first 32 bytes: {:?}", &ref_bytes[..32.min(ref_bytes.len())]);
+
+        let mut diffs = 0;
+        for (i, (a, b)) in our_bytes.iter().zip(ref_bytes.iter()).enumerate() {
+            if a != b {
+                if diffs < 20 {
+                    let px = i / 4;
+                    let ch = ["R", "G", "B", "A"][i % 4];
+                    eprintln!("  diff byte {}: pixel {} {}: ours={} ref={}", i, px, ch, a, b);
+                }
+                diffs += 1;
+            }
+        }
+        eprintln!("Total diffs: {} of {} bytes", diffs, our_bytes.len());
+        assert_eq!(diffs, 0, "Pixel data should match");
     }
 }
