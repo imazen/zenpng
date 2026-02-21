@@ -171,7 +171,9 @@ fn filter_brute_force(pixel_bytes: &[u8], row_bytes: usize, height: usize, bpp: 
             eval_buf.push(f);
             eval_buf.extend_from_slice(&candidate_data[f as usize]);
 
-            if let Ok(len) = eval_compressor.zlib_compress(&eval_buf, &mut compress_buf) {
+            if let Ok(len) =
+                eval_compressor.zlib_compress(&eval_buf, &mut compress_buf, zenflate::Unstoppable)
+            {
                 if len < best_size {
                     best_size = len;
                     best_f = f;
@@ -244,7 +246,9 @@ fn compress_zenflate(data: &[u8], level: u32) -> usize {
     let mut compressor = zenflate::Compressor::new(zenflate::CompressionLevel::new(level));
     let bound = zenflate::Compressor::zlib_compress_bound(data.len());
     let mut buf = vec![0u8; bound];
-    compressor.zlib_compress(data, &mut buf).unwrap()
+    compressor
+        .zlib_compress(data, &mut buf, zenflate::Unstoppable)
+        .unwrap()
 }
 
 fn compress_libdeflate_c(data: &[u8], level: i32) -> usize {
