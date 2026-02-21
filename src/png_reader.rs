@@ -80,6 +80,13 @@ impl<'a> Iterator for ChunkIter<'a> {
         // CRC covers type + data
         let computed_crc = crc32(crc32(0, &chunk_type), chunk_data);
         if stored_crc != computed_crc {
+            // PNG spec: bit 5 of the first byte indicates ancillary (lowercase).
+            // Ancillary chunks with bad CRC should be skipped, not fatal.
+            let is_ancillary = chunk_type[0] & 0x20 != 0;
+            if is_ancillary {
+                self.pos = crc_end;
+                return self.next(); // skip this chunk, try next
+            }
             return Some(Err(PngError::Decode(alloc::format!(
                 "CRC mismatch in {:?} chunk at offset {}",
                 core::str::from_utf8(&chunk_type).unwrap_or("????"),
@@ -275,7 +282,8 @@ impl PngAncillary {
                 self.trns = Some(chunk.data.to_vec());
             }
             b"iCCP" => {
-                self.parse_iccp(chunk.data)?;
+                // iCCP is ancillary — ignore parse failures (e.g., broken profiles)
+                let _ = self.parse_iccp(chunk.data);
             }
             b"gAMA" => {
                 if chunk.data.len() == 4 {
@@ -2040,6 +2048,140 @@ mod tests {
             PixelData::Gray16(_) => "Gray16",
             PixelData::GrayAlpha16(_) => "GrayAlpha16",
             _ => "Other",
+        }
+    }
+
+    /// Walk a directory tree collecting all .png files.
+    fn collect_pngs(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut pngs = Vec::new();
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&d) else {
+                continue;
+            };
+            for entry in entries {
+                let Ok(entry) = entry else { continue };
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().and_then(|e| e.to_str()) == Some("png") {
+                    pngs.push(path);
+                }
+            }
+        }
+        pngs.sort();
+        pngs
+    }
+
+    /// Mass-test our decoder against the png crate on all PNG corpuses.
+    #[test]
+    fn corpus_comparison_vs_png_crate() {
+        let corpus_dirs: Vec<(&str, &str)> = vec![
+            ("codec-corpus", "/home/lilith/work/codec-corpus"),
+            ("discover", "/mnt/v/discover/images"),
+            ("kodak", "/mnt/v/discover/kodak/images"),
+            ("image-png", "/home/lilith/work/jpeg-encoder/external/image-png"),
+        ];
+
+        let mut total_tested = 0u32;
+        let mut total_skipped = 0u32;
+        let mut total_both_err = 0u32;
+        let mut failures: Vec<String> = Vec::new();
+
+        for (corpus_name, dir) in &corpus_dirs {
+            let dir_path = std::path::Path::new(dir);
+            if !dir_path.exists() {
+                eprintln!("Corpus '{}' not found at {}, skipping", corpus_name, dir);
+                continue;
+            }
+
+            let pngs = collect_pngs(dir_path);
+            eprintln!("Corpus '{}': {} PNG files found", corpus_name, pngs.len());
+
+            let mut corpus_tested = 0u32;
+            let mut corpus_skipped = 0u32;
+            let mut corpus_both_err = 0u32;
+
+            for path in &pngs {
+                let filename = path.strip_prefix(dir_path).unwrap_or(path);
+                let filename_str = filename.display().to_string();
+
+                // Skip intentionally corrupt PNGSuite files
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if stem.starts_with('x') && filename_str.contains("pngsuite") {
+                        corpus_skipped += 1;
+                        continue;
+                    }
+                }
+
+                let data = match std::fs::read(path) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        eprintln!("  read error {}: {}", filename_str, e);
+                        corpus_skipped += 1;
+                        continue;
+                    }
+                };
+
+                let our_result = decode_png(&data, None, &Unstoppable);
+                let ref_result = decode_with_png_crate(&data);
+
+                match (our_result, ref_result) {
+                    (Ok(ours), Ok(reference)) => {
+                        let our_bytes = pixel_data_to_bytes(&ours.pixels);
+                        let ref_bytes = pixel_data_to_bytes(&reference.pixels);
+
+                        if our_bytes != ref_bytes {
+                            let our_desc = format_pixel_data(&ours.pixels);
+                            let ref_desc = format_pixel_data(&reference.pixels);
+                            failures.push(alloc::format!(
+                                "[{}] {}: pixel mismatch (ours={}, ref={}, our_len={}, ref_len={})",
+                                corpus_name, filename_str, our_desc, ref_desc,
+                                our_bytes.len(), ref_bytes.len()
+                            ));
+                        } else {
+                            corpus_tested += 1;
+                        }
+                    }
+                    (Err(e), Ok(_)) => {
+                        failures.push(alloc::format!(
+                            "[{}] {}: we failed but ref succeeded: {}",
+                            corpus_name, filename_str, e
+                        ));
+                    }
+                    (Ok(_), Err(_)) => {
+                        // We decode something the ref can't — that's fine
+                        corpus_tested += 1;
+                    }
+                    (Err(_), Err(_)) => {
+                        corpus_both_err += 1;
+                    }
+                }
+            }
+
+            eprintln!(
+                "  {} matched, {} skipped, {} both-err, {} failures so far",
+                corpus_tested, corpus_skipped, corpus_both_err, failures.len()
+            );
+            total_tested += corpus_tested;
+            total_skipped += corpus_skipped;
+            total_both_err += corpus_both_err;
+        }
+
+        eprintln!(
+            "\n=== TOTAL: {} matched, {} skipped, {} both-err, {} failures ===",
+            total_tested, total_skipped, total_both_err, failures.len()
+        );
+
+        if !failures.is_empty() {
+            eprintln!("\nFailures:");
+            for f in &failures {
+                eprintln!("  FAIL: {}", f);
+            }
+            panic!(
+                "{} corpus comparison failures (see stderr)",
+                failures.len()
+            );
         }
     }
 }
