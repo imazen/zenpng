@@ -155,15 +155,13 @@ fn main() {
     };
 
     println!("Image: {image_path}");
-    println!("  {w}x{h} (original), bpp={bpp}, {:.1} MB raw\n", (stride * h) as f64 / 1_000_000.0);
+    println!(
+        "  {w}x{h} (original), bpp={bpp}, {:.1} MB raw\n",
+        (stride * h) as f64 / 1_000_000.0
+    );
     println!("=== Isolated unfilter micro-benchmark ===\n");
 
-    let filters: &[(u8, &str)] = &[
-        (1, "Sub"),
-        (2, "Up"),
-        (3, "Average"),
-        (4, "Paeth"),
-    ];
+    let filters: &[(u8, &str)] = &[(1, "Sub"), (2, "Up"), (3, "Average"), (4, "Paeth")];
 
     println!(
         "{:<10} {:>12} {:>12} {:>8}",
@@ -204,5 +202,8 @@ fn main() {
     println!("\n=== Full decode pipeline ===\n");
     let raw_bytes = stride * h;
     let tp = bench_decode(&png_bytes, 5, raw_bytes);
-    println!("Full pipeline decode: {tp:.0} MB/s ({:.1} MB raw)", raw_bytes as f64 / 1_000_000.0);
+    println!(
+        "Full pipeline decode: {tp:.0} MB/s ({:.1} MB raw)",
+        raw_bytes as f64 / 1_000_000.0
+    );
 }
