@@ -2,9 +2,8 @@
 ///
 /// Usage: cargo run --release --example decode_bench --features _dev [-- /path/to/image.png]
 ///
-/// Two benchmarks:
-/// 1. Isolated unfilter micro-benchmark (calls unfilter directly)
-/// 2. Full decode pipeline (SIMD everywhere vs scalar everywhere)
+/// 1. Isolated unfilter micro-benchmark (SIMD vs scalar per filter)
+/// 2. Full decode pipeline throughput
 use std::time::Instant;
 
 use enough::Unstoppable;
@@ -198,21 +197,9 @@ fn main() {
         );
     }
 
-    // Full pipeline comparison — decode the original PNG file
-    println!("\n=== Full decode pipeline (SIMD vs scalar-only unfilter) ===\n");
+    // Full pipeline decode throughput
+    println!("\n=== Full decode pipeline ===\n");
     let raw_bytes = stride * h;
-
-    let simd_tp = bench_decode(&png_bytes, 5, raw_bytes);
-
-    // Disable SSE2 (cascades to all higher tiers) for unfilter scalar fallback
-    // Note: this also disables zenflate's SIMD, so it understates unfilter-only impact
-    disable_all_simd();
-    let scalar_tp = bench_decode(&png_bytes, 5, raw_bytes);
-    enable_all_simd();
-
-    println!(
-        "Full pipeline: SIMD {simd_tp:.0} MB/s, scalar {scalar_tp:.0} MB/s, speedup {:.2}x",
-        simd_tp / scalar_tp,
-    );
-    println!("  (scalar also disables zenflate SIMD, so this understates unfilter-only gains)");
+    let tp = bench_decode(&png_bytes, 5, raw_bytes);
+    println!("Full pipeline decode: {tp:.0} MB/s ({:.1} MB raw)", raw_bytes as f64 / 1_000_000.0);
 }
