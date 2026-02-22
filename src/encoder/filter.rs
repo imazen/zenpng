@@ -132,6 +132,14 @@ fn filter_image_heuristic(
     let mut prev_row = vec![0u8; row_bytes];
     let mut candidates: Vec<Vec<u8>> = (0..5).map(|_| vec![0u8; row_bytes]).collect();
 
+    // Pre-allocate scratch buffers for heuristics that need them.
+    // Previously these were allocated per-row inside pick_best_filter,
+    // causing massive allocation churn (e.g. BigEnt: 256KB × height).
+    let mut scratch = match strategy {
+        Strategy::Adaptive(h) => Some(HeuristicScratch::new(h)),
+        _ => None,
+    };
+
     for y in 0..height {
         let row = &packed_rows[y * row_bytes..(y + 1) * row_bytes];
 
@@ -145,7 +153,8 @@ fn filter_image_heuristic(
                 for f in 0..5u8 {
                     apply_filter(f, row, &prev_row, bpp, &mut candidates[f as usize]);
                 }
-                let best_f = pick_best_filter(&candidates, heuristic);
+                let best_f =
+                    pick_best_filter(&candidates, heuristic, scratch.as_mut().unwrap());
                 out.push(best_f);
                 out.extend_from_slice(&candidates[best_f as usize]);
             }
@@ -547,7 +556,40 @@ fn filter_image_blockwise(
     }
 }
 
-fn pick_best_filter(candidates: &[Vec<u8>], heuristic: AdaptiveHeuristic) -> u8 {
+/// Reusable scratch buffers for heuristic scoring.
+///
+/// Hoisted outside the per-row loop to avoid per-row allocation churn.
+/// BigEnt was the worst offender: 256KB (`vec![0u32; 65536]`) per row per
+/// filter candidate = 2GB+ of malloc/free on tall images.
+struct HeuristicScratch {
+    /// Bigrams: 65536-bit bitset (8KB). Used by Bigrams heuristic.
+    bigram_seen: Vec<u64>,
+    /// BigEnt: 65536-entry frequency table (256KB). Used by BigEnt heuristic.
+    bigram_counts: Vec<u32>,
+}
+
+impl HeuristicScratch {
+    fn new(heuristic: AdaptiveHeuristic) -> Self {
+        Self {
+            bigram_seen: if matches!(heuristic, AdaptiveHeuristic::Bigrams) {
+                vec![0u64; 1024]
+            } else {
+                Vec::new()
+            },
+            bigram_counts: if matches!(heuristic, AdaptiveHeuristic::BigEnt) {
+                vec![0u32; 65536]
+            } else {
+                Vec::new()
+            },
+        }
+    }
+}
+
+fn pick_best_filter(
+    candidates: &[Vec<u8>],
+    heuristic: AdaptiveHeuristic,
+    scratch: &mut HeuristicScratch,
+) -> u8 {
     match heuristic {
         AdaptiveHeuristic::MinSum => {
             let mut best = 0u8;
@@ -577,7 +619,7 @@ fn pick_best_filter(candidates: &[Vec<u8>], heuristic: AdaptiveHeuristic) -> u8 
             let mut best = 0u8;
             let mut best_score = usize::MAX;
             for f in 0..5u8 {
-                let score = bigrams_score(&candidates[f as usize]);
+                let score = bigrams_score(&candidates[f as usize], &mut scratch.bigram_seen);
                 if score < best_score {
                     best_score = score;
                     best = f;
@@ -589,7 +631,8 @@ fn pick_best_filter(candidates: &[Vec<u8>], heuristic: AdaptiveHeuristic) -> u8 
             let mut best = 0u8;
             let mut best_score = f64::MAX;
             for f in 0..5u8 {
-                let score = bigram_entropy_score(&candidates[f as usize]);
+                let score =
+                    bigram_entropy_score(&candidates[f as usize], &mut scratch.bigram_counts);
                 if score < best_score {
                     best_score = score;
                     best = f;
@@ -682,11 +725,11 @@ fn entropy_score(data: &[u8]) -> f64 {
     entropy
 }
 
-fn bigrams_score(data: &[u8]) -> usize {
+fn bigrams_score(data: &[u8], seen: &mut [u64]) -> usize {
     if data.len() < 2 {
         return 0;
     }
-    let mut seen = vec![0u64; 1024]; // 1024 * 64 = 65536 bits
+    seen.fill(0);
     let mut count = 0usize;
     for pair in data.windows(2) {
         let key = (pair[0] as usize) << 8 | pair[1] as usize;
@@ -706,11 +749,11 @@ fn bigrams_score(data: &[u8]) -> usize {
 /// actual entropy of the bigram distribution. Better at distinguishing
 /// between filtered rows that have similar unique-bigram counts but
 /// different frequency distributions.
-fn bigram_entropy_score(data: &[u8]) -> f64 {
+fn bigram_entropy_score(data: &[u8], counts: &mut [u32]) -> f64 {
     if data.len() < 2 {
         return 0.0;
     }
-    let mut counts = vec![0u32; 65536];
+    counts.fill(0);
     let n = data.len() - 1;
     for pair in data.windows(2) {
         let key = (pair[0] as usize) << 8 | pair[1] as usize;
@@ -718,7 +761,7 @@ fn bigram_entropy_score(data: &[u8]) -> f64 {
     }
     let len = n as f64;
     let mut entropy = 0.0f64;
-    for &c in &counts {
+    for &c in counts.iter() {
         if c > 0 {
             let p = c as f64 / len;
             entropy -= p * p.log2();

@@ -179,10 +179,19 @@ pub(crate) fn compress_filtered(
         _ => &[],
     };
 
-    // ---- Phase 1: Screen all heuristic strategies ----
-    // Use a cheap compressor to rank strategies by compressed size.
-    // Use fewer strategies at low compression levels (Fastest/Fast) for speed.
-    let strategies: &[Strategy] = if compression_level <= 4 {
+    // ---- Phase 1: Screen heuristic strategies ----
+    // At L0 (None/uncompressed), use filter None — filtering is pointless without
+    // compression, and this gives maximum speed (just memcpy rows with filter byte).
+    // At L1 (Fastest), skip screening — just use Paeth. It's within 1% of the best
+    // adaptive heuristic on screenshots and photos, and screening 5 strategies
+    // wastes ~4x the time for negligible gain.
+    // At L2-4 (Fast), use reduced FAST_STRATEGIES (5 strategies).
+    // At L5+ (Balanced and above), use full HEURISTIC_STRATEGIES (9 strategies).
+    let strategies: &[Strategy] = if compression_level == 0 {
+        &[Strategy::Single(0)] // None filter — no filtering for uncompressed
+    } else if compression_level == 1 {
+        &[Strategy::Single(4)] // Paeth only
+    } else if compression_level <= 4 {
         FAST_STRATEGIES
     } else {
         HEURISTIC_STRATEGIES
