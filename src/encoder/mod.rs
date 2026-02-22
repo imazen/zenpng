@@ -1,5 +1,6 @@
 //! PNG encode pipeline: filtering, compression, chunk assembly.
 
+pub(crate) mod apng;
 pub(crate) mod compress;
 pub(crate) mod filter;
 pub(crate) mod metadata;
@@ -276,7 +277,7 @@ pub(crate) fn write_truecolor_png_with_stats(
 
 // ---- Bit depth and packing (indexed only) ----
 
-fn select_bit_depth(n_colors: usize) -> u8 {
+pub(crate) fn select_bit_depth(n_colors: usize) -> u8 {
     if n_colors <= 2 {
         1
     } else if n_colors <= 4 {
@@ -288,7 +289,7 @@ fn select_bit_depth(n_colors: usize) -> u8 {
     }
 }
 
-fn packed_row_bytes(width: usize, bit_depth: u8) -> usize {
+pub(crate) fn packed_row_bytes(width: usize, bit_depth: u8) -> usize {
     match bit_depth {
         8 => width,
         4 => width.div_ceil(2),
@@ -298,7 +299,7 @@ fn packed_row_bytes(width: usize, bit_depth: u8) -> usize {
     }
 }
 
-fn pack_all_rows(indices: &[u8], width: usize, height: usize, bit_depth: u8) -> Vec<u8> {
+pub(crate) fn pack_all_rows(indices: &[u8], width: usize, height: usize, bit_depth: u8) -> Vec<u8> {
     if bit_depth == 8 {
         return indices[..width * height].to_vec();
     }
@@ -320,7 +321,7 @@ fn pack_all_rows(indices: &[u8], width: usize, height: usize, bit_depth: u8) -> 
     packed
 }
 
-fn truncate_trns(palette_alpha: Option<&[u8]>) -> Option<Vec<u8>> {
+pub(crate) fn truncate_trns(palette_alpha: Option<&[u8]>) -> Option<Vec<u8>> {
     let alpha = palette_alpha?;
     let last_non_opaque = alpha.iter().rposition(|&a| a != 255)?;
     Some(alpha[..=last_non_opaque].to_vec())

@@ -156,6 +156,8 @@ impl zencodec_types::EncoderConfig for PngEncoderConfig {
             stop: None,
             metadata: None,
             limits: None,
+            canvas_width: 0,
+            canvas_height: 0,
         }
     }
 }
@@ -168,6 +170,8 @@ pub struct PngEncodeJob<'a> {
     stop: Option<&'a dyn Stop>,
     metadata: Option<&'a ImageMetadata<'a>>,
     limits: Option<ResourceLimits>,
+    canvas_width: u32,
+    canvas_height: u32,
 }
 
 impl<'a> zencodec_types::EncodeJob<'a> for PngEncodeJob<'a> {
@@ -190,6 +194,12 @@ impl<'a> zencodec_types::EncodeJob<'a> for PngEncodeJob<'a> {
         self
     }
 
+    fn with_canvas_size(mut self, width: u32, height: u32) -> Self {
+        self.canvas_width = width;
+        self.canvas_height = height;
+        self
+    }
+
     fn encoder(self) -> PngEncoder<'a> {
         PngEncoder {
             config: self.config,
@@ -200,8 +210,12 @@ impl<'a> zencodec_types::EncodeJob<'a> for PngEncodeJob<'a> {
     }
 
     fn frame_encoder(self) -> Result<PngFrameEncoder, PngError> {
-        Err(PngError::InvalidInput(
-            "PNG does not support animation encoding".into(),
+        let owned_meta = self.metadata.map(OwnedMetadata::from_metadata);
+        Ok(PngFrameEncoder::new(
+            self.config.config.clone(),
+            self.canvas_width,
+            self.canvas_height,
+            owned_meta,
         ))
     }
 }
@@ -422,34 +436,163 @@ impl zencodec_types::Encoder for PngEncoder<'_> {
 
 // ── PngFrameEncoder ──────────────────────────────────────────────────
 
-/// Stub frame encoder (PNG does not support animation encoding).
-pub struct PngFrameEncoder;
+/// Accumulated frame data for APNG encoding.
+struct AccumulatedFrame {
+    pixels: Vec<u8>,     // RGBA8 canvas-sized
+    duration_ms: u32,
+}
+
+/// Owned copy of image metadata for frame encoder (avoids lifetime issues).
+struct OwnedMetadata {
+    icc_profile: Option<Vec<u8>>,
+    exif: Option<Vec<u8>>,
+    xmp: Option<Vec<u8>>,
+    cicp: Option<zencodec_types::Cicp>,
+    content_light_level: Option<zencodec_types::ContentLightLevel>,
+    mastering_display: Option<zencodec_types::MasteringDisplay>,
+}
+
+impl OwnedMetadata {
+    fn from_metadata(meta: &ImageMetadata<'_>) -> Self {
+        Self {
+            icc_profile: meta.icc_profile.map(|s| s.to_vec()),
+            exif: meta.exif.map(|s| s.to_vec()),
+            xmp: meta.xmp.map(|s| s.to_vec()),
+            cicp: meta.cicp,
+            content_light_level: meta.content_light_level,
+            mastering_display: meta.mastering_display,
+        }
+    }
+
+    fn as_metadata(&self) -> ImageMetadata<'_> {
+        let mut meta = ImageMetadata::none();
+        meta.icc_profile = self.icc_profile.as_deref();
+        meta.exif = self.exif.as_deref();
+        meta.xmp = self.xmp.as_deref();
+        meta.cicp = self.cicp;
+        meta.content_light_level = self.content_light_level;
+        meta.mastering_display = self.mastering_display;
+        meta
+    }
+}
+
+/// APNG frame-by-frame encoder implementing [`FrameEncoder`](zencodec_types::FrameEncoder).
+///
+/// Accumulates canvas-sized RGBA8 frames, then encodes them all on [`finish()`](PngFrameEncoder::finish).
+pub struct PngFrameEncoder {
+    frames: Vec<AccumulatedFrame>,
+    canvas_width: u32,
+    canvas_height: u32,
+    config: crate::encode::EncodeConfig,
+    metadata: Option<OwnedMetadata>,
+    loop_count: u32,
+    /// In-progress frame being built row-by-row.
+    building_frame: Option<BuildingFrame>,
+}
+
+/// State for row-by-row frame construction.
+struct BuildingFrame {
+    pixels: Vec<u8>,
+    duration_ms: u32,
+    rows_pushed: u32,
+}
+
+impl PngFrameEncoder {
+    fn new(
+        config: crate::encode::EncodeConfig,
+        canvas_width: u32,
+        canvas_height: u32,
+        metadata: Option<OwnedMetadata>,
+    ) -> Self {
+        Self {
+            frames: Vec::new(),
+            canvas_width,
+            canvas_height,
+            config,
+            metadata,
+            loop_count: 0,
+            building_frame: None,
+        }
+    }
+
+    /// Extract RGBA8 bytes from a PixelSlice, converting as needed.
+    fn pixels_to_rgba8(pixels: &PixelSlice<'_>) -> Result<Vec<u8>, PngError> {
+        let desc = pixels.descriptor();
+        match (desc.channel_type, desc.layout) {
+            (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Rgba) => {
+                Ok(collect_contiguous_bytes(pixels))
+            }
+            (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Bgra) => {
+                let src = collect_contiguous_bytes(pixels);
+                Ok(src
+                    .chunks_exact(4)
+                    .flat_map(|c| [c[2], c[1], c[0], c[3]])
+                    .collect())
+            }
+            (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Rgb) => {
+                let src = collect_contiguous_bytes(pixels);
+                Ok(src
+                    .chunks_exact(3)
+                    .flat_map(|c| [c[0], c[1], c[2], 255])
+                    .collect())
+            }
+            _ => Err(PngError::InvalidInput(alloc::format!(
+                "APNG frame encoder: unsupported pixel format {:?}, need RGBA8",
+                desc
+            ))),
+        }
+    }
+}
 
 impl zencodec_types::FrameEncoder for PngFrameEncoder {
     type Error = PngError;
 
-    fn push_frame(&mut self, _pixels: PixelSlice<'_>, _duration_ms: u32) -> Result<(), PngError> {
-        Err(PngError::InvalidInput(
-            "PNG does not support animation encoding".into(),
-        ))
+    fn push_frame(&mut self, pixels: PixelSlice<'_>, duration_ms: u32) -> Result<(), PngError> {
+        let rgba = Self::pixels_to_rgba8(&pixels)?;
+        self.frames.push(AccumulatedFrame {
+            pixels: rgba,
+            duration_ms,
+        });
+        Ok(())
     }
 
-    fn begin_frame(&mut self, _duration_ms: u32) -> Result<(), PngError> {
-        Err(PngError::InvalidInput(
-            "PNG does not support animation encoding".into(),
-        ))
+    fn begin_frame(&mut self, duration_ms: u32) -> Result<(), PngError> {
+        if self.building_frame.is_some() {
+            return Err(PngError::InvalidInput(
+                "begin_frame called while a frame is already in progress".into(),
+            ));
+        }
+        let expected = self.canvas_width as usize * self.canvas_height as usize * 4;
+        self.building_frame = Some(BuildingFrame {
+            pixels: Vec::with_capacity(expected),
+            duration_ms,
+            rows_pushed: 0,
+        });
+        Ok(())
     }
 
-    fn push_rows(&mut self, _rows: PixelSlice<'_>) -> Result<(), PngError> {
-        Err(PngError::InvalidInput(
-            "PNG does not support animation encoding".into(),
-        ))
+    fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), PngError> {
+        let frame = self.building_frame.as_mut().ok_or_else(|| {
+            PngError::InvalidInput("push_rows called without begin_frame".into())
+        })?;
+
+        let rgba = Self::pixels_to_rgba8(&rows)?;
+        let row_count = rows.rows();
+        frame.pixels.extend_from_slice(&rgba);
+        frame.rows_pushed += row_count;
+        Ok(())
     }
 
     fn end_frame(&mut self) -> Result<(), PngError> {
-        Err(PngError::InvalidInput(
-            "PNG does not support animation encoding".into(),
-        ))
+        let frame = self.building_frame.take().ok_or_else(|| {
+            PngError::InvalidInput("end_frame called without begin_frame".into())
+        })?;
+
+        self.frames.push(AccumulatedFrame {
+            pixels: frame.pixels,
+            duration_ms: frame.duration_ms,
+        });
+        Ok(())
     }
 
     fn pull_frame(
@@ -458,14 +601,57 @@ impl zencodec_types::FrameEncoder for PngFrameEncoder {
         _source: &mut dyn FnMut(u32, PixelSliceMut<'_>) -> usize,
     ) -> Result<(), PngError> {
         Err(PngError::InvalidInput(
-            "PNG does not support animation encoding".into(),
+            "APNG frame encoder: pull_frame not yet implemented".into(),
         ))
     }
 
+    fn with_loop_count(&mut self, count: Option<u32>) {
+        self.loop_count = count.unwrap_or(0);
+    }
+
     fn finish(self) -> Result<EncodeOutput, PngError> {
-        Err(PngError::InvalidInput(
-            "PNG does not support animation encoding".into(),
-        ))
+        if self.frames.is_empty() {
+            return Err(PngError::InvalidInput(
+                "APNG frame encoder: no frames pushed".into(),
+            ));
+        }
+
+        // Convert accumulated frames to ApngFrameInput
+        let inputs: Vec<crate::encode::ApngFrameInput<'_>> = self
+            .frames
+            .iter()
+            .map(|f| {
+                // Convert ms to delay_num/delay_den
+                // Use den=1000 for ms precision
+                crate::encode::ApngFrameInput {
+                    pixels: &f.pixels,
+                    delay_num: f.duration_ms.min(65535) as u16,
+                    delay_den: 1000,
+                }
+            })
+            .collect();
+
+        let apng_config = crate::encode::ApngEncodeConfig {
+            encode: self.config.clone(),
+            num_plays: self.loop_count,
+        };
+
+        let meta_tmp = self.metadata.as_ref().map(|m| m.as_metadata());
+        let metadata_ref = meta_tmp.as_ref();
+        let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
+        let deadline = almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
+
+        let data = crate::encode::encode_apng(
+            &inputs,
+            self.canvas_width,
+            self.canvas_height,
+            &apng_config,
+            metadata_ref,
+            &enough::Unstoppable,
+            &deadline,
+        )?;
+
+        Ok(EncodeOutput::new(data, ImageFormat::Png))
     }
 }
 

@@ -395,3 +395,76 @@ fn native_to_be_16(native: &[u8]) -> Vec<u8> {
     }
     out
 }
+
+// ── APNG encoding ───────────────────────────────────────────────────
+
+/// A single frame for APNG encoding.
+///
+/// Each frame must be canvas-sized RGBA8 pixel data (width * height * 4 bytes).
+/// The encoder computes delta regions internally.
+pub struct ApngFrameInput<'a> {
+    /// Canvas-sized RGBA8 pixel data.
+    pub pixels: &'a [u8],
+    /// Numerator of the frame delay fraction (in seconds).
+    pub delay_num: u16,
+    /// Denominator of the frame delay fraction.
+    /// Per the APNG spec, 0 is treated as 100 (i.e., delay_num/100 seconds).
+    pub delay_den: u16,
+}
+
+/// APNG encode configuration.
+#[derive(Clone, Debug, Default)]
+pub struct ApngEncodeConfig {
+    /// PNG compression/filter settings.
+    pub encode: EncodeConfig,
+    /// Animation loop count. 0 = infinite loop.
+    pub num_plays: u32,
+}
+
+/// Encode canvas-sized RGBA8 frames into a truecolor APNG file.
+///
+/// All frames must be `canvas_width * canvas_height * 4` bytes of RGBA8 data.
+/// The encoder computes delta regions between consecutive frames for efficient
+/// encoding. At least one frame is required.
+pub fn encode_apng(
+    frames: &[ApngFrameInput<'_>],
+    canvas_width: u32,
+    canvas_height: u32,
+    config: &ApngEncodeConfig,
+    metadata: Option<&ImageMetadata<'_>>,
+    cancel: &dyn Stop,
+    deadline: &dyn Stop,
+) -> Result<Vec<u8>, PngError> {
+    // Validation
+    if frames.is_empty() {
+        return Err(PngError::InvalidInput(
+            "APNG requires at least one frame".into(),
+        ));
+    }
+    let expected_len = canvas_width as usize * canvas_height as usize * 4;
+    for (i, frame) in frames.iter().enumerate() {
+        if frame.pixels.len() < expected_len {
+            return Err(PngError::InvalidInput(alloc::format!(
+                "frame {i}: pixel buffer too small: need {expected_len}, got {}",
+                frame.pixels.len()
+            )));
+        }
+    }
+
+    let level = config.encode.compression.to_zenflate_level();
+    let mut write_meta = PngWriteMetadata::from_metadata(metadata);
+    write_meta.source_gamma = config.encode.source_gamma;
+    write_meta.srgb_intent = config.encode.srgb_intent;
+    write_meta.chromaticities = config.encode.chromaticities;
+
+    crate::encoder::apng::encode_apng_truecolor(
+        frames,
+        canvas_width,
+        canvas_height,
+        &write_meta,
+        config.num_plays,
+        level,
+        cancel,
+        deadline,
+    )
+}
