@@ -48,7 +48,8 @@ fn main() {
         eprintln!("[{}/{}] {short}...", i + 1, paths.len());
 
         let source = std::fs::read(path).unwrap();
-        let decoded = match zenpng::decode(&source, &zenpng::PngLimits::none(), &Unstoppable) {
+        let decoded = match zenpng::decode(&source, &zenpng::PngDecodeConfig::none(), &Unstoppable)
+        {
             Ok(d) => d,
             Err(e) => {
                 eprintln!("  SKIP: {e}");

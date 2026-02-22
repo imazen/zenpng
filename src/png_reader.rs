@@ -659,7 +659,7 @@ pub(crate) struct RowDecoder<'a> {
 
 impl<'a> RowDecoder<'a> {
     /// Create a new RowDecoder from PNG file bytes.
-    pub fn new(data: &'a [u8], limits: &crate::decode::PngLimits) -> Result<Self, PngError> {
+    pub fn new(data: &'a [u8], limits: &crate::decode::PngDecodeConfig) -> Result<Self, PngError> {
         // Validate signature
         if data.len() < 8 || data[..8] != PNG_SIGNATURE {
             return Err(PngError::Decode("not a PNG file".into()));
@@ -1273,7 +1273,7 @@ fn adam7_pass_size(width: u32, height: u32, pass: usize) -> (u32, u32) {
 /// then return the assembled pixel rows.
 pub(crate) fn decode_interlaced(
     data: &'_ [u8],
-    limits: &crate::decode::PngLimits,
+    limits: &crate::decode::PngDecodeConfig,
     cancel: &dyn Stop,
 ) -> Result<(Ihdr, PngAncillary, Vec<u8>, OutputFormat), PngError> {
     // Validate signature
@@ -1590,7 +1590,7 @@ use crate::decode::PngDecodeOutput;
 /// Decode PNG to pixels using our own decoder.
 pub(crate) fn decode_png(
     data: &[u8],
-    limits: &crate::decode::PngLimits,
+    limits: &crate::decode::PngDecodeConfig,
     cancel: &dyn Stop,
 ) -> Result<PngDecodeOutput, PngError> {
     // Check for interlacing first
@@ -1629,16 +1629,29 @@ pub(crate) fn decode_png(
 
     reader.finish_metadata();
 
-    let info = build_png_info(&ihdr, reader.ancillary());
-    let pixels = build_pixel_data(&ihdr, reader.ancillary(), all_pixels, w, h)?;
+    let ancillary = reader.ancillary();
+    let info = build_png_info(&ihdr, ancillary);
+    let pixels = build_pixel_data(&ihdr, ancillary, all_pixels, w, h)?;
 
-    Ok(PngDecodeOutput { pixels, info })
+    let warnings = crate::decode::detect_color_warnings(
+        ancillary.srgb_intent,
+        ancillary.gamma,
+        ancillary.chrm.as_ref(),
+        ancillary.cicp.as_ref(),
+        ancillary.icc_profile.as_deref(),
+    );
+
+    Ok(PngDecodeOutput {
+        pixels,
+        info,
+        warnings,
+    })
 }
 
 /// Decode interlaced PNG to PngDecodeOutput.
 fn decode_interlaced_to_output(
     data: &[u8],
-    limits: &crate::decode::PngLimits,
+    limits: &crate::decode::PngDecodeConfig,
     cancel: &dyn Stop,
 ) -> Result<PngDecodeOutput, PngError> {
     let (ihdr, ancillary, pixels, _fmt) = decode_interlaced(data, limits, cancel)?;
@@ -1646,9 +1659,19 @@ fn decode_interlaced_to_output(
     let h = ihdr.height as usize;
     let info = build_png_info(&ihdr, &ancillary);
     let pixel_data = build_pixel_data(&ihdr, &ancillary, pixels, w, h)?;
+
+    let warnings = crate::decode::detect_color_warnings(
+        ancillary.srgb_intent,
+        ancillary.gamma,
+        ancillary.chrm.as_ref(),
+        ancillary.cicp.as_ref(),
+        ancillary.icc_profile.as_deref(),
+    );
+
     Ok(PngDecodeOutput {
         pixels: pixel_data,
         info,
+        warnings,
     })
 }
 
@@ -1745,7 +1768,7 @@ mod tests {
     fn chunk_parser_validates_signature() {
         let result = decode_png(
             b"not a png",
-            &crate::decode::PngLimits::none(),
+            &crate::decode::PngDecodeConfig::none(),
             &Unstoppable,
         );
         assert!(result.is_err());
@@ -1838,8 +1861,7 @@ mod tests {
     /// uncompressed block underflow, streaming parse, offset decode refill).
     #[test]
     fn regression_fixtures_decode() {
-        let fixture_dir =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/regression");
+        let fixture_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/regression");
         assert!(
             fixture_dir.exists(),
             "regression fixture directory not found: {}",
@@ -1863,7 +1885,7 @@ mod tests {
             let known_corrupt = filename.contains("badadler");
 
             let our_result =
-                decode_png(&data, &crate::decode::PngLimits::none(), &Unstoppable);
+                decode_png(&data, &crate::decode::PngDecodeConfig::none(), &Unstoppable);
             let ref_result = decode_with_png_crate(&data);
 
             match (our_result, ref_result) {
@@ -1875,7 +1897,11 @@ mod tests {
                         let ref_desc = format_pixel_data(&reference.pixels);
                         failures.push(alloc::format!(
                             "{}: pixel mismatch (ours={}, ref={}, our_len={}, ref_len={})",
-                            filename, our_desc, ref_desc, our_bytes.len(), ref_bytes.len()
+                            filename,
+                            our_desc,
+                            ref_desc,
+                            our_bytes.len(),
+                            ref_bytes.len()
                         ));
                     } else {
                         tested += 1;
@@ -1891,13 +1917,17 @@ mod tests {
                 }
                 (Err(e), Ok(_)) if known_corrupt => {
                     // We're stricter on corrupt data — acceptable
-                    eprintln!("  {}: we reject, ref accepts (known corrupt): {}", filename, e);
+                    eprintln!(
+                        "  {}: we reject, ref accepts (known corrupt): {}",
+                        filename, e
+                    );
                     tested += 1;
                 }
                 (Err(e), Ok(_)) => {
                     failures.push(alloc::format!(
                         "{}: we failed but ref succeeded: {}",
-                        filename, e
+                        filename,
+                        e
                     ));
                 }
             }
@@ -1914,7 +1944,11 @@ mod tests {
             }
             panic!("{} regression fixture failures", failures.len());
         }
-        assert!(tested >= 8, "expected at least 8 fixtures, found {}", tested);
+        assert!(
+            tested >= 8,
+            "expected at least 8 fixtures, found {}",
+            tested
+        );
     }
 
     /// Compare our decoder's pixel output against the reference png crate
@@ -1958,7 +1992,8 @@ mod tests {
             let data = std::fs::read(&path).unwrap();
 
             // Decode with our decoder
-            let our_result = decode_png(&data, &crate::decode::PngLimits::none(), &Unstoppable);
+            let our_result =
+                decode_png(&data, &crate::decode::PngDecodeConfig::none(), &Unstoppable);
 
             // Decode with reference png crate
             let ref_result = decode_with_png_crate(&data);
@@ -2055,7 +2090,7 @@ mod tests {
             let known_corrupt = filename.contains("badadler");
 
             let our_result =
-                decode_png(&data, &crate::decode::PngLimits::none(), &Unstoppable);
+                decode_png(&data, &crate::decode::PngDecodeConfig::none(), &Unstoppable);
             let ref_result = decode_with_png_crate(&data);
 
             match (our_result, ref_result) {
@@ -2067,7 +2102,11 @@ mod tests {
                         let ref_desc = format_pixel_data(&reference.pixels);
                         failures.push(alloc::format!(
                             "{}: pixel mismatch (ours={}, ref={}, our_len={}, ref_len={})",
-                            filename, our_desc, ref_desc, our_bytes.len(), ref_bytes.len()
+                            filename,
+                            our_desc,
+                            ref_desc,
+                            our_bytes.len(),
+                            ref_bytes.len()
                         ));
                     } else {
                         tested += 1;
@@ -2083,13 +2122,17 @@ mod tests {
                 }
                 (Err(e), Ok(_)) if known_corrupt => {
                     // We're stricter on corrupt data — acceptable
-                    eprintln!("  {}: we reject, ref accepts (known corrupt): {}", filename, e);
+                    eprintln!(
+                        "  {}: we reject, ref accepts (known corrupt): {}",
+                        filename, e
+                    );
                     tested += 1;
                 }
                 (Err(e), Ok(_)) => {
                     failures.push(alloc::format!(
                         "{}: we failed but ref succeeded: {}",
-                        filename, e
+                        filename,
+                        e
                     ));
                 }
             }
@@ -2208,7 +2251,11 @@ mod tests {
             mastering_display: None,
         };
 
-        Ok(PngDecodeOutput { pixels, info })
+        Ok(PngDecodeOutput {
+            pixels,
+            info,
+            warnings: Vec::new(),
+        })
     }
 
     fn be_to_native_16_ref(bytes: &[u8]) -> Vec<u8> {
@@ -2349,7 +2396,8 @@ mod tests {
                     }
                 };
 
-                let our_result = decode_png(&data, &crate::decode::PngLimits::none(), &Unstoppable);
+                let our_result =
+                    decode_png(&data, &crate::decode::PngDecodeConfig::none(), &Unstoppable);
                 let ref_result = decode_with_png_crate(&data);
 
                 match (our_result, ref_result) {
@@ -2536,7 +2584,11 @@ mod tests {
                 // cancellation can't break infinite loops in the fastloop.
                 let data_clone = data.clone();
                 let handle = std::thread::spawn(move || {
-                    decode_png(&data_clone, &crate::decode::PngLimits::none(), &Unstoppable)
+                    decode_png(
+                        &data_clone,
+                        &crate::decode::PngDecodeConfig::none(),
+                        &Unstoppable,
+                    )
                 });
                 let deadline = std::time::Instant::now() + timeout_dur;
                 let our_result = loop {
@@ -2879,7 +2931,7 @@ mod tests {
 
         let our = decode_png(
             &data,
-            &crate::decode::PngLimits::none(),
+            &crate::decode::PngDecodeConfig::none(),
             &zencodec_types::Unstoppable,
         )
         .unwrap();
@@ -3087,7 +3139,7 @@ mod tests {
             };
             let our = decode_png(
                 &data,
-                &crate::decode::PngLimits::none(),
+                &crate::decode::PngDecodeConfig::none(),
                 &zencodec_types::Unstoppable,
             );
             let reference = decode_with_png_crate(&data);

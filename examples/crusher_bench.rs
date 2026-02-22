@@ -63,13 +63,14 @@ fn main() {
         let source_size = source_data.len();
 
         // Decode
-        let decoded = match zenpng::decode(&source_data, &zenpng::PngLimits::none(), &Unstoppable) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("  SKIP: decode error: {e}");
-                continue;
-            }
-        };
+        let decoded =
+            match zenpng::decode(&source_data, &zenpng::PngDecodeConfig::none(), &Unstoppable) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("  SKIP: decode error: {e}");
+                    continue;
+                }
+            };
 
         let (w, h) = (decoded.info.width, decoded.info.height);
         let raw_pixels = match &decoded.pixels {

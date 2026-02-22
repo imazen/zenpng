@@ -18,7 +18,7 @@ fn main() {
     );
 
     let source = std::fs::read(&path).unwrap();
-    let decoded = zenpng::decode(&source, &zenpng::PngLimits::none(), &Unstoppable).unwrap();
+    let decoded = zenpng::decode(&source, &zenpng::PngDecodeConfig::none(), &Unstoppable).unwrap();
     let (w, h) = (decoded.info.width as usize, decoded.info.height as usize);
 
     let (pixel_bytes, bpp): (Vec<u8>, usize) = match &decoded.pixels {

@@ -7,7 +7,7 @@ fn main() {
     });
 
     let source = std::fs::read(&path).unwrap();
-    let decoded = zenpng::decode(&source, &zenpng::PngLimits::none(), &Unstoppable).unwrap();
+    let decoded = zenpng::decode(&source, &zenpng::PngDecodeConfig::none(), &Unstoppable).unwrap();
 
     println!("{:<15} {:>10} {:>8}", "Deadline", "Size", "Time");
     println!("{}", "-".repeat(36));
