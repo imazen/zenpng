@@ -29,7 +29,7 @@ pub(crate) struct IdatSource<'a> {
     pub post_idat_pos: usize,
     /// Whether to skip CRC validation on IDAT chunks.
     skip_crc: bool,
-    /// Whether any IDAT CRC was skipped (mismatch found but tolerated).
+    /// Whether CRC validation was skipped (either by config or mismatch tolerated).
     pub crc_skipped: bool,
 }
 
@@ -53,7 +53,7 @@ impl<'a> IdatSource<'a> {
             done: false,
             post_idat_pos: 0,
             skip_crc,
-            crc_skipped: false,
+            crc_skipped: skip_crc,
         }
     }
 }
@@ -100,13 +100,13 @@ impl<'a> zenflate::InputSource for IdatSource<'a> {
                 return Ok(&[]);
             }
 
-            // Validate CRC
-            let stored_crc = u32::from_be_bytes(self.data[data_end..crc_end].try_into().unwrap());
-            let computed_crc = crc32(crc32(0, &chunk_type), &self.data[data_start..data_end]);
-            if stored_crc != computed_crc {
-                if self.skip_crc {
-                    self.crc_skipped = true;
-                } else {
+            // Validate CRC (skip computation entirely when skip_crc is set)
+            if !self.skip_crc {
+                let stored_crc =
+                    u32::from_be_bytes(self.data[data_end..crc_end].try_into().unwrap());
+                let computed_crc =
+                    crc32(crc32(0, &chunk_type), &self.data[data_start..data_end]);
+                if stored_crc != computed_crc {
                     return Err(PngError::Decode("CRC mismatch in IDAT chunk".into()));
                 }
             }
@@ -144,7 +144,8 @@ pub(crate) struct FdatSource<'a> {
     pub post_fdat_pos: usize,
     /// Whether to skip CRC validation on fdAT chunks.
     skip_crc: bool,
-    /// Whether any fdAT CRC was skipped.
+    /// Whether CRC validation was skipped.
+    #[allow(dead_code)]
     pub crc_skipped: bool,
 }
 
@@ -175,7 +176,7 @@ impl<'a> FdatSource<'a> {
             done: false,
             post_fdat_pos: 0,
             skip_crc,
-            crc_skipped: false,
+            crc_skipped: skip_crc,
         }
     }
 }
@@ -222,13 +223,13 @@ impl<'a> zenflate::InputSource for FdatSource<'a> {
                 return Ok(&[]);
             }
 
-            // Validate CRC
-            let stored_crc = u32::from_be_bytes(self.data[data_end..crc_end].try_into().unwrap());
-            let computed_crc = crc32(crc32(0, &chunk_type), &self.data[data_start..data_end]);
-            if stored_crc != computed_crc {
-                if self.skip_crc {
-                    self.crc_skipped = true;
-                } else {
+            // Validate CRC (skip computation entirely when skip_crc is set)
+            if !self.skip_crc {
+                let stored_crc =
+                    u32::from_be_bytes(self.data[data_end..crc_end].try_into().unwrap());
+                let computed_crc =
+                    crc32(crc32(0, &chunk_type), &self.data[data_start..data_end]);
+                if stored_crc != computed_crc {
                     return Err(PngError::Decode("CRC mismatch in fdAT chunk".into()));
                 }
             }

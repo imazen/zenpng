@@ -97,6 +97,22 @@ cargo test -- simd             # SIMD tests only
 
 Each filter has `for_each_token_permutation` tests that verify byte-exact match against scalar reference at all dispatch tiers.
 
+## Decode Checksum Options
+
+`PngDecodeConfig` has options to skip checksum verification:
+- `skip_decompression_checksum: bool` — skip Adler-32 verification on zlib data
+- `skip_critical_chunk_crc: bool` — skip CRC-32 verification on IHDR/PLTE/IDAT chunks
+- `PngDecodeConfig::lenient()` — convenience constructor that skips both
+
+Currently these flags skip **verification** (mismatch → warning instead of error)
+but the checksums are still **computed**. The actual cost is negligible
+(Adler-32 at 114 GiB/s, CRC-32 at 78 GiB/s = <1ms combined for 42MB).
+
+TODO: Make zenflate skip Adler-32 computation in `flush_checksum` when
+`skip_checksum=true`. Also skip CRC-32 computation in zenpng's ChunkIter
+and IdatSource when `skip_critical_chunk_crc=true`. Speed gain is minimal
+but it's the principled approach.
+
 ## Compression Level Design
 
 See `TUNING.md` for empirical analysis. Key decisions:
