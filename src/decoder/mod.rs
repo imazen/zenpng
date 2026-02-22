@@ -171,6 +171,42 @@ pub(crate) fn decode_png(
     if is_passthrough {
         let raw_row_bytes = ihdr.raw_row_bytes();
         let total = raw_row_bytes * h;
+        let stride = ihdr.stride(); // raw_row_bytes + 1 (filter byte)
+        let bpp = ihdr.filter_bpp();
+
+        // Try stored-block fast path: if the zlib stream is entirely stored
+        // blocks (Compression::None), we can bypass the decompressor and just
+        // strip headers + copy + unfilter.
+        let first_idat_pos = reader.first_idat_pos();
+        let skip_crc = limits.skip_critical_chunk_crc;
+
+        let skip_adler = limits.skip_decompression_checksum;
+        if let Some(result) = try_decode_stored(
+            data, first_idat_pos, skip_crc, skip_adler,
+            h, stride, raw_row_bytes, bpp, cancel,
+        ) {
+            let result = result?;
+            reader.finish_metadata();
+            let mut warnings = reader.collect_decode_warnings();
+            let ancillary = reader.ancillary();
+            let info = build_png_info(&ihdr, ancillary);
+            warnings.extend(crate::decode::detect_color_warnings(
+                ancillary.srgb_intent, ancillary.gamma,
+                ancillary.chrm.as_ref(), ancillary.cicp.as_ref(),
+                ancillary.icc_profile.as_deref(),
+            ));
+            if result.adler_skipped {
+                warnings.push(crate::decode::PngWarning::DecompressionChecksumSkipped);
+            }
+            let pixels = if ihdr.color_type == 6 {
+                PixelData::Rgba8(ImgVec::new(vec_u8_to_rgba8(result.pixels), w, h))
+            } else {
+                PixelData::Rgb8(ImgVec::new(vec_u8_to_rgb8(result.pixels), w, h))
+            };
+            return Ok(PngDecodeOutput { pixels, info, warnings });
+        }
+
+        // Standard streaming path
         let mut all_pixels = vec![0u8; total];
 
         // Row 0: prev is zeros (already zeroed by vec![0u8; total])
@@ -290,6 +326,236 @@ fn vec_u8_to_rgba8(bytes: Vec<u8>) -> Vec<rgb::Rgba<u8>> {
 /// Reinterpret `Vec<u8>` as `Vec<Rgb<u8>>` without copying.
 fn vec_u8_to_rgb8(bytes: Vec<u8>) -> Vec<rgb::Rgb<u8>> {
     bytemuck::cast_vec(bytes)
+}
+
+/// Try to decode a stored-block (uncompressed) zlib stream directly, bypassing
+/// the full inflate engine. Returns `None` if the stream uses actual compression.
+///
+/// Stored DEFLATE blocks are: `[BFINAL|0x00] [LEN_LO LEN_HI NLEN_LO NLEN_HI] [data...]`
+/// The zlib wrapper adds a 2-byte header and 4-byte Adler-32 trailer.
+///
+/// This strips block headers and copies pixel data directly from the zlib stream
+/// into the output buffer, then unfilters in-place.
+/// Result from the stored-block fast path, including whether Adler-32 was skipped.
+struct StoredDecodeResult {
+    pixels: Vec<u8>,
+    adler_skipped: bool,
+}
+
+fn try_decode_stored(
+    file_data: &[u8],
+    first_idat_pos: usize,
+    skip_crc: bool,
+    skip_adler: bool,
+    height: usize,
+    stride: usize,       // raw_row_bytes + 1 (filter byte)
+    raw_row_bytes: usize,
+    bpp: usize,
+    cancel: &dyn Stop,
+) -> Option<Result<StoredDecodeResult, PngError>> {
+    // Collect IDAT chunk payload slices (the zlib stream, possibly split across chunks).
+    let mut idat_slices: Vec<&[u8]> = Vec::new();
+    let mut pos = first_idat_pos;
+    while pos + 12 <= file_data.len() {
+        let length = u32::from_be_bytes(file_data[pos..pos + 4].try_into().unwrap()) as usize;
+        let chunk_type: [u8; 4] = file_data[pos + 4..pos + 8].try_into().unwrap();
+        let data_start = pos + 8;
+        let data_end = data_start + length;
+        let crc_end = data_end + 4;
+        if crc_end > file_data.len() {
+            break;
+        }
+        if chunk_type != *b"IDAT" {
+            break;
+        }
+        if !skip_crc {
+            let stored_crc = u32::from_be_bytes(file_data[data_end..crc_end].try_into().unwrap());
+            let computed = zenflate::crc32(zenflate::crc32(0, &chunk_type), &file_data[data_start..data_end]);
+            if stored_crc != computed {
+                return Some(Err(PngError::Decode("CRC mismatch in IDAT chunk".into())));
+            }
+        }
+        idat_slices.push(&file_data[data_start..data_end]);
+        pos = crc_end;
+    }
+
+    if idat_slices.is_empty() {
+        return None;
+    }
+
+    // Build a contiguous view of the zlib stream.
+    // For single-IDAT PNGs (common), this is zero-copy.
+    let zlib_owned: Vec<u8>;
+    let zlib: &[u8] = if idat_slices.len() == 1 {
+        idat_slices[0]
+    } else {
+        zlib_owned = {
+            let total: usize = idat_slices.iter().map(|s| s.len()).sum();
+            let mut v = Vec::with_capacity(total);
+            for s in &idat_slices {
+                v.extend_from_slice(s);
+            }
+            v
+        };
+        &zlib_owned
+    };
+
+    // Need at least: zlib header (2) + block header (5) + adler32 (4)
+    if zlib.len() < 11 {
+        return None;
+    }
+
+    // Check zlib header: CM must be 8 (deflate)
+    if zlib[0] & 0x0F != 8 {
+        return None;
+    }
+
+    // Check first block is stored (BTYPE=00, bits 1-2 of first block byte)
+    if zlib[2] & 0x06 != 0 {
+        return None; // compressed — use full inflate
+    }
+
+    // Parse all stored blocks, collecting (offset, len) spans of payload data
+    // within `zlib`. This avoids any intermediate allocation.
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut zpos = 2; // past zlib header
+    let zlib_end = zlib.len() - 4; // before adler32 trailer
+
+    loop {
+        if zpos >= zlib_end {
+            return Some(Err(PngError::Decode("truncated stored block".into())));
+        }
+        let bfinal = zlib[zpos] & 0x01;
+        let btype = (zlib[zpos] >> 1) & 0x03;
+        if btype != 0 {
+            return None; // not all stored blocks
+        }
+        zpos += 1;
+        if zpos + 4 > zlib_end {
+            return Some(Err(PngError::Decode("truncated stored block header".into())));
+        }
+        let len = u16::from_le_bytes([zlib[zpos], zlib[zpos + 1]]) as usize;
+        let nlen = u16::from_le_bytes([zlib[zpos + 2], zlib[zpos + 3]]) as usize;
+        if len != (!nlen & 0xFFFF) {
+            return Some(Err(PngError::Decode("stored block LEN/NLEN mismatch".into())));
+        }
+        zpos += 4;
+        if zpos + len > zlib_end {
+            return Some(Err(PngError::Decode("truncated stored block data".into())));
+        }
+        if len > 0 {
+            spans.push((zpos, len));
+        }
+        zpos += len;
+        if bfinal != 0 {
+            break;
+        }
+    }
+
+    // Walk spans linearly with a cursor, copying row data into the output buffer.
+    // A "cursor" tracks which span we're in and our offset within it.
+    // Verify Adler-32 checksum from zlib trailer
+    let adler_skipped;
+    {
+        let stored_adler = u32::from_be_bytes(zlib[zlib_end..zlib_end + 4].try_into().unwrap());
+        let mut computed = zenflate::adler32(1, &[]);
+        for &(start, len) in &spans {
+            computed = zenflate::adler32(computed, &zlib[start..start + len]);
+        }
+        if stored_adler != computed {
+            if skip_adler {
+                adler_skipped = true;
+            } else {
+                return Some(Err(PngError::Decode("Adler-32 checksum mismatch".into())));
+            }
+        } else {
+            adler_skipped = false;
+        }
+    }
+
+    let total_payload: usize = spans.iter().map(|&(_, l)| l).sum();
+    let expected = stride * height;
+    if total_payload < expected {
+        return Some(Err(PngError::Decode(alloc::format!(
+            "stored data too short: {total_payload} < {expected}"
+        ))));
+    }
+
+    let total_pixels = raw_row_bytes * height;
+    let mut all_pixels = vec![0u8; total_pixels];
+
+    let mut cursor = SpanCursor::new(&spans);
+    let zeros = vec![0u8; raw_row_bytes];
+
+    for y in 0..height {
+        // Read filter byte
+        let fb = cursor.read_byte(zlib);
+
+        // Copy row data into output
+        let dest_start = y * raw_row_bytes;
+        cursor.read_into(zlib, &mut all_pixels[dest_start..dest_start + raw_row_bytes]);
+
+        // Unfilter if needed
+        if fb != 0 {
+            if y == 0 {
+                if let Err(e) = row::unfilter_row(fb, &mut all_pixels[..raw_row_bytes], &zeros, bpp) {
+                    return Some(Err(e));
+                }
+            } else {
+                let (prev_part, cur_part) = all_pixels.split_at_mut(y * raw_row_bytes);
+                let prev = &prev_part[(y - 1) * raw_row_bytes..];
+                if let Err(e) = row::unfilter_row(fb, &mut cur_part[..raw_row_bytes], prev, bpp) {
+                    return Some(Err(e));
+                }
+            }
+        }
+        cancel.check().ok()?;
+    }
+
+    Some(Ok(StoredDecodeResult { pixels: all_pixels, adler_skipped }))
+}
+
+/// Linear cursor over payload spans within a contiguous zlib buffer.
+struct SpanCursor<'a> {
+    spans: &'a [(usize, usize)],
+    idx: usize,
+    off: usize, // offset within current span
+}
+
+impl<'a> SpanCursor<'a> {
+    fn new(spans: &'a [(usize, usize)]) -> Self {
+        Self { spans, idx: 0, off: 0 }
+    }
+
+    fn read_byte(&mut self, zlib: &[u8]) -> u8 {
+        while self.idx < self.spans.len() {
+            let (start, len) = self.spans[self.idx];
+            if self.off < len {
+                let b = zlib[start + self.off];
+                self.off += 1;
+                return b;
+            }
+            self.idx += 1;
+            self.off = 0;
+        }
+        0
+    }
+
+    fn read_into(&mut self, zlib: &[u8], dest: &mut [u8]) {
+        let mut written = 0;
+        while written < dest.len() && self.idx < self.spans.len() {
+            let (start, len) = self.spans[self.idx];
+            let avail = len - self.off;
+            let n = avail.min(dest.len() - written);
+            dest[written..written + n].copy_from_slice(&zlib[start + self.off..start + self.off + n]);
+            written += n;
+            self.off += n;
+            if self.off >= len {
+                self.idx += 1;
+                self.off = 0;
+            }
+        }
+    }
 }
 
 /// Decode interlaced PNG to PngDecodeOutput.
