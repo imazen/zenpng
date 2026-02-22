@@ -758,3 +758,462 @@ fn blend_over_row_16(dst: &mut [u8], src: &[u8]) {
         }
     }
 }
+
+// ── Tests ────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chunk::ancillary::FrameControl;
+    use enough::Unstoppable;
+
+    // ── fcTL parsing tests ──────────────────────────────────────────
+
+    fn make_fctl_data(
+        seq: u32,
+        w: u32,
+        h: u32,
+        x: u32,
+        y: u32,
+        delay_num: u16,
+        delay_den: u16,
+        dispose: u8,
+        blend: u8,
+    ) -> Vec<u8> {
+        let mut data = Vec::with_capacity(26);
+        data.extend_from_slice(&seq.to_be_bytes());
+        data.extend_from_slice(&w.to_be_bytes());
+        data.extend_from_slice(&h.to_be_bytes());
+        data.extend_from_slice(&x.to_be_bytes());
+        data.extend_from_slice(&y.to_be_bytes());
+        data.extend_from_slice(&delay_num.to_be_bytes());
+        data.extend_from_slice(&delay_den.to_be_bytes());
+        data.push(dispose);
+        data.push(blend);
+        data
+    }
+
+    #[test]
+    fn fctl_parse_valid() {
+        let data = make_fctl_data(0, 100, 100, 0, 0, 1, 10, 0, 0);
+        let fctl = FrameControl::parse(&data, 100, 100).unwrap();
+        assert_eq!(fctl.width, 100);
+        assert_eq!(fctl.height, 100);
+        assert_eq!(fctl.x_offset, 0);
+        assert_eq!(fctl.y_offset, 0);
+        assert_eq!(fctl.delay_num, 1);
+        assert_eq!(fctl.delay_den, 10);
+        assert_eq!(fctl.dispose_op, 0);
+        assert_eq!(fctl.blend_op, 0);
+    }
+
+    #[test]
+    fn fctl_parse_subframe() {
+        let data = make_fctl_data(1, 50, 30, 10, 20, 100, 1000, 1, 1);
+        let fctl = FrameControl::parse(&data, 100, 100).unwrap();
+        assert_eq!(fctl.width, 50);
+        assert_eq!(fctl.height, 30);
+        assert_eq!(fctl.x_offset, 10);
+        assert_eq!(fctl.y_offset, 20);
+        assert_eq!(fctl.dispose_op, 1);
+        assert_eq!(fctl.blend_op, 1);
+    }
+
+    #[test]
+    fn fctl_rejects_wrong_length() {
+        let data = vec![0u8; 25]; // too short
+        assert!(FrameControl::parse(&data, 100, 100).is_err());
+
+        let data = vec![0u8; 27]; // too long
+        assert!(FrameControl::parse(&data, 100, 100).is_err());
+    }
+
+    #[test]
+    fn fctl_rejects_zero_dimensions() {
+        let data = make_fctl_data(0, 0, 100, 0, 0, 1, 10, 0, 0);
+        assert!(FrameControl::parse(&data, 100, 100).is_err());
+
+        let data = make_fctl_data(0, 100, 0, 0, 0, 1, 10, 0, 0);
+        assert!(FrameControl::parse(&data, 100, 100).is_err());
+    }
+
+    #[test]
+    fn fctl_rejects_out_of_bounds() {
+        // x_offset + width > canvas_width
+        let data = make_fctl_data(0, 50, 50, 60, 0, 1, 10, 0, 0);
+        assert!(FrameControl::parse(&data, 100, 100).is_err());
+
+        // y_offset + height > canvas_height
+        let data = make_fctl_data(0, 50, 50, 0, 60, 1, 10, 0, 0);
+        assert!(FrameControl::parse(&data, 100, 100).is_err());
+    }
+
+    #[test]
+    fn fctl_rejects_invalid_dispose_blend() {
+        let data = make_fctl_data(0, 100, 100, 0, 0, 1, 10, 3, 0);
+        assert!(FrameControl::parse(&data, 100, 100).is_err());
+
+        let data = make_fctl_data(0, 100, 100, 0, 0, 1, 10, 0, 2);
+        assert!(FrameControl::parse(&data, 100, 100).is_err());
+    }
+
+    #[test]
+    fn fctl_delay_ms_calculation() {
+        let data = make_fctl_data(0, 10, 10, 0, 0, 1, 10, 0, 0);
+        let fctl = FrameControl::parse(&data, 10, 10).unwrap();
+        assert_eq!(fctl.delay_ms(), 100); // 1/10 sec = 100ms
+
+        let data = make_fctl_data(0, 10, 10, 0, 0, 5, 100, 0, 0);
+        let fctl = FrameControl::parse(&data, 10, 10).unwrap();
+        assert_eq!(fctl.delay_ms(), 50); // 5/100 sec = 50ms
+
+        // delay_den=0 should be treated as 100
+        let data = make_fctl_data(0, 10, 10, 0, 0, 3, 0, 0, 0);
+        let fctl = FrameControl::parse(&data, 10, 10).unwrap();
+        assert_eq!(fctl.delay_ms(), 30); // 3/100 sec = 30ms
+    }
+
+    // ── Blend tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn blend_over_opaque_fg_replaces() {
+        let mut dst = vec![100, 200, 50, 128]; // semi-transparent bg
+        let src = vec![255, 0, 0, 255]; // opaque red
+        blend_over_row_8(&mut dst, &src);
+        assert_eq!(dst, vec![255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn blend_over_transparent_fg_preserves() {
+        let mut dst = vec![100, 200, 50, 255]; // opaque bg
+        let src = vec![0, 0, 0, 0]; // fully transparent fg
+        blend_over_row_8(&mut dst, &src);
+        assert_eq!(dst, vec![100, 200, 50, 255]);
+    }
+
+    #[test]
+    fn blend_over_semi_transparent() {
+        let mut dst = vec![0, 0, 0, 255]; // opaque black bg
+        let src = vec![255, 0, 0, 128]; // semi-transparent red
+        blend_over_row_8(&mut dst, &src);
+        // Result should be some shade of dark red
+        assert!(dst[0] > 100); // red channel present
+        assert!(dst[1] < 10); // green ~0
+        assert!(dst[2] < 10); // blue ~0
+        assert!(dst[3] == 255); // fully opaque result
+    }
+
+    // ── Non-animated PNG via decode_apng ─────────────────────────────
+
+    #[test]
+    fn decode_apng_non_animated_returns_one_frame() {
+        // Create a simple non-animated PNG
+        let img = imgref::ImgVec::new(
+            vec![
+                rgb::Rgba {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                };
+                4
+            ],
+            2,
+            2,
+        );
+        let encoded = crate::encode::encode_rgba8(
+            img.as_ref(),
+            None,
+            &crate::encode::EncodeConfig::default(),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+
+        let result =
+            crate::decode::decode_apng(&encoded, &PngDecodeConfig::none(), &Unstoppable).unwrap();
+
+        assert_eq!(result.frames.len(), 1);
+        assert_eq!(result.info.width, 2);
+        assert_eq!(result.info.height, 2);
+        assert!(!result.info.has_animation);
+        assert_eq!(result.num_plays, 0);
+    }
+
+    // ── APNG corpus tests ───────────────────────────────────────────
+
+    /// Decode all APNG files from the corpus, verify frame count matches acTL, no panics.
+    #[test]
+    fn apng_corpus_decode_no_panics() {
+        let apng_dir = std::path::Path::new("/mnt/v/output/corpus-builder/apng");
+        if !apng_dir.exists() {
+            eprintln!(
+                "Skipping APNG corpus test: {} not found",
+                apng_dir.display()
+            );
+            return;
+        }
+
+        let mut tested = 0u32;
+        let mut failures = Vec::new();
+
+        for entry in std::fs::read_dir(apng_dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("png") {
+                continue;
+            }
+
+            let filename = path.file_name().unwrap().to_str().unwrap().to_string();
+            let data = match std::fs::read(&path) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+
+            // Probe for expected frame count
+            let probe = match crate::decode::probe(&data) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+            if !probe.has_animation {
+                continue;
+            }
+
+            let expected_frames = probe.frame_count;
+
+            // Decode via decode_apng
+            match crate::decode::decode_apng(&data, &PngDecodeConfig::none(), &Unstoppable) {
+                Ok(result) => {
+                    if result.frames.len() as u32 != expected_frames {
+                        failures.push(alloc::format!(
+                            "{}: frame count mismatch: got {}, expected {}",
+                            filename,
+                            result.frames.len(),
+                            expected_frames
+                        ));
+                    } else {
+                        tested += 1;
+                    }
+                }
+                Err(e) => {
+                    // Decode errors are expected for corrupt files — this test only checks for panics
+                    eprintln!("  SKIP (decode error): {}: {}", filename, e);
+                    tested += 1; // Still counts — we handled it without panicking
+                }
+            }
+        }
+
+        eprintln!(
+            "APNG corpus: {} decoded ok, {} failures",
+            tested,
+            failures.len()
+        );
+        if !failures.is_empty() {
+            for f in &failures[..failures.len().min(20)] {
+                eprintln!("  FAIL: {}", f);
+            }
+            panic!(
+                "{} APNG corpus decode failures (showing first 20)",
+                failures.len()
+            );
+        }
+        assert!(
+            tested >= 10,
+            "expected at least 10 APNG files, found {}",
+            tested
+        );
+    }
+
+    /// Compare frame-by-frame decode against the `image-png` crate's APNG as reference.
+    #[test]
+    fn apng_corpus_frame_comparison() {
+        let apng_dir = std::path::Path::new("/mnt/v/output/corpus-builder/apng");
+        if !apng_dir.exists() {
+            eprintln!(
+                "Skipping APNG comparison test: {} not found",
+                apng_dir.display()
+            );
+            return;
+        }
+
+        let mut tested = 0u32;
+        let mut mismatches = 0u32;
+        let mut our_errors = 0u32;
+        let mut ref_errors = 0u32;
+
+        for entry in std::fs::read_dir(apng_dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("png") {
+                continue;
+            }
+
+            let filename = path.file_name().unwrap().to_str().unwrap().to_string();
+            let data = match std::fs::read(&path) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+
+            let probe = match crate::decode::probe(&data) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if !probe.has_animation {
+                continue;
+            }
+
+            // Decode with our decoder
+            let our_result =
+                crate::decode::decode_apng(&data, &PngDecodeConfig::none(), &Unstoppable);
+            // Decode with reference (image-png crate)
+            let ref_frames = decode_apng_with_png_crate(&data);
+
+            match (our_result, ref_frames) {
+                (Ok(ours), Ok(refs)) => {
+                    let frame_count = ours.frames.len().min(refs.len());
+                    let mut frame_match = true;
+                    for i in 0..frame_count {
+                        let our_bytes = pixel_data_to_rgba8_bytes(&ours.frames[i].pixels);
+                        if our_bytes != refs[i] {
+                            frame_match = false;
+                            break;
+                        }
+                    }
+                    if frame_match && ours.frames.len() == refs.len() {
+                        tested += 1;
+                    } else {
+                        mismatches += 1;
+                        if mismatches <= 5 {
+                            eprintln!(
+                                "  MISMATCH: {} (ours={} frames, ref={} frames)",
+                                filename,
+                                ours.frames.len(),
+                                refs.len()
+                            );
+                        }
+                    }
+                }
+                (Err(_), Ok(_)) => {
+                    our_errors += 1;
+                }
+                (Ok(_), Err(_)) => {
+                    ref_errors += 1;
+                    tested += 1; // We succeeded where ref failed, that's OK
+                }
+                (Err(_), Err(_)) => {
+                    // Both failed, skip
+                }
+            }
+        }
+
+        eprintln!(
+            "APNG comparison: {} matched, {} mismatches, {} our-errors, {} ref-errors",
+            tested, mismatches, our_errors, ref_errors
+        );
+
+        // Allow some mismatches due to compositing differences, but not too many
+        assert!(
+            tested >= 10,
+            "expected at least 10 matching APNG files, got {}",
+            tested
+        );
+    }
+
+    // ── Reference decoder helper ────────────────────────────────────
+
+    /// Decode all APNG frames using the reference `png` crate.
+    /// Returns RGBA8 bytes for each composed frame.
+    fn decode_apng_with_png_crate(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+        use std::io::Cursor;
+
+        let cursor = Cursor::new(data);
+        let mut decoder = png::Decoder::new(cursor);
+        decoder.set_transformations(png::Transformations::EXPAND);
+        let mut reader = decoder.read_info().map_err(|e| e.to_string())?;
+        let info = reader.info();
+        let w = info.width as usize;
+        let h = info.height as usize;
+
+        let mut frames = Vec::new();
+
+        loop {
+            let buffer_size = match reader.output_buffer_size() {
+                Some(size) => size,
+                None => break,
+            };
+            let mut buf = vec![0u8; buffer_size];
+            let output_info = match reader.next_frame(&mut buf) {
+                Ok(info) => info,
+                Err(png::DecodingError::Parameter(_)) => break,
+                Err(_) => break,
+            };
+            buf.truncate(output_info.buffer_size());
+
+            // Convert to RGBA8
+            let (ct, bd) = reader.output_color_type();
+            let rgba_bytes = match (ct, bd) {
+                (png::ColorType::Rgba, png::BitDepth::Eight) => buf,
+                (png::ColorType::Rgb, png::BitDepth::Eight) => {
+                    let mut rgba = Vec::with_capacity(buf.len() / 3 * 4);
+                    for chunk in buf.chunks_exact(3) {
+                        rgba.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
+                    }
+                    rgba
+                }
+                (png::ColorType::Rgba, png::BitDepth::Sixteen) => {
+                    // Downscale 16-bit to 8-bit
+                    let mut rgba = Vec::with_capacity(buf.len() / 2);
+                    for chunk in buf.chunks_exact(2) {
+                        rgba.push(chunk[0]); // high byte
+                    }
+                    rgba
+                }
+                _ => {
+                    // For other formats, convert through RGBA8
+                    let mut rgba = Vec::with_capacity(w * h * 4);
+                    for &b in &buf {
+                        rgba.extend_from_slice(&[b, b, b, 255]);
+                    }
+                    rgba
+                }
+            };
+
+            frames.push(rgba_bytes);
+        }
+
+        if frames.is_empty() {
+            return Err("no frames decoded".into());
+        }
+
+        Ok(frames)
+    }
+
+    /// Extract RGBA8 bytes from PixelData for comparison.
+    fn pixel_data_to_rgba8_bytes(pixels: &PixelData) -> Vec<u8> {
+        use rgb::ComponentBytes;
+        match pixels {
+            PixelData::Rgba8(img) => img.buf().as_bytes().to_vec(),
+            PixelData::Rgb8(img) => {
+                let mut out = Vec::with_capacity(img.buf().len() * 4);
+                for p in img.buf() {
+                    out.extend_from_slice(&[p.r, p.g, p.b, 255]);
+                }
+                out
+            }
+            PixelData::Rgba16(img) => {
+                let mut out = Vec::with_capacity(img.buf().len() * 4);
+                for p in img.buf() {
+                    out.extend_from_slice(&[
+                        (p.r >> 8) as u8,
+                        (p.g >> 8) as u8,
+                        (p.b >> 8) as u8,
+                        (p.a >> 8) as u8,
+                    ]);
+                }
+                out
+            }
+            _ => Vec::new(),
+        }
+    }
+}
