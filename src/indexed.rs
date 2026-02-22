@@ -10,8 +10,8 @@ use zenquant::{OutputFormat, QuantizeConfig};
 use enough::Stop;
 
 use crate::encode::{self, EncodeConfig};
+use crate::encoder::PngWriteMetadata;
 use crate::error::PngError;
-use crate::png_writer::{self, PngWriteMetadata};
 
 /// Encode RGBA8 pixels to indexed PNG using zenquant for palette quantization.
 ///
@@ -63,7 +63,7 @@ pub fn encode_indexed_rgba8(
     write_meta.srgb_intent = encode_config.srgb_intent;
     write_meta.chromaticities = encode_config.chromaticities;
 
-    png_writer::write_indexed_png(
+    crate::encoder::write_indexed_png(
         result.indices(),
         width,
         height,
@@ -159,7 +159,7 @@ pub fn encode_rgba8_auto(
         write_meta.srgb_intent = encode_config.srgb_intent;
         write_meta.chromaticities = encode_config.chromaticities;
 
-        let data = png_writer::write_indexed_png(
+        let data = crate::encoder::write_indexed_png(
             result.indices(),
             width,
             height,

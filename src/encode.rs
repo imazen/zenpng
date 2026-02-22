@@ -9,8 +9,8 @@ use zencodec_types::ImageMetadata;
 use enough::Stop;
 
 use crate::decode::PngChromaticities;
+use crate::encoder::PngWriteMetadata;
 use crate::error::PngError;
-use crate::png_writer::{self, PngWriteMetadata};
 use crate::types::{Compression, Filter};
 
 /// PNG encode configuration.
@@ -49,8 +49,8 @@ impl EncodeConfig {
         cancel: &'a dyn Stop,
         deadline: &'a dyn Stop,
         remaining_ns: Option<&'a dyn Fn() -> Option<u64>>,
-    ) -> png_writer::CompressOptions<'a> {
-        png_writer::CompressOptions {
+    ) -> crate::encoder::CompressOptions<'a> {
+        crate::encoder::CompressOptions {
             use_zopfli: self.compression.use_zopfli(),
             cancel,
             deadline,
@@ -283,7 +283,7 @@ pub(crate) fn encode_raw(
     write_meta.srgb_intent = config.srgb_intent;
     write_meta.chromaticities = config.chromaticities;
 
-    png_writer::write_truecolor_png(
+    crate::encoder::write_truecolor_png(
         bytes,
         width,
         height,
@@ -303,7 +303,7 @@ pub fn encode_rgb8_with_stats(
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<(Vec<u8>, crate::png_writer::PhaseStats), PngError> {
+) -> Result<(Vec<u8>, crate::encoder::PhaseStats), PngError> {
     let width = img.width() as u32;
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
@@ -329,7 +329,7 @@ pub fn encode_rgba8_with_stats(
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<(Vec<u8>, crate::png_writer::PhaseStats), PngError> {
+) -> Result<(Vec<u8>, crate::encoder::PhaseStats), PngError> {
     let width = img.width() as u32;
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
@@ -360,7 +360,7 @@ fn encode_raw_with_stats(
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<(Vec<u8>, crate::png_writer::PhaseStats), PngError> {
+) -> Result<(Vec<u8>, crate::encoder::PhaseStats), PngError> {
     let level = config.compression.to_zenflate_level();
     let opts = config.compress_options(cancel, deadline, None);
 
@@ -369,8 +369,8 @@ fn encode_raw_with_stats(
     write_meta.srgb_intent = config.srgb_intent;
     write_meta.chromaticities = config.chromaticities;
 
-    let mut stats = crate::png_writer::PhaseStats::default();
-    let png = png_writer::write_truecolor_png_with_stats(
+    let mut stats = crate::encoder::PhaseStats::default();
+    let png = crate::encoder::write_truecolor_png_with_stats(
         bytes,
         width,
         height,
