@@ -63,9 +63,15 @@ fn run_single(path: &Path) {
     );
     println!("{}", "-".repeat(92));
 
+    let parallel = std::env::var("PARALLEL").is_ok();
+    if parallel {
+        println!("*** PARALLEL MODE ***\n");
+    }
+
     for (name, comp) in &levels {
         let config = zenpng::EncodeConfig {
             compression: *comp,
+            parallel,
             source_gamma: decoded.info.source_gamma,
             srgb_intent: decoded.info.srgb_intent,
             chromaticities: decoded.info.chromaticities,
