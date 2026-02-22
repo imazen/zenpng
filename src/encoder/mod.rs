@@ -168,6 +168,55 @@ pub(crate) fn write_truecolor_png(
         )));
     }
 
+    // L0 fast path: write zlib stored blocks directly into the PNG output,
+    // avoiding a separate compressed Vec allocation. For 42MB images this
+    // eliminates one 42MB allocation + copy.
+    if compression_level == 0 {
+        let filtered_row = row_bytes + 1;
+        let total_filtered = filtered_row * h;
+        let num_blocks = if total_filtered == 0 {
+            1
+        } else {
+            total_filtered.div_ceil(65535)
+        };
+        let idat_data_len = 2 + 5 * num_blocks + total_filtered + 4; // zlib wrapper
+
+        let est = 8 + 25 + (12 + idat_data_len) + 12 + metadata_size_estimate(write_meta);
+        let mut out = Vec::with_capacity(est);
+
+        out.extend_from_slice(&PNG_SIGNATURE);
+
+        let mut ihdr = [0u8; 13];
+        ihdr[0..4].copy_from_slice(&width.to_be_bytes());
+        ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+        ihdr[8] = bit_depth;
+        ihdr[9] = color_type;
+        write_chunk(&mut out, b"IHDR", &ihdr);
+        write_all_metadata(&mut out, write_meta)?;
+
+        // Write IDAT chunk directly: length + type + inline zlib data + CRC
+        out.extend_from_slice(&(idat_data_len as u32).to_be_bytes());
+        out.extend_from_slice(b"IDAT");
+        let idat_start = out.len(); // CRC covers type + data
+
+        compress::write_zlib_stored_inline(
+            &mut out,
+            &pixel_bytes[..expected_len],
+            row_bytes,
+            h,
+        );
+
+        // CRC-32 over "IDAT" + data
+        let crc = zenflate::crc32(
+            zenflate::crc32(0, b"IDAT"),
+            &out[idat_start..],
+        );
+        out.extend_from_slice(&crc.to_be_bytes());
+
+        write_chunk(&mut out, b"IEND", &[]);
+        return Ok(out);
+    }
+
     // Compress with multi-strategy filter selection
     let compressed = compress_filtered(
         &pixel_bytes[..expected_len],

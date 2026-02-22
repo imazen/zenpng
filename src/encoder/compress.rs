@@ -88,6 +88,34 @@ pub(crate) fn compress_filtered(
     use std::time::Instant;
 
     let filtered_size = (row_bytes + 1) * height;
+
+    // ---- L0 fast path: write zlib stored blocks directly ----
+    // Bypasses the entire screening/compress/verify pipeline. No Compressor,
+    // no Decompressor, no intermediate buffers. Just memcpy rows with filter
+    // bytes into stored DEFLATE blocks with zlib header + Adler-32.
+    if compression_level == 0 {
+        if let Some(s) = &mut stats {
+            s.raw_size = filtered_size;
+        }
+        let phase_start = if stats.is_some() {
+            Some(Instant::now())
+        } else {
+            None
+        };
+
+        let result = zlib_store_unfiltered(packed_rows, row_bytes, height);
+
+        if let (Some(s), Some(t)) = (&mut stats, phase_start) {
+            s.phases.push(PhaseStat {
+                name: "Store (L0 direct)".to_string(),
+                duration_ns: t.elapsed().as_nanos() as u64,
+                best_size: result.len(),
+                evaluations: 1,
+            });
+        }
+        return Ok(result);
+    }
+
     let mut best_compressed: Option<Vec<u8>> = None;
 
     if let Some(s) = &mut stats {
@@ -654,6 +682,164 @@ pub(crate) fn compress_filtered(
     }
 
     best_compressed.ok_or_else(|| PngError::InvalidInput("no filter strategies tried".to_string()))
+}
+
+/// Write zlib stored blocks directly from raw pixel rows, applying filter None.
+///
+/// Bypasses the entire Compressor/Decompressor pipeline for L0. Writes:
+/// - 2-byte zlib header (CMF=0x78, FLG=0x01)
+/// - Stored DEFLATE blocks containing [0x00 filter_byte, row_data] per row
+/// - 4-byte Adler-32 checksum (big-endian)
+///
+/// Each stored block holds as many complete rows as fit in 65535 bytes.
+/// Single rows exceeding 65535 bytes get their own block(s).
+fn zlib_store_unfiltered(packed_rows: &[u8], row_bytes: usize, height: usize) -> Vec<u8> {
+    let filtered_row = row_bytes + 1; // filter byte + row data
+    let total_filtered = filtered_row * height;
+
+    // Single-pass: write stored DEFLATE blocks directly from source rows,
+    // computing Adler-32 incrementally per row. Each row feeds a single
+    // adler32 call on (filter_byte ++ row_data) by using Adler32Hasher.
+    let num_blocks = if total_filtered == 0 {
+        1
+    } else {
+        total_filtered.div_ceil(65535)
+    };
+    let out_size = 2 + 5 * num_blocks + total_filtered + 4;
+    let mut out = Vec::with_capacity(out_size);
+
+    // zlib header: CM=8 (deflate), CINFO=7 (32K window), FCHECK
+    out.push(0x78);
+    out.push(0x01);
+
+    if height == 0 {
+        write_stored_block_header(&mut out, 0, true);
+        out.extend_from_slice(&zenflate::adler32(1, &[]).to_be_bytes());
+        return out;
+    }
+
+    let mut adler = 1u32;
+    let mut block_remaining: usize = 0;
+    let mut filtered_remaining = total_filtered;
+
+    for y in 0..height {
+        let row = &packed_rows[y * row_bytes..(y + 1) * row_bytes];
+
+        // Write filter byte (0x00 = None) into the current stored block
+        if block_remaining == 0 {
+            let block_len = filtered_remaining.min(65535);
+            let is_final = block_len >= filtered_remaining;
+            write_stored_block_header(&mut out, block_len, is_final);
+            block_remaining = block_len;
+        }
+        out.push(0u8);
+        block_remaining -= 1;
+        filtered_remaining -= 1;
+
+        // Write row data, splitting across stored blocks as needed
+        let mut data = row;
+        while !data.is_empty() {
+            if block_remaining == 0 {
+                let block_len = filtered_remaining.min(65535);
+                let is_final = block_len >= filtered_remaining;
+                write_stored_block_header(&mut out, block_len, is_final);
+                block_remaining = block_len;
+            }
+            let n = data.len().min(block_remaining);
+            out.extend_from_slice(&data[..n]);
+            data = &data[n..];
+            block_remaining -= n;
+            filtered_remaining -= n;
+        }
+
+        // Adler-32: feed filter byte (0x00) then row data.
+        // For 0x00: s1 unchanged, s2 += s1, both mod 65521.
+        let s1 = adler & 0xFFFF;
+        let s2 = ((adler >> 16) + s1) % 65521;
+        adler = (s2 << 16) | s1;
+        adler = zenflate::adler32(adler, row);
+    }
+
+    out.extend_from_slice(&adler.to_be_bytes());
+    out
+}
+
+/// Write zlib-wrapped stored DEFLATE blocks directly into the output Vec.
+///
+/// Used by the L0 fast path to write IDAT data directly into the PNG output,
+/// avoiding a separate allocation. The caller handles the IDAT chunk framing
+/// (length, type, CRC).
+pub(crate) fn write_zlib_stored_inline(
+    out: &mut Vec<u8>,
+    packed_rows: &[u8],
+    row_bytes: usize,
+    height: usize,
+) {
+    let filtered_row = row_bytes + 1;
+    let total_filtered = filtered_row * height;
+
+    // zlib header
+    out.push(0x78);
+    out.push(0x01);
+
+    if height == 0 {
+        write_stored_block_header(out, 0, true);
+        out.extend_from_slice(&zenflate::adler32(1, &[]).to_be_bytes());
+        return;
+    }
+
+    let mut adler = 1u32;
+    let mut block_remaining: usize = 0;
+    let mut filtered_remaining = total_filtered;
+
+    for y in 0..height {
+        let row = &packed_rows[y * row_bytes..(y + 1) * row_bytes];
+
+        // Write filter byte (0x00 = None)
+        if block_remaining == 0 {
+            let block_len = filtered_remaining.min(65535);
+            let is_final = block_len >= filtered_remaining;
+            write_stored_block_header(out, block_len, is_final);
+            block_remaining = block_len;
+        }
+        out.push(0u8);
+        block_remaining -= 1;
+        filtered_remaining -= 1;
+
+        // Write row data, splitting across stored blocks as needed
+        let mut data = row;
+        while !data.is_empty() {
+            if block_remaining == 0 {
+                let block_len = filtered_remaining.min(65535);
+                let is_final = block_len >= filtered_remaining;
+                write_stored_block_header(out, block_len, is_final);
+                block_remaining = block_len;
+            }
+            let n = data.len().min(block_remaining);
+            out.extend_from_slice(&data[..n]);
+            data = &data[n..];
+            block_remaining -= n;
+            filtered_remaining -= n;
+        }
+
+        // Adler-32: 0x00 filter byte then row data
+        let s1 = adler & 0xFFFF;
+        let s2 = ((adler >> 16) + s1) % 65521;
+        adler = (s2 << 16) | s1;
+        adler = zenflate::adler32(adler, row);
+    }
+
+    out.extend_from_slice(&adler.to_be_bytes());
+}
+
+/// Write a stored DEFLATE block header (5 bytes).
+fn write_stored_block_header(out: &mut Vec<u8>, len: usize, is_final: bool) {
+    out.push(if is_final { 1 } else { 0 });
+    out.push((len & 0xFF) as u8);
+    out.push(((len >> 8) & 0xFF) as u8);
+    let nlen = !len & 0xFFFF;
+    out.push((nlen & 0xFF) as u8);
+    out.push(((nlen >> 8) & 0xFF) as u8);
 }
 
 /// Adaptive zopfli compression with time budgeting.
