@@ -39,3 +39,11 @@ default = ["quantize"]
 quantize = ["dep:zenquant"]
 unchecked = ["zenflate/unchecked"]
 zopfli = ["dep:zenzop"]
+_dev = []
+
+[[example]]
+name = "phase_timing"
+required-features = ["_dev"]
+
+[[example]]
+name = "strategy_explorer"
