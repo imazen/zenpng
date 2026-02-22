@@ -43,7 +43,7 @@ fn main() {
             }
         };
 
-        let orig = match zenpng::decode(&data, None, &Unstoppable) {
+        let orig = match zenpng::decode(&data, &zenpng::PngLimits::none(), &Unstoppable) {
             Ok(o) => o,
             Err(e) => {
                 eprintln!("SKIP {name}: decode error: {e}");
@@ -98,7 +98,7 @@ fn main() {
         };
 
         // Decode re-encoded
-        let rt = match zenpng::decode(&encoded, None, &Unstoppable) {
+        let rt = match zenpng::decode(&encoded, &zenpng::PngLimits::none(), &Unstoppable) {
             Ok(r) => r,
             Err(e) => {
                 failures.push(format!("{name}: re-decode failed: {e}"));

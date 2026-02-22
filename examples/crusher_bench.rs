@@ -63,7 +63,7 @@ fn main() {
         let source_size = source_data.len();
 
         // Decode
-        let decoded = match zenpng::decode(&source_data, None, &Unstoppable) {
+        let decoded = match zenpng::decode(&source_data, &zenpng::PngLimits::none(), &Unstoppable) {
             Ok(d) => d,
             Err(e) => {
                 eprintln!("  SKIP: decode error: {e}");
@@ -101,15 +101,27 @@ fn main() {
 
             let start = Instant::now();
             let encoded = match &decoded.pixels {
-                zencodec_types::PixelData::Rgb8(img) => {
-                    zenpng::encode_rgb8(img.as_ref(), None, &config, &enough::Unstoppable, &enough::Unstoppable)
-                }
-                zencodec_types::PixelData::Rgba8(img) => {
-                    zenpng::encode_rgba8(img.as_ref(), None, &config, &enough::Unstoppable, &enough::Unstoppable)
-                }
-                zencodec_types::PixelData::Gray8(img) => {
-                    zenpng::encode_gray8(img.as_ref(), None, &config, &enough::Unstoppable, &enough::Unstoppable)
-                }
+                zencodec_types::PixelData::Rgb8(img) => zenpng::encode_rgb8(
+                    img.as_ref(),
+                    None,
+                    &config,
+                    &enough::Unstoppable,
+                    &enough::Unstoppable,
+                ),
+                zencodec_types::PixelData::Rgba8(img) => zenpng::encode_rgba8(
+                    img.as_ref(),
+                    None,
+                    &config,
+                    &enough::Unstoppable,
+                    &enough::Unstoppable,
+                ),
+                zencodec_types::PixelData::Gray8(img) => zenpng::encode_gray8(
+                    img.as_ref(),
+                    None,
+                    &config,
+                    &enough::Unstoppable,
+                    &enough::Unstoppable,
+                ),
                 _ => {
                     eprintln!("  SKIP: unsupported pixel format for {level_name}");
                     continue;
