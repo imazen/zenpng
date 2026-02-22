@@ -52,13 +52,14 @@ pub use decode::{
     PngDecodeOutput, PngInfo, PngWarning, decode, decode_apng, probe,
 };
 pub use encode::{
-    EncodeConfig, encode_gray8, encode_gray16, encode_rgb8, encode_rgb16, encode_rgba8,
-    encode_rgba16,
+    ApngEncodeConfig, ApngFrameInput, EncodeConfig, encode_apng, encode_gray8, encode_gray16,
+    encode_rgb8, encode_rgb16, encode_rgba8, encode_rgba16,
 };
 pub use error::PngError;
 #[cfg(feature = "quantize")]
 pub use indexed::{
-    AutoEncodeResult, default_quantize_config, encode_indexed_rgba8, encode_rgba8_auto,
+    AutoEncodeResult, default_quantize_config, encode_apng_auto, encode_apng_indexed,
+    encode_indexed_rgba8, encode_rgba8_auto,
 };
 pub use zencodec::{
     PngDecodeJob, PngDecoder, PngDecoderConfig, PngEncodeJob, PngEncoder, PngEncoderConfig,

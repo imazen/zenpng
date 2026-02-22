@@ -186,6 +186,151 @@ pub fn encode_rgba8_auto(
     }
 }
 
+// ── APNG indexed encoding ───────────────────────────────────────────
+
+/// Encode canvas-sized RGBA8 frames into an indexed APNG file using a global palette.
+///
+/// Quantizes a representative sample across all frames to produce a single
+/// global palette, then encodes each frame as indexed data with delta regions.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_apng_indexed(
+    frames: &[crate::encode::ApngFrameInput<'_>],
+    canvas_width: u32,
+    canvas_height: u32,
+    config: &crate::encode::ApngEncodeConfig,
+    quant_config: &QuantizeConfig,
+    metadata: Option<&ImageMetadata<'_>>,
+    cancel: &dyn Stop,
+    deadline: &dyn Stop,
+) -> Result<Vec<u8>, PngError> {
+    if frames.is_empty() {
+        return Err(PngError::InvalidInput(
+            "APNG requires at least one frame".into(),
+        ));
+    }
+    let expected_len = canvas_width as usize * canvas_height as usize * 4;
+    for (i, frame) in frames.iter().enumerate() {
+        if frame.pixels.len() < expected_len {
+            return Err(PngError::InvalidInput(alloc::format!(
+                "frame {i}: pixel buffer too small: need {expected_len}, got {}",
+                frame.pixels.len()
+            )));
+        }
+    }
+
+    let level = config.encode.compression.to_zenflate_level();
+    let mut write_meta = crate::encoder::PngWriteMetadata::from_metadata(metadata);
+    write_meta.source_gamma = config.encode.source_gamma;
+    write_meta.srgb_intent = config.encode.srgb_intent;
+    write_meta.chromaticities = config.encode.chromaticities;
+
+    crate::encoder::apng::encode_apng_indexed(
+        frames,
+        canvas_width,
+        canvas_height,
+        &write_meta,
+        config.num_plays,
+        level,
+        quant_config,
+        cancel,
+        deadline,
+    )
+}
+
+/// Encode APNG frames, automatically choosing indexed or truecolor encoding.
+///
+/// Tries quantizing a representative sample across all frames. If the mean
+/// perceptual error (OKLab ΔE) is at or below `max_loss`, emits an indexed
+/// APNG. Otherwise falls back to truecolor RGBA8 APNG.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_apng_auto(
+    frames: &[crate::encode::ApngFrameInput<'_>],
+    canvas_width: u32,
+    canvas_height: u32,
+    config: &crate::encode::ApngEncodeConfig,
+    quant_config: &QuantizeConfig,
+    max_loss: f64,
+    metadata: Option<&ImageMetadata<'_>>,
+    cancel: &dyn Stop,
+    deadline: &dyn Stop,
+) -> Result<AutoEncodeResult, PngError> {
+    if frames.is_empty() {
+        return Err(PngError::InvalidInput(
+            "APNG requires at least one frame".into(),
+        ));
+    }
+    let expected_len = canvas_width as usize * canvas_height as usize * 4;
+    for (i, frame) in frames.iter().enumerate() {
+        if frame.pixels.len() < expected_len {
+            return Err(PngError::InvalidInput(alloc::format!(
+                "frame {i}: pixel buffer too small: need {expected_len}, got {}",
+                frame.pixels.len()
+            )));
+        }
+    }
+
+    // Build representative sample across all frames
+    let w = canvas_width as usize;
+    let h = canvas_height as usize;
+    let total_pixels = w * h * frames.len();
+    let target_samples = 10_000.min(total_pixels);
+    let sample_step = (total_pixels / target_samples).max(1);
+
+    let mut sample_rgba: Vec<Rgba<u8>> = Vec::with_capacity(target_samples);
+    let mut pixel_idx = 0usize;
+    for frame in frames {
+        let pixels: &[Rgba<u8>] = bytemuck::cast_slice(frame.pixels);
+        for px in pixels {
+            if pixel_idx % sample_step == 0 {
+                sample_rgba.push(*px);
+            }
+            pixel_idx += 1;
+        }
+    }
+
+    // Quantize sample
+    let sample_zq: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(&sample_rgba);
+    let result = zenquant::quantize_rgba(sample_zq, sample_rgba.len(), 1, quant_config)?;
+
+    // Compute quality loss on the sample
+    let loss = compute_mean_delta_e(&sample_rgba, result.palette_rgba(), result.indices());
+
+    if loss <= max_loss {
+        // Quality acceptable — encode as indexed APNG
+        let data = encode_apng_indexed(
+            frames,
+            canvas_width,
+            canvas_height,
+            config,
+            quant_config,
+            metadata,
+            cancel,
+            deadline,
+        )?;
+        Ok(AutoEncodeResult {
+            data,
+            indexed: true,
+            quality_loss: loss,
+        })
+    } else {
+        // Quality too low — fall back to truecolor APNG
+        let data = crate::encode::encode_apng(
+            frames,
+            canvas_width,
+            canvas_height,
+            config,
+            metadata,
+            cancel,
+            deadline,
+        )?;
+        Ok(AutoEncodeResult {
+            data,
+            indexed: false,
+            quality_loss: loss,
+        })
+    }
+}
+
 /// Convert sRGB u8 to OKLab [L, a, b].
 fn srgb_u8_to_oklab(lut: &linear_srgb::lut::SrgbConverter, r: u8, g: u8, b: u8) -> [f32; 3] {
     let lr = lut.srgb_u8_to_linear(r);
