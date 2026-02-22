@@ -319,40 +319,12 @@ pub fn decode_apng(
     let result = crate::decoder::apng::decode_apng_composed(data, config, cancel)?;
 
     let info = crate::decoder::build_png_info(&result.ihdr, &result.ancillary);
-    let canvas_w = result.ihdr.width as usize;
-    let canvas_h = result.ihdr.height as usize;
-    let is_16bit = result.ihdr.bit_depth == 16;
-    let num_plays = result.num_plays;
-    let warnings = result.warnings;
-
-    let frames = result
-        .frames
-        .into_iter()
-        .map(|cf| {
-            let pixels = if is_16bit {
-                // RGBA16 canvas
-                let rgba: &[rgb::Rgba<u16>] = bytemuck::cast_slice(&cf.pixels);
-                PixelData::Rgba16(imgref::ImgVec::new(rgba.to_vec(), canvas_w, canvas_h))
-            } else {
-                // RGBA8 canvas
-                let rgba: &[rgb::Rgba<u8>] = bytemuck::cast_slice(&cf.pixels);
-                PixelData::Rgba8(imgref::ImgVec::new(rgba.to_vec(), canvas_w, canvas_h))
-            };
-            ApngFrame {
-                pixels,
-                frame_info: ApngFrameInfo {
-                    delay_num: cf.fctl.delay_num,
-                    delay_den: cf.fctl.delay_den,
-                },
-            }
-        })
-        .collect();
 
     Ok(ApngDecodeOutput {
-        frames,
+        frames: result.frames,
         info,
-        num_plays,
-        warnings,
+        num_plays: result.num_plays,
+        warnings: result.warnings,
     })
 }
 

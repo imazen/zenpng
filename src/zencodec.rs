@@ -703,14 +703,8 @@ pub struct PngFrameDecoder {
     file_data: Vec<u8>,
     /// Shared image info for all frames.
     info: std::sync::Arc<ImageInfo>,
-    /// Decode config.
-    config: crate::decode::PngDecodeConfig,
-    /// Number of frames from acTL.
-    num_frames: u32,
-    /// Loop count from acTL.
-    num_plays: u32,
-    /// Current frame index.
-    current_frame: u32,
+    /// Saved decoder state for O(1) resumption between frames.
+    decoder_state: crate::decoder::apng::ApngDecoderState,
 }
 
 impl PngFrameDecoder {
@@ -721,35 +715,6 @@ impl PngFrameDecoder {
     ) -> Result<Self, PngError> {
         let probe_info = crate::decode::probe(data)?;
         let image_info = convert_info(&probe_info);
-        let num_frames = probe_info.frame_count;
-
-        // Extract num_plays from acTL
-        let num_plays = if probe_info.has_animation {
-            let mut plays = 0u32;
-            let mut pos = 8usize;
-            while pos + 12 <= data.len() {
-                let length = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
-                let chunk_type: [u8; 4] = data[pos + 4..pos + 8].try_into().unwrap();
-                let data_start = pos + 8;
-                let crc_end = data_start + length + 4;
-                if crc_end > data.len() {
-                    break;
-                }
-                if chunk_type == *b"acTL" && length == 8 {
-                    plays = u32::from_be_bytes(
-                        data[data_start + 4..data_start + 8].try_into().unwrap(),
-                    );
-                    break;
-                }
-                if chunk_type == *b"IDAT" {
-                    break;
-                }
-                pos = crc_end;
-            }
-            plays
-        } else {
-            0
-        };
 
         let decode_config = PngDecodeConfig {
             max_pixels: config.limits.max_pixels,
@@ -758,13 +723,14 @@ impl PngFrameDecoder {
             skip_critical_chunk_crc: false,
         };
 
+        // Create ApngDecoder once and save its state for O(1) resumption.
+        let decoder = crate::decoder::apng::ApngDecoder::new(data, &decode_config)?;
+        let decoder_state = decoder.save_state();
+
         Ok(Self {
             file_data: data.to_vec(),
             info: std::sync::Arc::new(image_info),
-            config: decode_config,
-            num_frames,
-            num_plays,
-            current_frame: 0,
+            decoder_state,
         })
     }
 }
@@ -773,34 +739,28 @@ impl zencodec_types::FrameDecoder for PngFrameDecoder {
     type Error = PngError;
 
     fn frame_count(&self) -> Option<u32> {
-        Some(self.num_frames)
+        Some(self.decoder_state.num_frames)
     }
 
     fn loop_count(&self) -> Option<u32> {
-        Some(self.num_plays)
+        Some(self.decoder_state.num_plays)
     }
 
     fn next_frame(&mut self) -> Result<Option<DecodeFrame>, PngError> {
-        if self.current_frame >= self.num_frames {
-            return Ok(None);
-        }
-
-        // Create a temporary ApngDecoder for each call
-        // (We can't store it because it borrows file_data)
-        // Skip to the current frame
-        let mut decoder = crate::decoder::apng::ApngDecoder::new(&self.file_data, &self.config)?;
-
-        // Skip frames until we reach current_frame
-        for _ in 0..self.current_frame {
-            if decoder.next_frame(&enough::Unstoppable)?.is_none() {
-                return Ok(None);
-            }
-        }
+        // Restore decoder from saved state (O(1), no re-scanning)
+        let mut decoder = crate::decoder::apng::ApngDecoder::from_state(
+            &self.file_data,
+            self.decoder_state.clone(),
+        );
 
         let raw = match decoder.next_frame(&enough::Unstoppable)? {
             Some(f) => f,
             None => return Ok(None),
         };
+
+        // Save updated state (chunk_pos / current_frame advanced)
+        let idx = self.decoder_state.current_frame;
+        self.decoder_state = decoder.save_state();
 
         let fctl = &raw.fctl;
         let blend = match fctl.blend_op {
@@ -814,9 +774,6 @@ impl zencodec_types::FrameDecoder for PngFrameDecoder {
         };
         let delay_ms = fctl.delay_ms();
         let frame_rect = [fctl.x_offset, fctl.y_offset, fctl.width, fctl.height];
-
-        let idx = self.current_frame;
-        self.current_frame += 1;
 
         let frame = DecodeFrame::new(raw.pixels, self.info.clone(), delay_ms, idx)
             .with_blend(blend)
