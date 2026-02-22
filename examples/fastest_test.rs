@@ -121,6 +121,56 @@ fn main() {
 
     // ── Decode benchmarks ─────────────────────────────────────────────
 
+    // Re-encode at None for stored-block decode test
+    let none_png = match &decoded.pixels {
+        zencodec_types::PixelData::Rgba8(img) => {
+            let config = zenpng::EncodeConfig {
+                compression: zenpng::Compression::None,
+                ..Default::default()
+            };
+            zenpng::encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap()
+        }
+        zencodec_types::PixelData::Rgb8(img) => {
+            let config = zenpng::EncodeConfig {
+                compression: zenpng::Compression::None,
+                ..Default::default()
+            };
+            zenpng::encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap()
+        }
+        _ => panic!("unsupported"),
+    };
+
+    println!(
+        "\n=== Decode None ({:.2}M stored) ===\n",
+        none_png.len() as f64 / 1e6
+    );
+
+    {
+        let config = zenpng::PngDecodeConfig::none();
+        let ms = bench_ms(1, 10, || {
+            let d = zenpng::decode(&none_png, &config, &Unstoppable).unwrap();
+            std::hint::black_box(&d);
+        });
+        println!(
+            "{:<14} {:>8.1}ms  ({:.0} MB/s)",
+            "zenpng", ms, raw as f64 / ms / 1000.0
+        );
+    }
+
+    {
+        let ms = bench_ms(1, 10, || {
+            let decoder = png::Decoder::new(std::io::Cursor::new(&none_png));
+            let mut reader = decoder.read_info().unwrap();
+            let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
+            reader.next_frame(&mut buf).unwrap();
+            std::hint::black_box(&buf);
+        });
+        println!(
+            "{:<14} {:>8.1}ms  ({:.0} MB/s)",
+            "png", ms, raw as f64 / ms / 1000.0
+        );
+    }
+
     // Re-encode at Fast for a reasonably compressed test file
     let test_png = match &decoded.pixels {
         zencodec_types::PixelData::Rgba8(img) => {

@@ -380,6 +380,11 @@ impl<'a> RowDecoder<'a> {
         &self.ancillary
     }
 
+    /// Byte offset of the first IDAT chunk header.
+    pub fn first_idat_pos(&self) -> usize {
+        self.first_idat_pos
+    }
+
     /// Yield the next unfiltered raw row, or None if all rows have been read.
     pub fn next_raw_row(&mut self) -> Option<Result<&[u8], PngError>> {
         if self.rows_yielded >= self.ihdr.height {
