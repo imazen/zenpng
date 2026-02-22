@@ -23,6 +23,8 @@ pub(crate) struct CompressOptions<'a> {
     /// Whether to use zopfli for final compression (Crush level).
     #[allow(dead_code)] // read only with `zopfli` feature
     pub use_zopfli: bool,
+    /// Run screening and refinement phases in parallel.
+    pub parallel: bool,
     /// Hard cancel — passed into zenflate/zenzop, aborts mid-compression.
     pub cancel: &'a dyn Stop,
     /// Soft deadline — checked between phases/strategies for graceful early return.

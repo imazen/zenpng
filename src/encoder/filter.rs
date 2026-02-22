@@ -19,6 +19,19 @@ pub(crate) const HEURISTIC_STRATEGIES: &[Strategy] = &[
     Strategy::Adaptive(AdaptiveHeuristic::BigEnt),
 ];
 
+/// Reduced strategy list for Fastest/Fast (compression_level <= 4).
+///
+/// Drops Single(Sub/Up/Average) — they rarely win screening. Keeps None
+/// (wins on flat screenshots), Paeth (wins on some screenshots), and the
+/// 3 best adaptive heuristics. 5 strategies instead of 9 = ~44% faster screen.
+pub(crate) const FAST_STRATEGIES: &[Strategy] = &[
+    Strategy::Single(0), // None
+    Strategy::Single(4), // Paeth
+    Strategy::Adaptive(AdaptiveHeuristic::MinSum),
+    Strategy::Adaptive(AdaptiveHeuristic::Bigrams),
+    Strategy::Adaptive(AdaptiveHeuristic::BigEnt),
+];
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Strategy {
     Single(u8),
@@ -36,6 +49,17 @@ pub(crate) enum Strategy {
     /// per-row greedy by considering cross-row DEFLATE interactions.
     BruteForceBlock {
         context_rows: usize,
+        eval_level: u32,
+    },
+    /// Forking brute-force: maintains real DEFLATE compressor state across
+    /// rows. For each row, clones the compressor, tries all 5 filters via
+    /// incremental compression, picks the filter producing the smallest
+    /// cumulative output. The winning fork becomes the state for the next row.
+    ///
+    /// Produces better results than context-based BruteForce because it uses
+    /// actual DEFLATE state (hash tables, frequency counters) rather than a
+    /// limited raw context window.
+    BruteForceFork {
         eval_level: u32,
     },
 }
@@ -88,6 +112,9 @@ pub(crate) fn filter_image(
                 out,
             );
         }
+        Strategy::BruteForceFork { eval_level } => {
+            filter_image_brute_fork(packed_rows, row_bytes, height, bpp, eval_level, cancel, out);
+        }
         _ => {
             filter_image_heuristic(packed_rows, row_bytes, height, bpp, strategy, out);
         }
@@ -122,7 +149,9 @@ fn filter_image_heuristic(
                 out.push(best_f);
                 out.extend_from_slice(&candidates[best_f as usize]);
             }
-            Strategy::BruteForce { .. } | Strategy::BruteForceBlock { .. } => unreachable!(),
+            Strategy::BruteForce { .. }
+            | Strategy::BruteForceBlock { .. }
+            | Strategy::BruteForceFork { .. } => unreachable!(),
         }
 
         prev_row.copy_from_slice(row);
@@ -203,6 +232,106 @@ fn filter_image_brute(
         // Emit winning filter
         out.push(best_f);
         out.extend_from_slice(&candidate_data[best_f as usize]);
+
+        prev_row.copy_from_slice(row);
+    }
+}
+
+/// Forking brute-force filter selection using incremental DEFLATE state.
+///
+/// For each row, clones the compressor 5 times (one per filter), feeds each
+/// clone the accumulated filtered stream via `deflate_compress_incremental`,
+/// and picks the filter producing the smallest cumulative output. The winning
+/// clone becomes the compressor for the next row.
+///
+/// This produces better filter choices than context-based brute-force because
+/// it uses actual DEFLATE state (hash tables, frequency counters, match history)
+/// rather than a limited raw context window.
+#[allow(clippy::too_many_arguments)]
+fn filter_image_brute_fork(
+    packed_rows: &[u8],
+    row_bytes: usize,
+    height: usize,
+    bpp: usize,
+    eval_level: u32,
+    cancel: &dyn Stop,
+    out: &mut Vec<u8>,
+) {
+    let filtered_row_size = row_bytes + 1; // filter byte + row data
+
+    let mut compressor = Compressor::new(CompressionLevel::new(eval_level));
+    let mut candidate_data: Vec<Vec<u8>> = (0..5).map(|_| vec![0u8; row_bytes]).collect();
+    let mut prev_row = vec![0u8; row_bytes];
+
+    // Output buffer for incremental compression — sized for one row's worth
+    let compress_bound = Compressor::deflate_compress_bound(filtered_row_size * height);
+    let mut compress_buf = vec![0u8; compress_bound];
+
+    // Track cumulative compressed size for the winning compressor
+    let mut cumulative_output = 0usize;
+
+    for y in 0..height {
+        let row = &packed_rows[y * row_bytes..(y + 1) * row_bytes];
+        let is_final = y == height - 1;
+
+        // Try all 5 filters
+        let mut best_f = 0u8;
+        let mut best_size = usize::MAX;
+        let mut best_compressor = None;
+
+        for f in 0..5u8 {
+            if cancel.check().is_err() {
+                // On cancel, emit remaining rows with filter 0
+                for rem_y in y..height {
+                    out.push(0);
+                    out.extend_from_slice(
+                        &packed_rows[rem_y * row_bytes..(rem_y + 1) * row_bytes],
+                    );
+                }
+                return;
+            }
+
+            apply_filter(f, row, &prev_row, bpp, &mut candidate_data[f as usize]);
+
+            // Clone the compressor to try this filter
+            let mut fork = compressor.clone();
+
+            // Build the accumulated data: existing output + this candidate row
+            // The incremental API expects the full accumulated buffer.
+            // We already committed prior rows to `out`; now append the candidate.
+            let new_start = out.len();
+            out.push(f);
+            out.extend_from_slice(&candidate_data[f as usize]);
+
+            // Compress incrementally from where we left off
+            let result = fork.deflate_compress_incremental(
+                out,
+                &mut compress_buf,
+                is_final,
+                zenflate::Unstoppable,
+            );
+
+            // Remove the candidate row (we haven't committed it yet)
+            out.truncate(new_start);
+
+            if let Ok(size) = result {
+                let total = cumulative_output + size;
+                if total < best_size {
+                    best_size = total;
+                    best_f = f;
+                    best_compressor = Some((fork, size));
+                }
+            }
+        }
+
+        // Commit winning filter
+        out.push(best_f);
+        out.extend_from_slice(&candidate_data[best_f as usize]);
+
+        if let Some((winner, size)) = best_compressor {
+            compressor = winner;
+            cumulative_output += size;
+        }
 
         prev_row.copy_from_slice(row);
     }

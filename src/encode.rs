@@ -20,6 +20,13 @@ pub struct EncodeConfig {
     pub compression: Compression,
     /// PNG row filter strategy.
     pub filter: Filter,
+    /// Use multi-threaded screening and refinement.
+    ///
+    /// When true, Phase 1 (strategy screening) and Phase 2 (refinement)
+    /// run their independent evaluations in parallel using `std::thread::scope`.
+    /// Each thread allocates its own compression buffers (~3× image size),
+    /// so memory usage scales with thread count. Default: false.
+    pub parallel: bool,
     /// Source gamma for gAMA chunk (scaled by 100000, e.g. 45455 = 1/2.2).
     pub source_gamma: Option<u32>,
     /// sRGB rendering intent for sRGB chunk (0-3).
@@ -52,6 +59,7 @@ impl EncodeConfig {
     ) -> crate::encoder::CompressOptions<'a> {
         crate::encoder::CompressOptions {
             use_zopfli: self.compression.use_zopfli(),
+            parallel: self.parallel,
             cancel,
             deadline,
             remaining_ns,

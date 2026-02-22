@@ -199,6 +199,7 @@ pub(crate) fn encode_apng_truecolor(
     let height = canvas_height as usize;
     let opts = CompressOptions {
         use_zopfli: false,
+        parallel: false,
         cancel,
         deadline,
         remaining_ns: None,
@@ -259,6 +260,7 @@ pub(crate) fn encode_apng_truecolor(
         let sub_height = region.height as usize;
         let opts = CompressOptions {
             use_zopfli: false,
+            parallel: false,
             cancel,
             deadline,
             remaining_ns: None,
@@ -431,6 +433,7 @@ pub(crate) fn encode_apng_indexed(
         // Compress
         let opts = CompressOptions {
             use_zopfli: false,
+            parallel: false,
             cancel,
             deadline,
             remaining_ns: None,
