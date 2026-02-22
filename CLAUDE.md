@@ -4,10 +4,24 @@ PNG encoder/decoder with SIMD-accelerated unfiltering and zenflate decompression
 
 ## Architecture
 
-- `src/png_reader.rs` — PNG decode pipeline (IHDR parsing, row decoding, color conversion)
-- `src/png_writer.rs` — PNG encode pipeline (filtering, compression, chunk assembly)
+- `src/chunk/` — PNG chunk parsing, iteration, writing
+  - `mod.rs` — PNG_SIGNATURE, ChunkRef, ChunkIter (zero-copy chunk iteration)
+  - `ihdr.rs` — Ihdr struct, parsing, validation
+  - `ancillary.rs` — PngAncillary (PLTE, tRNS, gAMA, sRGB, cHRM, cICP, iCCP, eXIf, XMP, acTL)
+  - `write.rs` — write_chunk() with CRC computation
+- `src/decoder/` — PNG decode pipeline
+  - `mod.rs` — decode orchestration (probe_png, decode_png, PngInfo construction) + all tests
+  - `row.rs` — IdatSource, RowDecoder (streaming row-by-row decompress + unfilter)
+  - `postprocess.rs` — post_process_row, OutputFormat, build_pixel_data, color conversion
+  - `interlace.rs` — Adam7 pass constants, decode_interlaced
+- `src/encoder/` — PNG encode pipeline
+  - `mod.rs` — CompressOptions, PhaseStat/PhaseStats, write_indexed_png, write_truecolor_png
+  - `filter.rs` — Filter strategies (Single, Adaptive, BruteForce, BruteForceBlock)
+  - `compress.rs` — Progressive 4-phase compression engine
+  - `metadata.rs` — PngWriteMetadata, chunk serialization (gAMA, sRGB, cHRM, iCCP, cICP, etc.)
 - `src/simd/` — SIMD-accelerated unfiltering (Sub, Up, Avg, Paeth)
-- `src/simd/mod.rs` — Dispatch entry point (`unfilter_row`), called once per row
+- `src/decode.rs` — Public decode API facade
+- `src/encode.rs` — Public encode API facade
 - `src/error.rs` — Error types
 - `src/zencodec.rs` — zencodec-types trait integration
 
