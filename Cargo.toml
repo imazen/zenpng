@@ -25,11 +25,14 @@ almost-enough = { version = "0.4", features = ["std"] }
 [dev-dependencies]
 png = "0.18"
 archmage = { version = "0.8.4", features = ["std"] }
-codec-corpus = "1.0.1"
+codec-corpus = "1.0.2"
 flate2 = "1"
 libdeflater = "1.25"
 miniz_oxide = "0.8"
 zopfli = "0.8"
+
+[profile.test]
+opt-level = 2
 
 [features]
 default = ["quantize"]

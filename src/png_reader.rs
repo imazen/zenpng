@@ -1833,15 +1833,108 @@ mod tests {
         assert_eq!(scale_to_8bit(15, 4), 255);
     }
 
+    /// Regression test: decode all local Tier 1 fixtures from tests/regression/.
+    /// These files previously triggered zenflate crashes (fastloop preload,
+    /// uncompressed block underflow, streaming parse, offset decode refill).
+    #[test]
+    fn regression_fixtures_decode() {
+        let fixture_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/regression");
+        assert!(
+            fixture_dir.exists(),
+            "regression fixture directory not found: {}",
+            fixture_dir.display()
+        );
+
+        let mut tested = 0;
+        let mut failures = Vec::new();
+
+        for entry in std::fs::read_dir(&fixture_dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("png") {
+                continue;
+            }
+
+            let filename = path.file_name().unwrap().to_str().unwrap().to_string();
+            let data = std::fs::read(&path).unwrap();
+
+            // Known-corrupt fixtures where our stricter validation is expected
+            let known_corrupt = filename.contains("badadler");
+
+            let our_result =
+                decode_png(&data, &crate::decode::PngLimits::none(), &Unstoppable);
+            let ref_result = decode_with_png_crate(&data);
+
+            match (our_result, ref_result) {
+                (Ok(ours), Ok(reference)) => {
+                    let our_bytes = pixel_data_to_bytes(&ours.pixels);
+                    let ref_bytes = pixel_data_to_bytes(&reference.pixels);
+                    if our_bytes != ref_bytes {
+                        let our_desc = format_pixel_data(&ours.pixels);
+                        let ref_desc = format_pixel_data(&reference.pixels);
+                        failures.push(alloc::format!(
+                            "{}: pixel mismatch (ours={}, ref={}, our_len={}, ref_len={})",
+                            filename, our_desc, ref_desc, our_bytes.len(), ref_bytes.len()
+                        ));
+                    } else {
+                        tested += 1;
+                    }
+                }
+                (Err(_), Err(_)) => {
+                    // Both failed — acceptable for intentionally corrupt files
+                    tested += 1;
+                }
+                (Ok(_), Err(_)) => {
+                    // We're more lenient — acceptable
+                    tested += 1;
+                }
+                (Err(e), Ok(_)) if known_corrupt => {
+                    // We're stricter on corrupt data — acceptable
+                    eprintln!("  {}: we reject, ref accepts (known corrupt): {}", filename, e);
+                    tested += 1;
+                }
+                (Err(e), Ok(_)) => {
+                    failures.push(alloc::format!(
+                        "{}: we failed but ref succeeded: {}",
+                        filename, e
+                    ));
+                }
+            }
+        }
+
+        eprintln!(
+            "Regression fixtures: {} tested, {} failures",
+            tested,
+            failures.len()
+        );
+        if !failures.is_empty() {
+            for f in &failures {
+                eprintln!("  FAIL: {}", f);
+            }
+            panic!("{} regression fixture failures", failures.len());
+        }
+        assert!(tested >= 8, "expected at least 8 fixtures, found {}", tested);
+    }
+
     /// Compare our decoder's pixel output against the reference png crate
-    /// for every PNGSuite file.
+    /// for every PNGSuite file, fetched via codec-corpus.
     #[test]
     fn pngsuite_comparison() {
-        let suite_dir = "/home/lilith/work/codec-corpus/pngsuite";
-        if !std::path::Path::new(suite_dir).exists() {
-            eprintln!("Skipping PNGSuite comparison: directory not found");
-            return;
-        }
+        let corpus = match codec_corpus::Corpus::new() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Skipping PNGSuite comparison: {e}");
+                return;
+            }
+        };
+        let suite_dir = match corpus.get("pngsuite") {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Skipping PNGSuite comparison: {e}");
+                return;
+            }
+        };
 
         let mut tested = 0;
         let mut skipped = 0;
@@ -1925,6 +2018,102 @@ mod tests {
                 failures.len()
             );
         }
+    }
+
+    /// Compare our decoder against the reference png crate on the
+    /// png-conformance corpus (real-world edge cases), fetched via codec-corpus.
+    #[test]
+    fn png_conformance_corpus() {
+        let corpus = match codec_corpus::Corpus::new() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Skipping png-conformance comparison: {e}");
+                return;
+            }
+        };
+        let conf_dir = match corpus.get("png-conformance") {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Skipping png-conformance comparison: {e}");
+                return;
+            }
+        };
+
+        let mut tested = 0;
+        let mut failures = Vec::new();
+
+        for entry in std::fs::read_dir(&conf_dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("png") {
+                continue;
+            }
+
+            let filename = path.file_name().unwrap().to_str().unwrap().to_string();
+            let data = std::fs::read(&path).unwrap();
+
+            let known_corrupt = filename.contains("badadler");
+
+            let our_result =
+                decode_png(&data, &crate::decode::PngLimits::none(), &Unstoppable);
+            let ref_result = decode_with_png_crate(&data);
+
+            match (our_result, ref_result) {
+                (Ok(ours), Ok(reference)) => {
+                    let our_bytes = pixel_data_to_bytes(&ours.pixels);
+                    let ref_bytes = pixel_data_to_bytes(&reference.pixels);
+                    if our_bytes != ref_bytes {
+                        let our_desc = format_pixel_data(&ours.pixels);
+                        let ref_desc = format_pixel_data(&reference.pixels);
+                        failures.push(alloc::format!(
+                            "{}: pixel mismatch (ours={}, ref={}, our_len={}, ref_len={})",
+                            filename, our_desc, ref_desc, our_bytes.len(), ref_bytes.len()
+                        ));
+                    } else {
+                        tested += 1;
+                    }
+                }
+                (Err(_), Err(_)) => {
+                    // Both failed — acceptable for corrupt files
+                    tested += 1;
+                }
+                (Ok(_), Err(_)) => {
+                    // We're more lenient — acceptable
+                    tested += 1;
+                }
+                (Err(e), Ok(_)) if known_corrupt => {
+                    // We're stricter on corrupt data — acceptable
+                    eprintln!("  {}: we reject, ref accepts (known corrupt): {}", filename, e);
+                    tested += 1;
+                }
+                (Err(e), Ok(_)) => {
+                    failures.push(alloc::format!(
+                        "{}: we failed but ref succeeded: {}",
+                        filename, e
+                    ));
+                }
+            }
+        }
+
+        eprintln!(
+            "png-conformance: {} tested, {} failures",
+            tested,
+            failures.len()
+        );
+        if !failures.is_empty() {
+            for f in &failures {
+                eprintln!("  FAIL: {}", f);
+            }
+            panic!(
+                "{} png-conformance comparison failures (see stderr)",
+                failures.len()
+            );
+        }
+        assert!(
+            tested >= 11,
+            "expected at least 11 png-conformance files, found {}",
+            tested
+        );
     }
 
     /// Decode using the reference png crate.
@@ -2141,9 +2330,11 @@ mod tests {
                 let filename = path.strip_prefix(dir_path).unwrap_or(path);
                 let filename_str = filename.display().to_string();
 
-                // Skip intentionally corrupt PNGSuite files
+                // Skip intentionally corrupt files
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if stem.starts_with('x') && filename_str.contains("pngsuite") {
+                    if (stem.starts_with('x') && filename_str.contains("pngsuite"))
+                        || stem == "badadler"
+                    {
                         corpus_skipped += 1;
                         continue;
                     }
