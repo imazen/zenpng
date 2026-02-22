@@ -9,7 +9,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use enough::Stop;
-use zencodec_types::{Cicp, ContentLightLevel, MasteringDisplay};
+use imgref::ImgVec;
+use zencodec_types::{Cicp, ContentLightLevel, MasteringDisplay, PixelData};
 
 use crate::chunk::ancillary::PngAncillary;
 use crate::chunk::ihdr::Ihdr;
@@ -156,10 +157,70 @@ pub(crate) fn decode_png(
 
     let mut reader = RowDecoder::new(data, limits)?;
     let ihdr = *reader.ihdr();
-    let fmt = OutputFormat::from_ihdr(&ihdr, reader.ancillary());
+    let has_trns = reader.ancillary().trns.is_some();
 
     let w = ihdr.width as usize;
     let h = ihdr.height as usize;
+
+    // Fast path: RGBA8 or RGB8 without tRNS — raw unfiltered data IS the output.
+    // Skip post_process_row (passthrough copy), skip build_pixel_data (cast + clone).
+    let is_passthrough = !has_trns
+        && ((ihdr.color_type == 6 && ihdr.bit_depth == 8)   // RGBA8
+            || (ihdr.color_type == 2 && ihdr.bit_depth == 8)); // RGB8
+
+    if is_passthrough {
+        let raw_row_bytes = ihdr.raw_row_bytes();
+        let total = raw_row_bytes * h;
+        let mut all_pixels = vec![0u8; total];
+
+        for y in 0..h {
+            let offset = y * raw_row_bytes;
+            match reader.next_raw_row_into(&mut all_pixels[offset..offset + raw_row_bytes]) {
+                Some(Ok(())) => {}
+                Some(Err(e)) => return Err(e),
+                None => {
+                    return Err(PngError::Decode(alloc::format!(
+                        "unexpected end of image data at row {y}"
+                    )));
+                }
+            }
+            cancel.check()?;
+        }
+
+        reader.finish_metadata();
+
+        let mut warnings = reader.collect_decode_warnings();
+        let ancillary = reader.ancillary();
+        let info = build_png_info(&ihdr, ancillary);
+
+        warnings.extend(crate::decode::detect_color_warnings(
+            ancillary.srgb_intent,
+            ancillary.gamma,
+            ancillary.chrm.as_ref(),
+            ancillary.cicp.as_ref(),
+            ancillary.icc_profile.as_deref(),
+        ));
+
+        // Reinterpret bytes as typed pixels without copying
+        let pixels = if ihdr.color_type == 6 {
+            // RGBA8 — reinterpret Vec<u8> as Vec<Rgba<u8>> (same layout, no copy)
+            let rgba = vec_u8_to_rgba8(all_pixels);
+            PixelData::Rgba8(ImgVec::new(rgba, w, h))
+        } else {
+            // RGB8
+            let rgb = vec_u8_to_rgb8(all_pixels);
+            PixelData::Rgb8(ImgVec::new(rgb, w, h))
+        };
+
+        return Ok(PngDecodeOutput {
+            pixels,
+            info,
+            warnings,
+        });
+    }
+
+    // General path for all other formats
+    let fmt = OutputFormat::from_ihdr(&ihdr, reader.ancillary());
     let pixel_bytes = fmt.channels * fmt.bytes_per_channel;
     let out_row_bytes = w * pixel_bytes;
 
@@ -201,6 +262,16 @@ pub(crate) fn decode_png(
         info,
         warnings,
     })
+}
+
+/// Reinterpret `Vec<u8>` as `Vec<Rgba<u8>>` without copying.
+fn vec_u8_to_rgba8(bytes: Vec<u8>) -> Vec<rgb::Rgba<u8>> {
+    bytemuck::cast_vec(bytes)
+}
+
+/// Reinterpret `Vec<u8>` as `Vec<Rgb<u8>>` without copying.
+fn vec_u8_to_rgb8(bytes: Vec<u8>) -> Vec<rgb::Rgb<u8>> {
+    bytemuck::cast_vec(bytes)
 }
 
 /// Decode interlaced PNG to PngDecodeOutput.

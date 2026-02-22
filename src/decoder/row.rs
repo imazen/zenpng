@@ -386,31 +386,11 @@ impl<'a> RowDecoder<'a> {
             return None;
         }
 
-        // Fill decompressor until we have a full stride
-        loop {
-            let available = self.decompressor.peek().len();
-            if available >= self.stride {
-                break;
-            }
-            if self.decompressor.is_done() {
-                if available > 0 && available < self.stride {
-                    return Some(Err(PngError::Decode(alloc::format!(
-                        "truncated row data: got {} bytes, expected {} (row {})",
-                        available,
-                        self.stride,
-                        self.rows_yielded
-                    ))));
-                }
-                return None;
-            }
-            match self.decompressor.fill() {
-                Ok(_) => {}
-                Err(e) => {
-                    return Some(Err(PngError::Decode(alloc::format!(
-                        "decompression error: {e:?}"
-                    ))));
-                }
-            }
+        if let Err(e) = self.fill_stride() {
+            return Some(Err(e));
+        }
+        if self.decompressor.peek().len() < self.stride {
+            return None;
         }
 
         let peeked = self.decompressor.peek();
@@ -436,6 +416,71 @@ impl<'a> RowDecoder<'a> {
         self.rows_yielded += 1;
 
         Some(Ok(&self.prev_row[..raw_row_bytes]))
+    }
+
+    /// Unfilter the next row directly into `dest` (must be exactly raw_row_bytes).
+    ///
+    /// This avoids the intermediate current_row copy — the caller provides the
+    /// output buffer directly. After return, `prev_row` is updated for the next row.
+    pub fn next_raw_row_into(&mut self, dest: &mut [u8]) -> Option<Result<(), PngError>> {
+        if self.rows_yielded >= self.ihdr.height {
+            return None;
+        }
+
+        if let Err(e) = self.fill_stride() {
+            return Some(Err(e));
+        }
+        if self.decompressor.peek().len() < self.stride {
+            return None;
+        }
+
+        let peeked = self.decompressor.peek();
+        let filter_byte = peeked[0];
+        let raw_row_bytes = self.stride - 1;
+
+        // Copy filtered data directly into dest
+        dest[..raw_row_bytes].copy_from_slice(&peeked[1..self.stride]);
+        self.decompressor.advance(self.stride);
+
+        // Apply inverse filter
+        if let Err(e) = unfilter_row(filter_byte, &mut dest[..raw_row_bytes], &self.prev_row, self.bpp) {
+            return Some(Err(e));
+        }
+
+        // Update prev_row for next row's unfiltering
+        self.prev_row[..raw_row_bytes].copy_from_slice(&dest[..raw_row_bytes]);
+        self.rows_yielded += 1;
+
+        Some(Ok(()))
+    }
+
+    /// Fill the decompressor until at least one full stride is available.
+    fn fill_stride(&mut self) -> Result<(), PngError> {
+        loop {
+            let available = self.decompressor.peek().len();
+            if available >= self.stride {
+                return Ok(());
+            }
+            if self.decompressor.is_done() {
+                if available > 0 && available < self.stride {
+                    return Err(PngError::Decode(alloc::format!(
+                        "truncated row data: got {} bytes, expected {} (row {})",
+                        available,
+                        self.stride,
+                        self.rows_yielded
+                    )));
+                }
+                return Ok(());
+            }
+            match self.decompressor.fill() {
+                Ok(_) => {}
+                Err(e) => {
+                    return Err(PngError::Decode(alloc::format!(
+                        "decompression error: {e:?}"
+                    )));
+                }
+            }
+        }
     }
 
     /// After all rows consumed, parse post-IDAT chunks for late metadata.
