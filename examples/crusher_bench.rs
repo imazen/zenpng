@@ -102,13 +102,13 @@ fn main() {
             let start = Instant::now();
             let encoded = match &decoded.pixels {
                 zencodec_types::PixelData::Rgb8(img) => {
-                    zenpng::encode_rgb8(img.as_ref(), None, &config)
+                    zenpng::encode_rgb8(img.as_ref(), None, &config, &enough::Unstoppable, &enough::Unstoppable)
                 }
                 zencodec_types::PixelData::Rgba8(img) => {
-                    zenpng::encode_rgba8(img.as_ref(), None, &config)
+                    zenpng::encode_rgba8(img.as_ref(), None, &config, &enough::Unstoppable, &enough::Unstoppable)
                 }
                 zencodec_types::PixelData::Gray8(img) => {
-                    zenpng::encode_gray8(img.as_ref(), None, &config)
+                    zenpng::encode_gray8(img.as_ref(), None, &config, &enough::Unstoppable, &enough::Unstoppable)
                 }
                 _ => {
                     eprintln!("  SKIP: unsupported pixel format for {level_name}");

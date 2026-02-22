@@ -20,11 +20,11 @@ zenquant = { path = "../zenquant", optional = true }
 zenflate = { path = "../zenflate" }
 linear-srgb = "0.5.5"
 zenzop = { path = "../zopfli-fork", optional = true, default-features = false, features = ["zlib", "std"] }
+almost-enough = { version = "0.4", features = ["std"] }
 
 [dev-dependencies]
 png = "0.18"
 archmage = { version = "0.8.4", features = ["std"] }
-almost-enough = { version = "0.4", features = ["std"] }
 codec-corpus = "1.0.1"
 flate2 = "1"
 libdeflater = "1.25"
