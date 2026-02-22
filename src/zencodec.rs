@@ -869,7 +869,7 @@ impl zencodec_types::Decoder for PngDecoder<'_> {
             let src_start = y as usize * row_bytes;
             let src_end = src_start + row_bytes;
             if src_end <= pixel_bytes.len() {
-                let buf = sink.demand(y, 1, row_bytes);
+                let (buf, _stride) = sink.demand(y, 1, w, bpp);
                 buf[..row_bytes].copy_from_slice(&pixel_bytes[src_start..src_end]);
             }
         }
@@ -980,15 +980,6 @@ impl zencodec_types::FrameDecoder for PngFrameDecoder {
         ))
     }
 
-    fn next_frame_rows(
-        &mut self,
-        _sink: &mut dyn zencodec_types::DecodeRowSink,
-    ) -> Result<Option<ImageInfo>, PngError> {
-        // Not implemented yet — callers can use next_frame() and copy
-        Err(PngError::InvalidInput(
-            "PNG frame_decoder: next_frame_rows not yet implemented".into(),
-        ))
-    }
 }
 
 // ── Pixel conversion helpers ─────────────────────────────────────────
