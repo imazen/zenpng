@@ -97,6 +97,14 @@ cargo test -- simd             # SIMD tests only
 
 Each filter has `for_each_token_permutation` tests that verify byte-exact match against scalar reference at all dispatch tiers.
 
+## Compression Level Design
+
+See `TUNING.md` for empirical analysis. Key decisions:
+- Brute-force filter selection only at Best (L12) and above
+- Obsessive level removed (identical output to Crush)
+- Block-wise brute-force permanently disabled (slower AND larger than per-row)
+- Zopfli adaptive with time budgeting at Crush and Maniac
+
 ## Known Issues
 
 None currently.

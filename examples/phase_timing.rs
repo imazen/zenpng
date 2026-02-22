@@ -54,7 +54,6 @@ fn run_single(path: &Path) {
         ("Aggressive", zenpng::Compression::Aggressive),
         ("Best", zenpng::Compression::Best),
         ("Crush", zenpng::Compression::Crush),
-        ("Obsessive", zenpng::Compression::Obsessive),
         ("Maniac", zenpng::Compression::Maniac),
     ];
 
@@ -164,7 +163,6 @@ fn run_corpus(dir: &Path) {
         ("Aggressive", zenpng::Compression::Aggressive),
         ("Best", zenpng::Compression::Best),
         ("Crush", zenpng::Compression::Crush),
-        ("Obsessive", zenpng::Compression::Obsessive),
         ("Maniac", zenpng::Compression::Maniac),
     ];
 

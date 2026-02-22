@@ -66,14 +66,30 @@ images. Not worth the extra BF time.
 
 ## Strategy explorer findings
 
-### Filter strategy doesn't matter much at high zenflate levels
+### Screenshots: Heuristic vs brute-force gap (gb82-sc, 10 images)
+
+| Level | Best Heuristic | Best BF | Gap | Gap % |
+|------:|---------------:|--------:|----:|------:|
+| 6 | 3,584,633 | 3,381,575 | 203,058 | 5.66% |
+| 9 | 3,529,192 | 3,317,062 | 212,130 | 6.01% |
+| 12 | 3,277,239 | 3,046,893 | 230,346 | 7.03% |
+
+BF delivers 5–7% better compression than the best heuristic on screenshots.
+This is much larger than the 0.07% gap seen on photographic images. However,
+the efficiency (bytes/ms) is still lower than the Refine phase.
+
+Adaptive(Bigrams) is the best heuristic at every level. Single(None) — no
+filtering at all — wins 6 of 10 individual screenshots. Screenshots with
+large flat regions compress best unfiltered.
+
+### Photographic images: BF barely matters
 
 At L12, the gap between the best heuristic and the best brute force is:
 - **Photographic images**: 1,018 bytes average (0.07%)
-- **Screenshots**: ~13K per image (varies widely)
+- **Screenshots**: ~23K per image (7%)
 
-The zenflate compressor level overwhelms filter selection quality. A mediocre
-filter at L12 beats a perfect filter at L9.
+The zenflate compressor level overwhelms filter selection quality on photos.
+A mediocre filter at L12 beats a perfect filter at L9.
 
 ### Block brute-force is strictly dominated
 
@@ -99,6 +115,13 @@ wins most images. BruteForce evaluates candidates with zenflate, so its filter
 choices are optimized for zenflate's compressor, not zopfli's. This means the
 filter selected by BF may not be optimal for zopfli.
 
+### Zopfli loses to zenflate-12 on screenshots
+
+On the gb82-sc screenshot corpus, BruteForce+zopfli-50 produces 3,051,220
+bytes vs BruteForce+zenflate-12's 3,046,893 bytes. Zenflate-12 wins by 4K
+while being 19× faster. Zopfli's DEFLATE optimization cannot compensate for
+zenflate-12's superior compression on screenshot content.
+
 ### Filter choice dwarfs zopfli improvement
 
 The range from worst to best filter strategy is ~42K per image average. The
@@ -115,6 +138,18 @@ filter selection would be more productive than spending it on zopfli iterations.
 
 The step from 15→50 iterations yields less than half the savings of 5→15
 while taking 2.6× more time. The cost per byte saved gets 6.7× worse.
+
+### Efficiency frontier (gb82-sc screenshots, sorted by total size)
+
+| Strategy | Level | Total Size | Time | Bytes/ms |
+|----------|------:|-----------:|-----:|---------:|
+| Single(None) | 6 | 3,675,958 | 318ms | 1,173 |
+| Adaptive(Bigrams) | 6 | 3,584,633 | 574ms | 809 |
+| Adaptive(Bigrams) | 9 | 3,529,192 | 1,088ms | 478 |
+| BruteForce(c1e1) | 9 | 3,369,404 | 2,436ms | 279 |
+| Single(None) | 12 | 3,313,498 | 9,658ms | 76 |
+| Adaptive(Bigrams) | 12 | 3,277,239 | 11,398ms | 68 |
+| BruteForce(c8e4) | 12 | 3,049,045 | 16,309ms | 61 |
 
 ## Problems with the current levels
 
@@ -144,54 +179,55 @@ There's no room between Crush and Maniac for a meaningfully different level.
 Zopfli takes 85–95% of the total time at these levels but delivers 0.06% of
 the total compression. The time budget is badly allocated.
 
-## Proposed level redesign
+## Implemented level redesign
 
-### Drop brute-force from Balanced through High
+Based on the analysis above, the following changes were made:
 
-The data shows heuristic strategies at L6–L9 are within 0.1% of brute-force.
-Remove BF from these levels to make them significantly faster:
+### Brute-force removed from Balanced through Aggressive
 
-| Level      | Current time | Without BF | Savings |
-|------------|-------------|------------|---------|
-| Balanced   | 8.5s        | 5.7s       | −33%    |
-| Thorough   | 9.7s        | 6.6s       | −32%    |
-| High       | 10.5s       | 7.3s       | −30%    |
+On photographic images, heuristic strategies at L6–L10 are within 0.1% of
+brute-force. On screenshots the gap is 5–7%, but the bytes/ms efficiency is
+still lower than the Refine phase. BF now only runs at Best (L12) and above.
 
-### Merge Thorough and High, or differentiate them
+| Level      | Previous time | New time | Savings |
+|------------|--------------|----------|---------|
+| Balanced   | 8.5s         | 5.7s     | −33%    |
+| Thorough   | 9.7s         | 6.6s     | −32%    |
+| High       | 10.5s        | 7.3s     | −30%    |
+| Aggressive | 19.7s        | 13.7s    | −30%    |
 
-Option A: **Remove High** (L9 is too close to L8). Renumber:
-- Balanced = L6, Thorough = L8, Aggressive = L10
+### Obsessive removed
 
-Option B: **Change High to L10** with no BF, making it "Aggressive without BF":
-- This creates a meaningful gap: Thorough=L8 → High=L10 (no BF) → Aggressive=L10+BF
+The full BF sweep found the same optimum as the standard ctx=5 configs on
+every corpus tested. Obsessive added nothing over Crush. Simplified to:
+Best → Crush → Maniac.
 
-### Cap zopfli at 15 iterations for Crush
+### Current level table
 
-50 iterations save 2.9K more than 15 iterations at 2.6× the time cost.
-For Crush, 15 iterations is the efficient choice. Reserve 50+ for Maniac.
+| Level      | Zenflate | BF configs    | Zopfli    |
+|------------|----------|---------------|-----------|
+| None       | L0       | —             | —         |
+| Fastest    | L1       | —             | —         |
+| Fast       | L4       | —             | —         |
+| Balanced   | L6       | —             | —         |
+| Thorough   | L8       | —             | —         |
+| High       | L9       | —             | —         |
+| Aggressive | L10      | —             | —         |
+| Best       | L12      | ctx5/L1+L4    | —         |
+| Crush      | L12      | ctx5/L1+L4    | adaptive  |
+| Maniac     | L12+L6sc | ctx1–8/L1+L4  | adaptive  |
 
-### Drop Obsessive (no value over Crush)
-
-The full BF sweep found the same result as standard configs on every corpus
-tested. Obsessive adds nothing. Simplify to: Best → Crush → Maniac.
-
-### Proposed final level table
-
-| Level      | Zenflate | BF configs    | Zopfli  | Approx time (1MP) |
-|------------|----------|---------------|---------|-------------------|
-| None       | L0       | —             | —       | ~0ms              |
-| Fastest    | L1       | —             | —       | ~5ms              |
-| Fast       | L4       | —             | —       | ~8ms              |
-| Balanced   | L6       | —             | —       | ~6ms              |
-| Thorough   | L8       | —             | —       | ~7ms              |
-| Aggressive | L10      | —             | —       | ~14ms             |
-| Best       | L12      | ctx5/L1+L4    | —       | ~110ms            |
-| Crush      | L12      | ctx5/L1+L4    | 15 iter | ~1500ms           |
-| Maniac     | L12+L6sc | ctx1–8/L1+L4  | 50 iter | ~2500ms           |
-
-Key changes:
-- **BF removed from Balanced/Thorough/Aggressive** — heuristics are within 0.1%
+Changes from original:
+- **BF removed from Balanced/Thorough/High/Aggressive** — heuristics are close enough
 - **BF only at Best and above** — where users explicitly asked for maximum quality
 - **Obsessive removed** — no measurable benefit over Crush
-- **Crush capped at zopfli-15** — 80% of zopfli benefit at 40% of the time
-- **Maniac = the "I don't care about time" option** — full sweep, zopfli-50, L6 screening
+- **Maniac = the "I don't care about time" option** — full sweep, zopfli, L6 screening
+
+### Open question: Thorough vs High
+
+Thorough (L8) and High (L9) produce nearly identical output:
+- gb82-sc: 3.18M vs 3.17M (0.3% difference)
+- Similar time (6.6s vs 7.3s without BF)
+
+Options to resolve: (a) Remove High entirely, (b) Move High to L10 to
+create a meaningful gap before Aggressive, (c) Keep both for API stability.

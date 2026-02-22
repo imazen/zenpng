@@ -135,17 +135,21 @@ pub(crate) fn compress_filtered(
 
     let needs_refine = compression_level >= 2;
 
-    let can_brute_force = compression_level >= 6;
+    let can_brute_force = compression_level >= 12;
 
     // Brute-force configs: (context_rows, eval_level)
     //
-    // Corpus analysis (10 images, strategy_explorer) showed:
+    // Corpus analysis (gb82-sc 10 images, CID22-512, strategy_explorer) showed:
+    // - On photographic images, BF saves <0.1% over best heuristic at L12
+    // - On screenshots, BF saves 5-7% but heuristics at L6-L10 are "good enough"
     // - Context > 5 has diminishing/negative returns vs context=5
     // - eval=4 vs eval=1: only +0.02-0.06% for 1.5-2x filter time
-    // - BruteForce total marginal value over best heuristic: ~0.15-0.35%
     //
-    // Levels 13-14 (Obsessive/Maniac) sweep all context rows to find the
-    // optimal configuration per-image. This is expensive but exhaustive.
+    // BF is only enabled at Best (L12) and above. At lower levels, the zenflate
+    // compressor level overwhelms filter selection quality — a mediocre filter
+    // at L12 beats a perfect filter at L9.
+    //
+    // Level 14 (Maniac) sweeps all context/eval combos exhaustively.
     let brute_configs: &[(usize, u32)] = match compression_level {
         14 => &[
             (1, 1),
@@ -157,11 +161,7 @@ pub(crate) fn compress_filtered(
             (8, 1),
             (8, 4),
         ],
-        13 => &[(1, 1), (3, 1), (5, 1), (5, 4), (8, 1)],
-        11..=12 => &[(5, 1), (5, 4)],
-        10 => &[(5, 1)],
-        8..=9 => &[(3, 1)],
-        6..=7 => &[(3, 1)],
+        12 => &[(5, 1), (5, 4)],
         _ => &[],
     };
 
