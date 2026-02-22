@@ -81,14 +81,14 @@ pub struct PngLimits {
 }
 
 impl PngLimits {
-    /// Default maximum pixel count: 256 million.
+    /// Default maximum pixel count: 100 million.
     ///
-    /// Covers all displays through 8K+ and most camera sensors.
-    pub const DEFAULT_MAX_PIXELS: u64 = 256_000_000;
+    /// Covers all displays through 8K and most camera sensors.
+    pub const DEFAULT_MAX_PIXELS: u64 = 100_000_000;
 
     /// Default maximum memory: 4 GiB.
     ///
-    /// 256 MP × RGBA8 = 1 GB, × RGBA16 = 2 GB — both well within this limit.
+    /// 100 MP × RGBA8 = 400 MB, × RGBA16 = 800 MB — both well within this limit.
     pub const DEFAULT_MAX_MEMORY: u64 = 4 * 1024 * 1024 * 1024;
 
     /// No limits. Caller takes responsibility for resource management.
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn default_has_expected_values() {
         let limits = PngLimits::default();
-        assert_eq!(limits.max_pixels, Some(256_000_000));
+        assert_eq!(limits.max_pixels, Some(100_000_000));
         assert_eq!(limits.max_memory_bytes, Some(4 * 1024 * 1024 * 1024));
     }
 
