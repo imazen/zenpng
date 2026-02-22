@@ -40,6 +40,7 @@ mod error;
 mod indexed;
 mod png_reader;
 mod png_writer;
+mod simd;
 mod types;
 mod zencodec;
 
