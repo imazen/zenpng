@@ -95,21 +95,24 @@ fn bench_unfilter(
     let h = filtered_rows.len();
     let total_bytes = stride * h;
 
-    // Warmup
-    let mut rows: Vec<Vec<u8>> = filtered_rows.to_vec();
+    // Pre-allocate working buffers (avoid 4096 Vec clones per iteration)
+    let mut work_rows: Vec<Vec<u8>> = filtered_rows.to_vec();
     let mut prev = vec![0u8; stride];
-    for row in &mut rows {
-        zenpng::__bench_unfilter_row(filter_type, row, &prev, bpp);
-        prev.copy_from_slice(row);
+
+    // Warmup
+    for (work, src) in work_rows.iter_mut().zip(filtered_rows.iter()) {
+        work.copy_from_slice(src);
+        zenpng::__bench_unfilter_row(filter_type, work, &prev, bpp);
+        prev.copy_from_slice(work);
     }
 
     let start = Instant::now();
     for _ in 0..iters {
-        let mut rows: Vec<Vec<u8>> = filtered_rows.to_vec();
-        let mut prev = vec![0u8; stride];
-        for row in &mut rows {
-            zenpng::__bench_unfilter_row(filter_type, row, &prev, bpp);
-            prev.copy_from_slice(row);
+        prev.fill(0);
+        for (work, src) in work_rows.iter_mut().zip(filtered_rows.iter()) {
+            work.copy_from_slice(src);
+            zenpng::__bench_unfilter_row(filter_type, work, &prev, bpp);
+            prev.copy_from_slice(work);
         }
     }
     let elapsed = start.elapsed().as_secs_f64();

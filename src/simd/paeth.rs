@@ -141,12 +141,9 @@ fn unfilter_paeth_bpp3_impl_v2(token: X64V2Token, row: &mut [u8], prev: &[u8]) {
         let filt = _mm_loadu_si32(<&[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
         let result = _mm_add_epi8(filt, pred_narrow);
 
-        // Store only 3 bytes
-        let val = _mm_cvtsi128_si32(result) as u32;
-        let bytes = val.to_le_bytes();
-        row[i] = bytes[0];
-        row[i + 1] = bytes[1];
-        row[i + 2] = bytes[2];
+        // Store only 3 bytes (lane 3 is garbage from the 4-byte load)
+        let val = (_mm_cvtsi128_si32(result) as u32).to_le_bytes();
+        row[i..i + 3].copy_from_slice(&val[..3]);
 
         a_wide = _mm_unpacklo_epi8(result, zero);
         c_wide = b_wide;
