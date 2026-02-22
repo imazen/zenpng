@@ -33,13 +33,14 @@
 extern crate alloc;
 extern crate std;
 
+mod chunk;
 mod decode;
+mod decoder;
 mod encode;
+mod encoder;
 mod error;
 #[cfg(feature = "quantize")]
 mod indexed;
-mod png_reader;
-mod png_writer;
 mod simd;
 mod types;
 mod zencodec;
@@ -70,7 +71,7 @@ pub use types::{Compression, Filter};
 pub use crate::encode::{encode_rgb8_with_stats, encode_rgba8_with_stats};
 #[cfg(feature = "_dev")]
 #[doc(hidden)]
-pub use crate::png_writer::{PhaseStat, PhaseStats};
+pub use crate::encoder::{PhaseStat, PhaseStats};
 #[cfg(feature = "_dev")]
 #[doc(hidden)]
 pub fn __bench_unfilter_row(filter_type: u8, row: &mut [u8], prev: &[u8], bpp: usize) {

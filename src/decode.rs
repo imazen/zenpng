@@ -233,7 +233,7 @@ pub type PngLimits = PngDecodeConfig;
 
 /// Probe PNG metadata without decoding pixels.
 pub fn probe(data: &[u8]) -> Result<PngInfo, PngError> {
-    crate::png_reader::probe_png(data)
+    crate::decoder::probe_png(data)
 }
 
 /// Decode PNG to pixels.
@@ -248,7 +248,7 @@ pub fn decode(
     config: &PngDecodeConfig,
     cancel: &dyn Stop,
 ) -> Result<PngDecodeOutput, PngError> {
-    crate::png_reader::decode_png(data, config, cancel)
+    crate::decoder::decode_png(data, config, cancel)
 }
 
 // ── sRGB standard chromaticities ─────────────────────────────────────
