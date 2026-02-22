@@ -27,6 +27,8 @@ pub(crate) struct ChunkRef<'a> {
 pub(crate) struct ChunkIter<'a> {
     data: &'a [u8],
     pos: usize,
+    skip_critical_crc: bool,
+    pub warnings: Vec<crate::decode::PngWarning>,
 }
 
 impl<'a> ChunkIter<'a> {
@@ -36,6 +38,18 @@ impl<'a> ChunkIter<'a> {
         Self {
             data,
             pos: 8, // skip PNG signature
+            skip_critical_crc: false,
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Create a new chunk iterator with CRC leniency configuration.
+    pub fn new_with_config(data: &'a [u8], skip_critical_crc: bool) -> Self {
+        Self {
+            data,
+            pos: 8,
+            skip_critical_crc,
+            warnings: Vec::new(),
         }
     }
 
@@ -87,11 +101,16 @@ impl<'a> Iterator for ChunkIter<'a> {
                 self.pos = crc_end;
                 return self.next(); // skip this chunk, try next
             }
-            return Some(Err(PngError::Decode(alloc::format!(
-                "CRC mismatch in {:?} chunk at offset {}",
-                core::str::from_utf8(&chunk_type).unwrap_or("????"),
-                self.pos
-            ))));
+            if self.skip_critical_crc {
+                self.warnings
+                    .push(crate::decode::PngWarning::CriticalChunkCrcSkipped { chunk_type });
+            } else {
+                return Some(Err(PngError::Decode(alloc::format!(
+                    "CRC mismatch in {:?} chunk at offset {}",
+                    core::str::from_utf8(&chunk_type).unwrap_or("????"),
+                    self.pos
+                ))));
+            }
         }
 
         self.pos = crc_end;
@@ -481,12 +500,17 @@ pub(crate) struct IdatSource<'a> {
     done: bool,
     /// Position of the first post-IDAT chunk (for metadata collection).
     pub post_idat_pos: usize,
+    /// Whether to skip CRC validation on IDAT chunks.
+    skip_crc: bool,
+    /// Whether any IDAT CRC was skipped (mismatch found but tolerated).
+    pub crc_skipped: bool,
 }
 
 impl<'a> IdatSource<'a> {
     /// Create a new IDAT source positioned at the first IDAT chunk.
     /// `first_idat_pos` is the byte offset of the first IDAT chunk header.
-    pub fn new(data: &'a [u8], first_idat_pos: usize) -> Self {
+    /// When `skip_crc` is true, IDAT CRC mismatches are tolerated.
+    pub fn new(data: &'a [u8], first_idat_pos: usize, skip_crc: bool) -> Self {
         // Parse the first IDAT chunk inline
         let length =
             u32::from_be_bytes(data[first_idat_pos..first_idat_pos + 4].try_into().unwrap())
@@ -501,6 +525,8 @@ impl<'a> IdatSource<'a> {
             current_data: &data[data_start..data_end],
             done: false,
             post_idat_pos: 0,
+            skip_crc,
+            crc_skipped: false,
         }
     }
 }
@@ -551,7 +577,11 @@ impl<'a> zenflate::InputSource for IdatSource<'a> {
             let stored_crc = u32::from_be_bytes(self.data[data_end..crc_end].try_into().unwrap());
             let computed_crc = crc32(crc32(0, &chunk_type), &self.data[data_start..data_end]);
             if stored_crc != computed_crc {
-                return Err(PngError::Decode("CRC mismatch in IDAT chunk".into()));
+                if self.skip_crc {
+                    self.crc_skipped = true;
+                } else {
+                    return Err(PngError::Decode("CRC mismatch in IDAT chunk".into()));
+                }
             }
 
             self.current_data = &self.data[data_start..data_end];
@@ -655,17 +685,20 @@ pub(crate) struct RowDecoder<'a> {
     rows_yielded: u32,
     stride: usize,
     bpp: usize,
+
+    /// Warnings collected from chunk CRC validation.
+    chunk_warnings: Vec<crate::decode::PngWarning>,
 }
 
 impl<'a> RowDecoder<'a> {
     /// Create a new RowDecoder from PNG file bytes.
-    pub fn new(data: &'a [u8], limits: &crate::decode::PngDecodeConfig) -> Result<Self, PngError> {
+    pub fn new(data: &'a [u8], config: &crate::decode::PngDecodeConfig) -> Result<Self, PngError> {
         // Validate signature
         if data.len() < 8 || data[..8] != PNG_SIGNATURE {
             return Err(PngError::Decode("not a PNG file".into()));
         }
 
-        let mut chunks = ChunkIter::new(data);
+        let mut chunks = ChunkIter::new_with_config(data, config.skip_critical_chunk_crc);
 
         // First chunk must be IHDR
         let ihdr_chunk = chunks
@@ -692,6 +725,9 @@ impl<'a> RowDecoder<'a> {
             ancillary.collect(&chunk)?;
         }
 
+        // Collect warnings from chunk CRC validation
+        let chunk_warnings = chunks.warnings;
+
         let first_idat_pos =
             first_idat_pos.ok_or_else(|| PngError::Decode("no IDAT chunk found".into()))?;
 
@@ -704,15 +740,16 @@ impl<'a> RowDecoder<'a> {
 
         // Apply limits
         let output_bpp = output_bytes_per_pixel(&ihdr, &ancillary) as u32;
-        limits.validate(ihdr.width, ihdr.height, output_bpp)?;
+        config.validate(ihdr.width, ihdr.height, output_bpp)?;
 
         let stride = ihdr.stride();
         let raw_row_bytes = ihdr.raw_row_bytes();
         let bpp = ihdr.filter_bpp();
 
         // Create IDAT source and decompressor
-        let source = IdatSource::new(data, first_idat_pos);
-        let decompressor = zenflate::StreamDecompressor::zlib(source, stride * 2);
+        let source = IdatSource::new(data, first_idat_pos, config.skip_critical_chunk_crc);
+        let decompressor = zenflate::StreamDecompressor::zlib(source, stride * 2)
+            .with_skip_checksum(config.skip_decompression_checksum);
 
         Ok(Self {
             decompressor,
@@ -725,6 +762,7 @@ impl<'a> RowDecoder<'a> {
             rows_yielded: 0,
             stride,
             bpp,
+            chunk_warnings,
         })
     }
 
@@ -840,6 +878,20 @@ impl<'a> RowDecoder<'a> {
             });
             pos = crc_end;
         }
+    }
+
+    /// Collect decode-related warnings (chunk CRC skips, decompression checksum).
+    pub fn collect_decode_warnings(&self) -> Vec<crate::decode::PngWarning> {
+        let mut warnings = self.chunk_warnings.clone();
+        if self.decompressor.source_ref().crc_skipped {
+            warnings.push(crate::decode::PngWarning::CriticalChunkCrcSkipped {
+                chunk_type: *b"IDAT",
+            });
+        }
+        if self.decompressor.checksum_matched() == Some(false) {
+            warnings.push(crate::decode::PngWarning::DecompressionChecksumSkipped);
+        }
+        warnings
     }
 }
 
@@ -1270,18 +1322,19 @@ fn adam7_pass_size(width: u32, height: u32, pass: usize) -> (u32, u32) {
 }
 
 /// Decode an interlaced PNG: decompress all 7 passes, unfilter, scatter to final image,
-/// then return the assembled pixel rows.
+/// then return the assembled pixel rows and decode warnings.
+#[allow(clippy::type_complexity)]
 pub(crate) fn decode_interlaced(
     data: &'_ [u8],
-    limits: &crate::decode::PngDecodeConfig,
+    config: &crate::decode::PngDecodeConfig,
     cancel: &dyn Stop,
-) -> Result<(Ihdr, PngAncillary, Vec<u8>, OutputFormat), PngError> {
+) -> Result<(Ihdr, PngAncillary, Vec<u8>, OutputFormat, Vec<crate::decode::PngWarning>), PngError> {
     // Validate signature
     if data.len() < 8 || data[..8] != PNG_SIGNATURE {
         return Err(PngError::Decode("not a PNG file".into()));
     }
 
-    let mut chunks = ChunkIter::new(data);
+    let mut chunks = ChunkIter::new_with_config(data, config.skip_critical_chunk_crc);
 
     // Parse IHDR
     let ihdr_chunk = chunks
@@ -1303,6 +1356,10 @@ pub(crate) fn decode_interlaced(
         }
         ancillary.collect(&chunk)?;
     }
+
+    // Collect warnings from chunk CRC validation
+    let mut decode_warnings = chunks.warnings;
+
     let first_idat_pos =
         first_idat_pos.ok_or_else(|| PngError::Decode("no IDAT chunk found".into()))?;
 
@@ -1315,7 +1372,7 @@ pub(crate) fn decode_interlaced(
     let fmt = OutputFormat::from_ihdr(&ihdr, &ancillary);
 
     let out_bpp = (fmt.channels * fmt.bytes_per_channel) as u32;
-    limits.validate(ihdr.width, ihdr.height, out_bpp)?;
+    config.validate(ihdr.width, ihdr.height, out_bpp)?;
 
     let bpp = ihdr.filter_bpp();
     let width = ihdr.width;
@@ -1331,8 +1388,9 @@ pub(crate) fn decode_interlaced(
     // Pass 7 (x_step=1) gives the widest rows: full image width.
     let max_pass_stride = ihdr.stride(); // 1 + raw_row_bytes for full width
     let capacity = max_pass_stride * 2;
-    let source = IdatSource::new(data, first_idat_pos);
-    let mut decompressor = zenflate::StreamDecompressor::zlib(source, capacity);
+    let source = IdatSource::new(data, first_idat_pos, config.skip_critical_chunk_crc);
+    let mut decompressor = zenflate::StreamDecompressor::zlib(source, capacity)
+        .with_skip_checksum(config.skip_decompression_checksum);
 
     // Process each Adam7 pass
     for (pass, &(x_off, y_off, x_step, y_step)) in ADAM7_PASSES.iter().enumerate() {
@@ -1456,7 +1514,17 @@ pub(crate) fn decode_interlaced(
         }
     }
 
-    Ok((ihdr, ancillary, final_pixels, fmt))
+    // Collect decompressor warnings
+    if decompressor.source_ref().crc_skipped {
+        decode_warnings.push(crate::decode::PngWarning::CriticalChunkCrcSkipped {
+            chunk_type: *b"IDAT",
+        });
+    }
+    if decompressor.checksum_matched() == Some(false) {
+        decode_warnings.push(crate::decode::PngWarning::DecompressionChecksumSkipped);
+    }
+
+    Ok((ihdr, ancillary, final_pixels, fmt, decode_warnings))
 }
 
 // ── PngInfo construction ────────────────────────────────────────────
@@ -1629,17 +1697,19 @@ pub(crate) fn decode_png(
 
     reader.finish_metadata();
 
+    let mut warnings = reader.collect_decode_warnings();
+
     let ancillary = reader.ancillary();
     let info = build_png_info(&ihdr, ancillary);
     let pixels = build_pixel_data(&ihdr, ancillary, all_pixels, w, h)?;
 
-    let warnings = crate::decode::detect_color_warnings(
+    warnings.extend(crate::decode::detect_color_warnings(
         ancillary.srgb_intent,
         ancillary.gamma,
         ancillary.chrm.as_ref(),
         ancillary.cicp.as_ref(),
         ancillary.icc_profile.as_deref(),
-    );
+    ));
 
     Ok(PngDecodeOutput {
         pixels,
@@ -1651,22 +1721,23 @@ pub(crate) fn decode_png(
 /// Decode interlaced PNG to PngDecodeOutput.
 fn decode_interlaced_to_output(
     data: &[u8],
-    limits: &crate::decode::PngDecodeConfig,
+    config: &crate::decode::PngDecodeConfig,
     cancel: &dyn Stop,
 ) -> Result<PngDecodeOutput, PngError> {
-    let (ihdr, ancillary, pixels, _fmt) = decode_interlaced(data, limits, cancel)?;
+    let (ihdr, ancillary, pixels, _fmt, mut warnings) =
+        decode_interlaced(data, config, cancel)?;
     let w = ihdr.width as usize;
     let h = ihdr.height as usize;
     let info = build_png_info(&ihdr, &ancillary);
     let pixel_data = build_pixel_data(&ihdr, &ancillary, pixels, w, h)?;
 
-    let warnings = crate::decode::detect_color_warnings(
+    warnings.extend(crate::decode::detect_color_warnings(
         ancillary.srgb_intent,
         ancillary.gamma,
         ancillary.chrm.as_ref(),
         ancillary.cicp.as_ref(),
         ancillary.icc_profile.as_deref(),
-    );
+    ));
 
     Ok(PngDecodeOutput {
         pixels: pixel_data,
@@ -3171,5 +3242,281 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "Failures: {failures:?}");
+    }
+
+    /// Craft a minimal valid 1×1 RGBA8 PNG and return its bytes.
+    fn craft_valid_1x1_png() -> Vec<u8> {
+        let img = imgref::ImgVec::new(
+            vec![rgb::Rgba { r: 255, g: 0, b: 0, a: 255 }],
+            1,
+            1,
+        );
+        crate::encode::encode_rgba8(
+            img.as_ref(),
+            None,
+            &crate::encode::EncodeConfig::default(),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap()
+    }
+
+    /// Corrupt a specific chunk's CRC in a PNG file.
+    /// Returns a copy with the CRC flipped for the first chunk matching `target_type`.
+    fn corrupt_chunk_crc(png: &[u8], target_type: &[u8; 4]) -> Vec<u8> {
+        let mut result = png.to_vec();
+        let mut pos = 8; // skip signature
+        while pos + 12 <= result.len() {
+            let length =
+                u32::from_be_bytes(result[pos..pos + 4].try_into().unwrap()) as usize;
+            let chunk_type: [u8; 4] = result[pos + 4..pos + 8].try_into().unwrap();
+            let crc_start = pos + 8 + length;
+            let crc_end = crc_start + 4;
+            if crc_end > result.len() {
+                break;
+            }
+            if &chunk_type == target_type {
+                // Flip a bit in the CRC
+                result[crc_start] ^= 0x01;
+                return result;
+            }
+            pos = crc_end;
+        }
+        panic!("chunk type {:?} not found", core::str::from_utf8(target_type));
+    }
+
+    /// Corrupt the zlib Adler-32 checksum inside IDAT data.
+    /// Flips a bit in the last 4 bytes of the zlib stream (the Adler-32).
+    fn corrupt_idat_adler(png: &[u8]) -> Vec<u8> {
+        // Find the last IDAT chunk and corrupt the last byte of its data
+        // (which is the last byte of the zlib stream's Adler-32)
+        let mut result = png.to_vec();
+        let mut last_idat_data_end = None;
+        let mut pos = 8;
+        while pos + 12 <= result.len() {
+            let length =
+                u32::from_be_bytes(result[pos..pos + 4].try_into().unwrap()) as usize;
+            let chunk_type: [u8; 4] = result[pos + 4..pos + 8].try_into().unwrap();
+            let data_start = pos + 8;
+            let data_end = data_start + length;
+            let crc_end = data_end + 4;
+            if crc_end > result.len() {
+                break;
+            }
+            if chunk_type == *b"IDAT" && length > 0 {
+                last_idat_data_end = Some(data_end);
+            }
+            pos = crc_end;
+        }
+        let data_end = last_idat_data_end.expect("no IDAT with data");
+        // Corrupt the last byte of zlib data (part of Adler-32)
+        result[data_end - 1] ^= 0x01;
+        // Re-compute the IDAT chunk's CRC so we only test Adler-32 skipping
+        // Find the IDAT chunk containing this byte and fix its CRC
+        pos = 8;
+        while pos + 12 <= result.len() {
+            let length =
+                u32::from_be_bytes(result[pos..pos + 4].try_into().unwrap()) as usize;
+            let chunk_type: [u8; 4] = result[pos + 4..pos + 8].try_into().unwrap();
+            let data_start = pos + 8;
+            let data_end_chunk = data_start + length;
+            let crc_start = data_end_chunk;
+            let crc_end = crc_start + 4;
+            if crc_end > result.len() {
+                break;
+            }
+            if chunk_type == *b"IDAT" && data_end_chunk == data_end {
+                // Recompute CRC for this chunk
+                let crc = zenflate::crc32(
+                    zenflate::crc32(0, &chunk_type),
+                    &result[data_start..data_end_chunk],
+                );
+                result[crc_start..crc_end].copy_from_slice(&crc.to_be_bytes());
+                break;
+            }
+            pos = crc_end;
+        }
+        result
+    }
+
+    #[test]
+    fn corrupt_ihdr_crc_rejected_by_default() {
+        let png = craft_valid_1x1_png();
+        let corrupt = corrupt_chunk_crc(&png, b"IHDR");
+        let result = decode_png(
+            &corrupt,
+            &crate::decode::PngDecodeConfig::none(),
+            &Unstoppable,
+        );
+        assert!(result.is_err(), "corrupt IHDR CRC should be rejected");
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(err_msg.contains("CRC mismatch"), "error: {err_msg}");
+    }
+
+    #[test]
+    fn corrupt_ihdr_crc_accepted_with_skip() {
+        let png = craft_valid_1x1_png();
+        let corrupt = corrupt_chunk_crc(&png, b"IHDR");
+        let config = crate::decode::PngDecodeConfig::none()
+            .with_skip_critical_chunk_crc(true);
+        let result = decode_png(&corrupt, &config, &Unstoppable);
+        assert!(result.is_ok(), "corrupt IHDR CRC should be accepted: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(
+            output.warnings.contains(&crate::decode::PngWarning::CriticalChunkCrcSkipped {
+                chunk_type: *b"IHDR",
+            }),
+            "should have CriticalChunkCrcSkipped warning for IHDR"
+        );
+    }
+
+    #[test]
+    fn corrupt_idat_crc_rejected_by_default() {
+        let png = craft_valid_1x1_png();
+        let corrupt = corrupt_chunk_crc(&png, b"IDAT");
+        let result = decode_png(
+            &corrupt,
+            &crate::decode::PngDecodeConfig::none(),
+            &Unstoppable,
+        );
+        assert!(result.is_err(), "corrupt IDAT CRC should be rejected");
+    }
+
+    #[test]
+    fn corrupt_idat_crc_accepted_with_skip() {
+        let png = craft_valid_1x1_png();
+        let corrupt = corrupt_chunk_crc(&png, b"IDAT");
+        let config = crate::decode::PngDecodeConfig::none()
+            .with_skip_critical_chunk_crc(true);
+        let result = decode_png(&corrupt, &config, &Unstoppable);
+        assert!(result.is_ok(), "corrupt IDAT CRC should be accepted: {:?}", result.err());
+        let output = result.unwrap();
+        assert!(
+            output.warnings.contains(&crate::decode::PngWarning::CriticalChunkCrcSkipped {
+                chunk_type: *b"IDAT",
+            }),
+            "should have CriticalChunkCrcSkipped warning for IDAT"
+        );
+    }
+
+    #[test]
+    fn corrupt_adler32_rejected_by_default() {
+        let png = craft_valid_1x1_png();
+        let corrupt = corrupt_idat_adler(&png);
+        let result = decode_png(
+            &corrupt,
+            &crate::decode::PngDecodeConfig::none(),
+            &Unstoppable,
+        );
+        assert!(result.is_err(), "corrupt Adler-32 should be rejected");
+    }
+
+    #[test]
+    fn corrupt_adler32_accepted_with_skip() {
+        let png = craft_valid_1x1_png();
+        let corrupt = corrupt_idat_adler(&png);
+        let config = crate::decode::PngDecodeConfig::none()
+            .with_skip_decompression_checksum(true);
+        let result = decode_png(&corrupt, &config, &Unstoppable);
+        assert!(
+            result.is_ok(),
+            "corrupt Adler-32 should be accepted: {:?}",
+            result.err()
+        );
+        let output = result.unwrap();
+        assert!(
+            output
+                .warnings
+                .contains(&crate::decode::PngWarning::DecompressionChecksumSkipped),
+            "should have DecompressionChecksumSkipped warning, got: {:?}",
+            output.warnings,
+        );
+    }
+
+    #[test]
+    fn lenient_accepts_all_corruption() {
+        let png = craft_valid_1x1_png();
+
+        // Corrupt both IHDR CRC and Adler-32
+        let mut corrupt = corrupt_chunk_crc(&png, b"IHDR");
+        corrupt = corrupt_idat_adler(&corrupt);
+
+        let result = decode_png(
+            &corrupt,
+            &crate::decode::PngDecodeConfig::lenient(),
+            &Unstoppable,
+        );
+        assert!(
+            result.is_ok(),
+            "lenient should accept all corruption: {:?}",
+            result.err()
+        );
+        let output = result.unwrap();
+        assert!(
+            output.warnings.iter().any(|w| matches!(
+                w,
+                crate::decode::PngWarning::CriticalChunkCrcSkipped { .. }
+            )),
+            "should have CriticalChunkCrcSkipped warning"
+        );
+        assert!(
+            output
+                .warnings
+                .contains(&crate::decode::PngWarning::DecompressionChecksumSkipped),
+            "should have DecompressionChecksumSkipped warning"
+        );
+    }
+
+    #[test]
+    fn badadler_fixture_rejected_by_default() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/regression/badadler.png");
+        let data = std::fs::read(&path).unwrap();
+        let result = decode_png(
+            &data,
+            &crate::decode::PngDecodeConfig::none(),
+            &Unstoppable,
+        );
+        assert!(result.is_err(), "badadler.png should be rejected by default");
+    }
+
+    #[test]
+    fn badadler_fixture_accepted_with_skip_checksum() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/regression/badadler.png");
+        let data = std::fs::read(&path).unwrap();
+        let config = crate::decode::PngDecodeConfig::none()
+            .with_skip_decompression_checksum(true);
+        let result = decode_png(&data, &config, &Unstoppable);
+        assert!(
+            result.is_ok(),
+            "badadler.png should decode with skip_decompression_checksum: {:?}",
+            result.err()
+        );
+        let output = result.unwrap();
+        assert!(
+            output
+                .warnings
+                .contains(&crate::decode::PngWarning::DecompressionChecksumSkipped),
+            "should have DecompressionChecksumSkipped warning"
+        );
+        // Verify we actually got pixel data
+        assert!(output.info.width > 0 && output.info.height > 0);
+    }
+
+    #[test]
+    fn valid_png_no_decode_warnings() {
+        let png = craft_valid_1x1_png();
+        let result = decode_png(
+            &png,
+            &crate::decode::PngDecodeConfig::none(),
+            &Unstoppable,
+        );
+        let output = result.unwrap();
+        assert!(
+            output.warnings.is_empty(),
+            "valid PNG should have no warnings, got: {:?}",
+            output.warnings,
+        );
     }
 }
