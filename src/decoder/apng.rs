@@ -43,6 +43,25 @@ fn read_chunk_header(data: &[u8], pos: usize) -> Option<(usize, [u8; 4], usize, 
 
 // ── ApngDecoder ─────────────────────────────────────────────────────
 
+/// Captured state of an [`ApngDecoder`] for O(1) resumption.
+///
+/// Stores all immutable metadata parsed during `new()` plus the mutable scan
+/// position. Used by [`PngFrameDecoder`] to avoid re-scanning from the
+/// beginning of the file for each frame.
+#[derive(Clone)]
+pub(crate) struct ApngDecoderState {
+    ihdr: Ihdr,
+    ancillary: PngAncillary,
+    config: PngDecodeConfig,
+    pub num_frames: u32,
+    pub num_plays: u32,
+    pub current_frame: u32,
+    chunk_pos: usize,
+    default_image_is_frame: bool,
+    first_idat_pos: usize,
+    frame0_fctl: Option<FrameControl>,
+}
+
 /// Stateful APNG frame decoder. Yields one raw subframe per `next_frame()` call.
 pub(crate) struct ApngDecoder<'a> {
     file_data: &'a [u8],
@@ -166,6 +185,39 @@ impl<'a> ApngDecoder<'a> {
             first_idat_pos,
             frame0_fctl,
         })
+    }
+
+    /// Create a decoder from previously saved state (O(1), no re-scanning).
+    pub fn from_state(data: &'a [u8], state: ApngDecoderState) -> Self {
+        Self {
+            file_data: data,
+            ihdr: state.ihdr,
+            ancillary: state.ancillary,
+            config: state.config,
+            num_frames: state.num_frames,
+            num_plays: state.num_plays,
+            current_frame: state.current_frame,
+            chunk_pos: state.chunk_pos,
+            default_image_is_frame: state.default_image_is_frame,
+            first_idat_pos: state.first_idat_pos,
+            frame0_fctl: state.frame0_fctl,
+        }
+    }
+
+    /// Capture the current state for later resumption.
+    pub fn save_state(&self) -> ApngDecoderState {
+        ApngDecoderState {
+            ihdr: self.ihdr,
+            ancillary: self.ancillary.clone(),
+            config: self.config.clone(),
+            num_frames: self.num_frames,
+            num_plays: self.num_plays,
+            current_frame: self.current_frame,
+            chunk_pos: self.chunk_pos,
+            default_image_is_frame: self.default_image_is_frame,
+            first_idat_pos: self.first_idat_pos,
+            frame0_fctl: self.frame0_fctl,
+        }
     }
 
     /// Decode the next frame. Returns `None` when all frames have been yielded.
@@ -408,26 +460,18 @@ impl<'a> ApngDecoder<'a> {
 
 // ── Compositing ─────────────────────────────────────────────────────
 
-/// A single composed APNG frame (canvas-sized, RGBA8 pixels).
-pub(crate) struct ComposedFrame {
-    /// RGBA8 canvas pixels.
-    pub pixels: Vec<u8>,
-    /// Frame control metadata.
-    pub fctl: FrameControl,
-}
-
 /// Result of composited APNG decoding.
 pub(crate) struct ComposedApng {
-    pub frames: Vec<ComposedFrame>,
+    pub frames: Vec<crate::decode::ApngFrame>,
     pub ihdr: Ihdr,
     pub ancillary: PngAncillary,
     pub num_plays: u32,
     pub warnings: Vec<PngWarning>,
 }
 
-/// Decode an APNG with full compositing, producing canvas-sized RGBA8 frames.
+/// Decode an APNG with full compositing, producing canvas-sized RGBA frames.
 ///
-/// For non-animated PNGs, falls through to regular decode and returns a single frame.
+/// Builds `PixelData` directly from the canvas to avoid double-copying.
 pub(crate) fn decode_apng_composed(
     data: &[u8],
     config: &PngDecodeConfig,
@@ -436,43 +480,46 @@ pub(crate) fn decode_apng_composed(
     let mut decoder = ApngDecoder::new(data, config)?;
     let canvas_w = decoder.ihdr().width as usize;
     let canvas_h = decoder.ihdr().height as usize;
-    // Determine if this is a 16-bit source
     let is_16bit = decoder.ihdr().bit_depth == 16;
-    let bytes_per_canvas_pixel = if is_16bit { 8 } else { 4 }; // RGBA16 vs RGBA8
-    let canvas_bytes = canvas_w * canvas_h * bytes_per_canvas_pixel;
+    let bpp = if is_16bit { 8 } else { 4 }; // RGBA16 vs RGBA8
+    let canvas_bytes = canvas_w * canvas_h * bpp;
 
     let num_frames = decoder.num_frames;
     let num_plays = decoder.num_plays;
 
     // Canvas starts as transparent black
     let mut canvas = vec![0u8; canvas_bytes];
-    let mut composed_frames = Vec::with_capacity(num_frames as usize);
+    let mut frames = Vec::with_capacity(num_frames as usize);
 
-    // For RestorePrevious: saved canvas state
-    let mut saved_canvas: Option<Vec<u8>> = None;
+    // For RestorePrevious: saved frame region (not full canvas)
+    let mut saved_region: Option<SavedRegion> = None;
 
     // Previous frame's fctl (for applying dispose_op after yielding)
     let mut prev_fctl: Option<FrameControl> = None;
 
     while let Some(frame) = decoder.next_frame(cancel)? {
         // Apply dispose_op from the PREVIOUS frame before compositing this one
-        if let Some(ref pfctl) = prev_fctl {
-            apply_dispose_op(pfctl, &mut canvas, &saved_canvas, canvas_w, is_16bit);
+        if let Some(pfctl) = prev_fctl {
+            apply_dispose_op(&pfctl, &mut canvas, &saved_region, canvas_w, is_16bit);
         }
 
-        // If this frame's dispose_op is RestorePrevious, save the canvas BEFORE compositing
+        // If this frame's dispose_op is RestorePrevious, save only the frame region
         if frame.fctl.dispose_op == 2 {
-            saved_canvas = Some(canvas.clone());
+            saved_region = Some(save_region(&frame.fctl, &canvas, canvas_w, is_16bit));
         }
 
-        // Promote subframe pixels to RGBA8 (or RGBA16) and composite onto canvas
+        // Promote subframe pixels to RGBA and composite onto canvas
         let subframe_rgba = promote_to_rgba(&frame.pixels, is_16bit);
         composite_frame(&frame.fctl, &subframe_rgba, &mut canvas, canvas_w, is_16bit);
 
-        // Clone the composited canvas as this frame's output
-        composed_frames.push(ComposedFrame {
-            pixels: canvas.clone(),
-            fctl: frame.fctl,
+        // Build PixelData directly from canvas (single copy, no intermediate Vec)
+        let pixels = canvas_to_pixel_data(&canvas, canvas_w, canvas_h, is_16bit);
+        frames.push(crate::decode::ApngFrame {
+            pixels,
+            frame_info: crate::decode::ApngFrameInfo {
+                delay_num: frame.fctl.delay_num,
+                delay_den: frame.fctl.delay_den,
+            },
         });
 
         prev_fctl = Some(frame.fctl);
@@ -480,10 +527,10 @@ pub(crate) fn decode_apng_composed(
 
     let ihdr = *decoder.ihdr();
     let ancillary = decoder.ancillary().clone();
-    let warnings = Vec::new(); // TODO: collect warnings from decoder
+    let warnings = Vec::new();
 
     Ok(ComposedApng {
-        frames: composed_frames,
+        frames,
         ihdr,
         ancillary,
         num_plays,
@@ -491,11 +538,49 @@ pub(crate) fn decode_apng_composed(
     })
 }
 
+/// Build PixelData directly from canvas bytes (single allocation).
+fn canvas_to_pixel_data(canvas: &[u8], w: usize, h: usize, is_16bit: bool) -> PixelData {
+    if is_16bit {
+        let rgba: &[rgb::Rgba<u16>] = bytemuck::cast_slice(canvas);
+        PixelData::Rgba16(imgref::ImgVec::new(rgba.to_vec(), w, h))
+    } else {
+        let rgba: &[rgb::Rgba<u8>] = bytemuck::cast_slice(canvas);
+        PixelData::Rgba8(imgref::ImgVec::new(rgba.to_vec(), w, h))
+    }
+}
+
+/// Saved frame region for RestorePrevious (only the affected area, not full canvas).
+struct SavedRegion {
+    data: Vec<u8>,
+    x: usize,
+    y: usize,
+    w: usize,
+    h: usize,
+}
+
+/// Save only the frame region from the canvas.
+fn save_region(fctl: &FrameControl, canvas: &[u8], canvas_w: usize, is_16bit: bool) -> SavedRegion {
+    let bpp = if is_16bit { 8 } else { 4 };
+    let x = fctl.x_offset as usize;
+    let y = fctl.y_offset as usize;
+    let w = fctl.width as usize;
+    let h = fctl.height as usize;
+    let row_stride = canvas_w * bpp;
+    let region_row_bytes = w * bpp;
+
+    let mut data = Vec::with_capacity(region_row_bytes * h);
+    for row in y..y + h {
+        let start = row * row_stride + x * bpp;
+        data.extend_from_slice(&canvas[start..start + region_row_bytes]);
+    }
+    SavedRegion { data, x, y, w, h }
+}
+
 /// Apply dispose_op to the canvas based on the previous frame's fctl.
 fn apply_dispose_op(
     fctl: &FrameControl,
     canvas: &mut [u8],
-    saved: &Option<Vec<u8>>,
+    saved: &Option<SavedRegion>,
     canvas_w: usize,
     is_16bit: bool,
 ) {
@@ -518,9 +603,17 @@ fn apply_dispose_op(
             }
         }
         2 => {
-            // PREVIOUS: restore saved canvas
+            // PREVIOUS: restore only the saved frame region
             if let Some(saved) = saved {
-                canvas.copy_from_slice(saved);
+                let row_stride = canvas_w * bpp;
+                let region_row_bytes = saved.w * bpp;
+                for row in 0..saved.h {
+                    let canvas_start = (saved.y + row) * row_stride + saved.x * bpp;
+                    let region_start = row * region_row_bytes;
+                    canvas[canvas_start..canvas_start + region_row_bytes].copy_from_slice(
+                        &saved.data[region_start..region_start + region_row_bytes],
+                    );
+                }
             }
         }
         _ => {} // invalid, treat as NONE
