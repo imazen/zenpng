@@ -71,3 +71,8 @@ pub use crate::encode::{encode_rgb8_with_stats, encode_rgba8_with_stats};
 #[cfg(feature = "_dev")]
 #[doc(hidden)]
 pub use crate::png_writer::{PhaseStat, PhaseStats};
+#[cfg(feature = "_dev")]
+#[doc(hidden)]
+pub fn __bench_unfilter_row(filter_type: u8, row: &mut [u8], prev: &[u8], bpp: usize) {
+    simd::bench_unfilter_row(filter_type, row, prev, bpp);
+}
