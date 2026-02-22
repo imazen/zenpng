@@ -418,11 +418,12 @@ impl<'a> RowDecoder<'a> {
         Some(Ok(&self.prev_row[..raw_row_bytes]))
     }
 
-    /// Unfilter the next row directly into `dest` (must be exactly raw_row_bytes).
+    /// Unfilter the next row directly into `dest`, using caller-provided `prev`.
     ///
-    /// This avoids the intermediate current_row copy — the caller provides the
-    /// output buffer directly. After return, `prev_row` is updated for the next row.
-    pub fn next_raw_row_into(&mut self, dest: &mut [u8]) -> Option<Result<(), PngError>> {
+    /// The caller owns both buffers — typically `prev` is the previous row in
+    /// the output buffer (via `split_at_mut`), eliminating the prev_row copy.
+    /// For row 0, pass a zeroed slice.
+    pub fn next_raw_row_direct(&mut self, dest: &mut [u8], prev: &[u8]) -> Option<Result<(), PngError>> {
         if self.rows_yielded >= self.ihdr.height {
             return None;
         }
@@ -438,19 +439,16 @@ impl<'a> RowDecoder<'a> {
         let filter_byte = peeked[0];
         let raw_row_bytes = self.stride - 1;
 
-        // Copy filtered data directly into dest
+        // Single copy: decompressor → dest
         dest[..raw_row_bytes].copy_from_slice(&peeked[1..self.stride]);
         self.decompressor.advance(self.stride);
 
-        // Apply inverse filter
-        if let Err(e) = unfilter_row(filter_byte, &mut dest[..raw_row_bytes], &self.prev_row, self.bpp) {
+        // Unfilter in-place using caller's prev slice
+        if let Err(e) = unfilter_row(filter_byte, &mut dest[..raw_row_bytes], prev, self.bpp) {
             return Some(Err(e));
         }
 
-        // Update prev_row for next row's unfiltering
-        self.prev_row[..raw_row_bytes].copy_from_slice(&dest[..raw_row_bytes]);
         self.rows_yielded += 1;
-
         Some(Ok(()))
     }
 

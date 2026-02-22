@@ -173,9 +173,27 @@ pub(crate) fn decode_png(
         let total = raw_row_bytes * h;
         let mut all_pixels = vec![0u8; total];
 
-        for y in 0..h {
-            let offset = y * raw_row_bytes;
-            match reader.next_raw_row_into(&mut all_pixels[offset..offset + raw_row_bytes]) {
+        // Row 0: prev is zeros (already zeroed by vec![0u8; total])
+        if h > 0 {
+            let zeros = vec![0u8; raw_row_bytes];
+            match reader.next_raw_row_direct(&mut all_pixels[..raw_row_bytes], &zeros) {
+                Some(Ok(())) => {}
+                Some(Err(e)) => return Err(e),
+                None => {
+                    return Err(PngError::Decode(
+                        "unexpected end of image data at row 0".into(),
+                    ));
+                }
+            }
+            cancel.check()?;
+        }
+
+        // Rows 1..h: prev is the previous row in the output buffer
+        for y in 1..h {
+            let (prev_part, cur_part) = all_pixels.split_at_mut(y * raw_row_bytes);
+            let prev = &prev_part[(y - 1) * raw_row_bytes..];
+            let dest = &mut cur_part[..raw_row_bytes];
+            match reader.next_raw_row_direct(dest, prev) {
                 Some(Ok(())) => {}
                 Some(Err(e)) => return Err(e),
                 None => {
