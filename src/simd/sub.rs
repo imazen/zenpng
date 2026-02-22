@@ -9,6 +9,7 @@ use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_sub(row: &mut [u8], bpp: usize) {
     match bpp {
+        3 => incant!(unfilter_sub_bpp3_impl(row), [v1]),
         4 => incant!(unfilter_sub_bpp4_impl(row), [v1]),
         _ => unfilter_sub_scalar_any(row, bpp),
     }
@@ -52,6 +53,45 @@ fn unfilter_sub_bpp4_impl_v1(_token: Sse2Token, row: &mut [u8]) {
     }
 }
 
+// ── SIMD bpp=3 (SSE2 / V1) ──────────────────────────────────────────
+
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn unfilter_sub_bpp3_impl_v1(_token: Sse2Token, row: &mut [u8]) {
+    let len = row.len();
+    if len < 6 {
+        unfilter_sub_scalar_any(row, 3);
+        return;
+    }
+
+    // First 3 bytes unchanged. Initialize `a` with first pixel.
+    let mut a = _mm_loadu_si32(<&[u8; 4]>::try_from(&row[0..4]).unwrap());
+
+    let mut i = 3;
+    // Need i + 4 <= len to safely load 4 bytes (3 pixel + 1 overlap)
+    while i + 4 <= len {
+        let filt = _mm_loadu_si32(<&[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
+        let result = _mm_add_epi8(filt, a);
+        // Store only 3 bytes (lane 3 is garbage)
+        let val = _mm_cvtsi128_si32(result) as u32;
+        let bytes = val.to_le_bytes();
+        row[i] = bytes[0];
+        row[i + 1] = bytes[1];
+        row[i + 2] = bytes[2];
+        a = result;
+        i += 3;
+    }
+
+    // Scalar tail for last pixel if 4-byte load would overrun
+    for j in i..len {
+        row[j] = row[j].wrapping_add(row[j - 3]);
+    }
+}
+
+fn unfilter_sub_bpp3_impl_scalar(_token: ScalarToken, row: &mut [u8]) {
+    unfilter_sub_scalar_any(row, 3);
+}
+
 // Scalar fallback for incant! dispatch
 fn unfilter_sub_bpp4_impl_scalar(_token: ScalarToken, row: &mut [u8]) {
     unfilter_sub_scalar_any(row, 4);
@@ -87,8 +127,26 @@ mod tests {
     }
 
     #[test]
+    fn sub_bpp3_all_tiers() {
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| {
+            for &len in &[0, 3, 6, 9, 99, 4095, 65535] {
+                let filtered: Vec<u8> = (0..len).map(|i| (i * 3 + 5) as u8).collect();
+
+                let mut expected = filtered.clone();
+                scalar_sub(&mut expected, 3);
+
+                let mut actual = filtered.clone();
+                super::unfilter_sub(&mut actual, 3);
+
+                assert_eq!(actual, expected, "sub bpp=3 mismatch at len={len}");
+            }
+        });
+        eprintln!("sub bpp=3: {report}");
+    }
+
+    #[test]
     fn sub_other_bpp_unchanged() {
-        for &bpp in &[1, 2, 3, 6, 8] {
+        for &bpp in &[1, 2, 6, 8] {
             for &len in &[0, bpp, bpp * 4, bpp * 100] {
                 let filtered: Vec<u8> = (0..len).map(|i| (i * 5 + 7) as u8).collect();
 

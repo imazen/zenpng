@@ -9,6 +9,7 @@ use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_paeth(row: &mut [u8], prev: &[u8], bpp: usize) {
     match bpp {
+        3 => incant!(unfilter_paeth_bpp3_impl(row, prev), [v2]),
         4 => incant!(unfilter_paeth_bpp4_impl(row, prev), [v2]),
         _ => unfilter_paeth_scalar_any(row, prev, bpp),
     }
@@ -115,6 +116,56 @@ fn paeth_simd_v2(_token: X64V2Token, a: __m128i, b: __m128i, c: __m128i) -> __m1
     _mm_blendv_epi8(result, a, _mm_and_si128(mask_ab, mask_ac))
 }
 
+// ── SIMD bpp=3 (SSE4.2 / V2) ────────────────────────────────────────
+
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn unfilter_paeth_bpp3_impl_v2(token: X64V2Token, row: &mut [u8], prev: &[u8]) {
+    let len = row.len();
+    if len < 3 {
+        return;
+    }
+
+    let zero = _mm_setzero_si128();
+    let mut a_wide = zero; // left pixel, widened to i16
+    let mut c_wide = zero; // upper-left pixel, widened to i16
+
+    let mut i = 0;
+    while i + 4 <= len {
+        let b_raw = _mm_loadu_si32(<&[u8; 4]>::try_from(&prev[i..i + 4]).unwrap());
+        let b_wide = _mm_unpacklo_epi8(b_raw, zero);
+
+        let pred_wide = paeth_simd_v2(token, a_wide, b_wide, c_wide);
+        let pred_narrow = _mm_packus_epi16(pred_wide, zero);
+
+        let filt = _mm_loadu_si32(<&[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
+        let result = _mm_add_epi8(filt, pred_narrow);
+
+        // Store only 3 bytes
+        let val = _mm_cvtsi128_si32(result) as u32;
+        let bytes = val.to_le_bytes();
+        row[i] = bytes[0];
+        row[i + 1] = bytes[1];
+        row[i + 2] = bytes[2];
+
+        a_wide = _mm_unpacklo_epi8(result, zero);
+        c_wide = b_wide;
+        i += 3;
+    }
+
+    // Scalar tail
+    for j in i..len {
+        let left = if j >= 3 { row[j - 3] } else { 0 };
+        let above = prev[j];
+        let upper_left = if j >= 3 { prev[j - 3] } else { 0 };
+        row[j] = row[j].wrapping_add(paeth_predictor(left, above, upper_left));
+    }
+}
+
+fn unfilter_paeth_bpp3_impl_scalar(_token: ScalarToken, row: &mut [u8], prev: &[u8]) {
+    unfilter_paeth_scalar_any(row, prev, 3);
+}
+
 // Scalar fallback for incant! dispatch
 fn unfilter_paeth_bpp4_impl_scalar(_token: ScalarToken, row: &mut [u8], prev: &[u8]) {
     unfilter_paeth_scalar_any(row, prev, 4);
@@ -157,9 +208,27 @@ mod tests {
     }
 
     #[test]
+    fn paeth_bpp3_all_tiers() {
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| {
+            for &len in &[0, 3, 6, 9, 99, 4095, 65535] {
+                let prev: Vec<u8> = (0..len).map(|i| (i * 7 + 13) as u8).collect();
+                let filtered: Vec<u8> = (0..len).map(|i| (i * 3 + 5) as u8).collect();
+
+                let mut expected = filtered.clone();
+                scalar_paeth(&mut expected, &prev, 3);
+
+                let mut actual = filtered.clone();
+                super::unfilter_paeth(&mut actual, &prev, 3);
+
+                assert_eq!(actual, expected, "paeth bpp=3 mismatch at len={len}");
+            }
+        });
+        eprintln!("paeth bpp=3: {report}");
+    }
+
+    #[test]
     fn paeth_other_bpp_unchanged() {
-        // Non-bpp=4 paths use scalar; verify they still work.
-        for &bpp in &[1, 2, 3, 6, 8] {
+        for &bpp in &[1, 2, 6, 8] {
             for &len in &[0, bpp, bpp * 4, bpp * 100] {
                 let prev: Vec<u8> = (0..len).map(|i| (i * 11 + 3) as u8).collect();
                 let filtered: Vec<u8> = (0..len).map(|i| (i * 5 + 7) as u8).collect();
