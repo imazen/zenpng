@@ -14,7 +14,7 @@ use enough::Unstoppable;
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
-        "/home/lilith/work/codec-corpus/clic2025-1024/0d154749c7771f58e89ad343653ec4e20d6f037da829f47f5598e5d0a4ab61f0.png".to_string()
+        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1025469.png".to_string()
     });
 
     let p = Path::new(&path);
