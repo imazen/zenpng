@@ -8,6 +8,96 @@ use zenflate::Unstoppable;
 use super::ChunkRef;
 use crate::error::PngError;
 
+// ── fcTL frame control ──────────────────────────────────────────────
+
+/// Parsed fcTL (frame control) chunk for APNG.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FrameControl {
+    #[allow(dead_code)]
+    pub sequence_number: u32,
+    pub width: u32,
+    pub height: u32,
+    pub x_offset: u32,
+    pub y_offset: u32,
+    pub delay_num: u16,
+    pub delay_den: u16,
+    pub dispose_op: u8,
+    pub blend_op: u8,
+}
+
+impl FrameControl {
+    /// Parse from 26-byte fcTL chunk data.
+    /// Validates dimensions fit within the canvas defined by `canvas_width` × `canvas_height`.
+    pub fn parse(data: &[u8], canvas_width: u32, canvas_height: u32) -> Result<Self, PngError> {
+        if data.len() != 26 {
+            return Err(PngError::Decode(alloc::format!(
+                "fcTL chunk is {} bytes, expected 26",
+                data.len()
+            )));
+        }
+
+        let sequence_number = u32::from_be_bytes(data[0..4].try_into().unwrap());
+        let width = u32::from_be_bytes(data[4..8].try_into().unwrap());
+        let height = u32::from_be_bytes(data[8..12].try_into().unwrap());
+        let x_offset = u32::from_be_bytes(data[12..16].try_into().unwrap());
+        let y_offset = u32::from_be_bytes(data[16..20].try_into().unwrap());
+        let delay_num = u16::from_be_bytes(data[20..22].try_into().unwrap());
+        let delay_den = u16::from_be_bytes(data[22..24].try_into().unwrap());
+        let dispose_op = data[24];
+        let blend_op = data[25];
+
+        if width == 0 || height == 0 {
+            return Err(PngError::Decode("fcTL: zero frame dimension".into()));
+        }
+        if x_offset.checked_add(width).is_none_or(|v| v > canvas_width) {
+            return Err(PngError::Decode(alloc::format!(
+                "fcTL: x_offset({x_offset}) + width({width}) exceeds canvas width({canvas_width})"
+            )));
+        }
+        if y_offset
+            .checked_add(height)
+            .is_none_or(|v| v > canvas_height)
+        {
+            return Err(PngError::Decode(alloc::format!(
+                "fcTL: y_offset({y_offset}) + height({height}) exceeds canvas height({canvas_height})"
+            )));
+        }
+        if dispose_op > 2 {
+            return Err(PngError::Decode(alloc::format!(
+                "fcTL: invalid dispose_op {dispose_op}"
+            )));
+        }
+        if blend_op > 1 {
+            return Err(PngError::Decode(alloc::format!(
+                "fcTL: invalid blend_op {blend_op}"
+            )));
+        }
+
+        Ok(Self {
+            sequence_number,
+            width,
+            height,
+            x_offset,
+            y_offset,
+            delay_num,
+            delay_den,
+            dispose_op,
+            blend_op,
+        })
+    }
+
+    /// Frame delay in milliseconds.
+    /// Per APNG spec, if delay_den is 0 it is treated as 100.
+    pub fn delay_ms(&self) -> u32 {
+        let den = if self.delay_den == 0 {
+            100
+        } else {
+            self.delay_den as u32
+        };
+        (self.delay_num as u32 * 1000 + den / 2) / den
+    }
+}
+
 /// Collected ancillary chunk data.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PngAncillary {

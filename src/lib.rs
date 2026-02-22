@@ -48,7 +48,8 @@ mod zencodec;
 #[allow(deprecated)]
 pub use decode::PngLimits;
 pub use decode::{
-    PngChromaticities, PngDecodeConfig, PngDecodeOutput, PngInfo, PngWarning, decode, probe,
+    ApngDecodeOutput, ApngFrame, ApngFrameInfo, PngChromaticities, PngDecodeConfig,
+    PngDecodeOutput, PngInfo, PngWarning, decode, decode_apng, probe,
 };
 pub use encode::{
     EncodeConfig, encode_gray8, encode_gray16, encode_rgb8, encode_rgb16, encode_rgba8,

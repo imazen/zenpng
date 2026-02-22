@@ -1,5 +1,6 @@
 //! PNG decode pipeline: chunk parsing, row decoding, color conversion, info assembly.
 
+pub(crate) mod apng;
 pub(crate) mod interlace;
 pub(crate) mod postprocess;
 pub(crate) mod row;
