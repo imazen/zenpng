@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 use enough::Stop;
 use zencodec_types::{Cicp, ContentLightLevel, ImageMetadata, MasteringDisplay};
-use zenflate::{crc32, CompressionLevel, Compressor, Unstoppable};
+use zenflate::{CompressionLevel, Compressor, Unstoppable, crc32};
 
 use crate::decode::PngChromaticities;
 use crate::error::PngError;

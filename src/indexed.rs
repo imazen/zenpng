@@ -349,14 +349,27 @@ mod tests {
         let config = EncodeConfig::default();
         let quant = default_quantize_config();
 
-        let encoded = encode_indexed_rgba8(img.as_ref(), &config, &quant, None, &enough::Unstoppable, &enough::Unstoppable).unwrap();
+        let encoded = encode_indexed_rgba8(
+            img.as_ref(),
+            &config,
+            &quant,
+            None,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
         assert!(!encoded.is_empty());
 
         // Verify PNG signature
         assert_eq!(&encoded[..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
 
         // Full decode roundtrip through zenpng
-        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
+        let decoded = crate::decode::decode(
+            &encoded,
+            &crate::decode::PngLimits::none(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
         assert_eq!(decoded.info.width, 4);
         assert_eq!(decoded.info.height, 4);
     }
@@ -376,8 +389,21 @@ mod tests {
             .with_exif(exif_data)
             .with_xmp(xmp_data);
 
-        let encoded = encode_indexed_rgba8(img.as_ref(), &config, &quant, Some(&meta), &enough::Unstoppable, &enough::Unstoppable).unwrap();
-        let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
+        let encoded = encode_indexed_rgba8(
+            img.as_ref(),
+            &config,
+            &quant,
+            Some(&meta),
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        let decoded = crate::decode::decode(
+            &encoded,
+            &crate::decode::PngLimits::none(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
         assert_eq!(decoded.info.width, 4);
         assert_eq!(decoded.info.height, 4);
 
@@ -409,8 +435,21 @@ mod tests {
             crate::Compression::Aggressive,
         ] {
             let config = EncodeConfig::default().with_compression(comp);
-            let encoded = encode_indexed_rgba8(img.as_ref(), &config, &quant, None, &enough::Unstoppable, &enough::Unstoppable).unwrap();
-            let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
+            let encoded = encode_indexed_rgba8(
+                img.as_ref(),
+                &config,
+                &quant,
+                None,
+                &enough::Unstoppable,
+                &enough::Unstoppable,
+            )
+            .unwrap();
+            let decoded = crate::decode::decode(
+                &encoded,
+                &crate::decode::PngLimits::none(),
+                &enough::Unstoppable,
+            )
+            .unwrap();
             assert_eq!(decoded.info.width, 4);
             assert_eq!(decoded.info.height, 4);
         }
@@ -423,7 +462,16 @@ mod tests {
         let config = EncodeConfig::default();
         let quant = default_quantize_config();
 
-        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.02, None, &enough::Unstoppable, &enough::Unstoppable).unwrap();
+        let result = encode_rgba8_auto(
+            img.as_ref(),
+            &config,
+            &quant,
+            0.02,
+            None,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
         assert!(
             result.indexed,
             "few-color image should use indexed encoding"
@@ -434,7 +482,12 @@ mod tests {
         );
 
         // Verify it decodes correctly
-        let decoded = crate::decode::decode(&result.data, None, &enough::Unstoppable).unwrap();
+        let decoded = crate::decode::decode(
+            &result.data,
+            &crate::decode::PngLimits::none(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
         assert_eq!(decoded.info.width, 4);
         assert_eq!(decoded.info.height, 4);
     }
@@ -446,7 +499,16 @@ mod tests {
         let config = EncodeConfig::default();
         let quant = default_quantize_config();
 
-        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.0, None, &enough::Unstoppable, &enough::Unstoppable).unwrap();
+        let result = encode_rgba8_auto(
+            img.as_ref(),
+            &config,
+            &quant,
+            0.0,
+            None,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
         // With only 10 colors, zenquant should produce lossless quantization
         assert!(
             result.indexed,
@@ -478,9 +540,23 @@ mod tests {
         let quant = default_quantize_config();
 
         // With very tight threshold, a gradient image should fall back to truecolor
-        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.0, None, &enough::Unstoppable, &enough::Unstoppable).unwrap();
+        let result = encode_rgba8_auto(
+            img.as_ref(),
+            &config,
+            &quant,
+            0.0,
+            None,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
         // Even if this happens to be lossless, that's OK — we just verify the function works
-        let decoded = crate::decode::decode(&result.data, None, &enough::Unstoppable).unwrap();
+        let decoded = crate::decode::decode(
+            &result.data,
+            &crate::decode::PngLimits::none(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
         assert_eq!(decoded.info.width, 16);
         assert_eq!(decoded.info.height, 16);
     }
@@ -504,7 +580,16 @@ mod tests {
         let quant = default_quantize_config();
 
         // With generous threshold, should use indexed
-        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.10, None, &enough::Unstoppable, &enough::Unstoppable).unwrap();
+        let result = encode_rgba8_auto(
+            img.as_ref(),
+            &config,
+            &quant,
+            0.10,
+            None,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
         assert!(
             result.indexed,
             "64x64 gradient with 0.10 threshold should use indexed"
@@ -518,7 +603,12 @@ mod tests {
         );
 
         // Indexed should decode correctly
-        let decoded = crate::decode::decode(&result.data, None, &enough::Unstoppable).unwrap();
+        let decoded = crate::decode::decode(
+            &result.data,
+            &crate::decode::PngLimits::none(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
         assert_eq!(decoded.info.width, 64);
         assert_eq!(decoded.info.height, 64);
     }

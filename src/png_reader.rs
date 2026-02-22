@@ -659,10 +659,7 @@ pub(crate) struct RowDecoder<'a> {
 
 impl<'a> RowDecoder<'a> {
     /// Create a new RowDecoder from PNG file bytes.
-    pub fn new(
-        data: &'a [u8],
-        limits: Option<&crate::decode::PngLimits>,
-    ) -> Result<Self, PngError> {
+    pub fn new(data: &'a [u8], limits: &crate::decode::PngLimits) -> Result<Self, PngError> {
         // Validate signature
         if data.len() < 8 || data[..8] != PNG_SIGNATURE {
             return Err(PngError::Decode("not a PNG file".into()));
@@ -706,10 +703,8 @@ impl<'a> RowDecoder<'a> {
         }
 
         // Apply limits
-        if let Some(lim) = limits {
-            let output_bpp = output_bytes_per_pixel(&ihdr, &ancillary) as u32;
-            lim.validate(ihdr.width, ihdr.height, output_bpp)?;
-        }
+        let output_bpp = output_bytes_per_pixel(&ihdr, &ancillary) as u32;
+        limits.validate(ihdr.width, ihdr.height, output_bpp)?;
 
         let stride = ihdr.stride();
         let raw_row_bytes = ihdr.raw_row_bytes();
@@ -1278,7 +1273,7 @@ fn adam7_pass_size(width: u32, height: u32, pass: usize) -> (u32, u32) {
 /// then return the assembled pixel rows.
 pub(crate) fn decode_interlaced(
     data: &'_ [u8],
-    limits: Option<&crate::decode::PngLimits>,
+    limits: &crate::decode::PngLimits,
     cancel: &dyn Stop,
 ) -> Result<(Ihdr, PngAncillary, Vec<u8>, OutputFormat), PngError> {
     // Validate signature
@@ -1319,10 +1314,8 @@ pub(crate) fn decode_interlaced(
 
     let fmt = OutputFormat::from_ihdr(&ihdr, &ancillary);
 
-    if let Some(lim) = limits {
-        let out_bpp = (fmt.channels * fmt.bytes_per_channel) as u32;
-        lim.validate(ihdr.width, ihdr.height, out_bpp)?;
-    }
+    let out_bpp = (fmt.channels * fmt.bytes_per_channel) as u32;
+    limits.validate(ihdr.width, ihdr.height, out_bpp)?;
 
     let bpp = ihdr.filter_bpp();
     let width = ihdr.width;
@@ -1592,7 +1585,7 @@ use crate::decode::PngDecodeOutput;
 /// Decode PNG to pixels using our own decoder.
 pub(crate) fn decode_png(
     data: &[u8],
-    limits: Option<&crate::decode::PngLimits>,
+    limits: &crate::decode::PngLimits,
     cancel: &dyn Stop,
 ) -> Result<PngDecodeOutput, PngError> {
     // Check for interlacing first
@@ -1640,7 +1633,7 @@ pub(crate) fn decode_png(
 /// Decode interlaced PNG to PngDecodeOutput.
 fn decode_interlaced_to_output(
     data: &[u8],
-    limits: Option<&crate::decode::PngLimits>,
+    limits: &crate::decode::PngLimits,
     cancel: &dyn Stop,
 ) -> Result<PngDecodeOutput, PngError> {
     let (ihdr, ancillary, pixels, _fmt) = decode_interlaced(data, limits, cancel)?;
@@ -1745,7 +1738,11 @@ mod tests {
 
     #[test]
     fn chunk_parser_validates_signature() {
-        let result = decode_png(b"not a png", None, &Unstoppable);
+        let result = decode_png(
+            b"not a png",
+            &crate::decode::PngLimits::none(),
+            &Unstoppable,
+        );
         assert!(result.is_err());
     }
 
@@ -1863,7 +1860,7 @@ mod tests {
             let data = std::fs::read(&path).unwrap();
 
             // Decode with our decoder
-            let our_result = decode_png(&data, None, &Unstoppable);
+            let our_result = decode_png(&data, &crate::decode::PngLimits::none(), &Unstoppable);
 
             // Decode with reference png crate
             let ref_result = decode_with_png_crate(&data);
@@ -2094,7 +2091,10 @@ mod tests {
             ("codec-corpus", "/home/lilith/work/codec-corpus"),
             ("discover", "/mnt/v/discover/images"),
             ("kodak", "/mnt/v/discover/kodak/images"),
-            ("image-png", "/home/lilith/work/jpeg-encoder/external/image-png"),
+            (
+                "image-png",
+                "/home/lilith/work/jpeg-encoder/external/image-png",
+            ),
         ];
 
         let mut total_tested = 0u32;
@@ -2116,13 +2116,20 @@ mod tests {
             let mut corpus_skipped = 0u32;
             let mut corpus_both_err = 0u32;
 
-            let progress_interval = if pngs.len() > 1000 { pngs.len() / 20 } else { usize::MAX };
+            let progress_interval = if pngs.len() > 1000 {
+                pngs.len() / 20
+            } else {
+                usize::MAX
+            };
 
             for (idx, path) in pngs.iter().enumerate() {
                 if idx > 0 && idx % progress_interval == 0 {
                     eprintln!(
                         "  [{}/{}] {} matched, {} failures so far",
-                        idx, pngs.len(), corpus_tested, failures.len()
+                        idx,
+                        pngs.len(),
+                        corpus_tested,
+                        failures.len()
                     );
                 }
 
@@ -2146,7 +2153,7 @@ mod tests {
                     }
                 };
 
-                let our_result = decode_png(&data, None, &Unstoppable);
+                let our_result = decode_png(&data, &crate::decode::PngLimits::none(), &Unstoppable);
                 let ref_result = decode_with_png_crate(&data);
 
                 match (our_result, ref_result) {
@@ -2159,8 +2166,12 @@ mod tests {
                             let ref_desc = format_pixel_data(&reference.pixels);
                             failures.push(alloc::format!(
                                 "[{}] {}: pixel mismatch (ours={}, ref={}, our_len={}, ref_len={})",
-                                corpus_name, filename_str, our_desc, ref_desc,
-                                our_bytes.len(), ref_bytes.len()
+                                corpus_name,
+                                filename_str,
+                                our_desc,
+                                ref_desc,
+                                our_bytes.len(),
+                                ref_bytes.len()
                             ));
                         } else {
                             corpus_tested += 1;
@@ -2169,7 +2180,9 @@ mod tests {
                     (Err(e), Ok(_)) => {
                         failures.push(alloc::format!(
                             "[{}] {}: we failed but ref succeeded: {}",
-                            corpus_name, filename_str, e
+                            corpus_name,
+                            filename_str,
+                            e
                         ));
                     }
                     (Ok(_), Err(_)) => {
@@ -2184,7 +2197,10 @@ mod tests {
 
             eprintln!(
                 "  {} matched, {} skipped, {} both-err, {} failures so far",
-                corpus_tested, corpus_skipped, corpus_both_err, failures.len()
+                corpus_tested,
+                corpus_skipped,
+                corpus_both_err,
+                failures.len()
             );
             total_tested += corpus_tested;
             total_skipped += corpus_skipped;
@@ -2193,7 +2209,10 @@ mod tests {
 
         eprintln!(
             "\n=== TOTAL: {} matched, {} skipped, {} both-err, {} failures ===",
-            total_tested, total_skipped, total_both_err, failures.len()
+            total_tested,
+            total_skipped,
+            total_both_err,
+            failures.len()
         );
 
         if !failures.is_empty() {
@@ -2201,10 +2220,7 @@ mod tests {
             for f in &failures {
                 eprintln!("  FAIL: {}", f);
             }
-            panic!(
-                "{} corpus comparison failures (see stderr)",
-                failures.len()
-            );
+            panic!("{} corpus comparison failures (see stderr)", failures.len());
         }
     }
 
@@ -2273,14 +2289,22 @@ mod tests {
             let mut corpus_tested = 0u32;
             let mut corpus_we_fail = 0u32;
             let mut corpus_both_err = 0u32;
-            let progress_interval = if pngs.len() > 500 { pngs.len() / 20 } else { usize::MAX };
+            let progress_interval = if pngs.len() > 500 {
+                pngs.len() / 20
+            } else {
+                usize::MAX
+            };
 
             for (idx, path) in pngs.iter().enumerate() {
                 if idx > 0 && idx % progress_interval == 0 {
                     eprintln!(
                         "  [{}/{}] {} ok, {} we-fail, {} mismatch, {} timeout",
-                        idx, pngs.len(), corpus_tested, corpus_we_fail,
-                        total_pixel_mismatch, total_timeout
+                        idx,
+                        pngs.len(),
+                        corpus_tested,
+                        corpus_we_fail,
+                        total_pixel_mismatch,
+                        total_timeout
                     );
                 }
 
@@ -2299,9 +2323,13 @@ mod tests {
 
                 // Skip very large files (>50MB)
                 if data.len() > 50_000_000 {
-                    let _ = writeln!(results_file,
+                    let _ = writeln!(
+                        results_file,
                         "{{\"path\":\"{}\",\"corpus\":\"{}\",\"result\":\"skipped\",\"reason\":\"too_large\",\"size\":{}}}",
-                        path_str, corpus_name, data.len());
+                        path_str,
+                        corpus_name,
+                        data.len()
+                    );
                     corpus_we_fail += 1;
                     continue;
                 }
@@ -2312,7 +2340,7 @@ mod tests {
                 // cancellation can't break infinite loops in the fastloop.
                 let data_clone = data.clone();
                 let handle = std::thread::spawn(move || {
-                    decode_png(&data_clone, None, &Unstoppable)
+                    decode_png(&data_clone, &crate::decode::PngLimits::none(), &Unstoppable)
                 });
                 let deadline = std::time::Instant::now() + timeout_dur;
                 let our_result = loop {
@@ -2321,16 +2349,23 @@ mod tests {
                     }
                     if std::time::Instant::now() >= deadline {
                         // Abandon the thread — it'll be cleaned up on process exit
-                        let _ = writeln!(results_file,
+                        let _ = writeln!(
+                            results_file,
                             "{{\"path\":\"{}\",\"corpus\":\"{}\",\"result\":\"timeout\",\"size\":{}}}",
-                            path_str, corpus_name, data.len());
+                            path_str,
+                            corpus_name,
+                            data.len()
+                        );
                         total_timeout += 1;
                         corpus_we_fail += 1;
                         break Err(PngError::Decode("timeout".into()));
                     }
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 };
-                if our_result.as_ref().is_err_and(|e| alloc::format!("{e}").contains("timeout")) {
+                if our_result
+                    .as_ref()
+                    .is_err_and(|e| alloc::format!("{e}").contains("timeout"))
+                {
                     continue;
                 }
 
@@ -2345,16 +2380,19 @@ mod tests {
                             total_pixel_mismatch += 1;
                             alloc::format!(
                                 "{{\"path\":\"{}\",\"corpus\":\"{}\",\"result\":\"pixel_mismatch\",\"ours\":\"{}\",\"ref\":\"{}\",\"our_len\":{},\"ref_len\":{}}}",
-                                path_str, corpus_name,
+                                path_str,
+                                corpus_name,
                                 format_pixel_data(&ours.pixels),
                                 format_pixel_data(&reference.pixels),
-                                our_bytes.len(), ref_bytes.len()
+                                our_bytes.len(),
+                                ref_bytes.len()
                             )
                         } else {
                             corpus_tested += 1;
                             alloc::format!(
                                 "{{\"path\":\"{}\",\"corpus\":\"{}\",\"result\":\"ok\"}}",
-                                path_str, corpus_name
+                                path_str,
+                                corpus_name
                             )
                         }
                     }
@@ -2363,21 +2401,25 @@ mod tests {
                         let err_msg = alloc::format!("{}", e).replace('"', "'");
                         alloc::format!(
                             "{{\"path\":\"{}\",\"corpus\":\"{}\",\"result\":\"we_fail\",\"error\":\"{}\"}}",
-                            path_str, corpus_name, err_msg
+                            path_str,
+                            corpus_name,
+                            err_msg
                         )
                     }
                     (Ok(_), Err(_)) => {
                         corpus_tested += 1;
                         alloc::format!(
                             "{{\"path\":\"{}\",\"corpus\":\"{}\",\"result\":\"ok_ref_fail\"}}",
-                            path_str, corpus_name
+                            path_str,
+                            corpus_name
                         )
                     }
                     (Err(_), Err(_)) => {
                         corpus_both_err += 1;
                         alloc::format!(
                             "{{\"path\":\"{}\",\"corpus\":\"{}\",\"result\":\"both_fail\"}}",
-                            path_str, corpus_name
+                            path_str,
+                            corpus_name
                         )
                     }
                 };
@@ -2398,13 +2440,21 @@ mod tests {
 
         eprintln!(
             "\n=== TOTAL: {} ok, {} we-fail, {} both-err, {} pixel-mismatch, {} timeout, {} skipped(resumed) ===",
-            total_tested, total_we_fail, total_both_err,
-            total_pixel_mismatch, total_timeout, total_skipped
+            total_tested,
+            total_we_fail,
+            total_both_err,
+            total_pixel_mismatch,
+            total_timeout,
+            total_skipped
         );
         eprintln!("Results written to {}", results_path.display());
 
         if total_pixel_mismatch > 0 {
-            panic!("{} pixel mismatches (see {})", total_pixel_mismatch, results_path.display());
+            panic!(
+                "{} pixel mismatches (see {})",
+                total_pixel_mismatch,
+                results_path.display()
+            );
         }
     }
 
@@ -2470,7 +2520,13 @@ mod tests {
 
             eprintln!(
                 "\n{}: {}x{} depth={} ctype={}, IDAT={} bytes, expected decompressed={}",
-                path, w, h, depth, ctype, idat_data.len(), expected_size
+                path,
+                w,
+                h,
+                depth,
+                ctype,
+                idat_data.len(),
+                expected_size
             );
 
             // Test 1: Batch decompressor (whole-buffer)
@@ -2625,15 +2681,34 @@ mod tests {
             }
         };
 
-        let our = decode_png(&data, None, &zencodec_types::Unstoppable).unwrap();
+        let our = decode_png(
+            &data,
+            &crate::decode::PngLimits::none(),
+            &zencodec_types::Unstoppable,
+        )
+        .unwrap();
         let our_bytes = pixel_data_to_bytes(&our.pixels);
-        eprintln!("Our format: {}, {} bytes", format_pixel_data(&our.pixels), our_bytes.len());
-        eprintln!("Our first 32 bytes: {:?}", &our_bytes[..32.min(our_bytes.len())]);
+        eprintln!(
+            "Our format: {}, {} bytes",
+            format_pixel_data(&our.pixels),
+            our_bytes.len()
+        );
+        eprintln!(
+            "Our first 32 bytes: {:?}",
+            &our_bytes[..32.min(our_bytes.len())]
+        );
 
         let reference = decode_with_png_crate(&data).unwrap();
         let ref_bytes = pixel_data_to_bytes(&reference.pixels);
-        eprintln!("Ref format: {}, {} bytes", format_pixel_data(&reference.pixels), ref_bytes.len());
-        eprintln!("Ref first 32 bytes: {:?}", &ref_bytes[..32.min(ref_bytes.len())]);
+        eprintln!(
+            "Ref format: {}, {} bytes",
+            format_pixel_data(&reference.pixels),
+            ref_bytes.len()
+        );
+        eprintln!(
+            "Ref first 32 bytes: {:?}",
+            &ref_bytes[..32.min(ref_bytes.len())]
+        );
 
         let mut diffs = 0;
         for (i, (a, b)) in our_bytes.iter().zip(ref_bytes.iter()).enumerate() {
@@ -2641,7 +2716,10 @@ mod tests {
                 if diffs < 20 {
                     let px = i / 4;
                     let ch = ["R", "G", "B", "A"][i % 4];
-                    eprintln!("  diff byte {}: pixel {} {}: ours={} ref={}", i, px, ch, a, b);
+                    eprintln!(
+                        "  diff byte {}: pixel {} {}: ours={} ref={}",
+                        i, px, ch, a, b
+                    );
                 }
                 diffs += 1;
             }
@@ -2655,7 +2733,8 @@ mod tests {
     #[test]
     #[ignore]
     fn debug_streaming_divergence() {
-        let path = "/mnt/v/output/corpus-builder/png-8/wm_upload_wikimedia_org_13efdd48e85b970e.png";
+        let path =
+            "/mnt/v/output/corpus-builder/png-8/wm_upload_wikimedia_org_13efdd48e85b970e.png";
         let data = match std::fs::read(path) {
             Ok(d) => d,
             Err(e) => {
@@ -2668,8 +2747,7 @@ mod tests {
         let mut pos = 8usize;
         let mut idat_data = Vec::new();
         while pos + 12 <= data.len() {
-            let length =
-                u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
+            let length = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
             let chunk_type: [u8; 4] = data[pos + 4..pos + 8].try_into().unwrap();
             let data_end = pos + 8 + length;
             if data_end + 4 > data.len() {
@@ -2759,15 +2837,28 @@ mod tests {
 
         if let Some(diff_pos) = first_diff {
             eprintln!("\nFIRST DIVERGENCE at byte {}", diff_pos);
-            eprintln!("  batch[{}..]: {:?}", diff_pos, &batch_output[diff_pos..diff_pos + 20.min(batch_len - diff_pos)]);
-            eprintln!("  stream[{}..]: {:?}", diff_pos, &stream_output[diff_pos..diff_pos + 20.min(stream_output.len() - diff_pos)]);
+            eprintln!(
+                "  batch[{}..]: {:?}",
+                diff_pos,
+                &batch_output[diff_pos..diff_pos + 20.min(batch_len - diff_pos)]
+            );
+            eprintln!(
+                "  stream[{}..]: {:?}",
+                diff_pos,
+                &stream_output[diff_pos..diff_pos + 20.min(stream_output.len() - diff_pos)]
+            );
             // Check which row this falls in (stride = 12316 for this file)
             let stride = 12316;
             let row = diff_pos / stride;
             let col = diff_pos % stride;
             eprintln!("  Row {}, col {} (stride={})", row, col, stride);
         } else if batch_len != stream_output.len() {
-            eprintln!("Same up to {} bytes, but lengths differ: batch={} stream={}", cmp_len, batch_len, stream_output.len());
+            eprintln!(
+                "Same up to {} bytes, but lengths differ: batch={} stream={}",
+                cmp_len,
+                batch_len,
+                stream_output.len()
+            );
         } else {
             eprintln!("IDENTICAL: {} bytes match perfectly", batch_len);
         }
@@ -2798,7 +2889,11 @@ mod tests {
                     continue;
                 }
             };
-            let our = decode_png(&data, None, &zencodec_types::Unstoppable);
+            let our = decode_png(
+                &data,
+                &crate::decode::PngLimits::none(),
+                &zencodec_types::Unstoppable,
+            );
             let reference = decode_with_png_crate(&data);
             match (&our, &reference) {
                 (Ok(o), Ok(r)) => {
@@ -2807,7 +2902,11 @@ mod tests {
                     if ob == rb {
                         eprintln!("{name}: OK ({} bytes)", ob.len());
                     } else {
-                        eprintln!("{name}: PIXEL MISMATCH (ours={} ref={})", ob.len(), rb.len());
+                        eprintln!(
+                            "{name}: PIXEL MISMATCH (ours={} ref={})",
+                            ob.len(),
+                            rb.len()
+                        );
                         failures.push(name);
                     }
                 }

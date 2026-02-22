@@ -7,14 +7,14 @@
 //! # Quick start
 //!
 //! ```no_run
-//! use zenpng::{decode, probe, encode_rgb8, EncodeConfig};
+//! use zenpng::{decode, probe, encode_rgb8, EncodeConfig, PngLimits};
 //! use enough::Unstoppable;
 //! use imgref::ImgVec;
 //! use rgb::Rgb;
 //!
 //! // Decode
 //! let data: &[u8] = &[]; // your PNG bytes
-//! let output = decode(data, None, &Unstoppable)?;
+//! let output = decode(data, &PngLimits::default(), &Unstoppable)?;
 //! println!("{}x{}", output.info.width, output.info.height);
 //!
 //! // Encode
