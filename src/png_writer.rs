@@ -123,7 +123,8 @@ pub(crate) fn write_indexed_png(
     let row_bytes = packed_row_bytes(w, bit_depth);
 
     // Compress with multi-strategy filter selection (bpp=1 for indexed)
-    let compressed = compress_filtered(&packed_rows, row_bytes, h, 1, compression_level, opts, None)?;
+    let compressed =
+        compress_filtered(&packed_rows, row_bytes, h, 1, compression_level, opts, None)?;
 
     // Assemble PNG
     let trns_data = truncate_trns(palette_alpha);
