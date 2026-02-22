@@ -162,13 +162,14 @@ fn reencode(
     meta: Option<&ImageMetadata<'_>>,
     config: &EncodeConfig,
 ) -> Result<Vec<u8>, zenpng::PngError> {
+    let u = &enough::Unstoppable;
     match pixels {
-        PixelData::Rgb8(img) => zenpng::encode_rgb8(img.as_ref(), meta, config),
-        PixelData::Rgba8(img) => zenpng::encode_rgba8(img.as_ref(), meta, config),
-        PixelData::Gray8(img) => zenpng::encode_gray8(img.as_ref(), meta, config),
-        PixelData::Rgb16(img) => zenpng::encode_rgb16(img.as_ref(), meta, config),
-        PixelData::Rgba16(img) => zenpng::encode_rgba16(img.as_ref(), meta, config),
-        PixelData::Gray16(img) => zenpng::encode_gray16(img.as_ref(), meta, config),
+        PixelData::Rgb8(img) => zenpng::encode_rgb8(img.as_ref(), meta, config, u, u),
+        PixelData::Rgba8(img) => zenpng::encode_rgba8(img.as_ref(), meta, config, u, u),
+        PixelData::Gray8(img) => zenpng::encode_gray8(img.as_ref(), meta, config, u, u),
+        PixelData::Rgb16(img) => zenpng::encode_rgb16(img.as_ref(), meta, config, u, u),
+        PixelData::Rgba16(img) => zenpng::encode_rgba16(img.as_ref(), meta, config, u, u),
+        PixelData::Gray16(img) => zenpng::encode_gray16(img.as_ref(), meta, config, u, u),
         PixelData::GrayAlpha8(_) | PixelData::GrayAlpha16(_) => Err(
             zenpng::PngError::InvalidInput("GrayAlpha not supported".into()),
         ),

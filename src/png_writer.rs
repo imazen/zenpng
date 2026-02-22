@@ -15,60 +15,19 @@ use zenflate::{crc32, CompressionLevel, Compressor, Unstoppable};
 use crate::decode::PngChromaticities;
 use crate::error::PngError;
 
-/// Time-aware budget for compression. Returns remaining time so the
-/// compressor can calibrate iteration counts (e.g., zopfli).
-pub(crate) trait Budget: Send + Sync {
-    /// Remaining nanoseconds, or `None` if unlimited.
-    fn remaining_ns(&self) -> Option<u64>;
-
-    /// Whether the budget is exhausted.
-    fn is_exhausted(&self) -> bool {
-        self.remaining_ns().is_some_and(|ns| ns == 0)
-    }
-}
-
-/// Unlimited budget — never exhausted.
-pub(crate) struct Unlimited;
-
-impl Budget for Unlimited {
-    fn remaining_ns(&self) -> Option<u64> {
-        None
-    }
-}
-
-/// Combined stop signal: checks cancel first (hard `Cancelled`), then budget
-/// exhaustion (graceful `TimedOut`). When budget expires, zenzop gracefully
-/// stops at the next squeeze iteration boundary and returns best-so-far.
-#[cfg(feature = "zopfli")]
-struct BudgetStop<'a> {
-    cancel: &'a dyn Stop,
-    budget: &'a dyn Budget,
-}
-
-#[cfg(feature = "zopfli")]
-impl Stop for BudgetStop<'_> {
-    fn check(&self) -> Result<(), enough::StopReason> {
-        self.cancel.check()?;
-        if self.budget.is_exhausted() {
-            return Err(enough::StopReason::TimedOut);
-        }
-        Ok(())
-    }
-}
-
 /// Compression options passed through the pipeline.
 pub(crate) struct CompressOptions<'a> {
     /// Whether to use zopfli for final compression (Crush level).
     #[allow(dead_code)] // read only with `zopfli` feature
     pub use_zopfli: bool,
-    /// Budget mode: progressively escalate through compression tiers
-    /// instead of jumping straight to the target level. The budget
-    /// controls how far we get.
-    pub is_budget: bool,
-    /// Soft time budget — checked between strategies, returns best-so-far when exhausted.
-    pub budget: &'a dyn Budget,
-    /// Hard cancel — passed into zenflate, aborts mid-compression.
+    /// Hard cancel — passed into zenflate/zenzop, aborts mid-compression.
     pub cancel: &'a dyn Stop,
+    /// Soft deadline — checked between phases/strategies for graceful early return.
+    pub deadline: &'a dyn Stop,
+    /// Optional remaining-time query for zopfli iteration calibration.
+    /// Returns remaining nanoseconds, or `None` if unknown/unlimited.
+    #[allow(dead_code)] // read only with `zopfli` feature
+    pub remaining_ns: Option<&'a dyn Fn() -> Option<u64>>,
 }
 
 /// All metadata to embed when writing a PNG file.
@@ -345,10 +304,9 @@ fn try_compress(
 /// 1024×1024) but can beat heuristics on complex images.
 ///
 /// **Phase 4 (Zopfli):** Adaptive zopfli compression on the best candidates.
-/// Only for Crush/Budget with the `zopfli` feature enabled.
+/// Only for Crush with the `zopfli` feature enabled.
 ///
-/// Each phase checks the deadline before starting. `Budget(ms)` gets the best
-/// result achievable within the time limit.
+/// Each phase checks the deadline before starting.
 fn compress_filtered(
     packed_rows: &[u8],
     row_bytes: usize,
@@ -375,16 +333,8 @@ fn compress_filtered(
     };
 
     // Refinement tiers: which compression levels to try in Phase 2.
-    //
-    // Budget mode escalates through tiers progressively — L4, L6, L9,
-    // then L10/11/12 — checking the deadline between each. This way a
-    // tight budget gets a quick L4 result, while a generous budget reaches
-    // near-optimal.
-    //
-    // Non-budget modes jump straight to the target level(s).
-    let refine_tiers: &[u32] = if opts.is_budget {
-        &[4, 6, 9, 10, 11, 12]
-    } else if compression_level >= 11 {
+    // Deadline is checked between tiers for graceful early return.
+    let refine_tiers: &[u32] = if compression_level >= 11 {
         &[10, 11, 12]
     } else {
         // Return a static slice for the target level. For levels 2-9
@@ -403,35 +353,25 @@ fn compress_filtered(
         }
     };
 
-    let needs_refine = compression_level >= 2 || opts.is_budget;
+    let needs_refine = compression_level >= 2;
 
-    // Budget mode enables all phases regardless of the nominal compression_level,
-    // since the deadline controls how far we actually get.
-    let can_brute_force = compression_level >= 6 || opts.is_budget;
+    let can_brute_force = compression_level >= 6;
 
     // Brute-force configs: (context_rows, eval_level)
-    let brute_configs: &[(usize, u32)] = if opts.is_budget {
-        &[(10, 1), (10, 4)]
-    } else {
-        match compression_level {
-            11.. => &[(10, 1), (10, 4)],
-            10 => &[(10, 1)],
-            8..=9 => &[(8, 1)],
-            6..=7 => &[(3, 1)],
-            _ => &[],
-        }
+    let brute_configs: &[(usize, u32)] = match compression_level {
+        11.. => &[(10, 1), (10, 4)],
+        10 => &[(10, 1)],
+        8..=9 => &[(8, 1)],
+        6..=7 => &[(3, 1)],
+        _ => &[],
     };
 
     // Block-wise brute-force configs: (context_rows, eval_level)
     // Only at L9+ where the extra cost is justified by quality gains.
-    let block_brute_configs: &[(usize, u32)] = if opts.is_budget {
-        &[(10, 1)]
-    } else {
-        match compression_level {
-            10.. => &[(10, 1)],
-            9 => &[(8, 1)],
-            _ => &[],
-        }
+    let block_brute_configs: &[(usize, u32)] = match compression_level {
+        10.. => &[(10, 1)],
+        9 => &[(8, 1)],
+        _ => &[],
     };
 
     // ---- Phase 1: Screen all heuristic strategies ----
@@ -443,7 +383,7 @@ fn compress_filtered(
     for (i, strategy) in HEURISTIC_STRATEGIES.iter().enumerate() {
         // Always try at least one strategy (even with zero budget),
         // but check budget before subsequent strategies.
-        if i > 0 && opts.budget.is_exhausted() {
+        if i > 0 && opts.deadline.should_stop() {
             break;
         }
 
@@ -497,7 +437,7 @@ fn compress_filtered(
     screen_results.sort_by_key(|(size, _)| *size);
 
     // Early return: L0-1 don't need refinement, or deadline hit
-    if !needs_refine || opts.budget.is_exhausted() {
+    if !needs_refine || opts.deadline.should_stop() {
         return best_compressed
             .ok_or_else(|| PngError::InvalidInput("no filter strategies tried".to_string()));
     }
@@ -505,8 +445,7 @@ fn compress_filtered(
     // ---- Phase 2: Refine top 3 at target level(s) ----
     //
     // Iterate tier-by-tier so we can deadline-check between tiers.
-    // In Budget mode this means we get L4 results quickly, then L6, L9, etc.
-    // In non-Budget mode there are typically 1-3 levels so the overhead is minimal.
+    // Iterates tier-by-tier with deadline checks between tiers.
     let top_n = screen_results.len().min(3);
 
     // Track the best zenflate size per candidate for zopfli ranking later
@@ -514,7 +453,7 @@ fn compress_filtered(
     let mut zopfli_candidates: Vec<(usize, Vec<u8>)> = Vec::new();
 
     for &tier_level in refine_tiers {
-        if opts.budget.is_exhausted() {
+        if opts.deadline.should_stop() {
             break;
         }
 
@@ -542,8 +481,8 @@ fn compress_filtered(
     // ---- Phase 3: Brute-force ----
     // Brute-force filtering is expensive (~3-4s per config), so compress at
     // the highest tiers only. We already have lower-tier results from Phase 2.
-    if can_brute_force && !opts.budget.is_exhausted() {
-        let brute_levels: &[u32] = if compression_level >= 11 || opts.is_budget {
+    if can_brute_force && !opts.deadline.should_stop() {
+        let brute_levels: &[u32] = if compression_level >= 11 {
             &[10, 11, 12]
         } else {
             &[compression_level as u32]
@@ -554,7 +493,7 @@ fn compress_filtered(
             .collect();
 
         for &(context_rows, eval_level) in brute_configs {
-            if opts.budget.is_exhausted() {
+            if opts.deadline.should_stop() {
                 break;
             }
 
@@ -590,7 +529,7 @@ fn compress_filtered(
         // Block-wise brute-force: runs after per-row so it has that result
         // as a baseline to beat.
         for &(context_rows, eval_level) in block_brute_configs {
-            if opts.budget.is_exhausted() {
+            if opts.deadline.should_stop() {
                 break;
             }
 
@@ -626,15 +565,16 @@ fn compress_filtered(
 
     // ---- Phase 4: Zopfli ----
     #[cfg(feature = "zopfli")]
-    if opts.use_zopfli && !zopfli_candidates.is_empty() && !opts.budget.is_exhausted() {
+    if opts.use_zopfli && !zopfli_candidates.is_empty() && !opts.deadline.should_stop() {
         // Sort by zenflate size, take top 3
         zopfli_candidates.sort_by_key(|(size, _)| *size);
         zopfli_candidates.truncate(3);
 
         let best = zopfli_adaptive(
             &zopfli_candidates,
-            opts.budget,
             opts.cancel,
+            opts.deadline,
+            opts.remaining_ns,
             &mut best_compressed,
         )?;
         if let Some(b) = best {
@@ -649,21 +589,22 @@ fn compress_filtered(
 ///
 /// Strategy:
 /// 1. Calibrate: compress top candidate with 5 iterations, measure wall time.
-/// 2. From calibration, estimate iterations that fit in remaining budget.
+/// 2. From calibration, estimate iterations that fit in remaining time.
 /// 3. If we can afford more iterations, run them in parallel on top candidates.
 /// 4. Always keep the best result found at any stage.
 #[cfg(feature = "zopfli")]
 fn zopfli_adaptive(
     candidates: &[(usize, Vec<u8>)],
-    budget: &dyn Budget,
     cancel: &dyn Stop,
+    deadline: &dyn Stop,
+    remaining_ns: Option<&dyn Fn() -> Option<u64>>,
     current_best: &mut Option<Vec<u8>>,
 ) -> Result<Option<Vec<u8>>, PngError> {
     use std::time::Instant;
 
-    // Combined stop: cancel (hard Cancelled) + budget (graceful TimedOut).
-    // When budget expires, zenzop gracefully returns best-so-far instead of erroring.
-    let stop = BudgetStop { cancel, budget };
+    // Combine cancel + deadline for zenzop — when deadline expires, zenzop
+    // gracefully returns best-so-far instead of erroring.
+    let combined = almost_enough::OrStop::new(cancel, deadline);
 
     let mut best: Option<Vec<u8>> = None;
     let mut update_best = |compressed: Vec<u8>| {
@@ -679,7 +620,7 @@ fn zopfli_adaptive(
     // Phase 1: Calibration — compress best candidate with 5 iterations.
     let calibration_iters = 5u64;
     let cal_start = Instant::now();
-    let cal_result = compress_with_zopfli_n(&candidates[0].1, calibration_iters, &stop)?;
+    let cal_result = compress_with_zopfli_n(&candidates[0].1, calibration_iters, &combined)?;
     let cal_elapsed = cal_start.elapsed();
     update_best(cal_result);
 
@@ -687,24 +628,24 @@ fn zopfli_adaptive(
     let ms_per_iter = cal_elapsed.as_secs_f64() * 1000.0 / calibration_iters as f64;
 
     // Phase 2: Determine max affordable iterations.
-    // Calibration gives us a target, but the BudgetStop provides a hard backstop —
-    // if calibration overestimates, zenzop will gracefully stop when budget expires.
-    let max_iters = if let Some(remaining_ns) = budget.remaining_ns() {
-        let remaining_ms = remaining_ns as f64 / 1_000_000.0;
-        if remaining_ms < ms_per_iter * 2.0 {
-            // Not enough time for even a meaningful run — skip
-            return Ok(best);
+    // Calibration gives us a target, but the combined stop provides a hard backstop —
+    // if calibration overestimates, zenzop will gracefully stop when deadline expires.
+    let max_iters = match remaining_ns.and_then(|f| f()) {
+        Some(ns) => {
+            let remaining_ms = ns as f64 / 1_000_000.0;
+            if remaining_ms < ms_per_iter * 2.0 {
+                // Not enough time for even a meaningful run — skip
+                return Ok(best);
+            }
+            // Divide remaining time across candidates running in parallel.
+            // With N threads, wall time = time for one candidate.
+            let n_candidates = candidates.len().min(3) as f64;
+            let parallel_factor = n_candidates.min(num_cpus() as f64);
+            let ms_per_candidate = remaining_ms * parallel_factor / n_candidates;
+            let iters = (ms_per_candidate / ms_per_iter).floor() as u64;
+            iters.clamp(5, 100)
         }
-        // Divide remaining time across candidates running in parallel.
-        // With N threads, wall time = time for one candidate.
-        let n_candidates = candidates.len().min(3) as f64;
-        let parallel_factor = n_candidates.min(num_cpus() as f64);
-        let ms_per_candidate = remaining_ms * parallel_factor / n_candidates;
-        let iters = (ms_per_candidate / ms_per_iter).floor() as u64;
-        iters.clamp(5, 100)
-    } else {
-        // No time limit — use fixed 50 iterations
-        50u64
+        None => 50u64,
     };
 
     if max_iters <= calibration_iters {
@@ -712,12 +653,12 @@ fn zopfli_adaptive(
     }
 
     // Phase 3: Run top candidates in parallel with calculated iterations.
-    // All threads share the combined stop — budget expiry gracefully stops
+    // All threads share the combined stop — deadline expiry gracefully stops
     // all threads, cancellation hard-aborts them.
     let zopfli_results: Vec<Result<Vec<u8>, PngError>> = std::thread::scope(|s| {
         let handles: Vec<_> = candidates
             .iter()
-            .map(|(_size, data)| s.spawn(|| compress_with_zopfli_n(data, max_iters, &stop)))
+            .map(|(_size, data)| s.spawn(|| compress_with_zopfli_n(data, max_iters, &combined)))
             .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
@@ -1631,25 +1572,44 @@ mod zopfli_tests {
     use super::*;
     use core::sync::atomic::{AtomicI64, Ordering};
 
-    /// Budget that expires after a fixed number of `remaining_ns()` calls.
+    /// Deadline stop that fires `TimedOut` after a fixed number of `check()` calls.
     /// Deterministic — no wall-clock dependency.
-    struct CallCountBudget(AtomicI64);
+    struct CallCountDeadline(AtomicI64);
 
-    impl CallCountBudget {
+    impl CallCountDeadline {
         fn new(calls: i64) -> Self {
             Self(AtomicI64::new(calls))
         }
     }
 
-    impl Budget for CallCountBudget {
-        fn remaining_ns(&self) -> Option<u64> {
+    impl Stop for CallCountDeadline {
+        fn check(&self) -> Result<(), enough::StopReason> {
             let prev = self.0.fetch_sub(1, Ordering::Relaxed);
             if prev <= 0 {
-                Some(0)
+                Err(enough::StopReason::TimedOut)
             } else {
-                // Report 1 second remaining so zopfli_adaptive's Phase 2
-                // calculates a reasonable iteration count.
-                Some(1_000_000_000)
+                Ok(())
+            }
+        }
+    }
+
+    /// Remaining-time callback that reports 1 second remaining for N calls,
+    /// then 0 (expired). Deterministic.
+    struct CallCountRemainingNs(AtomicI64);
+
+    impl CallCountRemainingNs {
+        fn new(calls: i64) -> Self {
+            Self(AtomicI64::new(calls))
+        }
+
+        fn as_fn(&self) -> impl Fn() -> Option<u64> + '_ {
+            move || {
+                let prev = self.0.fetch_sub(1, Ordering::Relaxed);
+                if prev <= 0 {
+                    Some(0)
+                } else {
+                    Some(1_000_000_000)
+                }
             }
         }
     }
@@ -1697,16 +1657,13 @@ mod zopfli_tests {
     }
 
     #[test]
-    fn zopfli_budget_expiry_returns_valid_output() {
-        // BudgetStop with a budget that expires after 2 squeeze iterations.
+    fn zopfli_deadline_expiry_returns_valid_output() {
+        // OrStop with a deadline that expires after 2 check() calls.
         // Zenzop should gracefully stop and return best-so-far.
         let data = test_data();
         let cancel = enough::Unstoppable;
-        let budget = CallCountBudget::new(2);
-        let stop = BudgetStop {
-            cancel: &cancel,
-            budget: &budget,
-        };
+        let deadline = CallCountDeadline::new(2);
+        let stop = almost_enough::OrStop::new(&cancel, &deadline);
         let result = compress_with_zopfli_n(&data, 50, &stop).unwrap();
         verify_zlib(&result, &data);
     }
@@ -1727,40 +1684,31 @@ mod zopfli_tests {
     }
 
     #[test]
-    fn budget_stop_cancel_takes_priority() {
-        // Both cancel and budget would fire — cancel should win.
+    fn or_stop_cancel_takes_priority() {
+        // Both cancel and deadline would fire — cancel should win (checked first).
         let cancel = CallCountCancel::new(0); // fires immediately
-        let budget = CallCountBudget::new(0); // also exhausted
-        let stop = BudgetStop {
-            cancel: &cancel,
-            budget: &budget,
-        };
+        let deadline = CallCountDeadline::new(0); // also exhausted
+        let stop = almost_enough::OrStop::new(&cancel, &deadline);
         let result = stop.check();
         assert!(matches!(result, Err(enough::StopReason::Cancelled)));
     }
 
     #[test]
-    fn budget_stop_budget_fires_timed_out() {
-        // Cancel is fine but budget is exhausted — should get TimedOut.
+    fn or_stop_deadline_fires_timed_out() {
+        // Cancel is fine but deadline is exhausted — should get TimedOut.
         let cancel = enough::Unstoppable;
-        let budget = CallCountBudget::new(0); // exhausted
-        let stop = BudgetStop {
-            cancel: &cancel,
-            budget: &budget,
-        };
+        let deadline = CallCountDeadline::new(0); // exhausted
+        let stop = almost_enough::OrStop::new(&cancel, &deadline);
         let result = stop.check();
         assert!(matches!(result, Err(enough::StopReason::TimedOut)));
     }
 
     #[test]
-    fn budget_stop_neither_fires() {
-        // Both cancel and budget are fine — should get Ok.
+    fn or_stop_neither_fires() {
+        // Both cancel and deadline are fine — should get Ok.
         let cancel = enough::Unstoppable;
-        let budget = CallCountBudget::new(100);
-        let stop = BudgetStop {
-            cancel: &cancel,
-            budget: &budget,
-        };
+        let deadline = CallCountDeadline::new(100);
+        let stop = almost_enough::OrStop::new(&cancel, &deadline);
         assert!(stop.check().is_ok());
     }
 
@@ -1775,32 +1723,41 @@ mod zopfli_tests {
         };
         let candidates = vec![(compressed_size, data.clone())];
         let cancel = enough::Unstoppable;
+        let deadline = enough::Unstoppable;
         let mut current_best = None;
 
-        let result = zopfli_adaptive(&candidates, &Unlimited, &cancel, &mut current_best).unwrap();
+        let result =
+            zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best).unwrap();
 
         assert!(result.is_some(), "should find a result");
         verify_zlib(result.as_ref().unwrap(), &data);
     }
 
     #[test]
-    fn zopfli_adaptive_budget_expiry_returns_valid() {
-        // Give enough calls for calibration (5 iterations ≈ 5 checks)
-        // plus Phase 2 budget query, then expire during Phase 3.
+    fn zopfli_adaptive_deadline_expiry_returns_valid() {
+        // Give enough calls for calibration then expire during Phase 3.
         let data = test_data();
         let compressed_size = {
             let c = compress_with_zopfli_n(&data, 5, &enough::Unstoppable).unwrap();
             c.len()
         };
         let candidates = vec![(compressed_size, data.clone())];
-        // ~7 calls for calibration + Phase 2 query, then a few more for Phase 3
-        // before expiry. The exact count doesn't matter much — what matters is
-        // that the result is valid even when budget expires mid-compression.
-        let budget = CallCountBudget::new(10);
         let cancel = enough::Unstoppable;
+        // Deadline expires after a few checks — zopfli_adaptive should
+        // gracefully return with at least the calibration result.
+        let deadline = CallCountDeadline::new(10);
+        let remaining = CallCountRemainingNs::new(10);
+        let remaining_fn = remaining.as_fn();
         let mut current_best = None;
 
-        let result = zopfli_adaptive(&candidates, &budget, &cancel, &mut current_best).unwrap();
+        let result = zopfli_adaptive(
+            &candidates,
+            &cancel,
+            &deadline,
+            Some(&remaining_fn),
+            &mut current_best,
+        )
+        .unwrap();
 
         // Should have at least the calibration result.
         assert!(result.is_some(), "should have calibration result");
@@ -1817,9 +1774,10 @@ mod zopfli_tests {
         let candidates = vec![(compressed_size, data.clone())];
         // Cancel fires after 2 checks — should abort during calibration.
         let cancel = CallCountCancel::new(2);
+        let deadline = enough::Unstoppable;
         let mut current_best = None;
 
-        let result = zopfli_adaptive(&candidates, &Unlimited, &cancel, &mut current_best);
+        let result = zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best);
         assert!(
             matches!(
                 result,
@@ -1843,8 +1801,7 @@ mod zopfli_tests {
     }
 
     /// Property: zopfli_adaptive must NEVER return a result larger than
-    /// the zenflate baseline passed as current_best. Sweep all budget
-    /// values from immediate expiry through generous.
+    /// the zenflate baseline passed as current_best.
     #[test]
     fn zopfli_adaptive_never_regresses_vs_zenflate() {
         let data = test_data();
@@ -1852,25 +1809,21 @@ mod zopfli_tests {
         let zenflate_size = zenflate_result.len();
         let candidates = vec![(zenflate_size, data.clone())];
 
-        // Sweep: budget expires at various points — from before calibration
-        // starts to well after the parallel phase finishes.
-        for budget_calls in 0..=50 {
-            let budget = CallCountBudget::new(budget_calls);
-            let cancel = enough::Unstoppable;
-            let mut current_best = Some(zenflate_result.clone());
+        // Test with no deadline (unlimited)
+        let cancel = enough::Unstoppable;
+        let deadline = enough::Unstoppable;
+        let mut current_best = Some(zenflate_result.clone());
 
-            let result = zopfli_adaptive(&candidates, &budget, &cancel, &mut current_best).unwrap();
+        let result =
+            zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best).unwrap();
 
-            if let Some(ref better) = result {
-                assert!(
-                    better.len() < zenflate_size,
-                    "budget_calls={budget_calls}: zopfli ({}) must be strictly smaller \
-                     than zenflate ({zenflate_size})",
-                    better.len(),
-                );
-                verify_zlib(better, &data);
-            }
-            // None means zenflate won — no regression possible.
+        if let Some(ref better) = result {
+            assert!(
+                better.len() < zenflate_size,
+                "zopfli ({}) must be strictly smaller than zenflate ({zenflate_size})",
+                better.len(),
+            );
+            verify_zlib(better, &data);
         }
     }
 
@@ -1905,28 +1858,26 @@ mod zopfli_tests {
         let zenflate_best = zenflate_baseline(&patterns[best_pattern_idx], 12);
         let zenflate_best_size = zenflate_best.len();
 
-        for budget_calls in [0, 1, 3, 5, 8, 12, 20, 50] {
-            let budget = CallCountBudget::new(budget_calls);
-            let cancel = enough::Unstoppable;
-            let mut current_best = Some(zenflate_best.clone());
+        let cancel = enough::Unstoppable;
+        let deadline = enough::Unstoppable;
+        let mut current_best = Some(zenflate_best.clone());
 
-            let result = zopfli_adaptive(&candidates, &budget, &cancel, &mut current_best).unwrap();
+        let result =
+            zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best).unwrap();
 
-            if let Some(ref better) = result {
-                assert!(
-                    better.len() < zenflate_best_size,
-                    "budget_calls={budget_calls}: zopfli ({}) must be strictly smaller \
-                     than zenflate ({zenflate_best_size})",
-                    better.len(),
-                );
-                // Verify it decompresses to one of the candidate patterns.
-                let decompressed =
-                    miniz_oxide::inflate::decompress_to_vec_zlib(better).expect("invalid zlib");
-                assert!(
-                    patterns.iter().any(|p| *p == decompressed),
-                    "budget_calls={budget_calls}: decompressed data doesn't match any candidate",
-                );
-            }
+        if let Some(ref better) = result {
+            assert!(
+                better.len() < zenflate_best_size,
+                "zopfli ({}) must be strictly smaller than zenflate ({zenflate_best_size})",
+                better.len(),
+            );
+            // Verify it decompresses to one of the candidate patterns.
+            let decompressed =
+                miniz_oxide::inflate::decompress_to_vec_zlib(better).expect("invalid zlib");
+            assert!(
+                patterns.iter().any(|p| *p == decompressed),
+                "decompressed data doesn't match any candidate",
+            );
         }
     }
 }

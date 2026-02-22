@@ -44,10 +44,10 @@ fn main() {
         let start = std::time::Instant::now();
         let encoded = match &decoded.pixels {
             zencodec_types::PixelData::Rgb8(img) => {
-                zenpng::encode_rgb8(img.as_ref(), None, &config)
+                zenpng::encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
             }
             zencodec_types::PixelData::Rgba8(img) => {
-                zenpng::encode_rgba8(img.as_ref(), None, &config)
+                zenpng::encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
             }
             _ => panic!("unsupported"),
         };

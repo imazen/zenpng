@@ -7,9 +7,11 @@ use rgb::Rgba;
 use zencodec_types::ImageMetadata;
 use zenquant::{OutputFormat, QuantizeConfig};
 
-use crate::encode::{self, DeadlineBudget, EncodeConfig};
+use enough::Stop;
+
+use crate::encode::{self, EncodeConfig};
 use crate::error::PngError;
-use crate::png_writer::{self, Budget, PngWriteMetadata, Unlimited};
+use crate::png_writer::{self, PngWriteMetadata};
 
 /// Encode RGBA8 pixels to indexed PNG using zenquant for palette quantization.
 ///
@@ -21,6 +23,8 @@ pub fn encode_indexed_rgba8(
     encode_config: &EncodeConfig,
     quant_config: &QuantizeConfig,
     metadata: Option<&ImageMetadata<'_>>,
+    cancel: &dyn Stop,
+    deadline: &dyn Stop,
 ) -> Result<Vec<u8>, PngError> {
     let width = img.width() as u32;
     let height = img.height() as u32;
@@ -52,8 +56,7 @@ pub fn encode_indexed_rgba8(
     };
 
     let compression_level = encode_config.compression.to_zenflate_level();
-    let budget = make_budget_from_config(encode_config);
-    let opts = encode_config.compress_options(&*budget, &enough::Unstoppable);
+    let opts = encode_config.compress_options(cancel, deadline, None);
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = encode_config.source_gamma;
@@ -111,6 +114,8 @@ pub fn encode_rgba8_auto(
     quant_config: &QuantizeConfig,
     max_loss: f64,
     metadata: Option<&ImageMetadata<'_>>,
+    cancel: &dyn Stop,
+    deadline: &dyn Stop,
 ) -> Result<AutoEncodeResult, PngError> {
     let (buf, w, h) = img.to_contiguous_buf();
     let rgba_slice: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(buf.as_ref());
@@ -147,8 +152,7 @@ pub fn encode_rgba8_auto(
         };
 
         let compression_level = encode_config.compression.to_zenflate_level();
-        let budget = make_budget_from_config(encode_config);
-        let opts = encode_config.compress_options(&*budget, &enough::Unstoppable);
+        let opts = encode_config.compress_options(cancel, deadline, None);
 
         let mut write_meta = PngWriteMetadata::from_metadata(metadata);
         write_meta.source_gamma = encode_config.source_gamma;
@@ -173,23 +177,12 @@ pub fn encode_rgba8_auto(
         })
     } else {
         // Quality too low — fall back to truecolor
-        let data = encode::encode_rgba8(img, metadata, encode_config)?;
+        let data = encode::encode_rgba8(img, metadata, encode_config, cancel, deadline)?;
         Ok(AutoEncodeResult {
             data,
             indexed: false,
             quality_loss: loss,
         })
-    }
-}
-
-/// Create a budget from the encode config's time limit.
-fn make_budget_from_config(config: &EncodeConfig) -> Box<dyn Budget> {
-    let budget_ms = config.compression.budget_ms().or(config.time_limit_ms);
-    match budget_ms {
-        Some(ms) => Box::new(DeadlineBudget(
-            std::time::Instant::now() + std::time::Duration::from_millis(ms as u64),
-        )),
-        None => Box::new(Unlimited),
     }
 }
 
@@ -356,7 +349,7 @@ mod tests {
         let config = EncodeConfig::default();
         let quant = default_quantize_config();
 
-        let encoded = encode_indexed_rgba8(img.as_ref(), &config, &quant, None).unwrap();
+        let encoded = encode_indexed_rgba8(img.as_ref(), &config, &quant, None, &enough::Unstoppable, &enough::Unstoppable).unwrap();
         assert!(!encoded.is_empty());
 
         // Verify PNG signature
@@ -383,7 +376,7 @@ mod tests {
             .with_exif(exif_data)
             .with_xmp(xmp_data);
 
-        let encoded = encode_indexed_rgba8(img.as_ref(), &config, &quant, Some(&meta)).unwrap();
+        let encoded = encode_indexed_rgba8(img.as_ref(), &config, &quant, Some(&meta), &enough::Unstoppable, &enough::Unstoppable).unwrap();
         let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
         assert_eq!(decoded.info.width, 4);
         assert_eq!(decoded.info.height, 4);
@@ -416,7 +409,7 @@ mod tests {
             crate::Compression::Aggressive,
         ] {
             let config = EncodeConfig::default().with_compression(comp);
-            let encoded = encode_indexed_rgba8(img.as_ref(), &config, &quant, None).unwrap();
+            let encoded = encode_indexed_rgba8(img.as_ref(), &config, &quant, None, &enough::Unstoppable, &enough::Unstoppable).unwrap();
             let decoded = crate::decode::decode(&encoded, None, &enough::Unstoppable).unwrap();
             assert_eq!(decoded.info.width, 4);
             assert_eq!(decoded.info.height, 4);
@@ -430,7 +423,7 @@ mod tests {
         let config = EncodeConfig::default();
         let quant = default_quantize_config();
 
-        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.02, None).unwrap();
+        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.02, None, &enough::Unstoppable, &enough::Unstoppable).unwrap();
         assert!(
             result.indexed,
             "few-color image should use indexed encoding"
@@ -453,7 +446,7 @@ mod tests {
         let config = EncodeConfig::default();
         let quant = default_quantize_config();
 
-        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.0, None).unwrap();
+        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.0, None, &enough::Unstoppable, &enough::Unstoppable).unwrap();
         // With only 10 colors, zenquant should produce lossless quantization
         assert!(
             result.indexed,
@@ -485,7 +478,7 @@ mod tests {
         let quant = default_quantize_config();
 
         // With very tight threshold, a gradient image should fall back to truecolor
-        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.0, None).unwrap();
+        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.0, None, &enough::Unstoppable, &enough::Unstoppable).unwrap();
         // Even if this happens to be lossless, that's OK — we just verify the function works
         let decoded = crate::decode::decode(&result.data, None, &enough::Unstoppable).unwrap();
         assert_eq!(decoded.info.width, 16);
@@ -511,7 +504,7 @@ mod tests {
         let quant = default_quantize_config();
 
         // With generous threshold, should use indexed
-        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.10, None).unwrap();
+        let result = encode_rgba8_auto(img.as_ref(), &config, &quant, 0.10, None, &enough::Unstoppable, &enough::Unstoppable).unwrap();
         assert!(
             result.indexed,
             "64x64 gradient with 0.10 threshold should use indexed"
