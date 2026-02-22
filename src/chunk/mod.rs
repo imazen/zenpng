@@ -91,20 +91,24 @@ impl<'a> Iterator for ChunkIter<'a> {
         let chunk_data = &self.data[data_start..data_end];
         let stored_crc = u32::from_be_bytes(self.data[data_end..crc_end].try_into().unwrap());
 
-        // CRC covers type + data
-        let computed_crc = crc32(crc32(0, &chunk_type), chunk_data);
-        if stored_crc != computed_crc {
-            // PNG spec: bit 5 of the first byte indicates ancillary (lowercase).
-            // Ancillary chunks with bad CRC should be skipped, not fatal.
-            let is_ancillary = chunk_type[0] & 0x20 != 0;
-            if is_ancillary {
-                self.pos = crc_end;
-                return self.next(); // skip this chunk, try next
-            }
-            if self.skip_critical_crc {
+        // CRC covers type + data. Skip computation entirely when skip_critical_crc
+        // is set (saves CRC-32 computation over all chunk data).
+        if self.skip_critical_crc {
+            let is_critical = chunk_type[0] & 0x20 == 0;
+            if is_critical {
                 self.warnings
                     .push(crate::decode::PngWarning::CriticalChunkCrcSkipped { chunk_type });
-            } else {
+            }
+        } else {
+            let computed_crc = crc32(crc32(0, &chunk_type), chunk_data);
+            if stored_crc != computed_crc {
+                // PNG spec: bit 5 of the first byte indicates ancillary (lowercase).
+                // Ancillary chunks with bad CRC should be skipped, not fatal.
+                let is_ancillary = chunk_type[0] & 0x20 != 0;
+                if is_ancillary {
+                    self.pos = crc_end;
+                    return self.next(); // skip this chunk, try next
+                }
                 return Some(Err(PngError::Decode(alloc::format!(
                     "CRC mismatch in {:?} chunk at offset {}",
                     core::str::from_utf8(&chunk_type).unwrap_or("????"),
