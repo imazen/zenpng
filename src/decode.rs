@@ -251,6 +251,111 @@ pub fn decode(
     crate::decoder::decode_png(data, config, cancel)
 }
 
+// ── APNG decode ──────────────────────────────────────────────────────
+
+/// Per-frame APNG timing metadata.
+#[derive(Clone, Copy, Debug)]
+pub struct ApngFrameInfo {
+    /// Numerator of the frame delay fraction.
+    pub delay_num: u16,
+    /// Denominator of the frame delay fraction.
+    /// Per the APNG spec, 0 is treated as 100 (i.e., delay_num/100 seconds).
+    pub delay_den: u16,
+}
+
+/// A single composed APNG frame (canvas-sized pixels).
+#[derive(Debug)]
+pub struct ApngFrame {
+    /// Fully composited pixel data at the canvas dimensions.
+    pub pixels: PixelData,
+    /// Frame timing metadata.
+    pub frame_info: ApngFrameInfo,
+}
+
+/// APNG decode output containing fully composed frames.
+#[derive(Debug)]
+pub struct ApngDecodeOutput {
+    /// All composed frames, each at the canvas dimensions.
+    pub frames: Vec<ApngFrame>,
+    /// Image metadata (canvas dimensions, color info, etc.).
+    pub info: PngInfo,
+    /// Animation loop count. 0 means infinite looping.
+    pub num_plays: u32,
+    /// Non-fatal warnings detected during decoding.
+    pub warnings: Vec<PngWarning>,
+}
+
+/// Decode APNG with full compositing, returning canvas-sized frames.
+///
+/// For non-animated PNGs, returns the single image as frame 0 with delay=0.
+///
+/// Each frame is fully composited (dispose_op and blend_op applied) so callers
+/// get ready-to-display canvas-sized frames.
+pub fn decode_apng(
+    data: &[u8],
+    config: &PngDecodeConfig,
+    cancel: &dyn Stop,
+) -> Result<ApngDecodeOutput, PngError> {
+    // Check if this is actually an APNG
+    let probe_info = crate::decoder::probe_png(data)?;
+    if !probe_info.has_animation {
+        // Non-animated PNG: decode normally, wrap as single frame
+        let output = crate::decoder::decode_png(data, config, cancel)?;
+        let frame = ApngFrame {
+            pixels: output.pixels,
+            frame_info: ApngFrameInfo {
+                delay_num: 0,
+                delay_den: 100,
+            },
+        };
+        return Ok(ApngDecodeOutput {
+            frames: vec![frame],
+            info: output.info,
+            num_plays: 0,
+            warnings: output.warnings,
+        });
+    }
+
+    let result = crate::decoder::apng::decode_apng_composed(data, config, cancel)?;
+
+    let info = crate::decoder::build_png_info(&result.ihdr, &result.ancillary);
+    let canvas_w = result.ihdr.width as usize;
+    let canvas_h = result.ihdr.height as usize;
+    let is_16bit = result.ihdr.bit_depth == 16;
+    let num_plays = result.num_plays;
+    let warnings = result.warnings;
+
+    let frames = result
+        .frames
+        .into_iter()
+        .map(|cf| {
+            let pixels = if is_16bit {
+                // RGBA16 canvas
+                let rgba: &[rgb::Rgba<u16>] = bytemuck::cast_slice(&cf.pixels);
+                PixelData::Rgba16(imgref::ImgVec::new(rgba.to_vec(), canvas_w, canvas_h))
+            } else {
+                // RGBA8 canvas
+                let rgba: &[rgb::Rgba<u8>] = bytemuck::cast_slice(&cf.pixels);
+                PixelData::Rgba8(imgref::ImgVec::new(rgba.to_vec(), canvas_w, canvas_h))
+            };
+            ApngFrame {
+                pixels,
+                frame_info: ApngFrameInfo {
+                    delay_num: cf.fctl.delay_num,
+                    delay_den: cf.fctl.delay_den,
+                },
+            }
+        })
+        .collect();
+
+    Ok(ApngDecodeOutput {
+        frames,
+        info,
+        num_plays,
+        warnings,
+    })
+}
+
 // ── sRGB standard chromaticities ─────────────────────────────────────
 
 /// Standard sRGB chromaticities (cHRM values × 100000).

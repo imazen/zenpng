@@ -569,10 +569,8 @@ impl<'a> zencodec_types::DecodeJob<'a> for PngDecodeJob<'a> {
         }
     }
 
-    fn frame_decoder(self, _data: &[u8]) -> Result<PngFrameDecoder, PngError> {
-        Err(PngError::InvalidInput(
-            "PNG does not support animation decoding via frame_decoder".into(),
-        ))
+    fn frame_decoder(self, data: &[u8]) -> Result<PngFrameDecoder, PngError> {
+        PngFrameDecoder::new(data, self.config, self.stop)
     }
 }
 
@@ -696,16 +694,136 @@ impl zencodec_types::Decoder for PngDecoder<'_> {
 
 // ── PngFrameDecoder ──────────────────────────────────────────────────
 
-/// Stub frame decoder (PNG animation not yet supported via this path).
-pub struct PngFrameDecoder;
+/// APNG frame-by-frame decoder implementing [`FrameDecoder`](zencodec_types::FrameDecoder).
+///
+/// Yields raw (non-composited) subframes with blend/disposal metadata.
+/// The caller is responsible for compositing if desired.
+pub struct PngFrameDecoder {
+    /// Owned copy of the PNG file data.
+    file_data: Vec<u8>,
+    /// Shared image info for all frames.
+    info: std::sync::Arc<ImageInfo>,
+    /// Decode config.
+    config: crate::decode::PngDecodeConfig,
+    /// Number of frames from acTL.
+    num_frames: u32,
+    /// Loop count from acTL.
+    num_plays: u32,
+    /// Current frame index.
+    current_frame: u32,
+}
+
+impl PngFrameDecoder {
+    fn new(
+        data: &[u8],
+        config: &PngDecoderConfig,
+        _stop: Option<&dyn Stop>,
+    ) -> Result<Self, PngError> {
+        let probe_info = crate::decode::probe(data)?;
+        let image_info = convert_info(&probe_info);
+        let num_frames = probe_info.frame_count;
+
+        // Extract num_plays from acTL
+        let num_plays = if probe_info.has_animation {
+            let mut plays = 0u32;
+            let mut pos = 8usize;
+            while pos + 12 <= data.len() {
+                let length = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
+                let chunk_type: [u8; 4] = data[pos + 4..pos + 8].try_into().unwrap();
+                let data_start = pos + 8;
+                let crc_end = data_start + length + 4;
+                if crc_end > data.len() {
+                    break;
+                }
+                if chunk_type == *b"acTL" && length == 8 {
+                    plays = u32::from_be_bytes(
+                        data[data_start + 4..data_start + 8].try_into().unwrap(),
+                    );
+                    break;
+                }
+                if chunk_type == *b"IDAT" {
+                    break;
+                }
+                pos = crc_end;
+            }
+            plays
+        } else {
+            0
+        };
+
+        let decode_config = PngDecodeConfig {
+            max_pixels: config.limits.max_pixels,
+            max_memory_bytes: config.limits.max_memory_bytes,
+            skip_decompression_checksum: false,
+            skip_critical_chunk_crc: false,
+        };
+
+        Ok(Self {
+            file_data: data.to_vec(),
+            info: std::sync::Arc::new(image_info),
+            config: decode_config,
+            num_frames,
+            num_plays,
+            current_frame: 0,
+        })
+    }
+}
 
 impl zencodec_types::FrameDecoder for PngFrameDecoder {
     type Error = PngError;
 
+    fn frame_count(&self) -> Option<u32> {
+        Some(self.num_frames)
+    }
+
+    fn loop_count(&self) -> Option<u32> {
+        Some(self.num_plays)
+    }
+
     fn next_frame(&mut self) -> Result<Option<DecodeFrame>, PngError> {
-        Err(PngError::InvalidInput(
-            "PNG does not support animation decoding via frame_decoder".into(),
-        ))
+        if self.current_frame >= self.num_frames {
+            return Ok(None);
+        }
+
+        // Create a temporary ApngDecoder for each call
+        // (We can't store it because it borrows file_data)
+        // Skip to the current frame
+        let mut decoder = crate::decoder::apng::ApngDecoder::new(&self.file_data, &self.config)?;
+
+        // Skip frames until we reach current_frame
+        for _ in 0..self.current_frame {
+            if decoder.next_frame(&enough::Unstoppable)?.is_none() {
+                return Ok(None);
+            }
+        }
+
+        let raw = match decoder.next_frame(&enough::Unstoppable)? {
+            Some(f) => f,
+            None => return Ok(None),
+        };
+
+        let fctl = &raw.fctl;
+        let blend = match fctl.blend_op {
+            0 => zencodec_types::FrameBlend::Source,
+            _ => zencodec_types::FrameBlend::Over,
+        };
+        let disposal = match fctl.dispose_op {
+            0 => zencodec_types::FrameDisposal::None,
+            1 => zencodec_types::FrameDisposal::RestoreBackground,
+            _ => zencodec_types::FrameDisposal::RestorePrevious,
+        };
+        let delay_ms = fctl.delay_ms();
+        let frame_rect = [fctl.x_offset, fctl.y_offset, fctl.width, fctl.height];
+
+        let idx = self.current_frame;
+        self.current_frame += 1;
+
+        let frame = DecodeFrame::new(raw.pixels, self.info.clone(), delay_ms, idx)
+            .with_blend(blend)
+            .with_disposal(disposal)
+            .with_frame_rect(frame_rect);
+
+        Ok(Some(frame))
     }
 
     fn next_frame_into(
@@ -713,8 +831,9 @@ impl zencodec_types::FrameDecoder for PngFrameDecoder {
         _dst: PixelSliceMut<'_>,
         _prior_frame: Option<u32>,
     ) -> Result<Option<ImageInfo>, PngError> {
+        // Not implemented yet — callers can use next_frame() and copy
         Err(PngError::InvalidInput(
-            "PNG does not support animation decoding via frame_decoder".into(),
+            "PNG frame_decoder: next_frame_into not yet implemented".into(),
         ))
     }
 
@@ -722,8 +841,9 @@ impl zencodec_types::FrameDecoder for PngFrameDecoder {
         &mut self,
         _sink: &mut dyn zencodec_types::DecodeRowSink,
     ) -> Result<Option<ImageInfo>, PngError> {
+        // Not implemented yet — callers can use next_frame() and copy
         Err(PngError::InvalidInput(
-            "PNG does not support animation decoding via frame_decoder".into(),
+            "PNG frame_decoder: next_frame_rows not yet implemented".into(),
         ))
     }
 }

@@ -126,6 +126,134 @@ impl<'a> zenflate::InputSource for IdatSource<'a> {
     }
 }
 
+// ── FdatSource — InputSource for fdAT chunks ────────────────────────
+
+/// Streams raw fdAT chunk payload bytes to `StreamDecompressor`.
+/// Like `IdatSource`, but for fdAT chunks. Each fdAT starts with a
+/// 4-byte sequence number that is skipped to get the deflate payload.
+pub(crate) struct FdatSource<'a> {
+    /// Full PNG file bytes.
+    data: &'a [u8],
+    /// Byte offset of the next chunk header to check.
+    chunk_pos: usize,
+    /// Remaining bytes in the current fdAT chunk's deflate data.
+    current_data: &'a [u8],
+    /// True when we've seen a non-fdAT chunk after fdAT.
+    done: bool,
+    /// Position of the first post-fdAT chunk (for scanning).
+    pub post_fdat_pos: usize,
+    /// Whether to skip CRC validation on fdAT chunks.
+    skip_crc: bool,
+    /// Whether any fdAT CRC was skipped.
+    pub crc_skipped: bool,
+}
+
+impl<'a> FdatSource<'a> {
+    /// Create a new fdAT source positioned at the first fdAT chunk.
+    /// `first_fdat_pos` is the byte offset of the first fdAT chunk header.
+    pub fn new(data: &'a [u8], first_fdat_pos: usize, skip_crc: bool) -> Self {
+        // Parse the first fdAT chunk inline
+        let length =
+            u32::from_be_bytes(data[first_fdat_pos..first_fdat_pos + 4].try_into().unwrap())
+                as usize;
+        let data_start = first_fdat_pos + 8; // skip length + type
+        let data_end = data_start + length;
+        let next_pos = data_end + 4; // skip CRC
+
+        // Skip the 4-byte sequence number to get to deflate data
+        let deflate_start = data_start + 4;
+        let deflate_data = if deflate_start < data_end {
+            &data[deflate_start..data_end]
+        } else {
+            &data[data_end..data_end] // empty
+        };
+
+        Self {
+            data,
+            chunk_pos: next_pos,
+            current_data: deflate_data,
+            done: false,
+            post_fdat_pos: 0,
+            skip_crc,
+            crc_skipped: false,
+        }
+    }
+}
+
+impl<'a> zenflate::InputSource for FdatSource<'a> {
+    type Error = PngError;
+
+    fn fill_buf(&mut self) -> Result<&[u8], PngError> {
+        if !self.current_data.is_empty() {
+            return Ok(self.current_data);
+        }
+        if self.done {
+            return Ok(&[]);
+        }
+
+        // Advance to next chunk
+        loop {
+            if self.chunk_pos + 12 > self.data.len() {
+                self.done = true;
+                self.post_fdat_pos = self.chunk_pos;
+                return Ok(&[]);
+            }
+
+            let length = u32::from_be_bytes(
+                self.data[self.chunk_pos..self.chunk_pos + 4]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            let chunk_type: [u8; 4] = self.data[self.chunk_pos + 4..self.chunk_pos + 8]
+                .try_into()
+                .unwrap();
+            let data_start = self.chunk_pos + 8;
+            let data_end = data_start + length;
+            let crc_end = data_end + 4;
+
+            if crc_end > self.data.len() {
+                return Err(PngError::Decode("truncated fdAT chunk".into()));
+            }
+
+            if chunk_type != *b"fdAT" {
+                // Not fdAT — we're done with this frame's data
+                self.done = true;
+                self.post_fdat_pos = self.chunk_pos;
+                return Ok(&[]);
+            }
+
+            // Validate CRC
+            let stored_crc = u32::from_be_bytes(self.data[data_end..crc_end].try_into().unwrap());
+            let computed_crc = crc32(crc32(0, &chunk_type), &self.data[data_start..data_end]);
+            if stored_crc != computed_crc {
+                if self.skip_crc {
+                    self.crc_skipped = true;
+                } else {
+                    return Err(PngError::Decode("CRC mismatch in fdAT chunk".into()));
+                }
+            }
+
+            // Skip 4-byte sequence number to get deflate data
+            let deflate_start = data_start + 4;
+            if deflate_start < data_end {
+                self.current_data = &self.data[deflate_start..data_end];
+            } else {
+                self.current_data = &[];
+            }
+            self.chunk_pos = crc_end;
+
+            if !self.current_data.is_empty() {
+                return Ok(self.current_data);
+            }
+            // Empty fdAT chunk — skip and try next
+        }
+    }
+
+    fn consume(&mut self, n: usize) {
+        self.current_data = &self.current_data[n..];
+    }
+}
+
 // ── Unfilter ────────────────────────────────────────────────────────
 
 /// Apply inverse filter to a row in-place given the previous (unfiltered) row.
