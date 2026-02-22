@@ -295,6 +295,95 @@ pub(crate) fn encode_raw(
     )
 }
 
+/// Encode RGB8 pixels to PNG, returning per-phase compression statistics.
+#[cfg(feature = "_dev")]
+pub fn encode_rgb8_with_stats(
+    img: ImgRef<Rgb<u8>>,
+    metadata: Option<&ImageMetadata<'_>>,
+    config: &EncodeConfig,
+    cancel: &dyn Stop,
+    deadline: &dyn Stop,
+) -> Result<(Vec<u8>, crate::png_writer::PhaseStats), PngError> {
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    let (buf, _, _) = img.to_contiguous_buf();
+    let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
+    encode_raw_with_stats(
+        bytes,
+        width,
+        height,
+        ColorType::Rgb,
+        BitDepth::Eight,
+        metadata,
+        config,
+        cancel,
+        deadline,
+    )
+}
+
+/// Encode RGBA8 pixels to PNG, returning per-phase compression statistics.
+#[cfg(feature = "_dev")]
+pub fn encode_rgba8_with_stats(
+    img: ImgRef<Rgba<u8>>,
+    metadata: Option<&ImageMetadata<'_>>,
+    config: &EncodeConfig,
+    cancel: &dyn Stop,
+    deadline: &dyn Stop,
+) -> Result<(Vec<u8>, crate::png_writer::PhaseStats), PngError> {
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    let (buf, _, _) = img.to_contiguous_buf();
+    let bytes: &[u8] = bytemuck::cast_slice(buf.as_ref());
+    encode_raw_with_stats(
+        bytes,
+        width,
+        height,
+        ColorType::Rgba,
+        BitDepth::Eight,
+        metadata,
+        config,
+        cancel,
+        deadline,
+    )
+}
+
+/// Low-level encode with stats: raw bytes to PNG with per-phase timing.
+#[cfg(feature = "_dev")]
+#[allow(clippy::too_many_arguments)]
+fn encode_raw_with_stats(
+    bytes: &[u8],
+    width: u32,
+    height: u32,
+    color_type: ColorType,
+    bit_depth: BitDepth,
+    metadata: Option<&ImageMetadata<'_>>,
+    config: &EncodeConfig,
+    cancel: &dyn Stop,
+    deadline: &dyn Stop,
+) -> Result<(Vec<u8>, crate::png_writer::PhaseStats), PngError> {
+    let level = config.compression.to_zenflate_level();
+    let opts = config.compress_options(cancel, deadline, None);
+
+    let mut write_meta = PngWriteMetadata::from_metadata(metadata);
+    write_meta.source_gamma = config.source_gamma;
+    write_meta.srgb_intent = config.srgb_intent;
+    write_meta.chromaticities = config.chromaticities;
+
+    let mut stats = crate::png_writer::PhaseStats::default();
+    let png = png_writer::write_truecolor_png_with_stats(
+        bytes,
+        width,
+        height,
+        color_type.to_png_byte(),
+        bit_depth.to_png_byte(),
+        &write_meta,
+        level,
+        opts,
+        &mut stats,
+    )?;
+    Ok((png, stats))
+}
+
 /// Byte-swap native-endian u16 samples to big-endian for PNG.
 fn native_to_be_16(native: &[u8]) -> Vec<u8> {
     if cfg!(target_endian = "big") {

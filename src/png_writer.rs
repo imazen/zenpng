@@ -30,6 +30,25 @@ pub(crate) struct CompressOptions<'a> {
     pub remaining_ns: Option<&'a dyn Fn() -> Option<u64>>,
 }
 
+/// Statistics for one compression phase.
+#[derive(Clone, Debug)]
+#[doc(hidden)]
+#[allow(dead_code)]
+pub struct PhaseStat {
+    pub name: alloc::string::String,
+    pub duration_ns: u64,
+    pub best_size: usize,
+    pub evaluations: u32,
+}
+
+/// Collected per-phase statistics from compression.
+#[derive(Clone, Debug, Default)]
+#[doc(hidden)]
+pub struct PhaseStats {
+    pub phases: Vec<PhaseStat>,
+    pub raw_size: usize,
+}
+
 /// All metadata to embed when writing a PNG file.
 ///
 /// Aggregates both codec-generic metadata (`ImageMetadata`) and PNG-specific
@@ -104,7 +123,7 @@ pub(crate) fn write_indexed_png(
     let row_bytes = packed_row_bytes(w, bit_depth);
 
     // Compress with multi-strategy filter selection (bpp=1 for indexed)
-    let compressed = compress_filtered(&packed_rows, row_bytes, h, 1, compression_level, opts)?;
+    let compressed = compress_filtered(&packed_rows, row_bytes, h, 1, compression_level, opts, None)?;
 
     // Assemble PNG
     let trns_data = truncate_trns(palette_alpha);
@@ -196,6 +215,7 @@ pub(crate) fn write_truecolor_png(
         bpp,
         compression_level,
         opts,
+        None,
     )?;
 
     // Assemble PNG
@@ -222,6 +242,75 @@ pub(crate) fn write_truecolor_png(
     write_chunk(&mut out, b"IDAT", &compressed);
 
     // IEND
+    write_chunk(&mut out, b"IEND", &[]);
+
+    Ok(out)
+}
+
+/// Like `write_truecolor_png` but also collects per-phase compression statistics.
+#[cfg(feature = "_dev")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_truecolor_png_with_stats(
+    pixel_bytes: &[u8],
+    width: u32,
+    height: u32,
+    color_type: u8,
+    bit_depth: u8,
+    write_meta: &PngWriteMetadata<'_>,
+    compression_level: u8,
+    opts: CompressOptions<'_>,
+    stats: &mut PhaseStats,
+) -> Result<Vec<u8>, PngError> {
+    let w = width as usize;
+    let h = height as usize;
+
+    let channels: usize = match color_type {
+        0 => 1,
+        2 => 3,
+        4 => 2,
+        6 => 4,
+        _ => {
+            return Err(PngError::InvalidInput(alloc::format!(
+                "unsupported PNG color type: {color_type}"
+            )));
+        }
+    };
+    let bytes_per_channel = bit_depth as usize / 8;
+    let bpp = channels * bytes_per_channel;
+    let row_bytes = w * bpp;
+
+    let expected_len = row_bytes * h;
+    if pixel_bytes.len() < expected_len {
+        return Err(PngError::InvalidInput(alloc::format!(
+            "pixel buffer too small: need {expected_len}, got {}",
+            pixel_bytes.len()
+        )));
+    }
+
+    let compressed = compress_filtered(
+        &pixel_bytes[..expected_len],
+        row_bytes,
+        h,
+        bpp,
+        compression_level,
+        opts,
+        Some(stats),
+    )?;
+
+    let est = 8 + 25 + (12 + compressed.len()) + 12 + metadata_size_estimate(write_meta);
+    let mut out = Vec::with_capacity(est);
+
+    out.extend_from_slice(&PNG_SIGNATURE);
+
+    let mut ihdr = [0u8; 13];
+    ihdr[0..4].copy_from_slice(&width.to_be_bytes());
+    ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+    ihdr[8] = bit_depth;
+    ihdr[9] = color_type;
+    write_chunk(&mut out, b"IHDR", &ihdr);
+
+    write_all_metadata(&mut out, write_meta)?;
+    write_chunk(&mut out, b"IDAT", &compressed);
     write_chunk(&mut out, b"IEND", &[]);
 
     Ok(out)
@@ -314,9 +403,16 @@ fn compress_filtered(
     bpp: usize,
     compression_level: u8,
     opts: CompressOptions<'_>,
+    mut stats: Option<&mut PhaseStats>,
 ) -> Result<Vec<u8>, PngError> {
+    use std::time::Instant;
+
     let filtered_size = (row_bytes + 1) * height;
     let mut best_compressed: Option<Vec<u8>> = None;
+
+    if let Some(s) = &mut stats {
+        s.raw_size = filtered_size;
+    }
 
     // Reusable buffers
     let mut filtered = Vec::with_capacity(filtered_size);
@@ -324,22 +420,26 @@ fn compress_filtered(
     let mut compress_buf = vec![0u8; compress_bound];
     let mut verify_buf = vec![0u8; filtered_size];
 
+    // Internal zenflate level: levels 13-14 use L12 internally.
+    let zenflate_level = compression_level.min(12);
+
     // For L0-1, screening IS the final compression — no Phase 2 needed.
     // For L2+, screen at L1 then refine the best candidates at the target level.
-    let screen_level = if compression_level <= 1 {
-        compression_level as u32
-    } else {
-        1
+    // Level 14 (Maniac) screens at L6 for more accurate strategy ranking.
+    let screen_level = match compression_level {
+        0..=1 => compression_level as u32,
+        14 => 6,
+        _ => 1,
     };
 
     // Refinement tiers: which compression levels to try in Phase 2.
     // Deadline is checked between tiers for graceful early return.
-    let refine_tiers: &[u32] = if compression_level >= 11 {
+    let refine_tiers: &[u32] = if zenflate_level >= 11 {
         &[10, 11, 12]
     } else {
         // Return a static slice for the target level. For levels 2-9
         // this is a single entry matching the requested compression.
-        match compression_level {
+        match zenflate_level {
             2 => &[2],
             3 => &[3],
             4 => &[4],
@@ -358,24 +458,45 @@ fn compress_filtered(
     let can_brute_force = compression_level >= 6;
 
     // Brute-force configs: (context_rows, eval_level)
+    //
+    // Corpus analysis (10 images, strategy_explorer) showed:
+    // - Context > 5 has diminishing/negative returns vs context=5
+    // - eval=4 vs eval=1: only +0.02-0.06% for 1.5-2x filter time
+    // - BruteForce total marginal value over best heuristic: ~0.15-0.35%
+    //
+    // Levels 13-14 (Obsessive/Maniac) sweep all context rows to find the
+    // optimal configuration per-image. This is expensive but exhaustive.
     let brute_configs: &[(usize, u32)] = match compression_level {
-        11.. => &[(10, 1), (10, 4)],
-        10 => &[(10, 1)],
-        8..=9 => &[(8, 1)],
+        14 => &[
+            (1, 1),
+            (1, 4),
+            (3, 1),
+            (3, 4),
+            (5, 1),
+            (5, 4),
+            (8, 1),
+            (8, 4),
+        ],
+        13 => &[(1, 1), (3, 1), (5, 1), (5, 4), (8, 1)],
+        11..=12 => &[(5, 1), (5, 4)],
+        10 => &[(5, 1)],
+        8..=9 => &[(3, 1)],
         6..=7 => &[(3, 1)],
         _ => &[],
     };
 
-    // Block-wise brute-force configs: (context_rows, eval_level)
-    // Only at L9+ where the extra cost is justified by quality gains.
-    let block_brute_configs: &[(usize, u32)] = match compression_level {
-        10.. => &[(10, 1)],
-        9 => &[(8, 1)],
-        _ => &[],
-    };
+    // Block-wise brute-force: DISABLED.
+    // Corpus analysis showed block brute is both slower AND larger than
+    // per-row brute force (-0.03 to -0.06% vs per-row at same level).
+    let block_brute_configs: &[(usize, u32)] = &[];
 
     // ---- Phase 1: Screen all heuristic strategies ----
     // Use a cheap compressor to rank strategies by compressed size.
+    let phase_start = if stats.is_some() {
+        Some(Instant::now())
+    } else {
+        None
+    };
     let mut screen_compressor = Compressor::new(CompressionLevel::new(screen_level));
     // (screen_size, filtered_data) — sorted later to pick top candidates
     let mut screen_results: Vec<(usize, Vec<u8>)> = Vec::with_capacity(HEURISTIC_STRATEGIES.len());
@@ -436,6 +557,16 @@ fn compress_filtered(
     // Sort by screen size — best first
     screen_results.sort_by_key(|(size, _)| *size);
 
+    if let (Some(s), Some(t)) = (&mut stats, phase_start) {
+        let tried = screen_results.len();
+        s.phases.push(PhaseStat {
+            name: alloc::format!("Screen ({tried}×L{screen_level})"),
+            duration_ns: t.elapsed().as_nanos() as u64,
+            best_size: best_compressed.as_ref().map_or(0, |b| b.len()),
+            evaluations: tried as u32,
+        });
+    }
+
     // Early return: L0-1 don't need refinement, or deadline hit
     if !needs_refine || opts.deadline.should_stop() {
         return best_compressed
@@ -446,6 +577,11 @@ fn compress_filtered(
     //
     // Iterate tier-by-tier so we can deadline-check between tiers.
     // Iterates tier-by-tier with deadline checks between tiers.
+    let phase2_start = if stats.is_some() {
+        Some(Instant::now())
+    } else {
+        None
+    };
     let top_n = screen_results.len().min(3);
 
     // Track the best zenflate size per candidate for zopfli ranking later
@@ -478,14 +614,34 @@ fn compress_filtered(
         }
     }
 
+    if let (Some(s), Some(t)) = (&mut stats, phase2_start) {
+        let tiers_str = refine_tiers
+            .iter()
+            .map(|l| alloc::format!("L{l}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        s.phases.push(PhaseStat {
+            name: alloc::format!("Refine ({top_n}×{tiers_str})"),
+            duration_ns: t.elapsed().as_nanos() as u64,
+            best_size: best_compressed.as_ref().map_or(0, |b| b.len()),
+            evaluations: (top_n * refine_tiers.len()) as u32,
+        });
+    }
+
     // ---- Phase 3: Brute-force ----
     // Brute-force filtering is expensive (~3-4s per config), so compress at
     // the highest tiers only. We already have lower-tier results from Phase 2.
+    let phase3_start = if stats.is_some() && can_brute_force {
+        Some(Instant::now())
+    } else {
+        None
+    };
+    let mut brute_evals = 0u32;
     if can_brute_force && !opts.deadline.should_stop() {
-        let brute_levels: &[u32] = if compression_level >= 11 {
+        let brute_levels: &[u32] = if zenflate_level >= 11 {
             &[10, 11, 12]
         } else {
-            &[compression_level as u32]
+            &[zenflate_level as u32]
         };
         let mut brute_compressors: Vec<Compressor> = brute_levels
             .iter()
@@ -519,6 +675,7 @@ fn compress_filtered(
                 &mut best_compressed,
                 opts.cancel,
             )?;
+            brute_evals += 1;
 
             #[cfg(feature = "zopfli")]
             if opts.use_zopfli && _best_size < usize::MAX {
@@ -555,6 +712,7 @@ fn compress_filtered(
                 &mut best_compressed,
                 opts.cancel,
             )?;
+            brute_evals += 1;
 
             #[cfg(feature = "zopfli")]
             if opts.use_zopfli && _best_size < usize::MAX {
@@ -563,22 +721,60 @@ fn compress_filtered(
         }
     }
 
+    if let (Some(s), Some(t)) = (&mut stats, phase3_start) {
+        if brute_evals > 0 {
+            let configs_desc = brute_configs
+                .iter()
+                .map(|(ctx, ev)| alloc::format!("ctx{ctx}/L{ev}"))
+                .chain(
+                    block_brute_configs
+                        .iter()
+                        .map(|(ctx, ev)| alloc::format!("blk-ctx{ctx}/L{ev}")),
+                )
+                .collect::<Vec<_>>()
+                .join(",");
+            s.phases.push(PhaseStat {
+                name: alloc::format!("BruteForce ({configs_desc})"),
+                duration_ns: t.elapsed().as_nanos() as u64,
+                best_size: best_compressed.as_ref().map_or(0, |b| b.len()),
+                evaluations: brute_evals,
+            });
+        }
+    }
+
     // ---- Phase 4: Zopfli ----
     #[cfg(feature = "zopfli")]
-    if opts.use_zopfli && !zopfli_candidates.is_empty() && !opts.deadline.should_stop() {
-        // Sort by zenflate size, take top 3
-        zopfli_candidates.sort_by_key(|(size, _)| *size);
-        zopfli_candidates.truncate(3);
+    {
+        let phase4_start = if stats.is_some() {
+            Some(Instant::now())
+        } else {
+            None
+        };
+        if opts.use_zopfli && !zopfli_candidates.is_empty() && !opts.deadline.should_stop() {
+            // Sort by zenflate size, take top 3
+            zopfli_candidates.sort_by_key(|(size, _)| *size);
+            zopfli_candidates.truncate(3);
 
-        let best = zopfli_adaptive(
-            &zopfli_candidates,
-            opts.cancel,
-            opts.deadline,
-            opts.remaining_ns,
-            &mut best_compressed,
-        )?;
-        if let Some(b) = best {
-            best_compressed = Some(b);
+            let n_candidates = zopfli_candidates.len();
+            let best = zopfli_adaptive(
+                &zopfli_candidates,
+                opts.cancel,
+                opts.deadline,
+                opts.remaining_ns,
+                &mut best_compressed,
+            )?;
+            if let Some(b) = best {
+                best_compressed = Some(b);
+            }
+
+            if let (Some(s), Some(t)) = (&mut stats, phase4_start) {
+                s.phases.push(PhaseStat {
+                    name: alloc::format!("Zopfli ({n_candidates} candidates)"),
+                    duration_ns: t.elapsed().as_nanos() as u64,
+                    best_size: best_compressed.as_ref().map_or(0, |b| b.len()),
+                    evaluations: n_candidates as u32,
+                });
+            }
         }
     }
 

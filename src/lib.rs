@@ -63,3 +63,10 @@ pub use zencodec::{
 };
 
 pub use types::{Compression, Filter};
+
+#[cfg(feature = "_dev")]
+#[doc(hidden)]
+pub use crate::encode::{encode_rgb8_with_stats, encode_rgba8_with_stats};
+#[cfg(feature = "_dev")]
+#[doc(hidden)]
+pub use crate::png_writer::{PhaseStat, PhaseStats};
