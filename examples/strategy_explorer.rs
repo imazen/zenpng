@@ -15,7 +15,7 @@ use enough::Unstoppable;
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
-        "/home/lilith/work/codec-corpus/clic2025-1024/0d154749c7771f58e89ad343653ec4e20d6f037da829f47f5598e5d0a4ab61f0.png".to_string()
+        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1025469.png".to_string()
     });
 
     let source = std::fs::read(&path).unwrap();
@@ -194,7 +194,10 @@ fn main() {
     // Re-filter the best heuristic and brute-force strategies, then compress with zopfli.
     let zopfli_iters = [5, 15, 50];
     let zopfli_strategies: Vec<(&str, Vec<u8>)> = vec![
-        ("Single(Paeth)", filter_single(&pixel_bytes, row_bytes, h, bpp, 4)),
+        (
+            "Single(Paeth)",
+            filter_single(&pixel_bytes, row_bytes, h, bpp, 4),
+        ),
         (
             "Adaptive(MinSum)",
             filter_adaptive(&pixel_bytes, row_bytes, h, bpp, Heuristic::MinSum),
