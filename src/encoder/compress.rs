@@ -9,7 +9,7 @@ use zenflate::{CompressionLevel, Compressor, Unstoppable};
 
 use crate::error::PngError;
 
-use super::filter::{HEURISTIC_STRATEGIES, Strategy, filter_image};
+use super::filter::{FAST_STRATEGIES, HEURISTIC_STRATEGIES, Strategy, filter_image};
 use super::{PhaseStat, PhaseStats};
 
 /// Try compressing `filtered` data with all `compressors`, updating `best_compressed`
@@ -170,67 +170,152 @@ pub(crate) fn compress_filtered(
     // per-row brute force (-0.03 to -0.06% vs per-row at same level).
     let block_brute_configs: &[(usize, u32)] = &[];
 
+    // Forking brute-force configs: eval_level values to try.
+    // Uses real DEFLATE state (not raw context) for filter evaluation.
+    // Enabled at same levels as regular brute-force.
+    let fork_brute_levels: &[u32] = match compression_level {
+        14 => &[1, 4],
+        12 => &[1],
+        _ => &[],
+    };
+
     // ---- Phase 1: Screen all heuristic strategies ----
     // Use a cheap compressor to rank strategies by compressed size.
+    // Use fewer strategies at low compression levels (Fastest/Fast) for speed.
+    let strategies: &[Strategy] = if compression_level <= 4 {
+        FAST_STRATEGIES
+    } else {
+        HEURISTIC_STRATEGIES
+    };
+
     let phase_start = if stats.is_some() {
         Some(Instant::now())
     } else {
         None
     };
-    let mut screen_compressor = Compressor::new(CompressionLevel::new(screen_level));
+
     // (screen_size, filtered_data) — sorted later to pick top candidates
-    let mut screen_results: Vec<(usize, Vec<u8>)> = Vec::with_capacity(HEURISTIC_STRATEGIES.len());
+    let mut screen_results: Vec<(usize, Vec<u8>)> = Vec::with_capacity(strategies.len());
 
-    for (i, strategy) in HEURISTIC_STRATEGIES.iter().enumerate() {
-        // Always try at least one strategy (even with zero budget),
-        // but check budget before subsequent strategies.
-        if i > 0 && opts.deadline.should_stop() {
-            break;
-        }
+    if opts.parallel {
+        // ── Parallel screening ──
+        // Each thread gets its own filtered buffer, compressor, compress buffer,
+        // and verify buffer. All strategies run concurrently.
+        #[allow(clippy::type_complexity)]
+        let par_results: Vec<Option<(usize, Vec<u8>, Vec<u8>)>> = std::thread::scope(|s| {
+            let handles: Vec<_> = strategies
+                .iter()
+                .map(|strategy| {
+                    s.spawn(move || {
+                        let mut t_filtered = Vec::with_capacity(filtered_size);
+                        let mut t_compressor = Compressor::new(CompressionLevel::new(screen_level));
+                        let mut t_compress_buf = vec![0u8; compress_bound];
+                        let mut t_verify_buf = vec![0u8; filtered_size];
 
-        filtered.clear();
-        filter_image(
-            packed_rows,
-            row_bytes,
-            height,
-            bpp,
-            *strategy,
-            opts.cancel,
-            &mut filtered,
-        );
+                        filter_image(
+                            packed_rows,
+                            row_bytes,
+                            height,
+                            bpp,
+                            *strategy,
+                            opts.cancel,
+                            &mut t_filtered,
+                        );
 
-        let compressed_len =
-            match screen_compressor.zlib_compress(&filtered, &mut compress_buf, opts.cancel) {
-                Ok(len) => len,
-                Err(zenflate::CompressionError::Stopped(reason)) => return Err(reason.into()),
-                Err(e) => {
-                    return Err(PngError::InvalidInput(alloc::format!(
-                        "compression failed: {e}"
-                    )));
-                }
-            };
+                        let compressed_len = t_compressor
+                            .zlib_compress(&t_filtered, &mut t_compress_buf, opts.cancel)
+                            .ok()?;
 
-        // Verify decompression roundtrip
-        let valid = {
-            let mut decompressor = zenflate::Decompressor::new();
-            decompressor
-                .zlib_decompress(
-                    &compress_buf[..compressed_len],
-                    &mut verify_buf,
-                    Unstoppable,
-                )
-                .is_ok()
-        };
+                        // Verify decompression roundtrip
+                        let mut decompressor = zenflate::Decompressor::new();
+                        decompressor
+                            .zlib_decompress(
+                                &t_compress_buf[..compressed_len],
+                                &mut t_verify_buf,
+                                Unstoppable,
+                            )
+                            .ok()?;
 
-        if valid {
-            // If screen level IS the target level, this is already a final result
+                        Some((
+                            compressed_len,
+                            t_filtered,
+                            t_compress_buf[..compressed_len].to_vec(),
+                        ))
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect()
+        });
+
+        for (compressed_len, filtered_data, compressed_data) in par_results.into_iter().flatten() {
             let dominated = best_compressed
                 .as_ref()
                 .is_some_and(|b| compressed_len >= b.len());
             if !dominated {
-                best_compressed = Some(compress_buf[..compressed_len].to_vec());
+                best_compressed = Some(compressed_data);
             }
-            screen_results.push((compressed_len, filtered.clone()));
+            screen_results.push((compressed_len, filtered_data));
+        }
+    } else {
+        // ── Serial screening ──
+        let mut screen_compressor = Compressor::new(CompressionLevel::new(screen_level));
+
+        for (i, strategy) in strategies.iter().enumerate() {
+            // Always try at least one strategy (even with zero budget),
+            // but check budget before subsequent strategies.
+            if i > 0 && opts.deadline.should_stop() {
+                break;
+            }
+
+            filtered.clear();
+            filter_image(
+                packed_rows,
+                row_bytes,
+                height,
+                bpp,
+                *strategy,
+                opts.cancel,
+                &mut filtered,
+            );
+
+            let compressed_len =
+                match screen_compressor.zlib_compress(&filtered, &mut compress_buf, opts.cancel) {
+                    Ok(len) => len,
+                    Err(zenflate::CompressionError::Stopped(reason)) => {
+                        return Err(reason.into());
+                    }
+                    Err(e) => {
+                        return Err(PngError::InvalidInput(alloc::format!(
+                            "compression failed: {e}"
+                        )));
+                    }
+                };
+
+            // Verify decompression roundtrip
+            let valid = {
+                let mut decompressor = zenflate::Decompressor::new();
+                decompressor
+                    .zlib_decompress(
+                        &compress_buf[..compressed_len],
+                        &mut verify_buf,
+                        Unstoppable,
+                    )
+                    .is_ok()
+            };
+
+            if valid {
+                // If screen level IS the target level, this is already a final result
+                let dominated = best_compressed
+                    .as_ref()
+                    .is_some_and(|b| compressed_len >= b.len());
+                if !dominated {
+                    best_compressed = Some(compress_buf[..compressed_len].to_vec());
+                }
+                screen_results.push((compressed_len, filtered.clone()));
+            }
         }
     }
 
@@ -254,9 +339,6 @@ pub(crate) fn compress_filtered(
     }
 
     // ---- Phase 2: Refine top 3 at target level(s) ----
-    //
-    // Iterate tier-by-tier so we can deadline-check between tiers.
-    // Iterates tier-by-tier with deadline checks between tiers.
     let phase2_start = if stats.is_some() {
         Some(Instant::now())
     } else {
@@ -268,28 +350,93 @@ pub(crate) fn compress_filtered(
     #[cfg(feature = "zopfli")]
     let mut zopfli_candidates: Vec<(usize, Vec<u8>)> = Vec::new();
 
-    for &tier_level in refine_tiers {
-        if opts.deadline.should_stop() {
-            break;
+    if opts.parallel && top_n > 1 {
+        // ── Parallel refinement ──
+        // Each candidate runs through all refine tiers in its own thread.
+        // Each thread returns Option<(best_size, compressed_data, filtered_data_ref_index)>.
+        let refine_results: Vec<Option<(usize, Vec<u8>)>> = std::thread::scope(|s| {
+            let handles: Vec<_> = screen_results[..top_n]
+                .iter()
+                .map(|(_, filtered_data)| {
+                    s.spawn(move || {
+                        let mut t_compress_buf = vec![0u8; compress_bound];
+                        let mut t_verify_buf = vec![0u8; filtered_size];
+                        let mut t_best: Option<Vec<u8>> = None;
+
+                        for &tier_level in refine_tiers {
+                            let mut t_compressor =
+                                Compressor::new(CompressionLevel::new(tier_level));
+                            let compressed_len = t_compressor
+                                .zlib_compress(filtered_data, &mut t_compress_buf, opts.cancel)
+                                .ok()?;
+
+                            // Verify
+                            let mut decompressor = zenflate::Decompressor::new();
+                            decompressor
+                                .zlib_decompress(
+                                    &t_compress_buf[..compressed_len],
+                                    &mut t_verify_buf,
+                                    Unstoppable,
+                                )
+                                .ok()?;
+
+                            let dominated = t_best
+                                .as_ref()
+                                .is_some_and(|b| compressed_len >= b.len());
+                            if !dominated {
+                                t_best = Some(t_compress_buf[..compressed_len].to_vec());
+                            }
+                        }
+                        t_best.map(|b| (b.len(), b))
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect()
+        });
+
+        #[allow(unused_variables)]
+        for (idx, result) in refine_results.into_iter().enumerate() {
+            if let Some((size, compressed_data)) = result {
+                let dominated = best_compressed
+                    .as_ref()
+                    .is_some_and(|b| size >= b.len());
+                if !dominated {
+                    best_compressed = Some(compressed_data);
+                }
+                #[cfg(feature = "zopfli")]
+                if opts.use_zopfli {
+                    zopfli_candidates
+                        .push((size, screen_results[idx].1.clone()));
+                }
+            }
         }
+    } else {
+        // ── Serial refinement ──
+        // Iterate tier-by-tier with deadline checks between tiers.
+        for &tier_level in refine_tiers {
+            if opts.deadline.should_stop() {
+                break;
+            }
 
-        let mut tier_compressor = Compressor::new(CompressionLevel::new(tier_level));
+            let mut tier_compressor = Compressor::new(CompressionLevel::new(tier_level));
 
-        for (_, filtered_data) in &screen_results[..top_n] {
-            let _best_size = try_compress(
-                filtered_data,
-                core::slice::from_mut(&mut tier_compressor),
-                &mut compress_buf,
-                &mut verify_buf,
-                &mut best_compressed,
-                opts.cancel,
-            )?;
+            for (_, filtered_data) in &screen_results[..top_n] {
+                let _best_size = try_compress(
+                    filtered_data,
+                    core::slice::from_mut(&mut tier_compressor),
+                    &mut compress_buf,
+                    &mut verify_buf,
+                    &mut best_compressed,
+                    opts.cancel,
+                )?;
 
-            #[cfg(feature = "zopfli")]
-            if opts.use_zopfli && _best_size < usize::MAX {
-                // Only add to zopfli candidates at the highest tier we reach
-                // (avoid duplicates — we'll deduplicate by taking top 3 by size later)
-                zopfli_candidates.push((_best_size, filtered_data.clone()));
+                #[cfg(feature = "zopfli")]
+                if opts.use_zopfli && _best_size < usize::MAX {
+                    zopfli_candidates.push((_best_size, filtered_data.clone()));
+                }
             }
         }
     }
@@ -399,6 +546,40 @@ pub(crate) fn compress_filtered(
                 zopfli_candidates.push((_best_size, filtered.clone()));
             }
         }
+
+        // Forking brute-force: uses real DEFLATE state for filter evaluation
+        // instead of a limited raw context window.
+        for &eval_level in fork_brute_levels {
+            if opts.deadline.should_stop() {
+                break;
+            }
+
+            filtered.clear();
+            filter_image(
+                packed_rows,
+                row_bytes,
+                height,
+                bpp,
+                Strategy::BruteForceFork { eval_level },
+                opts.cancel,
+                &mut filtered,
+            );
+
+            let _best_size = try_compress(
+                &filtered,
+                &mut brute_compressors,
+                &mut compress_buf,
+                &mut verify_buf,
+                &mut best_compressed,
+                opts.cancel,
+            )?;
+            brute_evals += 1;
+
+            #[cfg(feature = "zopfli")]
+            if opts.use_zopfli && _best_size < usize::MAX {
+                zopfli_candidates.push((_best_size, filtered.clone()));
+            }
+        }
     }
 
     if let (Some(s), Some(t)) = (&mut stats, phase3_start) {
@@ -410,6 +591,11 @@ pub(crate) fn compress_filtered(
                     block_brute_configs
                         .iter()
                         .map(|(ctx, ev)| alloc::format!("blk-ctx{ctx}/L{ev}")),
+                )
+                .chain(
+                    fork_brute_levels
+                        .iter()
+                        .map(|l| alloc::format!("fork-L{l}")),
                 )
                 .collect::<Vec<_>>()
                 .join(",");
