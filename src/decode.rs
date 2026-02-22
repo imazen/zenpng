@@ -59,6 +59,28 @@ pub struct PngInfo {
     pub mastering_display: Option<MasteringDisplay>,
 }
 
+/// Non-fatal issues detected during PNG decoding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PngWarning {
+    /// Both sRGB and cICP chunks present (conflicting color space signals).
+    SrgbCicpConflict,
+    /// Both iCCP and sRGB chunks present (redundant/conflicting).
+    IccpSrgbConflict,
+    /// Both cICP and iCCP chunks present (conflicting color space signals).
+    CicpIccpConflict,
+    /// Both cICP and cHRM chunks present (cICP supersedes primaries).
+    CicpChrmConflict,
+    /// sRGB chunk present but gAMA value is not the expected 45455.
+    SrgbGamaMismatch { actual_gamma: u32 },
+    /// sRGB chunk present but cHRM values don't match standard sRGB primaries.
+    SrgbChrmMismatch,
+    /// A critical chunk's CRC was skipped (checksum leniency enabled).
+    CriticalChunkCrcSkipped { chunk_type: [u8; 4] },
+    /// The zlib decompression checksum (Adler-32) was skipped.
+    DecompressionChecksumSkipped,
+}
+
 /// PNG decode output.
 #[derive(Debug)]
 pub struct PngDecodeOutput {
@@ -66,21 +88,42 @@ pub struct PngDecodeOutput {
     pub pixels: PixelData,
     /// Image metadata.
     pub info: PngInfo,
+    /// Non-fatal warnings detected during decoding.
+    pub warnings: Vec<PngWarning>,
 }
 
-/// Decode limits for PNG operations.
+/// Decode configuration for PNG operations.
 ///
-/// The default limits are safe for general use: 256 MP pixel count and 4 GiB memory.
-/// Use [`PngLimits::none()`] to explicitly disable all limits.
+/// Controls resource limits and checksum leniency. The default is safe for
+/// general use: 100 MP pixel count, 4 GiB memory, strict checksums.
+///
+/// Use [`PngDecodeConfig::none()`] to disable resource limits (strict checksums).
+/// Use [`PngDecodeConfig::lenient()`] for maximum permissiveness.
+///
+/// # Examples
+///
+/// ```no_run
+/// use zenpng::PngDecodeConfig;
+///
+/// // Custom config via builder pattern
+/// let config = PngDecodeConfig::default()
+///     .with_max_pixels(1_000_000_000)
+///     .with_skip_decompression_checksum(true);
+/// ```
 #[derive(Clone, Debug)]
-pub struct PngLimits {
-    /// Maximum total pixels (width * height).
+#[non_exhaustive]
+pub struct PngDecodeConfig {
+    /// Maximum total pixels (width × height). `None` = no limit.
     pub max_pixels: Option<u64>,
-    /// Maximum memory allocation in bytes.
+    /// Maximum memory allocation in bytes. `None` = no limit.
     pub max_memory_bytes: Option<u64>,
+    /// Skip zlib Adler-32 checksum verification (still computed for reporting).
+    pub skip_decompression_checksum: bool,
+    /// Skip CRC verification on critical chunks (IHDR, PLTE, IDAT).
+    pub skip_critical_chunk_crc: bool,
 }
 
-impl PngLimits {
+impl PngDecodeConfig {
     /// Default maximum pixel count: 100 million.
     ///
     /// Covers all displays through 8K and most camera sensors.
@@ -91,13 +134,62 @@ impl PngLimits {
     /// 100 MP × RGBA8 = 400 MB, × RGBA16 = 800 MB — both well within this limit.
     pub const DEFAULT_MAX_MEMORY: u64 = 4 * 1024 * 1024 * 1024;
 
-    /// No limits. Caller takes responsibility for resource management.
+    /// No resource limits, strict checksums.
+    ///
+    /// Caller takes responsibility for resource management.
     #[must_use]
     pub const fn none() -> Self {
         Self {
             max_pixels: None,
             max_memory_bytes: None,
+            skip_decompression_checksum: false,
+            skip_critical_chunk_crc: false,
         }
+    }
+
+    /// Maximum permissiveness: no resource limits, skip all checksums.
+    #[must_use]
+    pub const fn lenient() -> Self {
+        Self {
+            max_pixels: None,
+            max_memory_bytes: None,
+            skip_decompression_checksum: true,
+            skip_critical_chunk_crc: true,
+        }
+    }
+
+    /// Set maximum pixel count (width × height).
+    #[must_use]
+    pub const fn with_max_pixels(mut self, max: u64) -> Self {
+        self.max_pixels = Some(max);
+        self
+    }
+
+    /// Set maximum memory allocation in bytes.
+    #[must_use]
+    pub const fn with_max_memory(mut self, max: u64) -> Self {
+        self.max_memory_bytes = Some(max);
+        self
+    }
+
+    /// Skip zlib decompression checksum (Adler-32) verification.
+    ///
+    /// When true, corrupt checksums produce a [`PngWarning::DecompressionChecksumSkipped`]
+    /// instead of an error. Pixels are still decompressed and returned.
+    #[must_use]
+    pub const fn with_skip_decompression_checksum(mut self, skip: bool) -> Self {
+        self.skip_decompression_checksum = skip;
+        self
+    }
+
+    /// Skip CRC verification on critical PNG chunks.
+    ///
+    /// When true, critical chunk CRC mismatches produce a
+    /// [`PngWarning::CriticalChunkCrcSkipped`] instead of an error.
+    #[must_use]
+    pub const fn with_skip_critical_chunk_crc(mut self, skip: bool) -> Self {
+        self.skip_critical_chunk_crc = skip;
+        self
     }
 
     pub(crate) fn validate(
@@ -124,14 +216,20 @@ impl PngLimits {
     }
 }
 
-impl Default for PngLimits {
+impl Default for PngDecodeConfig {
     fn default() -> Self {
         Self {
             max_pixels: Some(Self::DEFAULT_MAX_PIXELS),
             max_memory_bytes: Some(Self::DEFAULT_MAX_MEMORY),
+            skip_decompression_checksum: false,
+            skip_critical_chunk_crc: false,
         }
     }
 }
+
+/// Deprecated: use [`PngDecodeConfig`] instead.
+#[deprecated(note = "renamed to PngDecodeConfig")]
+pub type PngLimits = PngDecodeConfig;
 
 /// Probe PNG metadata without decoding pixels.
 pub fn probe(data: &[u8]) -> Result<PngInfo, PngError> {
@@ -147,10 +245,60 @@ pub fn probe(data: &[u8]) -> Result<PngInfo, PngError> {
 /// cancellation is not needed.
 pub fn decode(
     data: &[u8],
-    limits: &PngLimits,
+    config: &PngDecodeConfig,
     cancel: &dyn Stop,
 ) -> Result<PngDecodeOutput, PngError> {
-    crate::png_reader::decode_png(data, limits, cancel)
+    crate::png_reader::decode_png(data, config, cancel)
+}
+
+// ── sRGB standard chromaticities ─────────────────────────────────────
+
+/// Standard sRGB chromaticities (cHRM values × 100000).
+const SRGB_CHRM: [u32; 8] = [
+    31270, 32900, // white point
+    64000, 33000, // red
+    30000, 60000, // green
+    15000, 6000, // blue
+];
+
+/// Detect color management metadata conflicts.
+pub(crate) fn detect_color_warnings(
+    srgb_intent: Option<u8>,
+    gamma: Option<u32>,
+    chrm: Option<&[u32; 8]>,
+    cicp: Option<&[u8; 4]>,
+    icc_profile: Option<&[u8]>,
+) -> Vec<PngWarning> {
+    let mut warnings = Vec::new();
+    let has_srgb = srgb_intent.is_some();
+    let has_cicp = cicp.is_some();
+    let has_iccp = icc_profile.is_some();
+
+    if has_srgb && has_cicp {
+        warnings.push(PngWarning::SrgbCicpConflict);
+    }
+    if has_iccp && has_srgb {
+        warnings.push(PngWarning::IccpSrgbConflict);
+    }
+    if has_cicp && has_iccp {
+        warnings.push(PngWarning::CicpIccpConflict);
+    }
+    if has_cicp && chrm.is_some() {
+        warnings.push(PngWarning::CicpChrmConflict);
+    }
+    if has_srgb {
+        if let Some(g) = gamma {
+            if g != 45455 {
+                warnings.push(PngWarning::SrgbGamaMismatch { actual_gamma: g });
+            }
+        }
+        if let Some(c) = chrm {
+            if c != &SRGB_CHRM {
+                warnings.push(PngWarning::SrgbChrmMismatch);
+            }
+        }
+    }
+    warnings
 }
 
 #[cfg(test)]
@@ -194,9 +342,8 @@ mod tests {
 
     #[test]
     fn limits_default_rejects_oversized() {
-        // 65535×65535 RGBA = 4.3 GP, far exceeding 256 MP default
         let png = craft_ihdr_png(65535, 65535, 6, 8);
-        let result = decode(&png, &PngLimits::default(), &enough::Unstoppable);
+        let result = decode(&png, &PngDecodeConfig::default(), &enough::Unstoppable);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -207,12 +354,9 @@ mod tests {
 
     #[test]
     fn limits_none_skips_checks() {
-        // Same oversized PNG, but with no limits — should fail for a different reason
-        // (decompression, not limits), proving limits were not enforced
         let png = craft_ihdr_png(65535, 65535, 6, 8);
-        let result = decode(&png, &PngLimits::none(), &enough::Unstoppable);
+        let result = decode(&png, &PngDecodeConfig::none(), &enough::Unstoppable);
         assert!(result.is_err());
-        // Should NOT be a limits error
         let err = result.unwrap_err();
         assert!(
             !matches!(err, PngError::LimitExceeded(_)),
@@ -222,41 +366,94 @@ mod tests {
 
     #[test]
     fn limits_custom_pixel_threshold() {
-        // 100×100 RGBA = 10,000 pixels, set limit to 5,000
         let png = craft_ihdr_png(100, 100, 6, 8);
-        let limits = PngLimits {
-            max_pixels: Some(5_000),
-            ..PngLimits::none()
-        };
-        let result = decode(&png, &limits, &enough::Unstoppable);
+        let config = PngDecodeConfig::none().with_max_pixels(5_000);
+        let result = decode(&png, &config, &enough::Unstoppable);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), PngError::LimitExceeded(_)));
     }
 
     #[test]
     fn limits_custom_memory_threshold() {
-        // 100×100 RGBA8 = 40,000 bytes, set limit to 20,000
         let png = craft_ihdr_png(100, 100, 6, 8);
-        let limits = PngLimits {
-            max_memory_bytes: Some(20_000),
-            ..PngLimits::none()
-        };
-        let result = decode(&png, &limits, &enough::Unstoppable);
+        let config = PngDecodeConfig::none().with_max_memory(20_000);
+        let result = decode(&png, &config, &enough::Unstoppable);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), PngError::LimitExceeded(_)));
     }
 
     #[test]
     fn default_has_expected_values() {
-        let limits = PngLimits::default();
-        assert_eq!(limits.max_pixels, Some(100_000_000));
-        assert_eq!(limits.max_memory_bytes, Some(4 * 1024 * 1024 * 1024));
+        let config = PngDecodeConfig::default();
+        assert_eq!(config.max_pixels, Some(100_000_000));
+        assert_eq!(config.max_memory_bytes, Some(4 * 1024 * 1024 * 1024));
+        assert!(!config.skip_decompression_checksum);
+        assert!(!config.skip_critical_chunk_crc);
     }
 
     #[test]
     fn none_has_no_limits() {
-        let limits = PngLimits::none();
-        assert!(limits.max_pixels.is_none());
-        assert!(limits.max_memory_bytes.is_none());
+        let config = PngDecodeConfig::none();
+        assert!(config.max_pixels.is_none());
+        assert!(config.max_memory_bytes.is_none());
+        assert!(!config.skip_decompression_checksum);
+        assert!(!config.skip_critical_chunk_crc);
+    }
+
+    #[test]
+    fn lenient_has_no_limits_and_skips_checksums() {
+        let config = PngDecodeConfig::lenient();
+        assert!(config.max_pixels.is_none());
+        assert!(config.max_memory_bytes.is_none());
+        assert!(config.skip_decompression_checksum);
+        assert!(config.skip_critical_chunk_crc);
+    }
+
+    #[test]
+    fn detect_srgb_cicp_conflict() {
+        let w = detect_color_warnings(Some(0), None, None, Some(&[1, 13, 0, 1]), None);
+        assert!(w.contains(&PngWarning::SrgbCicpConflict));
+    }
+
+    #[test]
+    fn detect_iccp_srgb_conflict() {
+        let w = detect_color_warnings(Some(0), None, None, None, Some(&[0]));
+        assert!(w.contains(&PngWarning::IccpSrgbConflict));
+    }
+
+    #[test]
+    fn detect_srgb_gama_mismatch() {
+        let w = detect_color_warnings(Some(0), Some(50000), None, None, None);
+        assert!(w.contains(&PngWarning::SrgbGamaMismatch {
+            actual_gamma: 50000
+        }));
+    }
+
+    #[test]
+    fn detect_srgb_gama_correct() {
+        let w = detect_color_warnings(Some(0), Some(45455), None, None, None);
+        assert!(
+            !w.iter()
+                .any(|w| matches!(w, PngWarning::SrgbGamaMismatch { .. }))
+        );
+    }
+
+    #[test]
+    fn detect_srgb_chrm_mismatch() {
+        let bad_chrm = [31270, 32900, 64000, 33000, 30000, 60000, 15000, 7000];
+        let w = detect_color_warnings(Some(0), None, Some(&bad_chrm), None, None);
+        assert!(w.contains(&PngWarning::SrgbChrmMismatch));
+    }
+
+    #[test]
+    fn detect_srgb_chrm_correct() {
+        let w = detect_color_warnings(Some(0), None, Some(&SRGB_CHRM), None, None);
+        assert!(!w.contains(&PngWarning::SrgbChrmMismatch));
+    }
+
+    #[test]
+    fn no_warnings_when_clean() {
+        let w = detect_color_warnings(Some(0), Some(45455), Some(&SRGB_CHRM), None, None);
+        assert!(w.is_empty());
     }
 }

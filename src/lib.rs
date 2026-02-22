@@ -7,14 +7,14 @@
 //! # Quick start
 //!
 //! ```no_run
-//! use zenpng::{decode, probe, encode_rgb8, EncodeConfig, PngLimits};
+//! use zenpng::{decode, probe, encode_rgb8, EncodeConfig, PngDecodeConfig};
 //! use enough::Unstoppable;
 //! use imgref::ImgVec;
 //! use rgb::Rgb;
 //!
 //! // Decode
 //! let data: &[u8] = &[]; // your PNG bytes
-//! let output = decode(data, &PngLimits::default(), &Unstoppable)?;
+//! let output = decode(data, &PngDecodeConfig::default(), &Unstoppable)?;
 //! println!("{}x{}", output.info.width, output.info.height);
 //!
 //! // Encode
@@ -43,7 +43,11 @@ mod png_writer;
 mod types;
 mod zencodec;
 
-pub use decode::{PngChromaticities, PngDecodeOutput, PngInfo, PngLimits, decode, probe};
+#[allow(deprecated)]
+pub use decode::PngLimits;
+pub use decode::{
+    PngChromaticities, PngDecodeConfig, PngDecodeOutput, PngInfo, PngWarning, decode, probe,
+};
 pub use encode::{
     EncodeConfig, encode_gray8, encode_gray16, encode_rgb8, encode_rgb16, encode_rgba8,
     encode_rgba16,

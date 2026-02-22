@@ -366,7 +366,7 @@ mod tests {
         // Full decode roundtrip through zenpng
         let decoded = crate::decode::decode(
             &encoded,
-            &crate::decode::PngLimits::none(),
+            &crate::decode::PngDecodeConfig::none(),
             &enough::Unstoppable,
         )
         .unwrap();
@@ -400,7 +400,7 @@ mod tests {
         .unwrap();
         let decoded = crate::decode::decode(
             &encoded,
-            &crate::decode::PngLimits::none(),
+            &crate::decode::PngDecodeConfig::none(),
             &enough::Unstoppable,
         )
         .unwrap();
@@ -446,7 +446,7 @@ mod tests {
             .unwrap();
             let decoded = crate::decode::decode(
                 &encoded,
-                &crate::decode::PngLimits::none(),
+                &crate::decode::PngDecodeConfig::none(),
                 &enough::Unstoppable,
             )
             .unwrap();
@@ -484,7 +484,7 @@ mod tests {
         // Verify it decodes correctly
         let decoded = crate::decode::decode(
             &result.data,
-            &crate::decode::PngLimits::none(),
+            &crate::decode::PngDecodeConfig::none(),
             &enough::Unstoppable,
         )
         .unwrap();
@@ -553,7 +553,7 @@ mod tests {
         // Even if this happens to be lossless, that's OK — we just verify the function works
         let decoded = crate::decode::decode(
             &result.data,
-            &crate::decode::PngLimits::none(),
+            &crate::decode::PngDecodeConfig::none(),
             &enough::Unstoppable,
         )
         .unwrap();
@@ -605,7 +605,7 @@ mod tests {
         // Indexed should decode correctly
         let decoded = crate::decode::decode(
             &result.data,
-            &crate::decode::PngLimits::none(),
+            &crate::decode::PngDecodeConfig::none(),
             &enough::Unstoppable,
         )
         .unwrap();
