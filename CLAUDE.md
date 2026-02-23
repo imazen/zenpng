@@ -113,17 +113,80 @@ skips Adler-32 computation entirely.
 ## Compression Effort Design
 
 Unified 0-30 effort scale. Each ~3 effort points roughly doubles time.
-Named presets: None=0, Fastest=2, Fast=6, Balanced=10, Thorough=13,
-High=16, Aggressive=20, Best=24, Crush=28, Maniac=30.
+`Compression::Effort(u32)` for fine-grained control, or named presets:
 
-- `Compression::Effort(u32)` for fine-grained control between presets
-- Low effort (0-7): screen IS final pass, no Phase 2 refinement
-- Medium effort (8-15): screen + single-tier refine
-- High effort (16-23): multi-tier refine at lazy2/near-optimal zenflate efforts
-- Max effort (24-30): brute-force filter selection + zopfli at 28+
-- `EffortParams::from_effort()` maps effort → all pipeline parameters
-- Block-wise brute-force permanently disabled (slower AND larger than per-row)
-- Zopfli adaptive with time budgeting at Crush (28) and Maniac (30)
+| Preset | Effort | Strategies | Pipeline | zenflate |
+|---------|--------|------------|----------|----------|
+| None | 0 | 1: None | store | Store |
+| Fastest | 2 | 1: Paeth | screen-only | Turbo |
+| Fast | 6 | 5: FAST | screen-only | FastHt |
+| Balanced | 10 | 9: HEURISTIC | screen@7 + refine@[10,12] | Lazy |
+| Thorough | 13 | 9: HEURISTIC | screen@7 + refine@[10,17] | Lazy |
+| High | 16 | 9: HEURISTIC | screen@7 + refine@[20,22] | Lazy2 |
+| Aggressive | 20 | 9: HEURISTIC | screen@7 + refine@[24,26] | NearOptimal |
+| Best | 24 | 9: HEURISTIC | screen@7 + refine + BF(5,1) | NearOptimal |
+| Crush | 28 | 9: HEURISTIC | screen@7 + refine + BF sweep + zopfli | NearOptimal |
+| Maniac | 30 | 9: HEURISTIC | screen@7 + refine + BF sweep + zopfli max | NearOptimal |
+
+### 4-phase pipeline (`src/encoder/compress.rs`)
+
+`EffortParams::from_effort()` maps effort → all pipeline parameters:
+
+1. **Phase 1 — Screen**: Apply filter strategies, compress at `screen_effort`.
+   Low effort (0-7): screen IS final pass (no Phase 2).
+2. **Phase 2 — Refine**: Top-K candidates re-compressed at `refine_efforts`.
+   Multiple refine tiers span zenflate strategy boundaries (e.g., [10,17,18] at e14
+   ensures both Lazy and Lazy2 are evaluated).
+3. **Phase 3 — BruteForce**: Per-row brute-force filter selection (effort 24+).
+   BruteForceBlock permanently disabled (slower AND larger than per-row).
+   BruteForceFork maintains actual DEFLATE state across rows (effort 26+).
+4. **Phase 4 — Zopfli**: Zopfli adaptive with time budgeting (effort 28+).
+
+### Filter strategy sets (`src/encoder/filter.rs`)
+
+- **MINIMAL** (3): None, Paeth, Adaptive(Bigrams) — effort 3-4
+- **FAST** (5): None, Paeth, Adaptive(MinSum, Bigrams, Entropy) — effort 5-9
+- **HEURISTIC** (9): All 5 Singles + Adaptive(MinSum, Entropy, Bigrams, BigEnt) — effort 10+
+
+BigEnt excluded from FAST — 30-170x slower than MinSum (256KB memset + 65536-entry
+iteration per row). Only used in HEURISTIC tier where screen cost is dwarfed by refine.
+
+### Filter precomputation optimization
+
+When multiple strategies share the same 5 PNG filter variants (Single/Adaptive),
+all 5 are computed once via `precompute_all_filters()` and shared across strategies
+via `filter_image_from_precomputed()`. Capped at 64 MiB. Saves 5× filter passes
+per additional adaptive strategy. Result: 2-3x screening speedup at effort 5+.
+
+### Sparse heuristic tracking
+
+`HeuristicScratch` tracks which buffer entries were modified:
+- `bigrams_score`: sparse word tracking → reset only touched entries (no 8KB fill(0))
+- `bigram_entropy_score`: sparse key tracking → compute entropy only on nonzero entries,
+  reset during computation (no 256KB fill(0) or 65536-entry iteration)
+- `new_universal()`: pre-allocates for BigEnt (the largest heuristic), reusable across all
+
+### Monotonicity safety net
+
+Higher effort must never produce larger output. Enforced by:
+- `fallback_screen_effort`: at Turbo→FastHt boundary (e5-8), also compresses all screened
+  results at e4 (previous tier's max). Catches butterfly effects from different hash algorithms.
+- Screen effort pinned at FastHt e7 for medium/high/max tiers — consistent candidate ranking
+  without crossing into Greedy territory where ranking could diverge.
+- Refine efforts span strategy boundaries: e.g., [17,18] at e14 evaluates both Lazy and Lazy2.
+
+### Filter performance (measured, effort_timing.rs)
+
+| Filter type | Screenshot (RGBA 1356×1132) | Photo (RGB 512×512) |
+|------------|---------------------------|---------------------|
+| Single (None/Sub/Up/Avg/Paeth) | 275-519 MP/s | 350-650 MP/s |
+| Adaptive(MinSum) | 86-171 MP/s | 100-200 MP/s |
+| Adaptive(Entropy) | ~80 MP/s | ~120 MP/s |
+| Adaptive(Bigrams) | ~60 MP/s | ~90 MP/s |
+| Adaptive(BigEnt) | **3 MP/s** | **1 MP/s** |
+
+At low effort, filter cost dominates (89% of screening time on screenshots).
+Turbo zenflate compress costs 1.6-3.4ms per strategy — negligible next to filters.
 
 ## Pending Encoder Optimizations
 
