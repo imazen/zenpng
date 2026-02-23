@@ -120,8 +120,8 @@ Unified 0-30 effort scale. Each ~3 effort points roughly doubles time.
 | None | 0 | 1: None | store | Store |
 | Fastest | 2 | 1: Paeth | screen-only | Turbo |
 | Fast | 6 | 5: FAST | screen-only | FastHt |
-| Balanced | 10 | 9: HEURISTIC | screen@7 + refine@[10,12] | Lazy |
-| Thorough | 13 | 9: HEURISTIC | screen@7 + refine@[10,17] | Lazy |
+| Balanced | 10 | 9: HEURISTIC | screen@7 + refine@12 | Lazy |
+| Thorough | 13 | 9: HEURISTIC | screen@7 + refine@17 | Lazy |
 | High | 16 | 9: HEURISTIC | screen@7 + refine@[20,22] | Lazy2 |
 | Aggressive | 20 | 9: HEURISTIC | screen@7 + refine@[24,26] | NearOptimal |
 | Best | 24 | 9: HEURISTIC | screen@7 + refine + BF(5,1) | NearOptimal |
@@ -134,9 +134,9 @@ Unified 0-30 effort scale. Each ~3 effort points roughly doubles time.
 
 1. **Phase 1 — Screen**: Apply filter strategies, compress at `screen_effort`.
    Low effort (0-7): screen IS final pass (no Phase 2).
-2. **Phase 2 — Refine**: Top-K candidates re-compressed at `refine_efforts`.
-   Multiple refine tiers span zenflate strategy boundaries (e.g., [10,17,18] at e14
-   ensures both Lazy and Lazy2 are evaluated).
+2. **Phase 2 — Refine**: Top-K candidates re-compressed at `refine_efforts` via
+   `try_compress_with_fallbacks()`, which follows zenflate's `monotonicity_fallback()`
+   chain automatically.
 3. **Phase 3 — BruteForce**: Per-row brute-force filter selection (effort 24+).
    BruteForceBlock permanently disabled (slower AND larger than per-row).
    BruteForceFork maintains actual DEFLATE state across rows (effort 26+).
@@ -166,14 +166,14 @@ per additional adaptive strategy. Result: 2-3x screening speedup at effort 5+.
   reset during computation (no 256KB fill(0) or 65536-entry iteration)
 - `new_universal()`: pre-allocates for BigEnt (the largest heuristic), reusable across all
 
-### Monotonicity safety net
+### Monotonicity via zenflate fallback chain
 
-Higher effort must never produce larger output. Enforced by:
-- `fallback_screen_effort`: at Turbo→FastHt boundary (e5-8), also compresses all screened
-  results at e4 (previous tier's max). Catches butterfly effects from different hash algorithms.
-- Screen effort pinned at FastHt e7 for medium/high/max tiers — consistent candidate ranking
-  without crossing into Greedy territory where ranking could diverge.
-- Refine efforts span strategy boundaries: e.g., [17,18] at e14 evaluates both Lazy and Lazy2.
+Higher effort must never produce larger output. Enforced by
+`zenflate::CompressionLevel::monotonicity_fallback()` — a caller-driven API where each
+compression call follows the chain: NearOpt→Lazy2 max(e22)→Lazy max(e17)→Greedy max(e10)→
+FastHt max(e9). `try_compress_with_fallbacks()` wraps this automatically.
+Screen effort stays at FastHt (≤9) for consistent candidate ranking.
+Turbo→FastHt always improves (zenflate guarantee), no fallback needed below e10.
 
 ### Filter performance (measured, effort_timing.rs)
 
