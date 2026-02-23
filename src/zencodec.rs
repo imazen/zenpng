@@ -775,8 +775,8 @@ impl PngDecoder<'_> {
         PngDecodeConfig {
             max_pixels: limits.max_pixels,
             max_memory_bytes: limits.max_memory_bytes,
-            skip_decompression_checksum: false,
-            skip_critical_chunk_crc: false,
+            skip_decompression_checksum: true,
+            skip_critical_chunk_crc: true,
         }
     }
 }
@@ -905,8 +905,8 @@ impl PngFrameDecoder {
         let decode_config = PngDecodeConfig {
             max_pixels: config.limits.max_pixels,
             max_memory_bytes: config.limits.max_memory_bytes,
-            skip_decompression_checksum: false,
-            skip_critical_chunk_crc: false,
+            skip_decompression_checksum: true,
+            skip_critical_chunk_crc: true,
         };
 
         // Create ApngDecoder once and save its state for O(1) resumption.

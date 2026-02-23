@@ -75,9 +75,7 @@ pub enum PngWarning {
     SrgbGamaMismatch { actual_gamma: u32 },
     /// sRGB chunk present but cHRM values don't match standard sRGB primaries.
     SrgbChrmMismatch,
-    /// A critical chunk's CRC was skipped (checksum leniency enabled).
-    CriticalChunkCrcSkipped { chunk_type: [u8; 4] },
-    /// The zlib decompression checksum (Adler-32) was skipped.
+    /// The zlib decompression checksum (Adler-32) mismatched but was tolerated.
     DecompressionChecksumSkipped,
 }
 
@@ -97,8 +95,8 @@ pub struct PngDecodeOutput {
 /// Controls resource limits and checksum leniency. The default is safe for
 /// general use: 100 MP pixel count, 4 GiB memory, strict checksums.
 ///
-/// Use [`PngDecodeConfig::none()`] to disable resource limits (strict checksums).
-/// Use [`PngDecodeConfig::lenient()`] for maximum permissiveness.
+/// By default, checksums (Adler-32 and CRC-32) are **not** verified for speed.
+/// Use [`PngDecodeConfig::strict()`] to enable checksum verification.
 ///
 /// # Examples
 ///
@@ -108,7 +106,7 @@ pub struct PngDecodeOutput {
 /// // Custom config via builder pattern
 /// let config = PngDecodeConfig::default()
 ///     .with_max_pixels(1_000_000_000)
-///     .with_skip_decompression_checksum(true);
+///     .with_skip_decompression_checksum(false); // enable Adler-32 verification
 /// ```
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -134,7 +132,7 @@ impl PngDecodeConfig {
     /// 100 MP × RGBA8 = 400 MB, × RGBA16 = 800 MB — both well within this limit.
     pub const DEFAULT_MAX_MEMORY: u64 = 4 * 1024 * 1024 * 1024;
 
-    /// No resource limits, strict checksums.
+    /// No resource limits, no checksum verification.
     ///
     /// Caller takes responsibility for resource management.
     #[must_use]
@@ -142,19 +140,29 @@ impl PngDecodeConfig {
         Self {
             max_pixels: None,
             max_memory_bytes: None,
-            skip_decompression_checksum: false,
-            skip_critical_chunk_crc: false,
+            skip_decompression_checksum: true,
+            skip_critical_chunk_crc: true,
         }
     }
 
     /// Maximum permissiveness: no resource limits, skip all checksums.
+    ///
+    /// Equivalent to [`PngDecodeConfig::none()`].
     #[must_use]
     pub const fn lenient() -> Self {
+        Self::none()
+    }
+
+    /// Strict checksums: verifies both Adler-32 and CRC-32.
+    ///
+    /// No resource limits. Use builder methods to add limits.
+    #[must_use]
+    pub const fn strict() -> Self {
         Self {
             max_pixels: None,
             max_memory_bytes: None,
-            skip_decompression_checksum: true,
-            skip_critical_chunk_crc: true,
+            skip_decompression_checksum: false,
+            skip_critical_chunk_crc: false,
         }
     }
 
@@ -184,8 +192,7 @@ impl PngDecodeConfig {
 
     /// Skip CRC verification on critical PNG chunks.
     ///
-    /// When true, critical chunk CRC mismatches produce a
-    /// [`PngWarning::CriticalChunkCrcSkipped`] instead of an error.
+    /// When true (the default), CRC-32 is not computed or verified.
     #[must_use]
     pub const fn with_skip_critical_chunk_crc(mut self, skip: bool) -> Self {
         self.skip_critical_chunk_crc = skip;
@@ -221,8 +228,8 @@ impl Default for PngDecodeConfig {
         Self {
             max_pixels: Some(Self::DEFAULT_MAX_PIXELS),
             max_memory_bytes: Some(Self::DEFAULT_MAX_MEMORY),
-            skip_decompression_checksum: false,
-            skip_critical_chunk_crc: false,
+            skip_decompression_checksum: true,
+            skip_critical_chunk_crc: true,
         }
     }
 }
@@ -460,21 +467,21 @@ mod tests {
     }
 
     #[test]
-    fn default_has_expected_values() {
+    fn default_skips_checksums() {
         let config = PngDecodeConfig::default();
         assert_eq!(config.max_pixels, Some(100_000_000));
         assert_eq!(config.max_memory_bytes, Some(4 * 1024 * 1024 * 1024));
-        assert!(!config.skip_decompression_checksum);
-        assert!(!config.skip_critical_chunk_crc);
+        assert!(config.skip_decompression_checksum);
+        assert!(config.skip_critical_chunk_crc);
     }
 
     #[test]
-    fn none_has_no_limits() {
+    fn none_has_no_limits_and_skips_checksums() {
         let config = PngDecodeConfig::none();
         assert!(config.max_pixels.is_none());
         assert!(config.max_memory_bytes.is_none());
-        assert!(!config.skip_decompression_checksum);
-        assert!(!config.skip_critical_chunk_crc);
+        assert!(config.skip_decompression_checksum);
+        assert!(config.skip_critical_chunk_crc);
     }
 
     #[test]
@@ -484,6 +491,15 @@ mod tests {
         assert!(config.max_memory_bytes.is_none());
         assert!(config.skip_decompression_checksum);
         assert!(config.skip_critical_chunk_crc);
+    }
+
+    #[test]
+    fn strict_verifies_checksums() {
+        let config = PngDecodeConfig::strict();
+        assert!(config.max_pixels.is_none());
+        assert!(config.max_memory_bytes.is_none());
+        assert!(!config.skip_decompression_checksum);
+        assert!(!config.skip_critical_chunk_crc);
     }
 
     #[test]

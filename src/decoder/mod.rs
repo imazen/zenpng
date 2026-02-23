@@ -181,11 +181,11 @@ pub(crate) fn decode_png(
         let skip_crc = limits.skip_critical_chunk_crc;
 
         let skip_adler = limits.skip_decompression_checksum;
-        if let Some(result) = try_decode_stored(
+        if let Some(all_pixels) = try_decode_stored(
             data, first_idat_pos, skip_crc, skip_adler,
             h, stride, raw_row_bytes, bpp, cancel,
         ) {
-            let result = result?;
+            let all_pixels = all_pixels?;
             reader.finish_metadata();
             let mut warnings = reader.collect_decode_warnings();
             let ancillary = reader.ancillary();
@@ -195,13 +195,10 @@ pub(crate) fn decode_png(
                 ancillary.chrm.as_ref(), ancillary.cicp.as_ref(),
                 ancillary.icc_profile.as_deref(),
             ));
-            if result.adler_skipped {
-                warnings.push(crate::decode::PngWarning::DecompressionChecksumSkipped);
-            }
             let pixels = if ihdr.color_type == 6 {
-                PixelData::Rgba8(ImgVec::new(vec_u8_to_rgba8(result.pixels), w, h))
+                PixelData::Rgba8(ImgVec::new(vec_u8_to_rgba8(all_pixels), w, h))
             } else {
-                PixelData::Rgb8(ImgVec::new(vec_u8_to_rgb8(result.pixels), w, h))
+                PixelData::Rgb8(ImgVec::new(vec_u8_to_rgb8(all_pixels), w, h))
             };
             return Ok(PngDecodeOutput { pixels, info, warnings });
         }
@@ -336,11 +333,7 @@ fn vec_u8_to_rgb8(bytes: Vec<u8>) -> Vec<rgb::Rgb<u8>> {
 ///
 /// This strips block headers and copies pixel data directly from the zlib stream
 /// into the output buffer, then unfilters in-place.
-/// Result from the stored-block fast path, including whether Adler-32 was skipped.
-struct StoredDecodeResult {
-    pixels: Vec<u8>,
-    adler_skipped: bool,
-}
+/// Result from the stored-block fast path.
 
 fn try_decode_stored(
     file_data: &[u8],
@@ -352,7 +345,7 @@ fn try_decode_stored(
     raw_row_bytes: usize,
     bpp: usize,
     cancel: &dyn Stop,
-) -> Option<Result<StoredDecodeResult, PngError>> {
+) -> Option<Result<Vec<u8>, PngError>> {
     // Collect IDAT chunk payload slices (the zlib stream, possibly split across chunks).
     let mut idat_slices: Vec<&[u8]> = Vec::new();
     let mut pos = first_idat_pos;
@@ -452,26 +445,19 @@ fn try_decode_stored(
         }
     }
 
-    // Walk spans linearly with a cursor, copying row data into the output buffer.
-    // A "cursor" tracks which span we're in and our offset within it.
-    // Verify Adler-32 checksum from zlib trailer
-    let adler_skipped;
-    {
+    // Verify Adler-32 checksum from zlib trailer (skip entirely when not needed).
+    if !skip_adler {
         let stored_adler = u32::from_be_bytes(zlib[zlib_end..zlib_end + 4].try_into().unwrap());
         let mut computed = zenflate::adler32(1, &[]);
         for &(start, len) in &spans {
             computed = zenflate::adler32(computed, &zlib[start..start + len]);
         }
         if stored_adler != computed {
-            if skip_adler {
-                adler_skipped = true;
-            } else {
-                return Some(Err(PngError::Decode("Adler-32 checksum mismatch".into())));
-            }
-        } else {
-            adler_skipped = false;
+            return Some(Err(PngError::Decode("Adler-32 checksum mismatch".into())));
         }
     }
+
+    // Walk spans linearly with a cursor, copying row data into the output buffer.
 
     let total_payload: usize = spans.iter().map(|&(_, l)| l).sum();
     let expected = stride * height;
@@ -512,7 +498,7 @@ fn try_decode_stored(
         cancel.check().ok()?;
     }
 
-    Some(Ok(StoredDecodeResult { pixels: all_pixels, adler_skipped }))
+    Some(Ok(all_pixels))
 }
 
 /// Linear cursor over payload spans within a contiguous zlib buffer.
@@ -2070,12 +2056,12 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_ihdr_crc_rejected_by_default() {
+    fn corrupt_ihdr_crc_rejected_with_strict() {
         let png = craft_valid_1x1_png();
         let corrupt = corrupt_chunk_crc(&png, b"IHDR");
         let result = decode_png(
             &corrupt,
-            &crate::decode::PngDecodeConfig::none(),
+            &crate::decode::PngDecodeConfig::strict(),
             &Unstoppable,
         );
         assert!(result.is_err(), "corrupt IHDR CRC should be rejected");
@@ -2084,96 +2070,67 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_ihdr_crc_accepted_with_skip() {
+    fn corrupt_ihdr_crc_accepted_by_default() {
         let png = craft_valid_1x1_png();
         let corrupt = corrupt_chunk_crc(&png, b"IHDR");
-        let config = crate::decode::PngDecodeConfig::none().with_skip_critical_chunk_crc(true);
-        let result = decode_png(&corrupt, &config, &Unstoppable);
+        let result = decode_png(&corrupt, &crate::decode::PngDecodeConfig::none(), &Unstoppable);
         assert!(
             result.is_ok(),
-            "corrupt IHDR CRC should be accepted: {:?}",
+            "corrupt IHDR CRC should be accepted by default: {:?}",
             result.err()
-        );
-        let output = result.unwrap();
-        assert!(
-            output
-                .warnings
-                .contains(&crate::decode::PngWarning::CriticalChunkCrcSkipped {
-                    chunk_type: *b"IHDR",
-                }),
-            "should have CriticalChunkCrcSkipped warning for IHDR"
         );
     }
 
     #[test]
-    fn corrupt_idat_crc_rejected_by_default() {
+    fn corrupt_idat_crc_rejected_with_strict() {
         let png = craft_valid_1x1_png();
         let corrupt = corrupt_chunk_crc(&png, b"IDAT");
         let result = decode_png(
             &corrupt,
-            &crate::decode::PngDecodeConfig::none(),
+            &crate::decode::PngDecodeConfig::strict(),
             &Unstoppable,
         );
         assert!(result.is_err(), "corrupt IDAT CRC should be rejected");
     }
 
     #[test]
-    fn corrupt_idat_crc_accepted_with_skip() {
+    fn corrupt_idat_crc_accepted_by_default() {
         let png = craft_valid_1x1_png();
         let corrupt = corrupt_chunk_crc(&png, b"IDAT");
-        let config = crate::decode::PngDecodeConfig::none().with_skip_critical_chunk_crc(true);
-        let result = decode_png(&corrupt, &config, &Unstoppable);
+        let result = decode_png(&corrupt, &crate::decode::PngDecodeConfig::none(), &Unstoppable);
         assert!(
             result.is_ok(),
-            "corrupt IDAT CRC should be accepted: {:?}",
+            "corrupt IDAT CRC should be accepted by default: {:?}",
             result.err()
-        );
-        let output = result.unwrap();
-        assert!(
-            output
-                .warnings
-                .contains(&crate::decode::PngWarning::CriticalChunkCrcSkipped {
-                    chunk_type: *b"IDAT",
-                }),
-            "should have CriticalChunkCrcSkipped warning for IDAT"
         );
     }
 
     #[test]
-    fn corrupt_adler32_rejected_by_default() {
+    fn corrupt_adler32_rejected_with_strict() {
         let png = craft_valid_1x1_png();
         let corrupt = corrupt_idat_adler(&png);
         let result = decode_png(
             &corrupt,
-            &crate::decode::PngDecodeConfig::none(),
+            &crate::decode::PngDecodeConfig::strict(),
             &Unstoppable,
         );
-        assert!(result.is_err(), "corrupt Adler-32 should be rejected");
+        assert!(result.is_err(), "corrupt Adler-32 should be rejected with strict");
     }
 
     #[test]
-    fn corrupt_adler32_accepted_with_skip() {
+    fn corrupt_adler32_accepted_by_default() {
         let png = craft_valid_1x1_png();
         let corrupt = corrupt_idat_adler(&png);
-        let config = crate::decode::PngDecodeConfig::none().with_skip_decompression_checksum(true);
-        let result = decode_png(&corrupt, &config, &Unstoppable);
+        let result = decode_png(&corrupt, &crate::decode::PngDecodeConfig::none(), &Unstoppable);
         assert!(
             result.is_ok(),
-            "corrupt Adler-32 should be accepted: {:?}",
+            "corrupt Adler-32 should be accepted by default: {:?}",
             result.err()
-        );
-        let output = result.unwrap();
-        assert!(
-            output
-                .warnings
-                .contains(&crate::decode::PngWarning::DecompressionChecksumSkipped),
-            "should have DecompressionChecksumSkipped warning, got: {:?}",
-            output.warnings,
         );
     }
 
     #[test]
-    fn lenient_accepts_all_corruption() {
+    fn default_accepts_all_corruption() {
         let png = craft_valid_1x1_png();
 
         // Corrupt both IHDR CRC and Adler-32
@@ -2182,52 +2139,37 @@ mod tests {
 
         let result = decode_png(
             &corrupt,
-            &crate::decode::PngDecodeConfig::lenient(),
+            &crate::decode::PngDecodeConfig::none(),
             &Unstoppable,
         );
         assert!(
             result.is_ok(),
-            "lenient should accept all corruption: {:?}",
+            "default should accept all corruption: {:?}",
             result.err()
-        );
-        let output = result.unwrap();
-        assert!(
-            output
-                .warnings
-                .iter()
-                .any(|w| matches!(w, crate::decode::PngWarning::CriticalChunkCrcSkipped { .. })),
-            "should have CriticalChunkCrcSkipped warning"
-        );
-        assert!(
-            output
-                .warnings
-                .contains(&crate::decode::PngWarning::DecompressionChecksumSkipped),
-            "should have DecompressionChecksumSkipped warning"
         );
     }
 
     #[test]
-    fn badadler_fixture_rejected_by_default() {
+    fn badadler_fixture_rejected_with_strict() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/regression/badadler.png");
+        let data = std::fs::read(&path).unwrap();
+        let result = decode_png(&data, &crate::decode::PngDecodeConfig::strict(), &Unstoppable);
+        assert!(
+            result.is_err(),
+            "badadler.png should be rejected with strict"
+        );
+    }
+
+    #[test]
+    fn badadler_fixture_accepted_by_default() {
         let path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/regression/badadler.png");
         let data = std::fs::read(&path).unwrap();
         let result = decode_png(&data, &crate::decode::PngDecodeConfig::none(), &Unstoppable);
         assert!(
-            result.is_err(),
-            "badadler.png should be rejected by default"
-        );
-    }
-
-    #[test]
-    fn badadler_fixture_accepted_with_skip_checksum() {
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/regression/badadler.png");
-        let data = std::fs::read(&path).unwrap();
-        let config = crate::decode::PngDecodeConfig::none().with_skip_decompression_checksum(true);
-        let result = decode_png(&data, &config, &Unstoppable);
-        assert!(
             result.is_ok(),
-            "badadler.png should decode with skip_decompression_checksum: {:?}",
+            "badadler.png should decode by default (checksums skipped): {:?}",
             result.err()
         );
         let output = result.unwrap();

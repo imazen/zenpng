@@ -94,11 +94,7 @@ impl<'a> Iterator for ChunkIter<'a> {
         // CRC covers type + data. Skip computation entirely when skip_critical_crc
         // is set (saves CRC-32 computation over all chunk data).
         if self.skip_critical_crc {
-            let is_critical = chunk_type[0] & 0x20 == 0;
-            if is_critical {
-                self.warnings
-                    .push(crate::decode::PngWarning::CriticalChunkCrcSkipped { chunk_type });
-            }
+            // Skip CRC computation entirely — no warning emitted.
         } else {
             let computed_crc = crc32(crc32(0, &chunk_type), chunk_data);
             if stored_crc != computed_crc {
