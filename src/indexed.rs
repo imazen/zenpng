@@ -118,13 +118,27 @@ pub fn encode_indexed_rgba8(
         None
     };
 
-    let effort = encode_config.compression.effort();
-    let opts = encode_config.compress_options(cancel, deadline, None);
-
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = encode_config.source_gamma;
     write_meta.srgb_intent = encode_config.srgb_intent;
     write_meta.chromaticities = encode_config.chromaticities;
+
+    // If zoint data is available, use the pre-compressed path
+    if let Some(zd) = result.zoint_data() {
+        return crate::encoder::write_indexed_png_precompressed(
+            width,
+            height,
+            &sp.rgb,
+            alpha,
+            &write_meta,
+            zd.deflate_stream(),
+            zd.adler32(),
+            zd.bit_depth(),
+        );
+    }
+
+    let effort = encode_config.compression.effort();
+    let opts = encode_config.compress_options(cancel, deadline, None);
 
     crate::encoder::write_indexed_png(
         result.indices(),
@@ -209,24 +223,38 @@ pub fn encode_rgba8_auto(
             None
         };
 
-        let effort = encode_config.compression.effort();
-        let opts = encode_config.compress_options(cancel, deadline, None);
-
         let mut write_meta = PngWriteMetadata::from_metadata(metadata);
         write_meta.source_gamma = encode_config.source_gamma;
         write_meta.srgb_intent = encode_config.srgb_intent;
         write_meta.chromaticities = encode_config.chromaticities;
 
-        let data = crate::encoder::write_indexed_png(
-            result.indices(),
-            width,
-            height,
-            &sp.rgb,
-            alpha,
-            &write_meta,
-            effort,
-            opts,
-        )?;
+        // If zoint data is available, use the pre-compressed path
+        let data = if let Some(zd) = result.zoint_data() {
+            crate::encoder::write_indexed_png_precompressed(
+                width,
+                height,
+                &sp.rgb,
+                alpha,
+                &write_meta,
+                zd.deflate_stream(),
+                zd.adler32(),
+                zd.bit_depth(),
+            )?
+        } else {
+            let effort = encode_config.compression.effort();
+            let opts = encode_config.compress_options(cancel, deadline, None);
+
+            crate::encoder::write_indexed_png(
+                result.indices(),
+                width,
+                height,
+                &sp.rgb,
+                alpha,
+                &write_meta,
+                effort,
+                opts,
+            )?
+        };
 
         Ok(AutoEncodeResult {
             data,

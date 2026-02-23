@@ -31,3 +31,9 @@ impl From<enough::StopReason> for PngError {
         PngError::Stopped(reason)
     }
 }
+
+impl From<zencodec_types::UnsupportedOperation> for PngError {
+    fn from(op: zencodec_types::UnsupportedOperation) -> Self {
+        PngError::InvalidInput(alloc::format!("unsupported operation: {op}"))
+    }
+}
