@@ -1,0 +1,2 @@
+2026-02-22T23:49:00-07:00 - User: asked for faster adaptive strategies + buffer reuse. Result: 2-3x screening speedup via precomputed filters, sparse BigEnt/Bigrams tracking, removing BigEnt from FAST_STRATEGIES.
+2026-02-23T00:00:00-07:00 - User: ready up for new features, update docs. Result: committed monotonicity safety net (fallback_screen_effort, pinned screen@7, boundary-spanning refine_efforts), updated CLAUDE.md with comprehensive effort system docs.
