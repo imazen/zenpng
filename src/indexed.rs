@@ -42,12 +42,10 @@ impl QualityGate {
     fn check_quantize_result(&self, result: &QuantizeResult, delta_e: f64) -> bool {
         match *self {
             QualityGate::MaxDeltaE(max) => delta_e <= max,
-            QualityGate::MaxMpe(max) => result
-                .mpe_score()
-                .is_some_and(|mpe| mpe <= max),
-            QualityGate::MinSsim2(min) => result
-                .ssimulacra2_estimate()
-                .is_some_and(|ss2| ss2 >= min),
+            QualityGate::MaxMpe(max) => result.mpe_score().is_some_and(|mpe| mpe <= max),
+            QualityGate::MinSsim2(min) => {
+                result.ssimulacra2_estimate().is_some_and(|ss2| ss2 >= min)
+            }
         }
     }
 
@@ -431,7 +429,11 @@ pub fn encode_apng_auto(
         let (frame_buf, fw, fh) = frame_ref.to_contiguous_buf();
         let remap_result = if let Some(prev) = &prev_indices {
             palette_result.remap_rgba_with_prev(
-                frame_buf.as_ref(), fw, fh, &effective_config, prev,
+                frame_buf.as_ref(),
+                fw,
+                fh,
+                &effective_config,
+                prev,
             )?
         } else {
             palette_result.remap_rgba(frame_buf.as_ref(), fw, fh, &effective_config)?
@@ -439,8 +441,7 @@ pub fn encode_apng_auto(
 
         // Compute OKLab ΔE for this frame
         let frame_pixels: &[Rgba<u8>] = bytemuck::cast_slice(&frames[i].pixels[..expected_len]);
-        let frame_loss =
-            compute_mean_delta_e(frame_pixels, palette_rgba, remap_result.indices());
+        let frame_loss = compute_mean_delta_e(frame_pixels, palette_rgba, remap_result.indices());
 
         // Check quality gate
         if !gate.check_quantize_result(&remap_result, frame_loss) {
@@ -936,5 +937,140 @@ mod tests {
         .unwrap();
         assert_eq!(decoded.info.width, 64);
         assert_eq!(decoded.info.height, 64);
+    }
+
+    #[cfg(feature = "zoint")]
+    #[test]
+    fn roundtrip_zoint_indexed_png() {
+        let img = test_image_4x4();
+        let config = EncodeConfig::default();
+        let quant = QuantizeConfig::new(OutputFormat::PngZoint);
+
+        let encoded = encode_indexed_rgba8(
+            img.as_ref(),
+            &config,
+            &quant,
+            None,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert!(!encoded.is_empty());
+
+        // Verify PNG signature
+        assert_eq!(&encoded[..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
+
+        // Full decode roundtrip
+        let decoded = crate::decode::decode(
+            &encoded,
+            &crate::decode::PngDecodeConfig::none(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, 4);
+        assert_eq!(decoded.info.height, 4);
+    }
+
+    #[cfg(feature = "zoint")]
+    #[test]
+    fn zoint_produces_smaller_or_equal_output() {
+        // 64x64 gradient: enough pixels for compression differences to appear
+        let mut pixels = Vec::with_capacity(64 * 64);
+        for y in 0..64u32 {
+            for x in 0..64u32 {
+                pixels.push(Rgba {
+                    r: (x * 4).min(255) as u8,
+                    g: (y * 4).min(255) as u8,
+                    b: ((x + y) * 2).min(255) as u8,
+                    a: 255,
+                });
+            }
+        }
+        let img = ImgVec::new(pixels, 64, 64);
+        let config = EncodeConfig::default();
+
+        // Standard indexed PNG
+        let quant_standard = QuantizeConfig::new(OutputFormat::Png);
+        let standard = encode_indexed_rgba8(
+            img.as_ref(),
+            &config,
+            &quant_standard,
+            None,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+
+        // Zoint indexed PNG
+        let quant_zoint = QuantizeConfig::new(OutputFormat::PngZoint);
+        let zoint = encode_indexed_rgba8(
+            img.as_ref(),
+            &config,
+            &quant_zoint,
+            None,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+
+        // Both should decode correctly
+        let dec_standard = crate::decode::decode(
+            &standard,
+            &crate::decode::PngDecodeConfig::none(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        let dec_zoint = crate::decode::decode(
+            &zoint,
+            &crate::decode::PngDecodeConfig::none(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(dec_standard.info.width, 64);
+        assert_eq!(dec_zoint.info.width, 64);
+
+        // Zoint should produce same or smaller output
+        // (on small test images, the overhead of joint optimization may not
+        // always win, so we allow up to 5% larger as a sanity check)
+        let ratio = zoint.len() as f64 / standard.len() as f64;
+        assert!(
+            ratio < 1.05,
+            "zoint output ({}) much larger than standard ({}) — ratio {:.3}",
+            zoint.len(),
+            standard.len(),
+            ratio,
+        );
+    }
+
+    #[cfg(feature = "zoint")]
+    #[test]
+    fn zoint_auto_encode_roundtrip() {
+        let img = test_image_4x4();
+        let config = EncodeConfig::default();
+        let quant = QuantizeConfig::new(OutputFormat::PngZoint);
+
+        let result = encode_rgba8_auto(
+            img.as_ref(),
+            &config,
+            &quant,
+            QualityGate::MaxDeltaE(0.02),
+            None,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert!(
+            result.indexed,
+            "few-color image should use indexed encoding"
+        );
+
+        let decoded = crate::decode::decode(
+            &result.data,
+            &crate::decode::PngDecodeConfig::none(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, 4);
+        assert_eq!(decoded.info.height, 4);
     }
 }

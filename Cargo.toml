@@ -39,6 +39,7 @@ opt-level = 2
 [features]
 default = ["quantize"]
 quantize = ["dep:zenquant"]
+zoint = ["quantize", "zenquant/zoint"]
 unchecked = ["zenflate/unchecked"]
 zopfli = ["dep:zenzop"]
 _dev = ["archmage/testable_dispatch"]
