@@ -23,13 +23,15 @@ pub(crate) const HEURISTIC_STRATEGIES: &[Strategy] = &[
 ///
 /// Drops Single(Sub/Up/Average) — they rarely win screening. Keeps None
 /// (wins on flat screenshots), Paeth (wins on some screenshots), and the
-/// 3 best adaptive heuristics. 5 strategies instead of 9 = ~44% faster screen.
+/// 3 cheapest adaptive heuristics. BigEnt is excluded — it's 30-170x slower
+/// than MinSum due to 256KB memset + 65536-entry iteration per row, making
+/// it inappropriate for "fast" tier.
 pub(crate) const FAST_STRATEGIES: &[Strategy] = &[
     Strategy::Single(0), // None
     Strategy::Single(4), // Paeth
     Strategy::Adaptive(AdaptiveHeuristic::MinSum),
     Strategy::Adaptive(AdaptiveHeuristic::Bigrams),
-    Strategy::Adaptive(AdaptiveHeuristic::BigEnt),
+    Strategy::Adaptive(AdaptiveHeuristic::Entropy),
 ];
 
 /// Minimal strategy list for low effort (effort 3-4).
@@ -361,7 +363,7 @@ fn filter_image_brute_fork(
 ///
 /// Layout: flat buffer with `[row0_f0, row0_f1, ..., row0_f4, row1_f0, ...]`.
 /// Each entry is `row_bytes` long. Total size: `5 * height * row_bytes`.
-fn precompute_all_filters(
+pub(crate) fn precompute_all_filters(
     packed_rows: &[u8],
     row_bytes: usize,
     height: usize,
@@ -386,6 +388,58 @@ fn precompute_all_filters(
 fn precomputed_row(buf: &[u8], row_bytes: usize, row: usize, filter: usize) -> &[u8] {
     let offset = (row * 5 + filter) * row_bytes;
     &buf[offset..offset + row_bytes]
+}
+
+/// Build filtered output from precomputed filter data.
+///
+/// Instead of applying filters per-strategy (which duplicates work when
+/// multiple adaptive strategies each apply the same 5 filters), this reads
+/// from a shared precomputed buffer. Saves 5× filter application per
+/// additional adaptive strategy.
+///
+/// For Single strategies, copies the corresponding filter's precomputed row.
+/// For Adaptive strategies, scores all 5 candidates per row and picks the best.
+pub(crate) fn filter_image_from_precomputed(
+    precomputed: &[u8],
+    row_bytes: usize,
+    height: usize,
+    strategy: Strategy,
+    scratch: &mut HeuristicScratch,
+    out: &mut Vec<u8>,
+) {
+    match strategy {
+        Strategy::Single(f) => {
+            for y in 0..height {
+                out.push(f);
+                out.extend_from_slice(precomputed_row(precomputed, row_bytes, y, f as usize));
+            }
+        }
+        Strategy::Adaptive(heuristic) => {
+            for y in 0..height {
+                let base = y * 5 * row_bytes;
+                let best_f = score_candidates(
+                    |f| {
+                        let start = base + f as usize * row_bytes;
+                        &precomputed[start..start + row_bytes]
+                    },
+                    &heuristic,
+                    scratch,
+                );
+                out.push(best_f);
+                out.extend_from_slice(precomputed_row(
+                    precomputed,
+                    row_bytes,
+                    y,
+                    best_f as usize,
+                ));
+            }
+        }
+        Strategy::BruteForce { .. }
+        | Strategy::BruteForceBlock { .. }
+        | Strategy::BruteForceFork { .. } => {
+            unreachable!("brute force strategies not supported with precomputed filters");
+        }
+    }
 }
 
 /// Pick block size B in [2, 5] based on image size and evaluation budget.
@@ -570,13 +624,23 @@ fn filter_image_blockwise(
 /// Reusable scratch buffers for heuristic scoring.
 ///
 /// Hoisted outside the per-row loop to avoid per-row allocation churn.
-/// BigEnt was the worst offender: 256KB (`vec![0u32; 65536]`) per row per
-/// filter candidate = 2GB+ of malloc/free on tall images.
-struct HeuristicScratch {
+/// Uses sparse tracking: instead of `fill(0)` on large buffers between
+/// calls, we track which entries were touched and reset only those.
+///
+/// - Bigrams: `touched_words` tracks which u64 words in `bigram_seen` were
+///   modified. Reset only those words after scoring (avoids 8KB memset).
+/// - BigEnt: `nonzero_keys` tracks which entries in `bigram_counts` are
+///   nonzero. Entropy is computed over only those entries, and they're
+///   reset during computation (avoids 256KB memset + 65536-entry iteration).
+pub(crate) struct HeuristicScratch {
     /// Bigrams: 65536-bit bitset (8KB). Used by Bigrams heuristic.
     bigram_seen: Vec<u64>,
     /// BigEnt: 65536-entry frequency table (256KB). Used by BigEnt heuristic.
     bigram_counts: Vec<u32>,
+    /// Sparse tracking for BigEnt: indices of nonzero entries in bigram_counts.
+    nonzero_keys: Vec<u16>,
+    /// Sparse tracking for Bigrams: indices of modified u64 words in bigram_seen.
+    touched_words: Vec<u16>,
 }
 
 impl HeuristicScratch {
@@ -592,6 +656,29 @@ impl HeuristicScratch {
             } else {
                 Vec::new()
             },
+            nonzero_keys: if matches!(heuristic, AdaptiveHeuristic::BigEnt) {
+                Vec::with_capacity(8192)
+            } else {
+                Vec::new()
+            },
+            touched_words: if matches!(heuristic, AdaptiveHeuristic::Bigrams) {
+                Vec::with_capacity(1024)
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    /// Create a scratch that works for all heuristic types.
+    ///
+    /// Used when screening multiple strategies with shared precomputed
+    /// filter data — one scratch serves all adaptive heuristics.
+    pub(crate) fn new_universal() -> Self {
+        Self {
+            bigram_seen: vec![0u64; 1024],
+            bigram_counts: vec![0u32; 65536],
+            nonzero_keys: Vec::with_capacity(8192),
+            touched_words: Vec::with_capacity(1024),
         }
     }
 }
@@ -601,12 +688,29 @@ fn pick_best_filter(
     heuristic: AdaptiveHeuristic,
     scratch: &mut HeuristicScratch,
 ) -> u8 {
+    score_candidates(
+        |f| &candidates[f as usize],
+        &heuristic,
+        scratch,
+    )
+}
+
+/// Score 5 filter candidates and return the best filter index.
+///
+/// The `get_candidate` closure returns the filtered row data for filter `f`.
+/// This is shared between the Vec-based path (filter_image_heuristic) and
+/// the precomputed path (filter_image_from_precomputed).
+fn score_candidates<'a>(
+    get_candidate: impl Fn(u8) -> &'a [u8],
+    heuristic: &AdaptiveHeuristic,
+    scratch: &mut HeuristicScratch,
+) -> u8 {
     match heuristic {
         AdaptiveHeuristic::MinSum => {
             let mut best = 0u8;
             let mut best_score = u64::MAX;
             for f in 0..5u8 {
-                let score = sav_score(&candidates[f as usize]);
+                let score = sav_score(get_candidate(f));
                 if score < best_score {
                     best_score = score;
                     best = f;
@@ -618,7 +722,7 @@ fn pick_best_filter(
             let mut best = 0u8;
             let mut best_score = f64::MAX;
             for f in 0..5u8 {
-                let score = entropy_score(&candidates[f as usize]);
+                let score = entropy_score(get_candidate(f));
                 if score < best_score {
                     best_score = score;
                     best = f;
@@ -630,7 +734,11 @@ fn pick_best_filter(
             let mut best = 0u8;
             let mut best_score = usize::MAX;
             for f in 0..5u8 {
-                let score = bigrams_score(&candidates[f as usize], &mut scratch.bigram_seen);
+                let score = bigrams_score(
+                    get_candidate(f),
+                    &mut scratch.bigram_seen,
+                    &mut scratch.touched_words,
+                );
                 if score < best_score {
                     best_score = score;
                     best = f;
@@ -642,8 +750,11 @@ fn pick_best_filter(
             let mut best = 0u8;
             let mut best_score = f64::MAX;
             for f in 0..5u8 {
-                let score =
-                    bigram_entropy_score(&candidates[f as usize], &mut scratch.bigram_counts);
+                let score = bigram_entropy_score(
+                    get_candidate(f),
+                    &mut scratch.bigram_counts,
+                    &mut scratch.nonzero_keys,
+                );
                 if score < best_score {
                     best_score = score;
                     best = f;
@@ -736,20 +847,29 @@ fn entropy_score(data: &[u8]) -> f64 {
     entropy
 }
 
-fn bigrams_score(data: &[u8], seen: &mut [u64]) -> usize {
+fn bigrams_score(data: &[u8], seen: &mut [u64], touched: &mut Vec<u16>) -> usize {
     if data.len() < 2 {
         return 0;
     }
-    seen.fill(0);
+    // Sparse tracking: instead of seen.fill(0), we track which words were
+    // modified and reset only those after scoring. Saves 8KB memset per call.
+    touched.clear();
     let mut count = 0usize;
     for pair in data.windows(2) {
         let key = (pair[0] as usize) << 8 | pair[1] as usize;
         let word = key >> 6;
         let bit = 1u64 << (key & 63);
         if seen[word] & bit == 0 {
+            if seen[word] == 0 {
+                touched.push(word as u16);
+            }
             seen[word] |= bit;
             count += 1;
         }
+    }
+    // Reset only the words we touched
+    for &w in touched.iter() {
+        seen[w as usize] = 0;
     }
     count
 }
@@ -760,23 +880,32 @@ fn bigrams_score(data: &[u8], seen: &mut [u64]) -> usize {
 /// actual entropy of the bigram distribution. Better at distinguishing
 /// between filtered rows that have similar unique-bigram counts but
 /// different frequency distributions.
-fn bigram_entropy_score(data: &[u8], counts: &mut [u32]) -> f64 {
+///
+/// Uses sparse tracking: `nonzero` collects indices of entries set during
+/// counting. Entropy is computed only over those entries, and they're reset
+/// to 0 during the computation. This avoids both the 256KB `fill(0)` and
+/// the 65536-entry iteration that made this function 30-170x slower than
+/// MinSum.
+fn bigram_entropy_score(data: &[u8], counts: &mut [u32], nonzero: &mut Vec<u16>) -> f64 {
     if data.len() < 2 {
         return 0.0;
     }
-    counts.fill(0);
+    nonzero.clear();
     let n = data.len() - 1;
     for pair in data.windows(2) {
         let key = (pair[0] as usize) << 8 | pair[1] as usize;
+        if counts[key] == 0 {
+            nonzero.push(key as u16);
+        }
         counts[key] += 1;
     }
     let len = n as f64;
     let mut entropy = 0.0f64;
-    for &c in counts.iter() {
-        if c > 0 {
-            let p = c as f64 / len;
-            entropy -= p * p.log2();
-        }
+    for &key in nonzero.iter() {
+        let c = counts[key as usize];
+        let p = c as f64 / len;
+        entropy -= p * p.log2();
+        counts[key as usize] = 0; // Reset as we go — no fill(0) needed
     }
     entropy
 }

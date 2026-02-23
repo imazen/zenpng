@@ -167,12 +167,37 @@ trial compression is cheap (same as Phase 1 screening in `compress.rs`). This is
 biggest APNG compression win available — can reduce APNG file sizes by 20-50% on typical
 animations.
 
+### APNG color type downconversion (not yet implemented)
+zenpng hardcodes RGBA8 (`color_type=6`) for all APNG truecolor output. apngasm's
+`downconvertOptimizations()` analyzes all frames and reduces to the minimal color type:
+
+- **RGBA → RGB** when all pixels are fully opaque (25% raw data reduction)
+- **RGBA → Grayscale** when all pixels are gray + simple transparency
+- **RGBA → GrayAlpha** when all pixels are gray but need alpha
+- **RGBA/RGB → Palette** when ≤256 unique colors across ALL frames (no quantization)
+- **Palette cleanup**: remove unused entries, sort by alpha then frequency
+
+The RGBA→RGB case alone is significant — most animations are fully opaque, and dropping
+the alpha channel saves 25% before compression even starts. Implementation: scan all frames
+for `alpha < 255`, if none found emit as RGB (color_type=2). For grayscale detection, check
+`r == g == b` on all pixels. For exact-palette, count unique colors across all frames.
+
+### APNG duplicate frame merging (not yet implemented)
+apngasm's `duplicateFramesOptimization()` detects consecutive identical frames and merges
+them by summing delays (GCD-simplified fraction). Eliminates redundant frame data entirely.
+Common in animations with "hold" frames. Simple pixel comparison + delay arithmetic.
+
 ### apngasm comparison (analyzed 2026-02-22)
 apngasm uses zlib L9 (no zopfli/libdeflate), 2-strategy filter selection (DEFAULT vs FILTERED),
 and no quantization (palette only when image already has ≤256 exact colors). zenpng already
 dominates on per-frame compression: zenflate L12 > zlib L9, 9 heuristic + 3 brute-force
-strategies, zenquant perceptual quantization. The two tricks worth adopting are transparent
-pixel zeroing and 6-way dispose/blend optimization for APNG.
+strategies, zenquant perceptual quantization. Optimizations worth adopting from apngasm:
+
+1. **Transparent pixel zeroing** — zero RGB on alpha==0 pixels
+2. **6-way dispose/blend optimization** — trial-compress all 6 combos per frame
+3. **Color type downconversion** — RGBA→RGB when opaque (25% savings), grayscale detection
+4. **Duplicate frame merging** — combine identical consecutive frames
+5. **Exact-palette detection** — use indexed color when ≤256 unique colors across all frames (no quantization needed)
 
 ## Known Issues
 
