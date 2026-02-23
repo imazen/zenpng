@@ -197,13 +197,23 @@ Quick `has_any_transparent_pixel()` scan avoids copying when no transparent pixe
 Creates runs of identical bytes that compress significantly better. No quality impact.
 
 ### Auto-indexed encoding via zenquant
-Already implemented: `encode_rgba8_auto()` quantizes via zenquant, checks OKLab ΔE against
-`max_loss` threshold, uses indexed PNG if quality permits, falls back to truecolor.
-`encode_apng_auto()` does the same for APNG with a shared global palette.
+`encode_rgba8_auto()` and `encode_apng_auto()` quantize via zenquant and check a
+`QualityGate` to decide indexed vs truecolor. Three gate types:
 
-zenquant also exposes SSIM2-estimated quality via `compute_quality_metric(true)` and
-`min_ssim2()` / `target_ssim2()`. The quality gate could optionally use SSIM2 instead of
-(or alongside) OKLab ΔE for tighter perceptual control.
+| Gate | Scale | Good default | Meaning |
+|------|-------|-------------|---------|
+| `MaxDeltaE(0.02)` | 0.0 – ∞ | 0.02 | Mean OKLab ΔE (lower = stricter) |
+| `MaxMpe(0.008)` | 0.0 – ∞ | 0.008 | Masked perceptual error calibrated to butteraugli/SSIM2 |
+| `MinSsim2(85.0)` | 0 – 100 | 85.0 | Estimated SSIMULACRA2 score (higher = stricter) |
+
+`AutoEncodeResult` exposes `quality_loss` (OKLab ΔE), plus optional `mpe_score`,
+`ssim2_estimate`, `butteraugli_estimate` (populated when `MaxMpe`/`MinSsim2` gate used).
+
+APNG indexed path uses `build_palette_rgba()` for a shared palette across all frames,
+then `remap_rgba_with_prev()` for temporal consistency (static pixels get identical
+indices across frames, eliminating flicker). Delta regions are computed on index buffers
+directly (1 byte/pixel) rather than RGBA pixels. `encode_apng_auto()` checks the quality
+gate per frame and bails to truecolor if any frame fails, reporting worst-case metrics.
 
 ### 6-way APNG dispose/blend optimization (not yet implemented)
 zenpng's APNG encoder hardcodes `dispose_op=NONE` + `blend_op=SOURCE` on every frame
