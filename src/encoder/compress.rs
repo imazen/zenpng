@@ -27,6 +27,8 @@ use super::{PhaseStat, PhaseStats};
 /// - `brute_configs`: (context_rows, eval_effort) for Phase 3 brute-force
 /// - `fork_brute_efforts`: eval efforts for forking brute-force
 /// - `use_zopfli`: whether to run Phase 4 (zopfli)
+/// - `fallback_screen_effort`: extra zenflate effort to try on all screened
+///   results (monotonicity safety net at zenflate strategy boundaries)
 struct EffortParams {
     zenflate_effort: u32,
     strategies: &'static [Strategy],
@@ -38,14 +40,33 @@ struct EffortParams {
     fork_brute_efforts: &'static [u32],
     #[allow(dead_code)] // read only with `zopfli` feature
     use_zopfli: bool,
+    /// When set, all screened filter results are also compressed at this
+    /// effort after the main screen/refine pass. Ensures monotonicity at
+    /// zenflate strategy boundaries (e.g., Turbo→FastHt, Lazy→Lazy2)
+    /// where different internal algorithms can produce butterfly effects.
+    fallback_screen_effort: Option<u32>,
 }
 
 impl EffortParams {
     /// Map effort (0-30) to pipeline parameters.
+    ///
+    /// Monotonicity invariant: higher effort must never produce larger output.
+    /// This is enforced by:
+    /// - `fallback_screen_effort`: at zenflate strategy boundaries (e.g.,
+    ///   Turbo→FastHt at e5), also compress at the previous tier's max effort
+    ///   to prevent butterfly effects from different hash/match algorithms.
+    /// - Screen efforts that never cross zenflate boundaries: screen_effort
+    ///   stays ≤7 (FastHt) through e26, avoiding Greedy ranking divergence.
+    /// - Refine efforts that span strategy boundaries include BOTH tiers
+    ///   (e.g., [17,18] at e14 tries both Lazy and Lazy2).
     fn from_effort(effort: u32) -> Self {
         let effort = effort.min(30);
         match effort {
             // ── Low effort (0-7): screen IS final pass ──
+            //
+            // Zenflate strategies: e0=Store, e1-4=Turbo, e5-7=FastHt.
+            // At the Turbo→FastHt boundary (e5), a fallback at e4 ensures
+            // monotonicity despite different internal match algorithms.
             0 => Self {
                 zenflate_effort: 0,
                 strategies: &[Strategy::Single(0)],
@@ -56,6 +77,7 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             1 => Self {
                 zenflate_effort: 1,
@@ -67,6 +89,7 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             2 => Self {
                 zenflate_effort: 2,
@@ -78,6 +101,7 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             3 => Self {
                 zenflate_effort: 3,
@@ -89,6 +113,7 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             4 => Self {
                 zenflate_effort: 4,
@@ -100,7 +125,11 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
+            // e5-7: FastHt screen with Turbo fallback for monotonicity.
+            // Different hash tables in FastHt vs Turbo can cause butterfly
+            // effects where FastHt produces slightly larger output.
             5 => Self {
                 zenflate_effort: 5,
                 strategies: FAST_STRATEGIES,
@@ -111,6 +140,7 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: Some(4),
             },
             6 => Self {
                 zenflate_effort: 6,
@@ -122,6 +152,7 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: Some(4),
             },
             7 => Self {
                 zenflate_effort: 7,
@@ -133,140 +164,166 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: Some(4),
             },
             // ── Medium effort (8-15): screen + refine ──
+            //
+            // Screen at FastHt e7 (not Turbo e1) so the screen result is at
+            // least as good as effort 7. Refine at Greedy/Lazy can only
+            // improve on it (best_compressed tracks the overall minimum).
             8 => Self {
                 zenflate_effort: 8,
                 strategies: FAST_STRATEGIES,
-                screen_effort: 1,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[8],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: Some(4),
             },
             9 => Self {
                 zenflate_effort: 10,
                 strategies: FAST_STRATEGIES,
-                screen_effort: 1,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[10],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
+            // e10-13: HEURISTIC strategies. Include Greedy e10 as fallback
+            // in refine to preserve monotonicity across the FAST→HEURISTIC
+            // transition and the Greedy→Lazy zenflate boundary.
             10 => Self {
                 zenflate_effort: 12,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 2,
+                screen_effort: 7,
                 screen_is_final: false,
-                top_k: 3,
-                refine_efforts: &[12],
+                top_k: 5,
+                refine_efforts: &[10, 12],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             11 => Self {
                 zenflate_effort: 14,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 2,
+                screen_effort: 7,
                 screen_is_final: false,
-                top_k: 3,
-                refine_efforts: &[14],
+                top_k: 5,
+                refine_efforts: &[10, 14],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             12 => Self {
                 zenflate_effort: 15,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 3,
+                screen_effort: 7,
                 screen_is_final: false,
-                top_k: 3,
-                refine_efforts: &[15],
+                top_k: 5,
+                refine_efforts: &[10, 15],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             13 => Self {
                 zenflate_effort: 17,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 3,
+                screen_effort: 7,
                 screen_is_final: false,
-                top_k: 3,
-                refine_efforts: &[17],
+                top_k: 5,
+                refine_efforts: &[10, 17],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
+            // e14: Lazy→Lazy2 boundary. Include both tiers + Greedy fallback.
             14 => Self {
                 zenflate_effort: 18,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 4,
+                screen_effort: 7,
                 screen_is_final: false,
-                top_k: 3,
-                refine_efforts: &[18],
+                top_k: 5,
+                refine_efforts: &[10, 17, 18],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
+            // e15: Include Lazy e17 as fallback for Lazy2 e20.
             15 => Self {
                 zenflate_effort: 20,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 4,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[20],
+                refine_efforts: &[10, 17, 20],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             // ── High effort (16-23): higher refine, multi-tier ──
+            //
+            // Screen stays at FastHt e7 for consistent candidate ranking.
+            // Refine efforts span zenflate tier boundaries where needed.
             16 => Self {
                 zenflate_effort: 22,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 5,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[20, 22],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             17 => Self {
                 zenflate_effort: 22,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 5,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[22],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             18 => Self {
                 zenflate_effort: 24,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 6,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[22, 24],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
+            // e19: Lazy2→NearOptimal boundary. Include both tiers.
             19 => Self {
                 zenflate_effort: 24,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 6,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[24],
+                refine_efforts: &[22, 24],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             20 => Self {
                 zenflate_effort: 26,
@@ -278,89 +335,101 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             21 => Self {
                 zenflate_effort: 28,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 8,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[26, 28],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             22 => Self {
                 zenflate_effort: 28,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 8,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[28],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             23 => Self {
                 zenflate_effort: 30,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 8,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[28, 30],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             // ── Max effort (24-30): brute-force + zopfli ──
+            //
+            // Screen stays at FastHt e7 for consistent ranking.
+            // Brute-force and fork generate their own per-row filter
+            // selections, independent of the screen ranking.
             24 => Self {
                 zenflate_effort: 30,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 8,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[28, 30],
                 brute_configs: &[(5, 1)],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             25 => Self {
                 zenflate_effort: 30,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 8,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[28, 30],
                 brute_configs: &[(5, 1), (5, 4)],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             26 => Self {
                 zenflate_effort: 30,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 8,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[30],
                 brute_configs: &[(5, 1), (5, 4)],
                 fork_brute_efforts: &[1],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             27 => Self {
                 zenflate_effort: 30,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 10,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[30],
                 brute_configs: &[(5, 1), (5, 4)],
                 fork_brute_efforts: &[1, 4],
                 use_zopfli: false,
+                fallback_screen_effort: None,
             },
             28 => Self {
                 zenflate_effort: 30,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 12,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[30],
@@ -376,11 +445,12 @@ impl EffortParams {
                 ],
                 fork_brute_efforts: &[1, 4],
                 use_zopfli: cfg!(feature = "zopfli"),
+                fallback_screen_effort: None,
             },
             29 => Self {
                 zenflate_effort: 30,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 15,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[30],
@@ -396,12 +466,13 @@ impl EffortParams {
                 ],
                 fork_brute_efforts: &[1, 4],
                 use_zopfli: cfg!(feature = "zopfli"),
+                fallback_screen_effort: None,
             },
             _ => Self {
                 // effort 30
                 zenflate_effort: 30,
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 15,
+                screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[30],
@@ -417,6 +488,7 @@ impl EffortParams {
                 ],
                 fork_brute_efforts: &[1, 4],
                 use_zopfli: cfg!(feature = "zopfli"),
+                fallback_screen_effort: None,
             },
         }
     }
@@ -723,6 +795,24 @@ pub(crate) fn compress_filtered(
             best_size: best_compressed.as_ref().map_or(0, |b| b.len()),
             evaluations: tried as u32,
         });
+    }
+
+    // ---- Fallback pass: monotonicity safety net ----
+    // At zenflate strategy boundaries, also compress all screened results at
+    // the previous tier's effort. This catches cases where a different hash
+    // algorithm produces slightly larger output (butterfly effect).
+    if let Some(fb_effort) = params.fallback_screen_effort {
+        let mut fb_compressor = Compressor::new(CompressionLevel::new(fb_effort));
+        for (_, filtered_data) in &screen_results {
+            let _ = try_compress(
+                filtered_data,
+                core::slice::from_mut(&mut fb_compressor),
+                &mut compress_buf,
+                &mut verify_buf,
+                &mut best_compressed,
+                opts.cancel,
+            );
+        }
     }
 
     // Early return: screen-only modes don't need refinement, or deadline hit
