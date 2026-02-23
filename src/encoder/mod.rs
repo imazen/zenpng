@@ -126,6 +126,82 @@ pub(crate) fn write_indexed_png(
     Ok(out)
 }
 
+/// Encode palette-indexed pixel data into a PNG file using pre-compressed IDAT data.
+///
+/// Accepts a raw deflate stream and Adler-32 from an external compression pass
+/// (e.g. zenquant's zoint optimizer). Wraps the deflate stream in a zlib
+/// envelope (2-byte header + deflate + 4-byte Adler-32) and assembles the
+/// full PNG file.
+#[cfg(feature = "quantize")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_indexed_png_precompressed(
+    width: u32,
+    height: u32,
+    palette_rgb: &[u8],
+    palette_alpha: Option<&[u8]>,
+    write_meta: &PngWriteMetadata<'_>,
+    deflate_stream: &[u8],
+    adler32: u32,
+    bit_depth: u8,
+) -> Result<Vec<u8>, PngError> {
+    let n_colors = palette_rgb.len() / 3;
+
+    if n_colors == 0 || n_colors > 256 {
+        return Err(PngError::InvalidInput(alloc::format!(
+            "palette must have 1-256 entries, got {n_colors}"
+        )));
+    }
+
+    // Build zlib stream: header + deflate + adler32
+    // CMF=0x78 (deflate, window=32KB), FLG=0x01 (no dict, check bits)
+    let zlib_len = 2 + deflate_stream.len() + 4;
+    let mut zlib_stream = Vec::with_capacity(zlib_len);
+    zlib_stream.push(0x78);
+    zlib_stream.push(0x01);
+    zlib_stream.extend_from_slice(deflate_stream);
+    zlib_stream.extend_from_slice(&adler32.to_be_bytes());
+
+    // Assemble PNG
+    let trns_data = truncate_trns(palette_alpha);
+    let est = 8
+        + 25
+        + (12 + n_colors * 3)
+        + trns_data.as_ref().map_or(0, |t| 12 + t.len())
+        + (12 + zlib_stream.len())
+        + 12
+        + metadata_size_estimate(write_meta);
+    let mut out = Vec::with_capacity(est);
+
+    out.extend_from_slice(&PNG_SIGNATURE);
+
+    // IHDR
+    let mut ihdr = [0u8; 13];
+    ihdr[0..4].copy_from_slice(&width.to_be_bytes());
+    ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+    ihdr[8] = bit_depth;
+    ihdr[9] = 3; // indexed color
+    write_chunk(&mut out, b"IHDR", &ihdr);
+
+    // Color metadata and generic metadata (before PLTE per PNG spec)
+    write_all_metadata(&mut out, write_meta)?;
+
+    // PLTE
+    write_chunk(&mut out, b"PLTE", &palette_rgb[..n_colors * 3]);
+
+    // tRNS
+    if let Some(trns) = &trns_data {
+        write_chunk(&mut out, b"tRNS", trns);
+    }
+
+    // IDAT (pre-compressed zlib stream)
+    write_chunk(&mut out, b"IDAT", &zlib_stream);
+
+    // IEND
+    write_chunk(&mut out, b"IEND", &[]);
+
+    Ok(out)
+}
+
 /// Encode truecolor/grayscale pixel data into a complete PNG file.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_truecolor_png(
