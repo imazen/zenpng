@@ -27,8 +27,11 @@ use super::{PhaseStat, PhaseStats};
 /// - `brute_configs`: (context_rows, eval_effort) for Phase 3 brute-force
 /// - `fork_brute_efforts`: eval efforts for forking brute-force
 /// - `use_zopfli`: whether to run Phase 4 (zopfli)
-/// - `fallback_screen_effort`: extra zenflate effort to try on all screened
-///   results (monotonicity safety net at zenflate strategy boundaries)
+///
+/// Monotonicity (higher effort never produces larger output) is enforced by
+/// `zenflate::CompressionLevel::monotonicity_fallback()`, which the compression
+/// helpers follow automatically. Screen effort stays at FastHt (≤9) to avoid
+/// cross-strategy ranking divergence.
 struct EffortParams {
     zenflate_effort: u32,
     strategies: &'static [Strategy],
@@ -40,33 +43,22 @@ struct EffortParams {
     fork_brute_efforts: &'static [u32],
     #[allow(dead_code)] // read only with `zopfli` feature
     use_zopfli: bool,
-    /// When set, all screened filter results are also compressed at this
-    /// effort after the main screen/refine pass. Ensures monotonicity at
-    /// zenflate strategy boundaries (e.g., Turbo→FastHt, Lazy→Lazy2)
-    /// where different internal algorithms can produce butterfly effects.
-    fallback_screen_effort: Option<u32>,
 }
 
 impl EffortParams {
     /// Map effort (0-30) to pipeline parameters.
     ///
-    /// Monotonicity invariant: higher effort must never produce larger output.
-    /// This is enforced by:
-    /// - `fallback_screen_effort`: at zenflate strategy boundaries (e.g.,
-    ///   Turbo→FastHt at e5), also compress at the previous tier's max effort
-    ///   to prevent butterfly effects from different hash/match algorithms.
-    /// - Screen efforts that never cross zenflate boundaries: screen_effort
-    ///   stays ≤7 (FastHt) through e26, avoiding Greedy ranking divergence.
-    /// - Refine efforts that span strategy boundaries include BOTH tiers
-    ///   (e.g., [17,18] at e14 tries both Lazy and Lazy2).
+    /// Monotonicity is enforced by `CompressionLevel::monotonicity_fallback()`:
+    /// each refine/brute compression automatically follows the fallback chain,
+    /// trying each previous strategy boundary's max effort. Screen effort stays
+    /// at FastHt (≤9) for consistent candidate ranking.
     fn from_effort(effort: u32) -> Self {
         let effort = effort.min(30);
         match effort {
             // ── Low effort (0-7): screen IS final pass ──
             //
-            // Zenflate strategies: e0=Store, e1-4=Turbo, e5-7=FastHt.
-            // At the Turbo→FastHt boundary (e5), a fallback at e4 ensures
-            // monotonicity despite different internal match algorithms.
+            // e0=Store, e1-4=Turbo, e5-9=FastHt.
+            // Turbo→FastHt always improves (zenflate guarantee), no fallback needed.
             0 => Self {
                 zenflate_effort: 0,
                 strategies: &[Strategy::Single(0)],
@@ -77,7 +69,6 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             1 => Self {
                 zenflate_effort: 1,
@@ -89,7 +80,6 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             2 => Self {
                 zenflate_effort: 2,
@@ -101,7 +91,6 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             3 => Self {
                 zenflate_effort: 3,
@@ -113,7 +102,6 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             4 => Self {
                 zenflate_effort: 4,
@@ -125,11 +113,7 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
-            // e5-7: FastHt screen with Turbo fallback for monotonicity.
-            // Different hash tables in FastHt vs Turbo can cause butterfly
-            // effects where FastHt produces slightly larger output.
             5 => Self {
                 zenflate_effort: 5,
                 strategies: FAST_STRATEGIES,
@@ -140,7 +124,6 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: Some(4),
             },
             6 => Self {
                 zenflate_effort: 6,
@@ -152,7 +135,6 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: Some(4),
             },
             7 => Self {
                 zenflate_effort: 7,
@@ -164,13 +146,12 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: Some(4),
             },
             // ── Medium effort (8-15): screen + refine ──
             //
-            // Screen at FastHt e7 (not Turbo e1) so the screen result is at
-            // least as good as effort 7. Refine at Greedy/Lazy can only
-            // improve on it (best_compressed tracks the overall minimum).
+            // Screen at FastHt e7. Refine at target efforts; monotonicity
+            // fallback chain (via zenflate) automatically tries previous
+            // strategy boundaries (e.g., e12 → e10 → e9).
             8 => Self {
                 zenflate_effort: 8,
                 strategies: FAST_STRATEGIES,
@@ -181,7 +162,6 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: Some(4),
             },
             9 => Self {
                 zenflate_effort: 10,
@@ -193,105 +173,87 @@ impl EffortParams {
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
-            // e10-13: HEURISTIC strategies. Include Greedy e10 as fallback
-            // in refine to preserve monotonicity across the FAST→HEURISTIC
-            // transition and the Greedy→Lazy zenflate boundary.
             10 => Self {
                 zenflate_effort: 12,
                 strategies: HEURISTIC_STRATEGIES,
                 screen_effort: 7,
                 screen_is_final: false,
-                top_k: 5,
-                refine_efforts: &[10, 12],
+                top_k: 3,
+                refine_efforts: &[12],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             11 => Self {
                 zenflate_effort: 14,
                 strategies: HEURISTIC_STRATEGIES,
                 screen_effort: 7,
                 screen_is_final: false,
-                top_k: 5,
-                refine_efforts: &[10, 14],
+                top_k: 3,
+                refine_efforts: &[14],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             12 => Self {
                 zenflate_effort: 15,
                 strategies: HEURISTIC_STRATEGIES,
                 screen_effort: 7,
                 screen_is_final: false,
-                top_k: 5,
-                refine_efforts: &[10, 15],
+                top_k: 3,
+                refine_efforts: &[15],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             13 => Self {
                 zenflate_effort: 17,
                 strategies: HEURISTIC_STRATEGIES,
                 screen_effort: 7,
                 screen_is_final: false,
-                top_k: 5,
-                refine_efforts: &[10, 17],
+                top_k: 3,
+                refine_efforts: &[17],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
-            // e14: Lazy→Lazy2 boundary. Include both tiers + Greedy fallback.
             14 => Self {
                 zenflate_effort: 18,
                 strategies: HEURISTIC_STRATEGIES,
                 screen_effort: 7,
                 screen_is_final: false,
-                top_k: 5,
-                refine_efforts: &[10, 17, 18],
+                top_k: 3,
+                refine_efforts: &[18],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
-            // e15: Include Lazy e17 as fallback for Lazy2 e20.
             15 => Self {
                 zenflate_effort: 20,
                 strategies: HEURISTIC_STRATEGIES,
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 20],
+                refine_efforts: &[20],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             // ── High effort (16-23): higher refine, multi-tier ──
             //
-            // Screen stays at FastHt e7 for consistent candidate ranking.
-            // Refine efforts span zenflate tier boundaries where needed.
-            // ── High effort (16-23): higher refine, multi-tier ──
-            //
-            // Refine efforts include tier boundary fallbacks:
-            // - e10 = max Greedy, e17 = max Lazy, e22 = max Lazy2
-            // This prevents regressions when crossing strategy boundaries.
+            // Screen at FastHt e7. Refine at target efforts; fallback chain
+            // handles cross-strategy monotonicity automatically.
             16 => Self {
                 zenflate_effort: 22,
                 strategies: HEURISTIC_STRATEGIES,
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 20, 22],
+                refine_efforts: &[20, 22],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             17 => Self {
                 zenflate_effort: 22,
@@ -299,11 +261,10 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 22],
+                refine_efforts: &[22],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             18 => Self {
                 zenflate_effort: 24,
@@ -311,11 +272,10 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 22, 24],
+                refine_efforts: &[22, 24],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             19 => Self {
                 zenflate_effort: 24,
@@ -323,11 +283,10 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 22, 24],
+                refine_efforts: &[24],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             20 => Self {
                 zenflate_effort: 26,
@@ -335,11 +294,10 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 22, 24, 26],
+                refine_efforts: &[24, 26],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             21 => Self {
                 zenflate_effort: 28,
@@ -347,11 +305,10 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 22, 26, 28],
+                refine_efforts: &[26, 28],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             22 => Self {
                 zenflate_effort: 28,
@@ -359,11 +316,10 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 22, 28],
+                refine_efforts: &[28],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             23 => Self {
                 zenflate_effort: 30,
@@ -371,28 +327,22 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 22, 28, 30],
+                refine_efforts: &[28, 30],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             // ── Max effort (24-30): brute-force + zopfli ──
-            //
-            // Refine includes all tier boundaries (10, 17, 22) plus the
-            // target NearOptimal efforts. This ensures monotonicity even
-            // when brute-force filter selection has butterfly effects.
             24 => Self {
                 zenflate_effort: 30,
                 strategies: HEURISTIC_STRATEGIES,
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 22, 28, 30],
+                refine_efforts: &[28, 30],
                 brute_configs: &[(5, 1)],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             25 => Self {
                 zenflate_effort: 30,
@@ -400,11 +350,10 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 22, 28, 30],
+                refine_efforts: &[28, 30],
                 brute_configs: &[(5, 1), (5, 4)],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             26 => Self {
                 zenflate_effort: 30,
@@ -412,11 +361,10 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 22, 30],
+                refine_efforts: &[30],
                 brute_configs: &[(5, 1), (5, 4)],
                 fork_brute_efforts: &[1],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             27 => Self {
                 zenflate_effort: 30,
@@ -424,11 +372,10 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 22, 30],
+                refine_efforts: &[30],
                 brute_configs: &[(5, 1), (5, 4)],
                 fork_brute_efforts: &[1, 4],
                 use_zopfli: false,
-                fallback_screen_effort: None,
             },
             28 => Self {
                 zenflate_effort: 30,
@@ -436,7 +383,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 22, 30],
+                refine_efforts: &[30],
                 brute_configs: &[
                     (1, 1),
                     (1, 4),
@@ -449,7 +396,6 @@ impl EffortParams {
                 ],
                 fork_brute_efforts: &[1, 4],
                 use_zopfli: cfg!(feature = "zopfli"),
-                fallback_screen_effort: None,
             },
             29 => Self {
                 zenflate_effort: 30,
@@ -457,7 +403,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 22, 30],
+                refine_efforts: &[30],
                 brute_configs: &[
                     (1, 1),
                     (1, 4),
@@ -470,7 +416,6 @@ impl EffortParams {
                 ],
                 fork_brute_efforts: &[1, 4],
                 use_zopfli: cfg!(feature = "zopfli"),
-                fallback_screen_effort: None,
             },
             _ => Self {
                 // effort 30
@@ -479,7 +424,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10, 17, 22, 30],
+                refine_efforts: &[30],
                 brute_configs: &[
                     (1, 1),
                     (1, 4),
@@ -492,7 +437,6 @@ impl EffortParams {
                 ],
                 fork_brute_efforts: &[1, 4],
                 use_zopfli: cfg!(feature = "zopfli"),
-                fallback_screen_effort: None,
             },
         }
     }
@@ -541,6 +485,38 @@ pub(crate) fn try_compress(
         }
     }
     Ok(best_for_stream)
+}
+
+/// Compress `filtered` data at the given effort, then follow zenflate's
+/// monotonicity fallback chain (trying each previous strategy boundary's
+/// max effort). Updates `best_compressed` if a smaller result is found.
+fn try_compress_with_fallbacks(
+    filtered: &[u8],
+    effort: u32,
+    compress_buf: &mut [u8],
+    verify_buf: &mut [u8],
+    best_compressed: &mut Option<Vec<u8>>,
+    cancel: &dyn Stop,
+) -> Result<usize, PngError> {
+    let mut best_size = usize::MAX;
+    let mut level = CompressionLevel::new(effort);
+    loop {
+        let mut compressor = Compressor::new(level);
+        let size = try_compress(
+            filtered,
+            core::slice::from_mut(&mut compressor),
+            compress_buf,
+            verify_buf,
+            best_compressed,
+            cancel,
+        )?;
+        best_size = best_size.min(size);
+        match level.monotonicity_fallback() {
+            Some(fb) => level = fb,
+            None => break,
+        }
+    }
+    Ok(best_size)
 }
 
 /// Progressive adaptive compression engine.
@@ -801,24 +777,6 @@ pub(crate) fn compress_filtered(
         });
     }
 
-    // ---- Fallback pass: monotonicity safety net ----
-    // At zenflate strategy boundaries, also compress all screened results at
-    // the previous tier's effort. This catches cases where a different hash
-    // algorithm produces slightly larger output (butterfly effect).
-    if let Some(fb_effort) = params.fallback_screen_effort {
-        let mut fb_compressor = Compressor::new(CompressionLevel::new(fb_effort));
-        for (_, filtered_data) in &screen_results {
-            let _ = try_compress(
-                filtered_data,
-                core::slice::from_mut(&mut fb_compressor),
-                &mut compress_buf,
-                &mut verify_buf,
-                &mut best_compressed,
-                opts.cancel,
-            );
-        }
-    }
-
     // Early return: screen-only modes don't need refinement, or deadline hit
     if params.screen_is_final || opts.deadline.should_stop() {
         return best_compressed
@@ -852,27 +810,41 @@ pub(crate) fn compress_filtered(
                         let mut t_best: Option<Vec<u8>> = None;
 
                         for &tier_level in refine_tiers {
-                            let mut t_compressor =
-                                Compressor::new(CompressionLevel::new(tier_level));
-                            let compressed_len = t_compressor
-                                .zlib_compress(filtered_data, &mut t_compress_buf, opts.cancel)
-                                .ok()?;
-
-                            // Verify
-                            let mut decompressor = zenflate::Decompressor::new();
-                            decompressor
-                                .zlib_decompress(
-                                    &t_compress_buf[..compressed_len],
-                                    &mut t_verify_buf,
-                                    Unstoppable,
-                                )
-                                .ok()?;
-
-                            let dominated = t_best
-                                .as_ref()
-                                .is_some_and(|b| compressed_len >= b.len());
-                            if !dominated {
-                                t_best = Some(t_compress_buf[..compressed_len].to_vec());
+                            // Follow zenflate's monotonicity fallback chain:
+                            // compress at target, then at each previous strategy
+                            // boundary's max effort, keeping the smallest.
+                            let mut level = CompressionLevel::new(tier_level);
+                            loop {
+                                let mut compressor = Compressor::new(level);
+                                if let Ok(len) = compressor
+                                    .zlib_compress(
+                                        filtered_data,
+                                        &mut t_compress_buf,
+                                        opts.cancel,
+                                    )
+                                {
+                                    let mut decompressor = zenflate::Decompressor::new();
+                                    if decompressor
+                                        .zlib_decompress(
+                                            &t_compress_buf[..len],
+                                            &mut t_verify_buf,
+                                            Unstoppable,
+                                        )
+                                        .is_ok()
+                                    {
+                                        let dominated = t_best
+                                            .as_ref()
+                                            .is_some_and(|b| len >= b.len());
+                                        if !dominated {
+                                            t_best =
+                                                Some(t_compress_buf[..len].to_vec());
+                                        }
+                                    }
+                                }
+                                match level.monotonicity_fallback() {
+                                    Some(fb) => level = fb,
+                                    None => break,
+                                }
                             }
                         }
                         t_best.map(|b| (b.len(), b))
@@ -904,17 +876,16 @@ pub(crate) fn compress_filtered(
     } else {
         // ── Serial refinement ──
         // Iterate tier-by-tier with deadline checks between tiers.
+        // Each tier follows zenflate's monotonicity fallback chain.
         for &tier_level in refine_tiers {
             if opts.deadline.should_stop() {
                 break;
             }
 
-            let mut tier_compressor = Compressor::new(CompressionLevel::new(tier_level));
-
             for (_, filtered_data) in &screen_results[..top_n] {
-                let _best_size = try_compress(
+                let _best_size = try_compress_with_fallbacks(
                     filtered_data,
-                    core::slice::from_mut(&mut tier_compressor),
+                    tier_level,
                     &mut compress_buf,
                     &mut verify_buf,
                     &mut best_compressed,
@@ -957,17 +928,6 @@ pub(crate) fn compress_filtered(
     };
     let mut brute_evals = 0u32;
     if can_brute_force && !opts.deadline.should_stop() {
-        // Compress brute-force results at high zenflate efforts
-        let brute_compress_efforts: &[u32] = if params.zenflate_effort >= 26 {
-            &[26, 28, 30]
-        } else {
-            core::slice::from_ref(&params.zenflate_effort)
-        };
-        let mut brute_compressors: Vec<Compressor> = brute_compress_efforts
-            .iter()
-            .map(|&e| Compressor::new(CompressionLevel::new(e)))
-            .collect();
-
         for &(context_rows, eval_level) in brute_configs {
             if opts.deadline.should_stop() {
                 break;
@@ -987,9 +947,9 @@ pub(crate) fn compress_filtered(
                 &mut filtered,
             );
 
-            let _best_size = try_compress(
+            let _best_size = try_compress_with_fallbacks(
                 &filtered,
-                &mut brute_compressors,
+                params.zenflate_effort,
                 &mut compress_buf,
                 &mut verify_buf,
                 &mut best_compressed,
@@ -1021,9 +981,9 @@ pub(crate) fn compress_filtered(
                 &mut filtered,
             );
 
-            let _best_size = try_compress(
+            let _best_size = try_compress_with_fallbacks(
                 &filtered,
-                &mut brute_compressors,
+                params.zenflate_effort,
                 &mut compress_buf,
                 &mut verify_buf,
                 &mut best_compressed,
