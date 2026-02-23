@@ -1030,7 +1030,7 @@ mod tests {
                 path.file_name()
             );
 
-            // Compare pixel data
+            // Compare pixel data (transparent pixels may have zeroed RGB)
             for (i, (orig, redo)) in original
                 .frames
                 .iter()
@@ -1039,14 +1039,16 @@ mod tests {
             {
                 let orig_buf: Vec<rgb::Rgba<u8>> = orig.pixels.to_rgba8().into_buf();
                 let redo_buf: Vec<rgb::Rgba<u8>> = redo.pixels.to_rgba8().into_buf();
-                let orig_bytes: &[u8] = bytemuck::cast_slice(&orig_buf);
-                let redo_bytes: &[u8] = bytemuck::cast_slice(&redo_buf);
-                assert_eq!(
-                    orig_bytes,
-                    redo_bytes,
-                    "pixel mismatch frame {i} for {:?}",
-                    path.file_name()
-                );
+                for (j, (o, r)) in orig_buf.iter().zip(redo_buf.iter()).enumerate() {
+                    if o.a == 0 && r.a == 0 {
+                        continue; // both transparent — RGB may differ due to zeroing
+                    }
+                    assert_eq!(
+                        o, r,
+                        "pixel {j} mismatch frame {i} for {:?}",
+                        path.file_name()
+                    );
+                }
             }
         }
     }

@@ -578,6 +578,19 @@ pub(crate) fn compress_filtered(
         return Ok(result);
     }
 
+    // Zero RGB channels of fully-transparent pixels (alpha == 0).
+    // Invisible pixels with arbitrary RGB values create noise that defeats
+    // PNG filtering and DEFLATE compression. Zeroing them produces runs of
+    // identical bytes that compress significantly better.
+    // Only for RGBA8 (bpp=4) where byte 3 of each pixel is alpha.
+    let owned_rows;
+    let packed_rows = if bpp == 4 && has_any_transparent_pixel(packed_rows) {
+        owned_rows = zero_transparent_rgba8(packed_rows);
+        &owned_rows
+    } else {
+        packed_rows
+    };
+
     let mut best_compressed: Option<Vec<u8>> = None;
 
     if let Some(s) = &mut stats {
@@ -1056,6 +1069,31 @@ pub(crate) fn compress_filtered(
     }
 
     best_compressed.ok_or_else(|| PngError::InvalidInput("no filter strategies tried".to_string()))
+}
+
+/// Check if any RGBA8 pixel has alpha == 0.
+///
+/// Quick scan to avoid copying the entire image when there are no transparent
+/// pixels (common for photos). Checks every 4th byte starting at offset 3.
+fn has_any_transparent_pixel(data: &[u8]) -> bool {
+    data.chunks_exact(4).any(|px| px[3] == 0)
+}
+
+/// Copy pixel data, zeroing RGB channels of fully-transparent pixels.
+///
+/// For each 4-byte RGBA8 pixel where alpha (byte 3) is 0, sets R, G, B
+/// (bytes 0-2) to 0. This creates runs of [0,0,0,0] that PNG filters
+/// and DEFLATE compress much better than random RGB + zero alpha.
+fn zero_transparent_rgba8(data: &[u8]) -> Vec<u8> {
+    let mut buf = data.to_vec();
+    for px in buf.chunks_exact_mut(4) {
+        if px[3] == 0 {
+            px[0] = 0;
+            px[1] = 0;
+            px[2] = 0;
+        }
+    }
+    buf
 }
 
 /// Write zlib stored blocks directly from raw pixel rows, applying filter None.
