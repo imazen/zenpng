@@ -110,13 +110,20 @@ in the streaming path, zenflate still computes it but tolerates mismatches
 (emits `DecompressionChecksumSkipped` warning). The stored-block fast path
 skips Adler-32 computation entirely.
 
-## Compression Level Design
+## Compression Effort Design
 
-See `TUNING.md` for empirical analysis. Key decisions:
-- Brute-force filter selection only at Best (L12) and above
-- Obsessive level removed (identical output to Crush)
+Unified 0-30 effort scale. Each ~3 effort points roughly doubles time.
+Named presets: None=0, Fastest=2, Fast=6, Balanced=10, Thorough=13,
+High=16, Aggressive=20, Best=24, Crush=28, Maniac=30.
+
+- `Compression::Effort(u32)` for fine-grained control between presets
+- Low effort (0-7): screen IS final pass, no Phase 2 refinement
+- Medium effort (8-15): screen + single-tier refine
+- High effort (16-23): multi-tier refine at lazy2/near-optimal zenflate efforts
+- Max effort (24-30): brute-force filter selection + zopfli at 28+
+- `EffortParams::from_effort()` maps effort → all pipeline parameters
 - Block-wise brute-force permanently disabled (slower AND larger than per-row)
-- Zopfli adaptive with time budgeting at Crush and Maniac
+- Zopfli adaptive with time budgeting at Crush (28) and Maniac (30)
 
 ## Pending Encoder Optimizations
 
