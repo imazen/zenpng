@@ -283,47 +283,84 @@ pub(crate) fn encode_apng_truecolor(
     Ok(out)
 }
 
-// ── Indexed APNG encode ─────────────────────────────────────────────
+// ── Indexed delta region helpers ─────────────────────────────────────
 
-/// Encode canvas-sized RGBA8 frames into an indexed APNG file using a global palette.
+/// Find the bounding box of differing indices between two canvas-sized index buffers.
+///
+/// Returns `None` if the buffers are identical.
+#[cfg(feature = "quantize")]
+fn compute_delta_region_indexed(prev: &[u8], curr: &[u8], w: u32, h: u32) -> Option<DeltaRegion> {
+    let w = w as usize;
+    let h = h as usize;
+    let mut min_x = w;
+    let mut max_x = 0usize;
+    let mut min_y = h;
+    let mut max_y = 0usize;
+
+    for y in 0..h {
+        let row_start = y * w;
+        for x in 0..w {
+            let off = row_start + x;
+            if prev[off] != curr[off] {
+                min_x = min_x.min(x);
+                max_x = max_x.max(x);
+                min_y = min_y.min(y);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+
+    if min_x > max_x || min_y > max_y {
+        return None; // identical
+    }
+
+    Some(DeltaRegion {
+        x: min_x as u32,
+        y: min_y as u32,
+        width: (max_x - min_x + 1) as u32,
+        height: (max_y - min_y + 1) as u32,
+    })
+}
+
+/// Extract a rectangular subregion from a canvas-sized index buffer (1 byte/pixel).
+#[cfg(feature = "quantize")]
+fn extract_subframe_indexed(indices: &[u8], canvas_w: u32, region: &DeltaRegion) -> Vec<u8> {
+    let canvas_w = canvas_w as usize;
+    let rw = region.width as usize;
+    let rh = region.height as usize;
+    let rx = region.x as usize;
+    let ry = region.y as usize;
+
+    let mut out = Vec::with_capacity(rw * rh);
+    for y in ry..ry + rh {
+        let row_start = y * canvas_w + rx;
+        out.extend_from_slice(&indices[row_start..row_start + rw]);
+    }
+    out
+}
+
+// ── Indexed APNG from pre-remapped indices ──────────────────────────
+
+/// Encode canvas-sized frames into an indexed APNG from pre-remapped index buffers.
+///
+/// Takes pre-built palette and per-frame index buffers (from zenquant remap).
+/// Delta regions are computed on index buffers directly (more correct with
+/// temporal clamping since identical indices mean identical visual output).
 #[cfg(feature = "quantize")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn encode_apng_indexed(
+pub(crate) fn encode_apng_indexed_from_indices(
     frames: &[ApngFrameInput<'_>],
+    palette_rgba: &[[u8; 4]],
+    frame_indices: &[Vec<u8>],
     canvas_width: u32,
     canvas_height: u32,
     write_meta: &PngWriteMetadata<'_>,
     num_plays: u32,
     effort: u32,
-    quant_config: &zenquant::QuantizeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> Result<Vec<u8>, PngError> {
     let num_frames = frames.len() as u32;
-    let w = canvas_width as usize;
-    let h = canvas_height as usize;
-
-    // Build representative sample: sample every Nth pixel across all frames
-    let total_pixels = w * h * frames.len();
-    let target_samples = 10_000.min(total_pixels);
-    let sample_step = (total_pixels / target_samples).max(1);
-
-    let mut sample: Vec<zenquant::RGBA<u8>> = Vec::with_capacity(target_samples);
-    let mut pixel_idx = 0usize;
-    for frame in frames {
-        let pixels: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(frame.pixels);
-        for px in pixels {
-            if pixel_idx % sample_step == 0 {
-                sample.push(*px);
-            }
-            pixel_idx += 1;
-        }
-    }
-
-    // Quantize sample for global palette
-    let sample_w = sample.len();
-    let result = zenquant::quantize_rgba(&sample, sample_w, 1, quant_config)?;
-    let palette_rgba = result.palette_rgba();
     let n_colors = palette_rgba.len();
 
     // Build separate RGB and alpha palette arrays
@@ -378,39 +415,33 @@ pub(crate) fn encode_apng_indexed(
         write_chunk(&mut out, b"tRNS", trns);
     }
 
-    // Remap and encode each frame
+    // Encode each frame using pre-built index buffers
     for (i, frame) in frames.iter().enumerate() {
         cancel.check()?;
 
-        // Determine region and pixel data for this frame
-        let (region_x, region_y, region_w, region_h, subframe_rgba) = if i == 0 {
+        let curr_indices = &frame_indices[i];
+
+        // Determine delta region from index buffers
+        let (region_x, region_y, region_w, region_h, sub_indices) = if i == 0 {
             // Frame 0: full canvas
-            (0u32, 0u32, canvas_width, canvas_height, frame.pixels.to_vec())
+            (0u32, 0u32, canvas_width, canvas_height, curr_indices.clone())
         } else {
-            let prev = frames[i - 1].pixels;
-            let curr = frame.pixels;
-            match compute_delta_region(prev, curr, canvas_width, canvas_height) {
+            let prev_indices = &frame_indices[i - 1];
+            match compute_delta_region_indexed(prev_indices, curr_indices, canvas_width, canvas_height) {
                 Some(region) => {
-                    let sub = extract_subframe(curr, canvas_width, &region);
+                    let sub = extract_subframe_indexed(curr_indices, canvas_width, &region);
                     (region.x, region.y, region.width, region.height, sub)
                 }
                 None => {
                     // Identical: minimal 1x1 frame
-                    (0, 0, 1, 1, curr[..4].to_vec())
+                    (0, 0, 1, 1, vec![curr_indices[0]])
                 }
             }
         };
 
-        // Remap subframe pixels to palette indices
-        let sub_pixels: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(&subframe_rgba);
-        let indices: Vec<u8> = sub_pixels
-            .iter()
-            .map(|px| nearest_palette_index(px, palette_rgba))
-            .collect();
-
         // Pack indices
         let packed =
-            super::pack_all_rows(&indices, region_w as usize, region_h as usize, bit_depth);
+            super::pack_all_rows(&sub_indices, region_w as usize, region_h as usize, bit_depth);
         let row_bytes = super::packed_row_bytes(region_w as usize, bit_depth);
 
         // Write fcTL
@@ -460,29 +491,6 @@ pub(crate) fn encode_apng_indexed(
     Ok(out)
 }
 
-/// Find the nearest palette index for a given RGBA pixel (simple Euclidean distance).
-#[cfg(feature = "quantize")]
-fn nearest_palette_index(pixel: &zenquant::RGBA<u8>, palette: &[[u8; 4]]) -> u8 {
-    let mut best_idx = 0u8;
-    let mut best_dist = u32::MAX;
-
-    for (idx, entry) in palette.iter().enumerate() {
-        let dr = pixel.r as i32 - entry[0] as i32;
-        let dg = pixel.g as i32 - entry[1] as i32;
-        let db = pixel.b as i32 - entry[2] as i32;
-        let da = pixel.a as i32 - entry[3] as i32;
-        let dist = (dr * dr + dg * dg + db * db + da * da) as u32;
-        if dist == 0 {
-            return idx as u8;
-        }
-        if dist < best_dist {
-            best_dist = dist;
-            best_idx = idx as u8;
-        }
-    }
-
-    best_idx
-}
 
 // ── Tests ───────────────────────────────────────────────────────────
 
@@ -907,16 +915,15 @@ mod tests {
             },
         ];
 
-        let write_meta = PngWriteMetadata::from_metadata(None);
         let quant_config = zenquant::QuantizeConfig::new(zenquant::OutputFormat::Png);
-        let encoded = encode_apng_indexed(
+        let apng_config = crate::encode::ApngEncodeConfig::default();
+        let encoded = crate::indexed::encode_apng_indexed(
             &frames,
             w,
             h,
-            &write_meta,
-            0,
-            6,
+            &apng_config,
             &quant_config,
+            None,
             &enough::Unstoppable,
             &enough::Unstoppable,
         )

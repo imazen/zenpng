@@ -58,8 +58,8 @@ pub use encode::{
 pub use error::PngError;
 #[cfg(feature = "quantize")]
 pub use indexed::{
-    AutoEncodeResult, default_quantize_config, encode_apng_auto, encode_apng_indexed,
-    encode_indexed_rgba8, encode_rgba8_auto,
+    AutoEncodeResult, QualityGate, default_quantize_config, encode_apng_auto,
+    encode_apng_indexed, encode_indexed_rgba8, encode_rgba8_auto,
 };
 pub use zencodec::{
     PngDecodeJob, PngDecoder, PngDecoderConfig, PngEncodeJob, PngEncoder, PngEncoderConfig,
