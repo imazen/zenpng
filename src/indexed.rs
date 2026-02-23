@@ -121,20 +121,6 @@ pub fn encode_indexed_rgba8(
     write_meta.srgb_intent = encode_config.srgb_intent;
     write_meta.chromaticities = encode_config.chromaticities;
 
-    // If zoint data is available, use the pre-compressed path
-    if let Some(zd) = result.zoint_data() {
-        return crate::encoder::write_indexed_png_precompressed(
-            width,
-            height,
-            &sp.rgb,
-            alpha,
-            &write_meta,
-            zd.deflate_stream(),
-            zd.adler32(),
-            zd.bit_depth(),
-        );
-    }
-
     let effort = encode_config.compression.effort();
     let opts = encode_config.compress_options(cancel, deadline, None);
 
@@ -226,33 +212,19 @@ pub fn encode_rgba8_auto(
         write_meta.srgb_intent = encode_config.srgb_intent;
         write_meta.chromaticities = encode_config.chromaticities;
 
-        // If zoint data is available, use the pre-compressed path
-        let data = if let Some(zd) = result.zoint_data() {
-            crate::encoder::write_indexed_png_precompressed(
-                width,
-                height,
-                &sp.rgb,
-                alpha,
-                &write_meta,
-                zd.deflate_stream(),
-                zd.adler32(),
-                zd.bit_depth(),
-            )?
-        } else {
-            let effort = encode_config.compression.effort();
-            let opts = encode_config.compress_options(cancel, deadline, None);
+        let effort = encode_config.compression.effort();
+        let opts = encode_config.compress_options(cancel, deadline, None);
 
-            crate::encoder::write_indexed_png(
-                result.indices(),
-                width,
-                height,
-                &sp.rgb,
-                alpha,
-                &write_meta,
-                effort,
-                opts,
-            )?
-        };
+        let data = crate::encoder::write_indexed_png(
+            result.indices(),
+            width,
+            height,
+            &sp.rgb,
+            alpha,
+            &write_meta,
+            effort,
+            opts,
+        )?;
 
         Ok(AutoEncodeResult {
             data,
@@ -1072,5 +1044,94 @@ mod tests {
         .unwrap();
         assert_eq!(decoded.info.width, 4);
         assert_eq!(decoded.info.height, 4);
+    }
+
+    #[cfg(feature = "zoint")]
+    #[test]
+    fn zoint_compression_comparison() {
+        fn compare(name: &str, img: ImgRef<'_, Rgba<u8>>, tolerance: f32) {
+            let config = EncodeConfig::default();
+
+            let quant_std = QuantizeConfig::new(OutputFormat::Png);
+            let standard = encode_indexed_rgba8(
+                img,
+                &config,
+                &quant_std,
+                None,
+                &enough::Unstoppable,
+                &enough::Unstoppable,
+            )
+            .unwrap();
+
+            let quant_zoint =
+                QuantizeConfig::new(OutputFormat::PngZoint)._zoint_tolerance(tolerance);
+            let zoint = encode_indexed_rgba8(
+                img,
+                &config,
+                &quant_zoint,
+                None,
+                &enough::Unstoppable,
+                &enough::Unstoppable,
+            )
+            .unwrap();
+
+            let saving_pct = (1.0 - zoint.len() as f64 / standard.len() as f64) * 100.0;
+            eprintln!(
+                "{:30} tol={:.3} {:>7} -> {:>7} ({:+.1}%)",
+                name,
+                tolerance,
+                standard.len(),
+                zoint.len(),
+                saving_pct,
+            );
+        }
+
+        // 256x256 smooth gradient
+        let mut pixels = Vec::with_capacity(256 * 256);
+        for y in 0..256u32 {
+            for x in 0..256u32 {
+                pixels.push(Rgba {
+                    r: x.min(255) as u8,
+                    g: y.min(255) as u8,
+                    b: ((x + y) / 2).min(255) as u8,
+                    a: 255,
+                });
+            }
+        }
+        let img = ImgVec::new(pixels, 256, 256);
+
+        // Load real photos
+        let paths = &[
+            "/home/lilith/work/codec-corpus/imageflow/test_inputs/dice.png",
+            "/home/lilith/work/codec-corpus/imageflow/test_inputs/red-night.png",
+            "/home/lilith/work/codec-corpus/imageflow/test_inputs/rings2.png",
+        ];
+        let mut real_images: Vec<(String, ImgVec<Rgba<u8>>)> = Vec::new();
+        for path in paths {
+            if std::path::Path::new(path).exists() {
+                let data = std::fs::read(path).unwrap();
+                let decoded = crate::decode::decode(
+                    &data,
+                    &crate::decode::PngDecodeConfig::none(),
+                    &enough::Unstoppable,
+                )
+                .unwrap();
+                let name = std::path::Path::new(path)
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                real_images.push((name, decoded.pixels.into_rgba8()));
+            }
+        }
+
+        // Test at default tolerance (0.002) and higher tolerances
+        for &tol in &[0.002, 0.005, 0.010, 0.020] {
+            eprintln!("--- tolerance {tol} ---");
+            compare("256x256 gradient", img.as_ref(), tol);
+            for (name, ri) in &real_images {
+                compare(name, ri.as_ref(), tol);
+            }
+        }
     }
 }
