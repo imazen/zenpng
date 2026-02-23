@@ -276,13 +276,18 @@ impl EffortParams {
             //
             // Screen stays at FastHt e7 for consistent candidate ranking.
             // Refine efforts span zenflate tier boundaries where needed.
+            // ── High effort (16-23): higher refine, multi-tier ──
+            //
+            // Refine efforts include tier boundary fallbacks:
+            // - e10 = max Greedy, e17 = max Lazy, e22 = max Lazy2
+            // This prevents regressions when crossing strategy boundaries.
             16 => Self {
                 zenflate_effort: 22,
                 strategies: HEURISTIC_STRATEGIES,
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[20, 22],
+                refine_efforts: &[10, 17, 20, 22],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
@@ -294,7 +299,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[22],
+                refine_efforts: &[10, 17, 22],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
@@ -306,20 +311,19 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[22, 24],
+                refine_efforts: &[10, 17, 22, 24],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
                 fallback_screen_effort: None,
             },
-            // e19: Lazy2→NearOptimal boundary. Include both tiers.
             19 => Self {
                 zenflate_effort: 24,
                 strategies: HEURISTIC_STRATEGIES,
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[22, 24],
+                refine_efforts: &[10, 17, 22, 24],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
@@ -331,7 +335,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[24, 26],
+                refine_efforts: &[10, 17, 22, 24, 26],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
@@ -343,7 +347,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[26, 28],
+                refine_efforts: &[10, 17, 22, 26, 28],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
@@ -355,7 +359,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[28],
+                refine_efforts: &[10, 17, 22, 28],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
@@ -367,7 +371,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[28, 30],
+                refine_efforts: &[10, 17, 22, 28, 30],
                 brute_configs: &[],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
@@ -375,16 +379,16 @@ impl EffortParams {
             },
             // ── Max effort (24-30): brute-force + zopfli ──
             //
-            // Screen stays at FastHt e7 for consistent ranking.
-            // Brute-force and fork generate their own per-row filter
-            // selections, independent of the screen ranking.
+            // Refine includes all tier boundaries (10, 17, 22) plus the
+            // target NearOptimal efforts. This ensures monotonicity even
+            // when brute-force filter selection has butterfly effects.
             24 => Self {
                 zenflate_effort: 30,
                 strategies: HEURISTIC_STRATEGIES,
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[28, 30],
+                refine_efforts: &[10, 17, 22, 28, 30],
                 brute_configs: &[(5, 1)],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
@@ -396,7 +400,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[28, 30],
+                refine_efforts: &[10, 17, 22, 28, 30],
                 brute_configs: &[(5, 1), (5, 4)],
                 fork_brute_efforts: &[],
                 use_zopfli: false,
@@ -408,7 +412,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[30],
+                refine_efforts: &[10, 17, 22, 30],
                 brute_configs: &[(5, 1), (5, 4)],
                 fork_brute_efforts: &[1],
                 use_zopfli: false,
@@ -420,7 +424,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[30],
+                refine_efforts: &[10, 17, 22, 30],
                 brute_configs: &[(5, 1), (5, 4)],
                 fork_brute_efforts: &[1, 4],
                 use_zopfli: false,
@@ -432,7 +436,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[30],
+                refine_efforts: &[10, 17, 22, 30],
                 brute_configs: &[
                     (1, 1),
                     (1, 4),
@@ -453,7 +457,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[30],
+                refine_efforts: &[10, 17, 22, 30],
                 brute_configs: &[
                     (1, 1),
                     (1, 4),
@@ -475,7 +479,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[30],
+                refine_efforts: &[10, 17, 22, 30],
                 brute_configs: &[
                     (1, 1),
                     (1, 4),
