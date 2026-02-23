@@ -10,7 +10,8 @@ use zenflate::{CompressionLevel, Compressor, Unstoppable};
 use crate::error::PngError;
 
 use super::filter::{
-    FAST_STRATEGIES, HEURISTIC_STRATEGIES, MINIMAL_STRATEGIES, Strategy, filter_image,
+    FAST_STRATEGIES, HEURISTIC_STRATEGIES, HeuristicScratch, MINIMAL_STRATEGIES, Strategy,
+    filter_image, filter_image_from_precomputed, precompute_all_filters,
 };
 use super::{PhaseStat, PhaseStats};
 
@@ -550,10 +551,24 @@ pub(crate) fn compress_filtered(
 
     let screen_effort = params.screen_effort;
 
+    // Precompute all 5 filter variants once, shared across strategies.
+    // This avoids redundant filter application: e.g. HEURISTIC_STRATEGIES has
+    // 4 Adaptive strategies that each independently apply 5 filters → 20 passes.
+    // With precomputation: 5 passes total, then each strategy just scores.
+    // Cap at 64 MiB to avoid excessive memory on very large images.
+    let precompute_size = 5 * height * row_bytes;
+    let precomputed = if strategies.len() > 1 && precompute_size <= 64 * 1024 * 1024 {
+        Some(precompute_all_filters(packed_rows, row_bytes, height, bpp))
+    } else {
+        None
+    };
+
     if opts.parallel {
         // ── Parallel screening ──
         // Each thread gets its own filtered buffer, compressor, compress buffer,
-        // and verify buffer. All strategies run concurrently.
+        // verify buffer, and scratch. The precomputed filter data is shared
+        // immutably across all threads.
+        let precomputed_ref = precomputed.as_deref();
         #[allow(clippy::type_complexity)]
         let par_results: Vec<Option<(usize, Vec<u8>, Vec<u8>)>> = std::thread::scope(|s| {
             let handles: Vec<_> = strategies
@@ -566,15 +581,27 @@ pub(crate) fn compress_filtered(
                         let mut t_compress_buf = vec![0u8; compress_bound];
                         let mut t_verify_buf = vec![0u8; filtered_size];
 
-                        filter_image(
-                            packed_rows,
-                            row_bytes,
-                            height,
-                            bpp,
-                            *strategy,
-                            opts.cancel,
-                            &mut t_filtered,
-                        );
+                        if let Some(pc) = precomputed_ref {
+                            let mut t_scratch = HeuristicScratch::new_universal();
+                            filter_image_from_precomputed(
+                                pc,
+                                row_bytes,
+                                height,
+                                *strategy,
+                                &mut t_scratch,
+                                &mut t_filtered,
+                            );
+                        } else {
+                            filter_image(
+                                packed_rows,
+                                row_bytes,
+                                height,
+                                bpp,
+                                *strategy,
+                                opts.cancel,
+                                &mut t_filtered,
+                            );
+                        }
 
                         let compressed_len = t_compressor
                             .zlib_compress(&t_filtered, &mut t_compress_buf, opts.cancel)
@@ -616,6 +643,7 @@ pub(crate) fn compress_filtered(
     } else {
         // ── Serial screening ──
         let mut screen_compressor = Compressor::new(CompressionLevel::new(screen_effort));
+        let mut scratch = HeuristicScratch::new_universal();
 
         for (i, strategy) in strategies.iter().enumerate() {
             // Always try at least one strategy (even with zero budget),
@@ -625,15 +653,26 @@ pub(crate) fn compress_filtered(
             }
 
             filtered.clear();
-            filter_image(
-                packed_rows,
-                row_bytes,
-                height,
-                bpp,
-                *strategy,
-                opts.cancel,
-                &mut filtered,
-            );
+            if let Some(ref pc) = precomputed {
+                filter_image_from_precomputed(
+                    pc,
+                    row_bytes,
+                    height,
+                    *strategy,
+                    &mut scratch,
+                    &mut filtered,
+                );
+            } else {
+                filter_image(
+                    packed_rows,
+                    row_bytes,
+                    height,
+                    bpp,
+                    *strategy,
+                    opts.cancel,
+                    &mut filtered,
+                );
+            }
 
             let compressed_len =
                 match screen_compressor.zlib_compress(&filtered, &mut compress_buf, opts.cancel) {
