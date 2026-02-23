@@ -9,8 +9,417 @@ use zenflate::{CompressionLevel, Compressor, Unstoppable};
 
 use crate::error::PngError;
 
-use super::filter::{FAST_STRATEGIES, HEURISTIC_STRATEGIES, Strategy, filter_image};
+use super::filter::{
+    FAST_STRATEGIES, HEURISTIC_STRATEGIES, MINIMAL_STRATEGIES, Strategy, filter_image,
+};
 use super::{PhaseStat, PhaseStats};
+
+/// Parameters derived from a single effort value (0-30).
+///
+/// Each field controls one axis of the compression pipeline:
+/// - `zenflate_effort`: final zenflate effort for Phase 2 / screen-only
+/// - `strategies`: which filter strategies to screen in Phase 1
+/// - `screen_effort`: cheap zenflate effort for Phase 1 screening
+/// - `screen_is_final`: if true, Phase 1 IS the final pass (no Phase 2)
+/// - `top_k`: how many candidates advance from Phase 1 to Phase 2
+/// - `refine_efforts`: zenflate efforts to try in Phase 2
+/// - `brute_configs`: (context_rows, eval_effort) for Phase 3 brute-force
+/// - `fork_brute_efforts`: eval efforts for forking brute-force
+/// - `use_zopfli`: whether to run Phase 4 (zopfli)
+struct EffortParams {
+    zenflate_effort: u32,
+    strategies: &'static [Strategy],
+    screen_effort: u32,
+    screen_is_final: bool,
+    top_k: usize,
+    refine_efforts: &'static [u32],
+    brute_configs: &'static [(usize, u32)],
+    fork_brute_efforts: &'static [u32],
+    #[allow(dead_code)] // read only with `zopfli` feature
+    use_zopfli: bool,
+}
+
+impl EffortParams {
+    /// Map effort (0-30) to pipeline parameters.
+    fn from_effort(effort: u32) -> Self {
+        let effort = effort.min(30);
+        match effort {
+            // ── Low effort (0-7): screen IS final pass ──
+            0 => Self {
+                zenflate_effort: 0,
+                strategies: &[Strategy::Single(0)],
+                screen_effort: 0,
+                screen_is_final: true,
+                top_k: 1,
+                refine_efforts: &[],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            1 => Self {
+                zenflate_effort: 1,
+                strategies: &[Strategy::Single(4)],
+                screen_effort: 1,
+                screen_is_final: true,
+                top_k: 1,
+                refine_efforts: &[],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            2 => Self {
+                zenflate_effort: 2,
+                strategies: &[Strategy::Single(4)],
+                screen_effort: 2,
+                screen_is_final: true,
+                top_k: 1,
+                refine_efforts: &[],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            3 => Self {
+                zenflate_effort: 3,
+                strategies: MINIMAL_STRATEGIES,
+                screen_effort: 3,
+                screen_is_final: true,
+                top_k: 1,
+                refine_efforts: &[],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            4 => Self {
+                zenflate_effort: 4,
+                strategies: MINIMAL_STRATEGIES,
+                screen_effort: 4,
+                screen_is_final: true,
+                top_k: 1,
+                refine_efforts: &[],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            5 => Self {
+                zenflate_effort: 5,
+                strategies: FAST_STRATEGIES,
+                screen_effort: 5,
+                screen_is_final: true,
+                top_k: 1,
+                refine_efforts: &[],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            6 => Self {
+                zenflate_effort: 6,
+                strategies: FAST_STRATEGIES,
+                screen_effort: 6,
+                screen_is_final: true,
+                top_k: 1,
+                refine_efforts: &[],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            7 => Self {
+                zenflate_effort: 7,
+                strategies: FAST_STRATEGIES,
+                screen_effort: 7,
+                screen_is_final: true,
+                top_k: 1,
+                refine_efforts: &[],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            // ── Medium effort (8-15): screen + refine ──
+            8 => Self {
+                zenflate_effort: 8,
+                strategies: FAST_STRATEGIES,
+                screen_effort: 1,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[8],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            9 => Self {
+                zenflate_effort: 10,
+                strategies: FAST_STRATEGIES,
+                screen_effort: 1,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[10],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            10 => Self {
+                zenflate_effort: 12,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 2,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[12],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            11 => Self {
+                zenflate_effort: 14,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 2,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[14],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            12 => Self {
+                zenflate_effort: 15,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 3,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[15],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            13 => Self {
+                zenflate_effort: 17,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 3,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[17],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            14 => Self {
+                zenflate_effort: 18,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 4,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[18],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            15 => Self {
+                zenflate_effort: 20,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 4,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[20],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            // ── High effort (16-23): higher refine, multi-tier ──
+            16 => Self {
+                zenflate_effort: 22,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 5,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[20, 22],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            17 => Self {
+                zenflate_effort: 22,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 5,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[22],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            18 => Self {
+                zenflate_effort: 24,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 6,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[22, 24],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            19 => Self {
+                zenflate_effort: 24,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 6,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[24],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            20 => Self {
+                zenflate_effort: 26,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 7,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[24, 26],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            21 => Self {
+                zenflate_effort: 28,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 8,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[26, 28],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            22 => Self {
+                zenflate_effort: 28,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 8,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[28],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            23 => Self {
+                zenflate_effort: 30,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 8,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[28, 30],
+                brute_configs: &[],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            // ── Max effort (24-30): brute-force + zopfli ──
+            24 => Self {
+                zenflate_effort: 30,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 8,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[28, 30],
+                brute_configs: &[(5, 1)],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            25 => Self {
+                zenflate_effort: 30,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 8,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[28, 30],
+                brute_configs: &[(5, 1), (5, 4)],
+                fork_brute_efforts: &[],
+                use_zopfli: false,
+            },
+            26 => Self {
+                zenflate_effort: 30,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 8,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[30],
+                brute_configs: &[(5, 1), (5, 4)],
+                fork_brute_efforts: &[1],
+                use_zopfli: false,
+            },
+            27 => Self {
+                zenflate_effort: 30,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 10,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[30],
+                brute_configs: &[(5, 1), (5, 4)],
+                fork_brute_efforts: &[1, 4],
+                use_zopfli: false,
+            },
+            28 => Self {
+                zenflate_effort: 30,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 12,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[30],
+                brute_configs: &[
+                    (1, 1),
+                    (1, 4),
+                    (3, 1),
+                    (3, 4),
+                    (5, 1),
+                    (5, 4),
+                    (8, 1),
+                    (8, 4),
+                ],
+                fork_brute_efforts: &[1, 4],
+                use_zopfli: cfg!(feature = "zopfli"),
+            },
+            29 => Self {
+                zenflate_effort: 30,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 15,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[30],
+                brute_configs: &[
+                    (1, 1),
+                    (1, 4),
+                    (3, 1),
+                    (3, 4),
+                    (5, 1),
+                    (5, 4),
+                    (8, 1),
+                    (8, 4),
+                ],
+                fork_brute_efforts: &[1, 4],
+                use_zopfli: cfg!(feature = "zopfli"),
+            },
+            _ => Self {
+                // effort 30
+                zenflate_effort: 30,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 15,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[30],
+                brute_configs: &[
+                    (1, 1),
+                    (1, 4),
+                    (3, 1),
+                    (3, 4),
+                    (5, 1),
+                    (5, 4),
+                    (8, 1),
+                    (8, 4),
+                ],
+                fork_brute_efforts: &[1, 4],
+                use_zopfli: cfg!(feature = "zopfli"),
+            },
+        }
+    }
+}
 
 /// Try compressing `filtered` data with all `compressors`, updating `best_compressed`
 /// if a smaller result is found.
@@ -61,19 +470,18 @@ pub(crate) fn try_compress(
 ///
 /// Instead of a flat loop over all strategies × all levels, works in phases:
 ///
-/// **Phase 1 (Screen):** Try all heuristic strategies with a cheap L1 compressor
-/// to rank them. Cost: ~1ms per strategy. This gets us a valid result immediately.
+/// **Phase 1 (Screen):** Try filter strategies with a cheap compressor to rank
+/// them. Cost: ~1ms per strategy. This gets us a valid result immediately.
 ///
-/// **Phase 2 (Refine):** Compress the top 3 filtered streams at the target
-/// compression level(s). For L10+, tries L10/L11/L12. This is where 90%+ of
-/// final quality comes from.
+/// **Phase 2 (Refine):** Compress the top-K filtered streams at higher zenflate
+/// effort(s). This is where 90%+ of final quality comes from.
 ///
 /// **Phase 3 (Brute-force):** Per-row brute-force filter selection with DEFLATE
-/// context evaluation. Only for level >= 6. Expensive (~3-4s per config on
-/// 1024×1024) but can beat heuristics on complex images.
+/// context evaluation. Expensive (~3-4s per config on 1024×1024) but can beat
+/// heuristics on complex images.
 ///
 /// **Phase 4 (Zopfli):** Adaptive zopfli compression on the best candidates.
-/// Only for Crush with the `zopfli` feature enabled.
+/// Only at effort >= 28 with the `zopfli` feature enabled.
 ///
 /// Each phase checks the deadline before starting.
 pub(crate) fn compress_filtered(
@@ -81,19 +489,20 @@ pub(crate) fn compress_filtered(
     row_bytes: usize,
     height: usize,
     bpp: usize,
-    compression_level: u8,
+    effort: u32,
     opts: super::CompressOptions<'_>,
     mut stats: Option<&mut PhaseStats>,
 ) -> Result<Vec<u8>, PngError> {
     use std::time::Instant;
 
+    let params = EffortParams::from_effort(effort);
     let filtered_size = (row_bytes + 1) * height;
 
-    // ---- L0 fast path: write zlib stored blocks directly ----
+    // ---- Effort 0 fast path: write zlib stored blocks directly ----
     // Bypasses the entire screening/compress/verify pipeline. No Compressor,
     // no Decompressor, no intermediate buffers. Just memcpy rows with filter
     // bytes into stored DEFLATE blocks with zlib header + Adler-32.
-    if compression_level == 0 {
+    if effort == 0 {
         if let Some(s) = &mut stats {
             s.raw_size = filtered_size;
         }
@@ -107,7 +516,7 @@ pub(crate) fn compress_filtered(
 
         if let (Some(s), Some(t)) = (&mut stats, phase_start) {
             s.phases.push(PhaseStat {
-                name: "Store (L0 direct)".to_string(),
+                name: "Store (effort 0)".to_string(),
                 duration_ns: t.elapsed().as_nanos() as u64,
                 best_size: result.len(),
                 evaluations: 1,
@@ -128,102 +537,7 @@ pub(crate) fn compress_filtered(
     let mut compress_buf = vec![0u8; compress_bound];
     let mut verify_buf = vec![0u8; filtered_size];
 
-    // Internal zenflate level: levels 13-14 use L12 internally.
-    let zenflate_level = compression_level.min(12);
-
-    // For L0-1, screening IS the final compression — no Phase 2 needed.
-    // For L2+, screen at L1 then refine the best candidates at the target level.
-    // Level 14 (Maniac) screens at L6 for more accurate strategy ranking.
-    let screen_level = match compression_level {
-        0..=1 => compression_level as u32,
-        14 => 6,
-        _ => 1,
-    };
-
-    // Refinement tiers: which compression levels to try in Phase 2.
-    // Deadline is checked between tiers for graceful early return.
-    let refine_tiers: &[u32] = if zenflate_level >= 11 {
-        &[10, 11, 12]
-    } else {
-        // Return a static slice for the target level. For levels 2-9
-        // this is a single entry matching the requested compression.
-        match zenflate_level {
-            2 => &[2],
-            3 => &[3],
-            4 => &[4],
-            5 => &[5],
-            6 => &[6],
-            7 => &[7],
-            8 => &[8],
-            9 => &[9],
-            10 => &[10],
-            _ => &[1], // L0-1 won't reach here (needs_refine is false)
-        }
-    };
-
-    let needs_refine = compression_level >= 2;
-
-    let can_brute_force = compression_level >= 12;
-
-    // Brute-force configs: (context_rows, eval_level)
-    //
-    // Corpus analysis (gb82-sc 10 images, CID22-512, strategy_explorer) showed:
-    // - On photographic images, BF saves <0.1% over best heuristic at L12
-    // - On screenshots, BF saves 5-7% but heuristics at L6-L10 are "good enough"
-    // - Context > 5 has diminishing/negative returns vs context=5
-    // - eval=4 vs eval=1: only +0.02-0.06% for 1.5-2x filter time
-    //
-    // BF is only enabled at Best (L12) and above. At lower levels, the zenflate
-    // compressor level overwhelms filter selection quality — a mediocre filter
-    // at L12 beats a perfect filter at L9.
-    //
-    // Level 14 (Maniac) sweeps all context/eval combos exhaustively.
-    let brute_configs: &[(usize, u32)] = match compression_level {
-        14 => &[
-            (1, 1),
-            (1, 4),
-            (3, 1),
-            (3, 4),
-            (5, 1),
-            (5, 4),
-            (8, 1),
-            (8, 4),
-        ],
-        12 => &[(5, 1), (5, 4)],
-        _ => &[],
-    };
-
-    // Block-wise brute-force: DISABLED.
-    // Corpus analysis showed block brute is both slower AND larger than
-    // per-row brute force (-0.03 to -0.06% vs per-row at same level).
-    let block_brute_configs: &[(usize, u32)] = &[];
-
-    // Forking brute-force configs: eval_level values to try.
-    // Uses real DEFLATE state (not raw context) for filter evaluation.
-    // Enabled at same levels as regular brute-force.
-    let fork_brute_levels: &[u32] = match compression_level {
-        14 => &[1, 4],
-        12 => &[1],
-        _ => &[],
-    };
-
-    // ---- Phase 1: Screen heuristic strategies ----
-    // At L0 (None/uncompressed), use filter None — filtering is pointless without
-    // compression, and this gives maximum speed (just memcpy rows with filter byte).
-    // At L1 (Fastest), skip screening — just use Paeth. It's within 1% of the best
-    // adaptive heuristic on screenshots and photos, and screening 5 strategies
-    // wastes ~4x the time for negligible gain.
-    // At L2-4 (Fast), use reduced FAST_STRATEGIES (5 strategies).
-    // At L5+ (Balanced and above), use full HEURISTIC_STRATEGIES (9 strategies).
-    let strategies: &[Strategy] = if compression_level == 0 {
-        &[Strategy::Single(0)] // None filter — no filtering for uncompressed
-    } else if compression_level == 1 {
-        &[Strategy::Single(4)] // Paeth only
-    } else if compression_level <= 4 {
-        FAST_STRATEGIES
-    } else {
-        HEURISTIC_STRATEGIES
-    };
+    let strategies = params.strategies;
 
     let phase_start = if stats.is_some() {
         Some(Instant::now())
@@ -233,6 +547,8 @@ pub(crate) fn compress_filtered(
 
     // (screen_size, filtered_data) — sorted later to pick top candidates
     let mut screen_results: Vec<(usize, Vec<u8>)> = Vec::with_capacity(strategies.len());
+
+    let screen_effort = params.screen_effort;
 
     if opts.parallel {
         // ── Parallel screening ──
@@ -245,7 +561,8 @@ pub(crate) fn compress_filtered(
                 .map(|strategy| {
                     s.spawn(move || {
                         let mut t_filtered = Vec::with_capacity(filtered_size);
-                        let mut t_compressor = Compressor::new(CompressionLevel::new(screen_level));
+                        let mut t_compressor =
+                            Compressor::new(CompressionLevel::new(screen_effort));
                         let mut t_compress_buf = vec![0u8; compress_bound];
                         let mut t_verify_buf = vec![0u8; filtered_size];
 
@@ -298,7 +615,7 @@ pub(crate) fn compress_filtered(
         }
     } else {
         // ── Serial screening ──
-        let mut screen_compressor = Compressor::new(CompressionLevel::new(screen_level));
+        let mut screen_compressor = Compressor::new(CompressionLevel::new(screen_effort));
 
         for (i, strategy) in strategies.iter().enumerate() {
             // Always try at least one strategy (even with zero budget),
@@ -362,26 +679,27 @@ pub(crate) fn compress_filtered(
     if let (Some(s), Some(t)) = (&mut stats, phase_start) {
         let tried = screen_results.len();
         s.phases.push(PhaseStat {
-            name: alloc::format!("Screen ({tried}×L{screen_level})"),
+            name: alloc::format!("Screen ({tried}×E{screen_effort})"),
             duration_ns: t.elapsed().as_nanos() as u64,
             best_size: best_compressed.as_ref().map_or(0, |b| b.len()),
             evaluations: tried as u32,
         });
     }
 
-    // Early return: L0-1 don't need refinement, or deadline hit
-    if !needs_refine || opts.deadline.should_stop() {
+    // Early return: screen-only modes don't need refinement, or deadline hit
+    if params.screen_is_final || opts.deadline.should_stop() {
         return best_compressed
             .ok_or_else(|| PngError::InvalidInput("no filter strategies tried".to_string()));
     }
 
-    // ---- Phase 2: Refine top 3 at target level(s) ----
+    // ---- Phase 2: Refine top-K at target effort(s) ----
+    let refine_tiers = params.refine_efforts;
     let phase2_start = if stats.is_some() {
         Some(Instant::now())
     } else {
         None
     };
-    let top_n = screen_results.len().min(3);
+    let top_n = screen_results.len().min(params.top_k);
 
     // Track the best zenflate size per candidate for zopfli ranking later
     #[cfg(feature = "zopfli")]
@@ -444,7 +762,7 @@ pub(crate) fn compress_filtered(
                     best_compressed = Some(compressed_data);
                 }
                 #[cfg(feature = "zopfli")]
-                if opts.use_zopfli {
+                if params.use_zopfli {
                     zopfli_candidates
                         .push((size, screen_results[idx].1.clone()));
                 }
@@ -471,7 +789,7 @@ pub(crate) fn compress_filtered(
                 )?;
 
                 #[cfg(feature = "zopfli")]
-                if opts.use_zopfli && _best_size < usize::MAX {
+                if params.use_zopfli && _best_size < usize::MAX {
                     zopfli_candidates.push((_best_size, filtered_data.clone()));
                 }
             }
@@ -481,7 +799,7 @@ pub(crate) fn compress_filtered(
     if let (Some(s), Some(t)) = (&mut stats, phase2_start) {
         let tiers_str = refine_tiers
             .iter()
-            .map(|l| alloc::format!("L{l}"))
+            .map(|l| alloc::format!("E{l}"))
             .collect::<Vec<_>>()
             .join(",");
         s.phases.push(PhaseStat {
@@ -494,7 +812,11 @@ pub(crate) fn compress_filtered(
 
     // ---- Phase 3: Brute-force ----
     // Brute-force filtering is expensive (~3-4s per config), so compress at
-    // the highest tiers only. We already have lower-tier results from Phase 2.
+    // the highest effort only. We already have lower-effort results from Phase 2.
+    let brute_configs = params.brute_configs;
+    let fork_brute_levels = params.fork_brute_efforts;
+    let can_brute_force = !brute_configs.is_empty() || !fork_brute_levels.is_empty();
+
     let phase3_start = if stats.is_some() && can_brute_force {
         Some(Instant::now())
     } else {
@@ -502,14 +824,15 @@ pub(crate) fn compress_filtered(
     };
     let mut brute_evals = 0u32;
     if can_brute_force && !opts.deadline.should_stop() {
-        let brute_levels: &[u32] = if zenflate_level >= 11 {
-            &[10, 11, 12]
+        // Compress brute-force results at high zenflate efforts
+        let brute_compress_efforts: &[u32] = if params.zenflate_effort >= 26 {
+            &[26, 28, 30]
         } else {
-            &[zenflate_level as u32]
+            core::slice::from_ref(&params.zenflate_effort)
         };
-        let mut brute_compressors: Vec<Compressor> = brute_levels
+        let mut brute_compressors: Vec<Compressor> = brute_compress_efforts
             .iter()
-            .map(|&l| Compressor::new(CompressionLevel::new(l)))
+            .map(|&e| Compressor::new(CompressionLevel::new(e)))
             .collect();
 
         for &(context_rows, eval_level) in brute_configs {
@@ -542,44 +865,7 @@ pub(crate) fn compress_filtered(
             brute_evals += 1;
 
             #[cfg(feature = "zopfli")]
-            if opts.use_zopfli && _best_size < usize::MAX {
-                zopfli_candidates.push((_best_size, filtered.clone()));
-            }
-        }
-
-        // Block-wise brute-force: runs after per-row so it has that result
-        // as a baseline to beat.
-        for &(context_rows, eval_level) in block_brute_configs {
-            if opts.deadline.should_stop() {
-                break;
-            }
-
-            filtered.clear();
-            filter_image(
-                packed_rows,
-                row_bytes,
-                height,
-                bpp,
-                Strategy::BruteForceBlock {
-                    context_rows,
-                    eval_level,
-                },
-                opts.cancel,
-                &mut filtered,
-            );
-
-            let _best_size = try_compress(
-                &filtered,
-                &mut brute_compressors,
-                &mut compress_buf,
-                &mut verify_buf,
-                &mut best_compressed,
-                opts.cancel,
-            )?;
-            brute_evals += 1;
-
-            #[cfg(feature = "zopfli")]
-            if opts.use_zopfli && _best_size < usize::MAX {
+            if params.use_zopfli && _best_size < usize::MAX {
                 zopfli_candidates.push((_best_size, filtered.clone()));
             }
         }
@@ -613,7 +899,7 @@ pub(crate) fn compress_filtered(
             brute_evals += 1;
 
             #[cfg(feature = "zopfli")]
-            if opts.use_zopfli && _best_size < usize::MAX {
+            if params.use_zopfli && _best_size < usize::MAX {
                 zopfli_candidates.push((_best_size, filtered.clone()));
             }
         }
@@ -623,16 +909,11 @@ pub(crate) fn compress_filtered(
         if brute_evals > 0 {
             let configs_desc = brute_configs
                 .iter()
-                .map(|(ctx, ev)| alloc::format!("ctx{ctx}/L{ev}"))
-                .chain(
-                    block_brute_configs
-                        .iter()
-                        .map(|(ctx, ev)| alloc::format!("blk-ctx{ctx}/L{ev}")),
-                )
+                .map(|(ctx, ev)| alloc::format!("ctx{ctx}/E{ev}"))
                 .chain(
                     fork_brute_levels
                         .iter()
-                        .map(|l| alloc::format!("fork-L{l}")),
+                        .map(|l| alloc::format!("fork-E{l}")),
                 )
                 .collect::<Vec<_>>()
                 .join(",");
@@ -653,7 +934,7 @@ pub(crate) fn compress_filtered(
         } else {
             None
         };
-        if opts.use_zopfli && !zopfli_candidates.is_empty() && !opts.deadline.should_stop() {
+        if params.use_zopfli && !zopfli_candidates.is_empty() && !opts.deadline.should_stop() {
             // Sort by zenflate size, take top 3
             zopfli_candidates.sort_by_key(|(size, _)| *size);
             zopfli_candidates.truncate(3);

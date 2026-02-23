@@ -149,7 +149,7 @@ pub(crate) fn encode_apng_truecolor(
     canvas_height: u32,
     write_meta: &PngWriteMetadata<'_>,
     num_plays: u32,
-    compression_level: u8,
+    effort: u32,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> Result<Vec<u8>, PngError> {
@@ -198,7 +198,6 @@ pub(crate) fn encode_apng_truecolor(
     let row_bytes = canvas_width as usize * bpp;
     let height = canvas_height as usize;
     let opts = CompressOptions {
-        use_zopfli: false,
         parallel: false,
         cancel,
         deadline,
@@ -209,7 +208,7 @@ pub(crate) fn encode_apng_truecolor(
         row_bytes,
         height,
         bpp,
-        compression_level,
+        effort,
         opts,
         None,
     )?;
@@ -259,7 +258,6 @@ pub(crate) fn encode_apng_truecolor(
         let sub_row_bytes = region.width as usize * bpp;
         let sub_height = region.height as usize;
         let opts = CompressOptions {
-            use_zopfli: false,
             parallel: false,
             cancel,
             deadline,
@@ -270,7 +268,7 @@ pub(crate) fn encode_apng_truecolor(
             sub_row_bytes,
             sub_height,
             bpp,
-            compression_level,
+            effort,
             opts,
             None,
         )?;
@@ -296,7 +294,7 @@ pub(crate) fn encode_apng_indexed(
     canvas_height: u32,
     write_meta: &PngWriteMetadata<'_>,
     num_plays: u32,
-    compression_level: u8,
+    effort: u32,
     quant_config: &zenquant::QuantizeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
@@ -432,7 +430,6 @@ pub(crate) fn encode_apng_indexed(
 
         // Compress
         let opts = CompressOptions {
-            use_zopfli: false,
             parallel: false,
             cancel,
             deadline,
@@ -443,7 +440,7 @@ pub(crate) fn encode_apng_indexed(
             row_bytes,
             region_h as usize,
             1, // bpp=1 for indexed
-            compression_level,
+            effort,
             opts,
             None,
         )?;
@@ -839,7 +836,7 @@ mod tests {
         let mut f1 = f0.clone();
         f1[0] = 200;
 
-        for level in [0u8, 1, 4, 6, 8, 9, 10] {
+        for effort in [0u32, 2, 6, 10, 13, 16, 20] {
             let frames = [
                 ApngFrameInput {
                     pixels: &f0,
@@ -860,7 +857,7 @@ mod tests {
                 h,
                 &write_meta,
                 0,
-                level,
+                effort,
                 &enough::Unstoppable,
                 &enough::Unstoppable,
             )
@@ -872,7 +869,7 @@ mod tests {
                 &enough::Unstoppable,
             )
             .unwrap();
-            assert_eq!(decoded.frames.len(), 2, "level {level} failed");
+            assert_eq!(decoded.frames.len(), 2, "effort {effort} failed");
         }
     }
 

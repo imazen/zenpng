@@ -55,7 +55,7 @@ pub fn encode_indexed_rgba8(
         None
     };
 
-    let compression_level = encode_config.compression.to_zenflate_level();
+    let effort = encode_config.compression.effort();
     let opts = encode_config.compress_options(cancel, deadline, None);
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
@@ -70,7 +70,7 @@ pub fn encode_indexed_rgba8(
         &palette_rgb,
         alpha,
         &write_meta,
-        compression_level,
+        effort,
         opts,
     )
 }
@@ -151,7 +151,7 @@ pub fn encode_rgba8_auto(
             None
         };
 
-        let compression_level = encode_config.compression.to_zenflate_level();
+        let effort = encode_config.compression.effort();
         let opts = encode_config.compress_options(cancel, deadline, None);
 
         let mut write_meta = PngWriteMetadata::from_metadata(metadata);
@@ -166,7 +166,7 @@ pub fn encode_rgba8_auto(
             &palette_rgb,
             alpha,
             &write_meta,
-            compression_level,
+            effort,
             opts,
         )?;
 
@@ -218,7 +218,7 @@ pub fn encode_apng_indexed(
         }
     }
 
-    let level = config.encode.compression.to_zenflate_level();
+    let effort = config.encode.compression.effort();
     let mut write_meta = crate::encoder::PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = config.encode.source_gamma;
     write_meta.srgb_intent = config.encode.srgb_intent;
@@ -230,7 +230,7 @@ pub fn encode_apng_indexed(
         canvas_height,
         &write_meta,
         config.num_plays,
-        level,
+        effort,
         quant_config,
         cancel,
         deadline,

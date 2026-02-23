@@ -19,7 +19,7 @@ pub(crate) const HEURISTIC_STRATEGIES: &[Strategy] = &[
     Strategy::Adaptive(AdaptiveHeuristic::BigEnt),
 ];
 
-/// Reduced strategy list for Fastest/Fast (compression_level <= 4).
+/// Reduced strategy list for Fast (effort 5-7).
 ///
 /// Drops Single(Sub/Up/Average) — they rarely win screening. Keeps None
 /// (wins on flat screenshots), Paeth (wins on some screenshots), and the
@@ -30,6 +30,17 @@ pub(crate) const FAST_STRATEGIES: &[Strategy] = &[
     Strategy::Adaptive(AdaptiveHeuristic::MinSum),
     Strategy::Adaptive(AdaptiveHeuristic::Bigrams),
     Strategy::Adaptive(AdaptiveHeuristic::BigEnt),
+];
+
+/// Minimal strategy list for low effort (effort 3-4).
+///
+/// Just 3 strategies: None (best for flat content), Paeth (best single
+/// filter overall), and Bigrams (best cheap adaptive). Enough for a
+/// quick ranking without the cost of 5+ evaluations.
+pub(crate) const MINIMAL_STRATEGIES: &[Strategy] = &[
+    Strategy::Single(0), // None
+    Strategy::Single(4), // Paeth
+    Strategy::Adaptive(AdaptiveHeuristic::Bigrams),
 ];
 
 #[derive(Clone, Copy, Debug)]

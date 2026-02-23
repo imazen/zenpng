@@ -20,9 +20,6 @@ pub(crate) use self::metadata::{PngWriteMetadata, metadata_size_estimate, write_
 
 /// Compression options passed through the pipeline.
 pub(crate) struct CompressOptions<'a> {
-    /// Whether to use zopfli for final compression (Crush level).
-    #[allow(dead_code)] // read only with `zopfli` feature
-    pub use_zopfli: bool,
     /// Run screening and refinement phases in parallel.
     pub parallel: bool,
     /// Hard cancel — passed into zenflate/zenzop, aborts mid-compression.
@@ -63,7 +60,7 @@ pub(crate) fn write_indexed_png(
     palette_rgb: &[u8],
     palette_alpha: Option<&[u8]>,
     write_meta: &PngWriteMetadata<'_>,
-    compression_level: u8,
+    effort: u32,
     opts: CompressOptions<'_>,
 ) -> Result<Vec<u8>, PngError> {
     let w = width as usize;
@@ -86,8 +83,7 @@ pub(crate) fn write_indexed_png(
     let row_bytes = packed_row_bytes(w, bit_depth);
 
     // Compress with multi-strategy filter selection (bpp=1 for indexed)
-    let compressed =
-        compress_filtered(&packed_rows, row_bytes, h, 1, compression_level, opts, None)?;
+    let compressed = compress_filtered(&packed_rows, row_bytes, h, 1, effort, opts, None)?;
 
     // Assemble PNG
     let trns_data = truncate_trns(palette_alpha);
@@ -139,7 +135,7 @@ pub(crate) fn write_truecolor_png(
     color_type: u8,
     bit_depth: u8,
     write_meta: &PngWriteMetadata<'_>,
-    compression_level: u8,
+    effort: u32,
     opts: CompressOptions<'_>,
 ) -> Result<Vec<u8>, PngError> {
     let w = width as usize;
@@ -168,10 +164,10 @@ pub(crate) fn write_truecolor_png(
         )));
     }
 
-    // L0 fast path: write zlib stored blocks directly into the PNG output,
+    // Effort 0 fast path: write zlib stored blocks directly into the PNG output,
     // avoiding a separate compressed Vec allocation. For 42MB images this
     // eliminates one 42MB allocation + copy.
-    if compression_level == 0 {
+    if effort == 0 {
         let filtered_row = row_bytes + 1;
         let total_filtered = filtered_row * h;
         let num_blocks = if total_filtered == 0 {
@@ -223,7 +219,7 @@ pub(crate) fn write_truecolor_png(
         row_bytes,
         h,
         bpp,
-        compression_level,
+        effort,
         opts,
         None,
     )?;
@@ -267,7 +263,7 @@ pub(crate) fn write_truecolor_png_with_stats(
     color_type: u8,
     bit_depth: u8,
     write_meta: &PngWriteMetadata<'_>,
-    compression_level: u8,
+    effort: u32,
     opts: CompressOptions<'_>,
     stats: &mut PhaseStats,
 ) -> Result<Vec<u8>, PngError> {
@@ -302,7 +298,7 @@ pub(crate) fn write_truecolor_png_with_stats(
         row_bytes,
         h,
         bpp,
-        compression_level,
+        effort,
         opts,
         Some(stats),
     )?;
