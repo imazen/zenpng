@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 
 use zencodec_types::{
     CodecCapabilities, DecodeFrame, DecodeOutput, EncodeOutput, ImageFormat, ImageInfo,
-    ImageMetadata, OutputInfo, PixelDescriptor, PixelSlice, PixelSliceMut, ResourceLimits, Stop,
+    MetadataView, OutputInfo, PixelDescriptor, PixelSlice, PixelSliceMut, ResourceLimits, Stop,
 };
 
 use crate::decode::PngDecodeConfig;
@@ -168,7 +168,7 @@ impl zencodec_types::EncoderConfig for PngEncoderConfig {
 pub struct PngEncodeJob<'a> {
     config: &'a PngEncoderConfig,
     stop: Option<&'a dyn Stop>,
-    metadata: Option<&'a ImageMetadata<'a>>,
+    metadata: Option<&'a MetadataView<'a>>,
     limits: Option<ResourceLimits>,
     canvas_width: u32,
     canvas_height: u32,
@@ -184,7 +184,7 @@ impl<'a> zencodec_types::EncodeJob<'a> for PngEncodeJob<'a> {
         self
     }
 
-    fn with_metadata(mut self, meta: &'a ImageMetadata<'a>) -> Self {
+    fn with_metadata(mut self, meta: &'a MetadataView<'a>) -> Self {
         self.metadata = Some(meta);
         self
     }
@@ -226,7 +226,7 @@ impl<'a> zencodec_types::EncodeJob<'a> for PngEncodeJob<'a> {
 pub struct PngEncoder<'a> {
     config: &'a PngEncoderConfig,
     stop: Option<&'a dyn Stop>,
-    metadata: Option<&'a ImageMetadata<'a>>,
+    metadata: Option<&'a MetadataView<'a>>,
     limits: Option<ResourceLimits>,
 }
 
@@ -453,7 +453,7 @@ struct OwnedMetadata {
 }
 
 impl OwnedMetadata {
-    fn from_metadata(meta: &ImageMetadata<'_>) -> Self {
+    fn from_metadata(meta: &MetadataView<'_>) -> Self {
         Self {
             icc_profile: meta.icc_profile.map(|s| s.to_vec()),
             exif: meta.exif.map(|s| s.to_vec()),
@@ -464,8 +464,8 @@ impl OwnedMetadata {
         }
     }
 
-    fn as_metadata(&self) -> ImageMetadata<'_> {
-        let mut meta = ImageMetadata::none();
+    fn as_metadata(&self) -> MetadataView<'_> {
+        let mut meta = MetadataView::none();
         meta.icc_profile = self.icc_profile.as_deref();
         meta.exif = self.exif.as_deref();
         meta.xmp = self.xmp.as_deref();
@@ -2373,7 +2373,7 @@ mod tests {
         let fake_icc = vec![0x42u8; 200];
         let exif_data = b"Exif\0\0test_exif";
         let xmp_data = b"<x:xmpmeta>test</x:xmpmeta>";
-        let meta = ImageMetadata::none()
+        let meta = MetadataView::none()
             .with_icc(&fake_icc)
             .with_exif(exif_data)
             .with_xmp(xmp_data);
@@ -2611,7 +2611,7 @@ mod tests {
 
     #[test]
     fn cicp_roundtrip() {
-        use zencodec_types::{Cicp, ImageMetadata};
+        use zencodec_types::{Cicp, MetadataView};
 
         let pixels = vec![
             Rgb::<u8> {
@@ -2624,7 +2624,7 @@ mod tests {
         let img = imgref::ImgVec::new(pixels, 2, 2);
 
         let cicp = Cicp::new(9, 16, 0, true); // BT.2020 primaries, PQ transfer, Identity matrix (PNG requirement)
-        let meta = ImageMetadata::none().with_cicp(cicp);
+        let meta = MetadataView::none().with_cicp(cicp);
         let config = crate::encode::EncodeConfig::default();
 
         let encoded = crate::encode::encode_rgb8(
@@ -2648,7 +2648,7 @@ mod tests {
 
     #[test]
     fn clli_mdcv_roundtrip() {
-        use zencodec_types::{ContentLightLevel, ImageMetadata, MasteringDisplay};
+        use zencodec_types::{ContentLightLevel, MetadataView, MasteringDisplay};
 
         let pixels = vec![
             Rgb::<u8> {
@@ -2667,7 +2667,7 @@ mod tests {
             10000000,                                      // 1000 cd/m²
             50,                                            // 0.005 cd/m²
         );
-        let meta = ImageMetadata::none()
+        let meta = MetadataView::none()
             .with_content_light_level(clli)
             .with_mastering_display(mdcv);
         let config = crate::encode::EncodeConfig::default();
@@ -2822,7 +2822,7 @@ mod tests {
         assert!(!icc.is_empty());
 
         // Re-encode with ICC profile
-        let meta = zencodec_types::ImageMetadata::none().with_icc(icc);
+        let meta = zencodec_types::MetadataView::none().with_icc(icc);
         let config = crate::encode::EncodeConfig::default();
         let PixelData::Rgba8(ref pixels) = orig.pixels else {
             panic!("shirt_transparent.png should decode as RGBA8");

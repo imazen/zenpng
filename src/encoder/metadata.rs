@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use zencodec_types::{Cicp, ContentLightLevel, ImageMetadata, MasteringDisplay};
+use zencodec_types::{Cicp, ContentLightLevel, MetadataView, MasteringDisplay};
 use zenflate::{CompressionLevel, Compressor, Unstoppable};
 
 use crate::chunk::write::write_chunk;
@@ -11,11 +11,11 @@ use crate::error::PngError;
 
 /// All metadata to embed when writing a PNG file.
 ///
-/// Aggregates both codec-generic metadata (`ImageMetadata`) and PNG-specific
+/// Aggregates both codec-generic metadata (`MetadataView`) and PNG-specific
 /// color chunks (gAMA, sRGB, cHRM). Constructed by the encode functions.
 pub(crate) struct PngWriteMetadata<'a> {
-    /// ICC profile, EXIF, XMP from ImageMetadata.
-    pub generic: Option<&'a ImageMetadata<'a>>,
+    /// ICC profile, EXIF, XMP from MetadataView.
+    pub generic: Option<&'a MetadataView<'a>>,
     /// gAMA chunk value (scaled by 100000, e.g. 45455 = 1/2.2).
     pub source_gamma: Option<u32>,
     /// sRGB rendering intent (0-3).
@@ -31,8 +31,8 @@ pub(crate) struct PngWriteMetadata<'a> {
 }
 
 impl<'a> PngWriteMetadata<'a> {
-    /// Build from ImageMetadata, inheriting cICP/cLLi/mDCV from it.
-    pub fn from_metadata(meta: Option<&'a ImageMetadata<'a>>) -> Self {
+    /// Build from MetadataView, inheriting cICP/cLLi/mDCV from it.
+    pub fn from_metadata(meta: Option<&'a MetadataView<'a>>) -> Self {
         let (cicp, content_light_level, mastering_display) = meta
             .map(|m| (m.cicp, m.content_light_level, m.mastering_display))
             .unwrap_or((None, None, None));

@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use imgref::ImgRef;
 use rgb::{Gray, Rgb, Rgba};
 
-use zencodec_types::ImageMetadata;
+use zencodec_types::MetadataView;
 
 use enough::Stop;
 
@@ -108,7 +108,7 @@ impl BitDepth {
 /// Encode RGB8 pixels to PNG.
 pub fn encode_rgb8(
     img: ImgRef<Rgb<u8>>,
-    metadata: Option<&ImageMetadata<'_>>,
+    metadata: Option<&MetadataView<'_>>,
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
@@ -133,7 +133,7 @@ pub fn encode_rgb8(
 /// Encode RGBA8 pixels to PNG.
 pub fn encode_rgba8(
     img: ImgRef<Rgba<u8>>,
-    metadata: Option<&ImageMetadata<'_>>,
+    metadata: Option<&MetadataView<'_>>,
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
@@ -158,7 +158,7 @@ pub fn encode_rgba8(
 /// Encode Gray8 pixels to PNG.
 pub fn encode_gray8(
     img: ImgRef<Gray<u8>>,
-    metadata: Option<&ImageMetadata<'_>>,
+    metadata: Option<&MetadataView<'_>>,
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
@@ -186,7 +186,7 @@ pub fn encode_gray8(
 /// to big-endian as required by the PNG specification.
 pub fn encode_rgb16(
     img: ImgRef<Rgb<u16>>,
-    metadata: Option<&ImageMetadata<'_>>,
+    metadata: Option<&MetadataView<'_>>,
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
@@ -215,7 +215,7 @@ pub fn encode_rgb16(
 /// to big-endian as required by the PNG specification.
 pub fn encode_rgba16(
     img: ImgRef<Rgba<u16>>,
-    metadata: Option<&ImageMetadata<'_>>,
+    metadata: Option<&MetadataView<'_>>,
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
@@ -244,7 +244,7 @@ pub fn encode_rgba16(
 /// to big-endian as required by the PNG specification.
 pub fn encode_gray16(
     img: ImgRef<Gray<u16>>,
-    metadata: Option<&ImageMetadata<'_>>,
+    metadata: Option<&MetadataView<'_>>,
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
@@ -277,7 +277,7 @@ pub(crate) fn encode_raw(
     height: u32,
     color_type: ColorType,
     bit_depth: BitDepth,
-    metadata: Option<&ImageMetadata<'_>>,
+    metadata: Option<&MetadataView<'_>>,
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
@@ -306,7 +306,7 @@ pub(crate) fn encode_raw(
 #[cfg(feature = "_dev")]
 pub fn encode_rgb8_with_stats(
     img: ImgRef<Rgb<u8>>,
-    metadata: Option<&ImageMetadata<'_>>,
+    metadata: Option<&MetadataView<'_>>,
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
@@ -332,7 +332,7 @@ pub fn encode_rgb8_with_stats(
 #[cfg(feature = "_dev")]
 pub fn encode_rgba8_with_stats(
     img: ImgRef<Rgba<u8>>,
-    metadata: Option<&ImageMetadata<'_>>,
+    metadata: Option<&MetadataView<'_>>,
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
@@ -363,7 +363,7 @@ fn encode_raw_with_stats(
     height: u32,
     color_type: ColorType,
     bit_depth: BitDepth,
-    metadata: Option<&ImageMetadata<'_>>,
+    metadata: Option<&MetadataView<'_>>,
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
@@ -438,7 +438,7 @@ pub fn encode_apng(
     canvas_width: u32,
     canvas_height: u32,
     config: &ApngEncodeConfig,
-    metadata: Option<&ImageMetadata<'_>>,
+    metadata: Option<&MetadataView<'_>>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> Result<Vec<u8>, PngError> {
