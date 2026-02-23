@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use imgref::ImgRef;
 use rgb::Rgba;
 
-use zencodec_types::ImageMetadata;
+use zencodec_types::MetadataView;
 use zenquant::{OutputFormat, QuantizeConfig};
 
 use enough::Stop;
@@ -22,7 +22,7 @@ pub fn encode_indexed_rgba8(
     img: ImgRef<Rgba<u8>>,
     encode_config: &EncodeConfig,
     quant_config: &QuantizeConfig,
-    metadata: Option<&ImageMetadata<'_>>,
+    metadata: Option<&MetadataView<'_>>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> Result<Vec<u8>, PngError> {
@@ -113,7 +113,7 @@ pub fn encode_rgba8_auto(
     encode_config: &EncodeConfig,
     quant_config: &QuantizeConfig,
     max_loss: f64,
-    metadata: Option<&ImageMetadata<'_>>,
+    metadata: Option<&MetadataView<'_>>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> Result<AutoEncodeResult, PngError> {
@@ -199,7 +199,7 @@ pub fn encode_apng_indexed(
     canvas_height: u32,
     config: &crate::encode::ApngEncodeConfig,
     quant_config: &QuantizeConfig,
-    metadata: Option<&ImageMetadata<'_>>,
+    metadata: Option<&MetadataView<'_>>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> Result<Vec<u8>, PngError> {
@@ -250,7 +250,7 @@ pub fn encode_apng_auto(
     config: &crate::encode::ApngEncodeConfig,
     quant_config: &QuantizeConfig,
     max_loss: f64,
-    metadata: Option<&ImageMetadata<'_>>,
+    metadata: Option<&MetadataView<'_>>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> Result<AutoEncodeResult, PngError> {
@@ -529,7 +529,7 @@ mod tests {
         let exif_data = b"Exif\0\0test_exif";
         let xmp_data = b"<x:xmpmeta>test</x:xmpmeta>";
 
-        let meta = ImageMetadata::none()
+        let meta = MetadataView::none()
             .with_icc(&fake_icc)
             .with_exif(exif_data)
             .with_xmp(xmp_data);
