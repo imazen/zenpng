@@ -29,8 +29,6 @@ pub(crate) struct IdatSource<'a> {
     pub post_idat_pos: usize,
     /// Whether to skip CRC validation on IDAT chunks.
     skip_crc: bool,
-    /// Whether CRC validation was skipped (either by config or mismatch tolerated).
-    pub crc_skipped: bool,
 }
 
 impl<'a> IdatSource<'a> {
@@ -53,7 +51,6 @@ impl<'a> IdatSource<'a> {
             done: false,
             post_idat_pos: 0,
             skip_crc,
-            crc_skipped: skip_crc,
         }
     }
 }
@@ -144,9 +141,6 @@ pub(crate) struct FdatSource<'a> {
     pub post_fdat_pos: usize,
     /// Whether to skip CRC validation on fdAT chunks.
     skip_crc: bool,
-    /// Whether CRC validation was skipped.
-    #[allow(dead_code)]
-    pub crc_skipped: bool,
 }
 
 impl<'a> FdatSource<'a> {
@@ -176,7 +170,6 @@ impl<'a> FdatSource<'a> {
             done: false,
             post_fdat_pos: 0,
             skip_crc,
-            crc_skipped: skip_crc,
         }
     }
 }
@@ -535,11 +528,6 @@ impl<'a> RowDecoder<'a> {
     /// Collect decode-related warnings (chunk CRC skips, decompression checksum).
     pub fn collect_decode_warnings(&self) -> Vec<crate::decode::PngWarning> {
         let mut warnings = self.chunk_warnings.clone();
-        if self.decompressor.source_ref().crc_skipped {
-            warnings.push(crate::decode::PngWarning::CriticalChunkCrcSkipped {
-                chunk_type: *b"IDAT",
-            });
-        }
         if self.decompressor.checksum_matched() == Some(false) {
             warnings.push(crate::decode::PngWarning::DecompressionChecksumSkipped);
         }

@@ -245,11 +245,6 @@ pub(crate) fn decode_interlaced(
     }
 
     // Collect decompressor warnings
-    if decompressor.source_ref().crc_skipped {
-        decode_warnings.push(crate::decode::PngWarning::CriticalChunkCrcSkipped {
-            chunk_type: *b"IDAT",
-        });
-    }
     if decompressor.checksum_matched() == Some(false) {
         decode_warnings.push(crate::decode::PngWarning::DecompressionChecksumSkipped);
     }
