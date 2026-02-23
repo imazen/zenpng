@@ -190,12 +190,11 @@ Turbo zenflate compress costs 1.6-3.4ms per strategy — negligible next to filt
 
 ## Pending Encoder Optimizations
 
-### Transparent pixel zeroing (not yet implemented)
-Zero RGB channels of fully-transparent pixels (`alpha == 0 → r = g = b = 0`) before
-filtering/compression. Creates runs of identical bytes that compress significantly better.
-apngasm does this (`dirtyTransparencyOptimization`), oxipng does too. Should be a pre-pass
-in the encode path before `compress_filtered`. Applies to both truecolor RGBA and indexed
-APNG delta frames. Simple, high-value, no quality impact (transparent pixels are invisible).
+### Transparent pixel zeroing
+Implemented in `compress_filtered()`. For RGBA8 (bpp=4), zeroes RGB channels of
+fully-transparent pixels (`alpha == 0 → [0,0,0,0]`) before filtering/compression.
+Quick `has_any_transparent_pixel()` scan avoids copying when no transparent pixels exist.
+Creates runs of identical bytes that compress significantly better. No quality impact.
 
 ### Auto-indexed encoding via zenquant
 Already implemented: `encode_rgba8_auto()` quantizes via zenquant, checks OKLab ΔE against
