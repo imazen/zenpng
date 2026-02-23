@@ -58,7 +58,6 @@ impl EncodeConfig {
         remaining_ns: Option<&'a dyn Fn() -> Option<u64>>,
     ) -> crate::encoder::CompressOptions<'a> {
         crate::encoder::CompressOptions {
-            use_zopfli: self.compression.use_zopfli(),
             parallel: self.parallel,
             cancel,
             deadline,
@@ -283,7 +282,7 @@ pub(crate) fn encode_raw(
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> Result<Vec<u8>, PngError> {
-    let level = config.compression.to_zenflate_level();
+    let effort = config.compression.effort();
     let opts = config.compress_options(cancel, deadline, None);
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
@@ -298,7 +297,7 @@ pub(crate) fn encode_raw(
         color_type.to_png_byte(),
         bit_depth.to_png_byte(),
         &write_meta,
-        level,
+        effort,
         opts,
     )
 }
@@ -369,7 +368,7 @@ fn encode_raw_with_stats(
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> Result<(Vec<u8>, crate::encoder::PhaseStats), PngError> {
-    let level = config.compression.to_zenflate_level();
+    let effort = config.compression.effort();
     let opts = config.compress_options(cancel, deadline, None);
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
@@ -385,7 +384,7 @@ fn encode_raw_with_stats(
         color_type.to_png_byte(),
         bit_depth.to_png_byte(),
         &write_meta,
-        level,
+        effort,
         opts,
         &mut stats,
     )?;
@@ -459,7 +458,7 @@ pub fn encode_apng(
         }
     }
 
-    let level = config.encode.compression.to_zenflate_level();
+    let effort = config.encode.compression.effort();
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = config.encode.source_gamma;
     write_meta.srgb_intent = config.encode.srgb_intent;
@@ -471,7 +470,7 @@ pub fn encode_apng(
         canvas_height,
         &write_meta,
         config.num_plays,
-        level,
+        effort,
         cancel,
         deadline,
     )

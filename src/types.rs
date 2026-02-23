@@ -2,25 +2,27 @@
 //!
 //! These are zenpng's own types, independent of the `png` crate backend.
 
-/// PNG compression level.
+/// PNG compression effort.
 ///
 /// Controls the trade-off between encoding speed and output file size.
-/// Higher levels produce smaller files but take longer.
+/// Higher effort produces smaller files but takes longer.
 ///
-/// Levels map to [zenflate](https://crates.io/crates/zenflate) compression strategies:
+/// Named presets map to effort levels on a 0-30 scale. Each ~3 effort
+/// points roughly doubles encoding time. Use [`Effort`](Self::Effort)
+/// for fine-grained control between presets.
 ///
-/// | Variant | Level | Strategy |
-/// |---------|-------|----------|
-/// | `None` | 0 | Store (no compression) |
-/// | `Fastest` | 1 | Hash table |
-/// | `Fast` | 4 | Greedy |
-/// | `Balanced` | 6 | Lazy (default) |
-/// | `Thorough` | 8 | Double lazy |
-/// | `High` | 9 | Double lazy |
-/// | `Aggressive` | 10 | Near-optimal (2-pass) |
-/// | `Best` | 12 | Near-optimal multi-pass + brute-force filters |
-/// | `Crush` | 12+zopfli | Near-optimal filter eval, zopfli final compression |
-/// | `Maniac` | 12+L6 screen+sweep+zopfli | Accurate screening + full sweep + zopfli |
+/// | Preset | Effort | Description |
+/// |---------|--------|-------------|
+/// | `None` | 0 | Uncompressed |
+/// | `Fastest` | 2 | Single filter, turbo DEFLATE |
+/// | `Fast` | 6 | 5 strategies, fast-ht screen only |
+/// | `Balanced` | 10 | 9 strategies, screen + lazy refine |
+/// | `Thorough` | 13 | 9 strategies, screen + lazy+ refine |
+/// | `High` | 16 | Screen + lazy2 multi-tier refine |
+/// | `Aggressive` | 20 | Screen + near-optimal multi-tier |
+/// | `Best` | 24 | Brute-force + near-optimal |
+/// | `Crush` | 28 | Full sweep + zopfli |
+/// | `Maniac` | 30 | Maximum everything |
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Compression {
@@ -35,9 +37,9 @@ pub enum Compression {
     Balanced,
     /// Thorough compression. Double-lazy DEFLATE matching.
     Thorough,
-    /// High compression. Double-lazy DEFLATE matching.
+    /// High compression. Multi-tier lazy2 DEFLATE refinement.
     High,
-    /// Aggressive compression. Near-optimal DEFLATE (2-pass).
+    /// Aggressive compression. Near-optimal DEFLATE multi-tier.
     Aggressive,
     /// Best compression with zenflate. Near-optimal multi-pass parser with
     /// brute-force per-row filter selection. ~10x slower than `Balanced`.
@@ -47,37 +49,34 @@ pub enum Compression {
     /// produces the smallest files. Requires the `zopfli` feature; falls back
     /// to `Best` if the feature is not enabled.
     Crush,
-    /// Maximum possible compression. Screens all heuristic strategies at L6 for
-    /// more accurate ranking, full brute-force sweep, and zopfli with maximum
-    /// candidates. Extremely slow — minutes per megapixel.
+    /// Maximum possible compression. Full brute-force sweep and zopfli with
+    /// maximum effort. Extremely slow — minutes per megapixel.
     /// Requires the `zopfli` feature; falls back to `Best` if not enabled.
     Maniac,
+    /// Explicit effort level (0-30, clamped).
+    ///
+    /// Provides fine-grained control between the named presets. Each ~3 effort
+    /// points roughly doubles encoding time. Named presets are equivalent to
+    /// specific effort values (e.g., `Balanced` = `Effort(10)`).
+    Effort(u32),
 }
 
 impl Compression {
-    /// Convert to internal compression level (0-14).
-    ///
-    /// Levels 0-12 map directly to zenflate compression levels.
-    /// Level 14 (Maniac) uses zenflate L12 internally with L6 screening
-    /// and a full brute-force sweep.
-    pub(crate) fn to_zenflate_level(self) -> u8 {
+    /// Get the effort level (0-30) for this compression setting.
+    pub fn effort(self) -> u32 {
         match self {
             Compression::None => 0,
-            Compression::Fastest => 1,
-            Compression::Fast => 4,
-            Compression::Balanced => 6,
-            Compression::Thorough => 8,
-            Compression::High => 9,
-            Compression::Aggressive => 10,
-            Compression::Best => 12,
-            Compression::Crush => 12,
-            Compression::Maniac => 14,
+            Compression::Fastest => 2,
+            Compression::Fast => 6,
+            Compression::Balanced => 10,
+            Compression::Thorough => 13,
+            Compression::High => 16,
+            Compression::Aggressive => 20,
+            Compression::Best => 24,
+            Compression::Crush => 28,
+            Compression::Maniac => 30,
+            Compression::Effort(e) => e.min(30),
         }
-    }
-
-    /// Whether this level uses zopfli for final compression.
-    pub(crate) fn use_zopfli(self) -> bool {
-        matches!(self, Compression::Crush | Compression::Maniac) && cfg!(feature = "zopfli")
     }
 }
 
