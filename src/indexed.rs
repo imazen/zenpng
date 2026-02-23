@@ -5,13 +5,91 @@ use imgref::ImgRef;
 use rgb::Rgba;
 
 use zencodec_types::MetadataView;
-use zenquant::{OutputFormat, QuantizeConfig};
+use zenquant::{OutputFormat, QuantizeConfig, QuantizeResult};
 
 use enough::Stop;
 
 use crate::encode::{self, EncodeConfig};
 use crate::encoder::PngWriteMetadata;
 use crate::error::PngError;
+
+/// Quality gate for auto-encode: indexed (smaller) vs truecolor (lossless).
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub enum QualityGate {
+    /// Mean OKLab ΔE threshold (lower = stricter).
+    /// 0.0 = lossless only, 0.02 = good, 0.05 = moderate.
+    MaxDeltaE(f64),
+    /// Maximum MPE score (lower = stricter).
+    /// 0.008 ≈ JPEG q95, 0.02 ≈ JPEG q75, 0.028 ≈ JPEG q50.
+    MaxMpe(f32),
+    /// Minimum SSIMULACRA2 score (higher = stricter, 0-100).
+    /// 85+ ≈ near-lossless, 75+ ≈ good, 65+ ≈ moderate.
+    MinSsim2(f32),
+}
+
+impl QualityGate {
+    /// Whether this gate requires zenquant's compute_quality_metric.
+    pub fn needs_metric(&self) -> bool {
+        matches!(self, QualityGate::MaxMpe(_) | QualityGate::MinSsim2(_))
+    }
+
+    /// Check whether a quantize result passes this quality gate.
+    ///
+    /// For `MaxDeltaE`, the caller must compute and pass the ΔE separately.
+    /// For `MaxMpe`/`MinSsim2`, reads metrics from the result (requires
+    /// `compute_quality_metric(true)` on the config).
+    fn check_quantize_result(&self, result: &QuantizeResult, delta_e: f64) -> bool {
+        match *self {
+            QualityGate::MaxDeltaE(max) => delta_e <= max,
+            QualityGate::MaxMpe(max) => result
+                .mpe_score()
+                .is_some_and(|mpe| mpe <= max),
+            QualityGate::MinSsim2(min) => result
+                .ssimulacra2_estimate()
+                .is_some_and(|ss2| ss2 >= min),
+        }
+    }
+
+    /// Apply this gate's metric requirements to a QuantizeConfig.
+    fn apply_to_config(&self, config: &QuantizeConfig) -> QuantizeConfig {
+        if self.needs_metric() {
+            config.clone().compute_quality_metric(true)
+        } else {
+            config.clone()
+        }
+    }
+}
+
+/// Palette split into RGB and alpha arrays for PNG PLTE/tRNS chunks.
+struct SplitPalette {
+    rgb: Vec<u8>,
+    alpha: Vec<u8>,
+    has_transparency: bool,
+}
+
+/// Split a `&[[u8; 4]]` RGBA palette into separate RGB and alpha arrays.
+fn split_palette(palette_rgba: &[[u8; 4]]) -> SplitPalette {
+    let mut rgb = Vec::with_capacity(palette_rgba.len() * 3);
+    let mut alpha = Vec::with_capacity(palette_rgba.len());
+    let mut has_transparency = false;
+
+    for entry in palette_rgba {
+        rgb.push(entry[0]);
+        rgb.push(entry[1]);
+        rgb.push(entry[2]);
+        alpha.push(entry[3]);
+        if entry[3] < 255 {
+            has_transparency = true;
+        }
+    }
+
+    SplitPalette {
+        rgb,
+        alpha,
+        has_transparency,
+    }
+}
 
 /// Encode RGBA8 pixels to indexed PNG using zenquant for palette quantization.
 ///
@@ -33,24 +111,9 @@ pub fn encode_indexed_rgba8(
     let rgba_slice: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(buf.as_ref());
     let result = zenquant::quantize_rgba(rgba_slice, w, h, quant_config)?;
 
-    // Build separate RGB and alpha palette arrays
-    let palette_rgba = result.palette_rgba();
-    let mut palette_rgb = Vec::with_capacity(palette_rgba.len() * 3);
-    let mut palette_alpha = Vec::with_capacity(palette_rgba.len());
-    let mut has_transparency = false;
-
-    for entry in palette_rgba {
-        palette_rgb.push(entry[0]);
-        palette_rgb.push(entry[1]);
-        palette_rgb.push(entry[2]);
-        palette_alpha.push(entry[3]);
-        if entry[3] < 255 {
-            has_transparency = true;
-        }
-    }
-
-    let alpha = if has_transparency {
-        Some(palette_alpha.as_slice())
+    let sp = split_palette(result.palette_rgba());
+    let alpha = if sp.has_transparency {
+        Some(sp.alpha.as_slice())
     } else {
         None
     };
@@ -67,7 +130,7 @@ pub fn encode_indexed_rgba8(
         result.indices(),
         width,
         height,
-        &palette_rgb,
+        &sp.rgb,
         alpha,
         &write_meta,
         effort,
@@ -91,28 +154,34 @@ pub struct AutoEncodeResult {
     /// Mean OKLab ΔE between the original and quantized image.
     /// Only meaningful when `indexed` is `true` (always `0.0` for truecolor).
     pub quality_loss: f64,
+    /// MPE quality score (lower = better). `None` unless `QualityGate::MaxMpe` used.
+    pub mpe_score: Option<f32>,
+    /// Estimated SSIMULACRA2 score (0-100, higher = better).
+    /// `None` unless `QualityGate::MaxMpe` or `QualityGate::MinSsim2` used.
+    pub ssim2_estimate: Option<f32>,
+    /// Estimated butteraugli distance (lower = better).
+    /// `None` unless `QualityGate::MaxMpe` or `QualityGate::MinSsim2` used.
+    pub butteraugli_estimate: Option<f32>,
 }
 
 /// Encode RGBA8 pixels, automatically choosing indexed or truecolor PNG.
 ///
-/// Tries quantizing to 256 colors via zenquant. If the mean perceptual error
-/// (OKLab ΔE) is at or below `max_loss`, emits an indexed PNG (typically much
-/// smaller). Otherwise falls back to truecolor RGBA8 PNG.
+/// Tries quantizing to 256 colors via zenquant. If the quality gate passes,
+/// emits an indexed PNG (typically much smaller). Otherwise falls back to
+/// truecolor RGBA8 PNG.
 ///
-/// # Quality loss scale (mean OKLab ΔE)
+/// # Quality gates
 ///
-/// | Value | Meaning |
-/// |-------|---------|
-/// | 0.0   | Only use indexed if quantization is lossless |
-/// | 0.01  | Virtually imperceptible — safe for all content |
-/// | 0.02  | Minimal — good default for photographic images |
-/// | 0.05  | Moderate — visible on close inspection of smooth gradients |
-/// | 0.10  | Aggressive — noticeable artifacts in some images |
+/// | Gate | Scale | Good default | Meaning |
+/// |------|-------|-------------|---------|
+/// | `MaxDeltaE(0.02)` | 0.0 – ∞ | 0.02 | Mean OKLab ΔE (lower = stricter) |
+/// | `MaxMpe(0.008)` | 0.0 – ∞ | 0.008 | Masked perceptual error (lower = stricter) |
+/// | `MinSsim2(85.0)` | 0 – 100 | 85.0 | SSIMULACRA2 estimate (higher = stricter) |
 pub fn encode_rgba8_auto(
     img: ImgRef<Rgba<u8>>,
     encode_config: &EncodeConfig,
     quant_config: &QuantizeConfig,
-    max_loss: f64,
+    gate: QualityGate,
     metadata: Option<&MetadataView<'_>>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
@@ -120,33 +189,22 @@ pub fn encode_rgba8_auto(
     let (buf, w, h) = img.to_contiguous_buf();
     let rgba_slice: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(buf.as_ref());
 
-    let result = zenquant::quantize_rgba(rgba_slice, w, h, quant_config)?;
+    let effective_config = gate.apply_to_config(quant_config);
+    let result = zenquant::quantize_rgba(rgba_slice, w, h, &effective_config)?;
 
-    // Compute quality loss
+    // Compute OKLab ΔE for MaxDeltaE gate (and always populate quality_loss)
     let loss = compute_mean_delta_e(buf.as_ref(), result.palette_rgba(), result.indices());
 
-    if loss <= max_loss {
+    let passed = gate.check_quantize_result(&result, loss);
+
+    if passed {
         // Quality acceptable — encode as indexed
         let width = img.width() as u32;
         let height = img.height() as u32;
 
-        let palette_rgba = result.palette_rgba();
-        let mut palette_rgb = Vec::with_capacity(palette_rgba.len() * 3);
-        let mut palette_alpha = Vec::with_capacity(palette_rgba.len());
-        let mut has_transparency = false;
-
-        for entry in palette_rgba {
-            palette_rgb.push(entry[0]);
-            palette_rgb.push(entry[1]);
-            palette_rgb.push(entry[2]);
-            palette_alpha.push(entry[3]);
-            if entry[3] < 255 {
-                has_transparency = true;
-            }
-        }
-
-        let alpha = if has_transparency {
-            Some(palette_alpha.as_slice())
+        let sp = split_palette(result.palette_rgba());
+        let alpha = if sp.has_transparency {
+            Some(sp.alpha.as_slice())
         } else {
             None
         };
@@ -163,7 +221,7 @@ pub fn encode_rgba8_auto(
             result.indices(),
             width,
             height,
-            &palette_rgb,
+            &sp.rgb,
             alpha,
             &write_meta,
             effort,
@@ -174,6 +232,9 @@ pub fn encode_rgba8_auto(
             data,
             indexed: true,
             quality_loss: loss,
+            mpe_score: result.mpe_score(),
+            ssim2_estimate: result.ssimulacra2_estimate(),
+            butteraugli_estimate: result.butteraugli_estimate(),
         })
     } else {
         // Quality too low — fall back to truecolor
@@ -182,6 +243,9 @@ pub fn encode_rgba8_auto(
             data,
             indexed: false,
             quality_loss: loss,
+            mpe_score: result.mpe_score(),
+            ssim2_estimate: result.ssimulacra2_estimate(),
+            butteraugli_estimate: result.butteraugli_estimate(),
         })
     }
 }
@@ -190,8 +254,9 @@ pub fn encode_rgba8_auto(
 
 /// Encode canvas-sized RGBA8 frames into an indexed APNG file using a global palette.
 ///
-/// Quantizes a representative sample across all frames to produce a single
-/// global palette, then encodes each frame as indexed data with delta regions.
+/// Builds a shared palette across all frames via zenquant, then remaps each
+/// frame with proper dithering and temporal consistency (identical pixels
+/// between consecutive frames receive the same index, eliminating flicker).
 #[allow(clippy::too_many_arguments)]
 pub fn encode_apng_indexed(
     frames: &[crate::encode::ApngFrameInput<'_>],
@@ -208,7 +273,9 @@ pub fn encode_apng_indexed(
             "APNG requires at least one frame".into(),
         ));
     }
-    let expected_len = canvas_width as usize * canvas_height as usize * 4;
+    let w = canvas_width as usize;
+    let h = canvas_height as usize;
+    let expected_len = w * h * 4;
     for (i, frame) in frames.iter().enumerate() {
         if frame.pixels.len() < expected_len {
             return Err(PngError::InvalidInput(alloc::format!(
@@ -218,20 +285,53 @@ pub fn encode_apng_indexed(
         }
     }
 
+    // Build ImgRef for each frame
+    let frame_refs: Vec<ImgRef<'_, zenquant::RGBA<u8>>> = frames
+        .iter()
+        .map(|f| {
+            let pixels: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(&f.pixels[..expected_len]);
+            ImgRef::new(pixels, w, h)
+        })
+        .collect();
+
+    // Build shared palette across all frames
+    let palette_result = zenquant::build_palette_rgba(&frame_refs, quant_config)?;
+    let palette_rgba = palette_result.palette_rgba();
+
+    // Remap each frame with temporal consistency
+    let mut all_indices: Vec<Vec<u8>> = Vec::with_capacity(frames.len());
+    let mut prev_indices: Option<Vec<u8>> = None;
+
+    for frame_ref in &frame_refs {
+        cancel.check()?;
+
+        let (frame_buf, fw, fh) = frame_ref.to_contiguous_buf();
+        let remap_result = if let Some(prev) = &prev_indices {
+            palette_result.remap_rgba_with_prev(frame_buf.as_ref(), fw, fh, quant_config, prev)?
+        } else {
+            palette_result.remap_rgba(frame_buf.as_ref(), fw, fh, quant_config)?
+        };
+
+        let indices = remap_result.indices().to_vec();
+        prev_indices = Some(indices.clone());
+        all_indices.push(indices);
+    }
+
     let effort = config.encode.compression.effort();
     let mut write_meta = crate::encoder::PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = config.encode.source_gamma;
     write_meta.srgb_intent = config.encode.srgb_intent;
     write_meta.chromaticities = config.encode.chromaticities;
 
-    crate::encoder::apng::encode_apng_indexed(
+    crate::encoder::apng::encode_apng_indexed_from_indices(
         frames,
+        palette_rgba,
+        &all_indices,
         canvas_width,
         canvas_height,
         &write_meta,
         config.num_plays,
         effort,
-        quant_config,
         cancel,
         deadline,
     )
@@ -239,9 +339,11 @@ pub fn encode_apng_indexed(
 
 /// Encode APNG frames, automatically choosing indexed or truecolor encoding.
 ///
-/// Tries quantizing a representative sample across all frames. If the mean
-/// perceptual error (OKLab ΔE) is at or below `max_loss`, emits an indexed
-/// APNG. Otherwise falls back to truecolor RGBA8 APNG.
+/// Builds a shared palette across all frames via zenquant, remaps each frame
+/// with temporal consistency, and checks the quality gate per frame. If any
+/// frame fails the gate, falls back to truecolor RGBA8 APNG for all frames.
+///
+/// Returns the worst-case metrics across all frames.
 #[allow(clippy::too_many_arguments)]
 pub fn encode_apng_auto(
     frames: &[crate::encode::ApngFrameInput<'_>],
@@ -249,7 +351,7 @@ pub fn encode_apng_auto(
     canvas_height: u32,
     config: &crate::encode::ApngEncodeConfig,
     quant_config: &QuantizeConfig,
-    max_loss: f64,
+    gate: QualityGate,
     metadata: Option<&MetadataView<'_>>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
@@ -259,7 +361,9 @@ pub fn encode_apng_auto(
             "APNG requires at least one frame".into(),
         ));
     }
-    let expected_len = canvas_width as usize * canvas_height as usize * 4;
+    let w = canvas_width as usize;
+    let h = canvas_height as usize;
+    let expected_len = w * h * 4;
     for (i, frame) in frames.iter().enumerate() {
         if frame.pixels.len() < expected_len {
             return Err(PngError::InvalidInput(alloc::format!(
@@ -269,66 +373,114 @@ pub fn encode_apng_auto(
         }
     }
 
-    // Build representative sample across all frames
-    let w = canvas_width as usize;
-    let h = canvas_height as usize;
-    let total_pixels = w * h * frames.len();
-    let target_samples = 10_000.min(total_pixels);
-    let sample_step = (total_pixels / target_samples).max(1);
+    // Build ImgRef for each frame
+    let frame_refs: Vec<ImgRef<'_, zenquant::RGBA<u8>>> = frames
+        .iter()
+        .map(|f| {
+            let pixels: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(&f.pixels[..expected_len]);
+            ImgRef::new(pixels, w, h)
+        })
+        .collect();
 
-    let mut sample_rgba: Vec<Rgba<u8>> = Vec::with_capacity(target_samples);
-    let mut pixel_idx = 0usize;
-    for frame in frames {
-        let pixels: &[Rgba<u8>] = bytemuck::cast_slice(frame.pixels);
-        for px in pixels {
-            if pixel_idx % sample_step == 0 {
-                sample_rgba.push(*px);
-            }
-            pixel_idx += 1;
+    // Apply gate's metric requirements to config
+    let effective_config = gate.apply_to_config(quant_config);
+
+    // Build shared palette across all frames
+    let palette_result = zenquant::build_palette_rgba(&frame_refs, &effective_config)?;
+    let palette_rgba = palette_result.palette_rgba();
+
+    // Remap each frame with temporal consistency, checking quality per frame
+    let mut all_indices: Vec<Vec<u8>> = Vec::with_capacity(frames.len());
+    let mut prev_indices: Option<Vec<u8>> = None;
+    let mut worst_loss = 0.0_f64;
+    let mut worst_mpe: Option<f32> = None;
+    let mut worst_ssim2: Option<f32> = None;
+    let mut worst_ba: Option<f32> = None;
+
+    for (i, frame_ref) in frame_refs.iter().enumerate() {
+        cancel.check()?;
+
+        let (frame_buf, fw, fh) = frame_ref.to_contiguous_buf();
+        let remap_result = if let Some(prev) = &prev_indices {
+            palette_result.remap_rgba_with_prev(
+                frame_buf.as_ref(), fw, fh, &effective_config, prev,
+            )?
+        } else {
+            palette_result.remap_rgba(frame_buf.as_ref(), fw, fh, &effective_config)?
+        };
+
+        // Compute OKLab ΔE for this frame
+        let frame_pixels: &[Rgba<u8>] = bytemuck::cast_slice(&frames[i].pixels[..expected_len]);
+        let frame_loss =
+            compute_mean_delta_e(frame_pixels, palette_rgba, remap_result.indices());
+
+        // Check quality gate
+        if !gate.check_quantize_result(&remap_result, frame_loss) {
+            // Frame failed — bail to truecolor for all frames
+            let data = crate::encode::encode_apng(
+                frames,
+                canvas_width,
+                canvas_height,
+                config,
+                metadata,
+                cancel,
+                deadline,
+            )?;
+            return Ok(AutoEncodeResult {
+                data,
+                indexed: false,
+                quality_loss: frame_loss,
+                mpe_score: remap_result.mpe_score(),
+                ssim2_estimate: remap_result.ssimulacra2_estimate(),
+                butteraugli_estimate: remap_result.butteraugli_estimate(),
+            });
         }
+
+        // Track worst-case metrics
+        worst_loss = worst_loss.max(frame_loss);
+        if let Some(mpe) = remap_result.mpe_score() {
+            worst_mpe = Some(worst_mpe.map_or(mpe, |prev: f32| prev.max(mpe)));
+        }
+        if let Some(ss2) = remap_result.ssimulacra2_estimate() {
+            worst_ssim2 = Some(worst_ssim2.map_or(ss2, |prev: f32| prev.min(ss2)));
+        }
+        if let Some(ba) = remap_result.butteraugli_estimate() {
+            worst_ba = Some(worst_ba.map_or(ba, |prev: f32| prev.max(ba)));
+        }
+
+        let indices = remap_result.indices().to_vec();
+        prev_indices = Some(indices.clone());
+        all_indices.push(indices);
     }
 
-    // Quantize sample
-    let sample_zq: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(&sample_rgba);
-    let result = zenquant::quantize_rgba(sample_zq, sample_rgba.len(), 1, quant_config)?;
+    // All frames passed — encode as indexed APNG
+    let effort = config.encode.compression.effort();
+    let mut write_meta = crate::encoder::PngWriteMetadata::from_metadata(metadata);
+    write_meta.source_gamma = config.encode.source_gamma;
+    write_meta.srgb_intent = config.encode.srgb_intent;
+    write_meta.chromaticities = config.encode.chromaticities;
 
-    // Compute quality loss on the sample
-    let loss = compute_mean_delta_e(&sample_rgba, result.palette_rgba(), result.indices());
+    let data = crate::encoder::apng::encode_apng_indexed_from_indices(
+        frames,
+        palette_rgba,
+        &all_indices,
+        canvas_width,
+        canvas_height,
+        &write_meta,
+        config.num_plays,
+        effort,
+        cancel,
+        deadline,
+    )?;
 
-    if loss <= max_loss {
-        // Quality acceptable — encode as indexed APNG
-        let data = encode_apng_indexed(
-            frames,
-            canvas_width,
-            canvas_height,
-            config,
-            quant_config,
-            metadata,
-            cancel,
-            deadline,
-        )?;
-        Ok(AutoEncodeResult {
-            data,
-            indexed: true,
-            quality_loss: loss,
-        })
-    } else {
-        // Quality too low — fall back to truecolor APNG
-        let data = crate::encode::encode_apng(
-            frames,
-            canvas_width,
-            canvas_height,
-            config,
-            metadata,
-            cancel,
-            deadline,
-        )?;
-        Ok(AutoEncodeResult {
-            data,
-            indexed: false,
-            quality_loss: loss,
-        })
-    }
+    Ok(AutoEncodeResult {
+        data,
+        indexed: true,
+        quality_loss: worst_loss,
+        mpe_score: worst_mpe,
+        ssim2_estimate: worst_ssim2,
+        butteraugli_estimate: worst_ba,
+    })
 }
 
 /// Convert sRGB u8 to OKLab [L, a, b].
@@ -611,7 +763,7 @@ mod tests {
             img.as_ref(),
             &config,
             &quant,
-            0.02,
+            QualityGate::MaxDeltaE(0.02),
             None,
             &enough::Unstoppable,
             &enough::Unstoppable,
@@ -648,7 +800,7 @@ mod tests {
             img.as_ref(),
             &config,
             &quant,
-            0.0,
+            QualityGate::MaxDeltaE(0.0),
             None,
             &enough::Unstoppable,
             &enough::Unstoppable,
@@ -689,7 +841,7 @@ mod tests {
             img.as_ref(),
             &config,
             &quant,
-            0.0,
+            QualityGate::MaxDeltaE(0.0),
             None,
             &enough::Unstoppable,
             &enough::Unstoppable,
@@ -729,7 +881,7 @@ mod tests {
             img.as_ref(),
             &config,
             &quant,
-            0.10,
+            QualityGate::MaxDeltaE(0.10),
             None,
             &enough::Unstoppable,
             &enough::Unstoppable,
