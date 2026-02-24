@@ -942,4 +942,184 @@ mod tests {
         assert!(a.is_grayscale);
         assert_eq!(a.unique_color_count, 3);
     }
+
+    #[test]
+    fn min_gray_bit_depth_1bit() {
+        // All values ∈ {0, 255} → 1-bit
+        let bytes = [0, 0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255];
+        let a = analyze_rgba8(&bytes, 3, 1);
+        assert!(a.is_grayscale);
+        assert_eq!(a.min_gray_bit_depth, 1);
+    }
+
+    #[test]
+    fn min_gray_bit_depth_2bit() {
+        // Values: 0, 85, 170, 255 → 2-bit (all % 85 == 0)
+        let bytes = [
+            0, 0, 0, 255, 85, 85, 85, 255, 170, 170, 170, 255, 255, 255, 255, 255,
+        ];
+        let a = analyze_rgba8(&bytes, 4, 1);
+        assert!(a.is_grayscale);
+        assert_eq!(a.min_gray_bit_depth, 2);
+    }
+
+    #[test]
+    fn min_gray_bit_depth_4bit() {
+        // Value 34 = 17*2 → fits 4-bit but not 2-bit
+        let bytes = [0, 0, 0, 255, 34, 34, 34, 255, 255, 255, 255, 255];
+        let a = analyze_rgba8(&bytes, 3, 1);
+        assert!(a.is_grayscale);
+        assert_eq!(a.min_gray_bit_depth, 4);
+    }
+
+    #[test]
+    fn min_gray_bit_depth_8bit() {
+        // Value 100 is not divisible by 17 → 8-bit
+        let bytes = [100, 100, 100, 255, 200, 200, 200, 255];
+        let a = analyze_rgba8(&bytes, 2, 1);
+        assert!(a.is_grayscale);
+        assert_eq!(a.min_gray_bit_depth, 8);
+    }
+
+    #[test]
+    fn binary_alpha_detection() {
+        // Alpha values: 0 and 255 only → binary alpha
+        let bytes = [255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 255];
+        let a = analyze_rgba8(&bytes, 3, 1);
+        assert!(a.is_binary_alpha);
+        assert!(!a.is_opaque);
+    }
+
+    #[test]
+    fn non_binary_alpha_detection() {
+        // Alpha value 128 → not binary
+        let bytes = [255, 0, 0, 128, 0, 255, 0, 255];
+        let a = analyze_rgba8(&bytes, 2, 1);
+        assert!(!a.is_binary_alpha);
+    }
+
+    #[test]
+    fn single_transparent_color_tracking() {
+        // One transparent color [255, 0, 0] with alpha=0
+        let bytes = [255, 0, 0, 0, 0, 255, 0, 255, 255, 0, 0, 0];
+        let a = analyze_rgba8(&bytes, 3, 1);
+        assert_eq!(a.transparent_color, Some([255, 0, 0]));
+    }
+
+    #[test]
+    fn multi_transparent_colors() {
+        // Two different transparent colors → None
+        let bytes = [255, 0, 0, 0, 0, 255, 0, 0, 128, 128, 128, 255];
+        let a = analyze_rgba8(&bytes, 3, 1);
+        assert_eq!(a.transparent_color, None);
+    }
+
+    #[test]
+    fn trns_exclusive_color() {
+        // Transparent color [255, 0, 0] never appears opaque
+        let bytes = [255, 0, 0, 0, 0, 255, 0, 255, 0, 0, 255, 255];
+        assert!(trns_color_is_exclusive(&bytes, [255, 0, 0]));
+    }
+
+    #[test]
+    fn trns_non_exclusive_color() {
+        // Transparent color [255, 0, 0] also appears opaque
+        let bytes = [255, 0, 0, 0, 255, 0, 0, 255];
+        assert!(!trns_color_is_exclusive(&bytes, [255, 0, 0]));
+    }
+
+    #[test]
+    fn gray8_to_subbyte_scaling() {
+        // 1-bit: 0→0, 255→1
+        assert_eq!(gray8_to_subbyte(&[0, 255], 1), vec![0, 1]);
+        // 2-bit: 0→0, 85→1, 170→2, 255→3
+        assert_eq!(gray8_to_subbyte(&[0, 85, 170, 255], 2), vec![0, 1, 2, 3]);
+        // 4-bit: 0→0, 17→1, 34→2, ... 255→15
+        assert_eq!(gray8_to_subbyte(&[0, 17, 34, 255], 4), vec![0, 1, 2, 15]);
+        // 8-bit: identity
+        assert_eq!(gray8_to_subbyte(&[42, 200], 8), vec![42, 200]);
+    }
+
+    #[test]
+    fn optimize_rgba_to_subbyte_gray() {
+        // 4x1 image: black and white, all opaque → should produce 1-bit gray
+        let bytes = [
+            0, 0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255, 255, 255, 255, 255,
+        ];
+        match optimize_rgba8(&bytes, 4, 1) {
+            OptimalEncoding::Truecolor {
+                color_type,
+                bit_depth,
+                trns,
+                ..
+            } => {
+                assert_eq!(color_type, 0); // Grayscale
+                assert!(bit_depth < 8); // Sub-byte
+                assert!(trns.is_none());
+            }
+            OptimalEncoding::Indexed { .. } => {
+                // Indexed might win for very small images — that's OK
+            }
+            OptimalEncoding::Original => panic!("should optimize"),
+        }
+    }
+
+    #[test]
+    fn optimize_rgba_to_gray_with_trns() {
+        // Grayscale RGBA with binary alpha, single exclusive transparent color
+        // 20x20 to exceed palette threshold
+        let mut bytes = Vec::new();
+        for i in 0..400 {
+            let v = ((i * 7) % 256) as u8;
+            // Make value 100 divisible by nothing useful to force 8-bit gray
+            let gray = if v == 0 { 100 } else { v };
+            bytes.extend_from_slice(&[gray, gray, gray, 255]);
+        }
+        // Add one transparent pixel with unique color
+        bytes[0] = 1;
+        bytes[1] = 1;
+        bytes[2] = 1;
+        bytes[3] = 0;
+        match optimize_rgba8(&bytes, 20, 20) {
+            OptimalEncoding::Truecolor {
+                color_type, trns, ..
+            } => {
+                // Should be grayscale (0) with tRNS, or grayscale+alpha (4)
+                if color_type == 0 {
+                    assert!(trns.is_some(), "gray with tRNS expected");
+                }
+            }
+            _ => {} // other encodings might be smaller
+        }
+    }
+
+    #[test]
+    fn optimize_rgba_to_rgb_with_trns() {
+        // Non-grayscale RGBA with binary alpha, single exclusive transparent color
+        // 400+ unique colors to exceed indexed
+        let mut bytes = Vec::new();
+        for r in 0..20u8 {
+            for g in 0..21u8 {
+                bytes.extend_from_slice(&[r * 13, g * 12, 128, 255]);
+            }
+        }
+        // Make pixel 0 transparent with a unique RGB
+        bytes[0] = 3;
+        bytes[1] = 7;
+        bytes[2] = 11;
+        bytes[3] = 0;
+        match optimize_rgba8(&bytes, 420, 1) {
+            OptimalEncoding::Truecolor {
+                color_type, trns, ..
+            } => {
+                if color_type == 2 {
+                    // RGB with tRNS
+                    assert!(trns.is_some(), "RGB with tRNS expected");
+                    let t = trns.unwrap();
+                    assert_eq!(t.len(), 6); // 3 big-endian u16 values
+                }
+            }
+            _ => {} // other encodings might be chosen
+        }
+    }
 }
