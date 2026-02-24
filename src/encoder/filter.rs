@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use enough::Stop;
-use zenflate::{CompressionLevel, Compressor, Unstoppable};
+use zenflate::{CompressionLevel, Compressor, CompressorSnapshot, Unstoppable};
 
 /// Heuristic strategies to screen in Phase 1.
 pub(crate) const HEURISTIC_STRATEGIES: &[Strategy] = &[
@@ -285,10 +285,9 @@ fn filter_image_brute(
 
 /// Forking brute-force filter selection using incremental DEFLATE state.
 ///
-/// For each row, clones the compressor 5 times (one per filter), feeds each
-/// clone the accumulated filtered stream via `deflate_compress_incremental`,
-/// and picks the filter producing the smallest cumulative output. The winning
-/// clone becomes the compressor for the next row.
+/// For each row, snapshots the compressor state, tries all 5 filters via
+/// `deflate_compress_incremental`, and restores the winning state. Uses
+/// [`CompressorSnapshot`] for cheaper state save/restore than full cloning.
 ///
 /// This produces better filter choices than context-based brute-force because
 /// it uses actual DEFLATE state (hash tables, frequency counters, match history)
@@ -306,6 +305,7 @@ fn filter_image_brute_fork(
     let filtered_row_size = row_bytes + 1; // filter byte + row data
 
     let mut compressor = Compressor::new(CompressionLevel::new(eval_level));
+    compressor.set_png_mode(true);
     let mut candidate_data: Vec<Vec<u8>> = (0..5).map(|_| vec![0u8; row_bytes]).collect();
     let mut prev_row = vec![0u8; row_bytes];
 
@@ -323,7 +323,10 @@ fn filter_image_brute_fork(
         // Try all 5 filters
         let mut best_f = 0u8;
         let mut best_size = usize::MAX;
-        let mut best_compressor = None;
+        let mut best_snap = None;
+
+        // Snapshot before trying filters — cheaper than full clone
+        let snap = compressor.snapshot();
 
         for f in 0..5u8 {
             if cancel.check().is_err() {
@@ -337,18 +340,14 @@ fn filter_image_brute_fork(
 
             apply_filter(f, row, &prev_row, bpp, &mut candidate_data[f as usize]);
 
-            // Clone the compressor to try this filter
-            let mut fork = compressor.clone();
+            // Restore to pre-row state and try this filter
+            compressor.restore(snap.clone());
 
-            // Build the accumulated data: existing output + this candidate row
-            // The incremental API expects the full accumulated buffer.
-            // We already committed prior rows to `out`; now append the candidate.
             let new_start = out.len();
             out.push(f);
             out.extend_from_slice(&candidate_data[f as usize]);
 
-            // Compress incrementally from where we left off
-            let result = fork.deflate_compress_incremental(
+            let result = compressor.deflate_compress_incremental(
                 out,
                 &mut compress_buf,
                 is_final,
@@ -363,7 +362,7 @@ fn filter_image_brute_fork(
                 if total < best_size {
                     best_size = total;
                     best_f = f;
-                    best_compressor = Some((fork, size));
+                    best_snap = Some((compressor.snapshot(), size));
                 }
             }
         }
@@ -372,8 +371,8 @@ fn filter_image_brute_fork(
         out.push(best_f);
         out.extend_from_slice(&candidate_data[best_f as usize]);
 
-        if let Some((winner, size)) = best_compressor {
-            compressor = winner;
+        if let Some((winner_snap, size)) = best_snap {
+            compressor.restore(winner_snap);
             cumulative_output += size;
         }
 
@@ -388,6 +387,8 @@ fn filter_image_brute_fork(
 /// (K×5 candidates), evaluates via incremental DEFLATE compression, and keeps
 /// the top K by cumulative compressed size. The winning entry's filtered data
 /// becomes the output.
+///
+/// Uses [`CompressorSnapshot`] for cheaper state save/restore than full cloning.
 ///
 /// This finds better filter sequences than greedy BruteForceFork at ~K× the
 /// cost, because suboptimal choices at row Y can be recovered when they enable
@@ -417,8 +418,10 @@ fn filter_image_brute_beam(
         filtered: Vec<u8>,
     }
 
+    let mut init_compressor = Compressor::new(CompressionLevel::new(eval_level));
+    init_compressor.set_png_mode(true);
     let mut beam = vec![BeamEntry {
-        compressor: Compressor::new(CompressionLevel::new(eval_level)),
+        compressor: init_compressor,
         cumulative_size: 0,
         filtered: Vec::with_capacity(filtered_row_size * height),
     }];
@@ -426,8 +429,9 @@ fn filter_image_brute_beam(
     let mut candidate_data: Vec<Vec<u8>> = (0..5).map(|_| vec![0u8; row_bytes]).collect();
     let mut prev_row = vec![0u8; row_bytes];
 
-    // (cumulative_size, beam_idx, filter, compressor)
-    let mut candidates: Vec<(usize, usize, u8, Compressor)> = Vec::with_capacity(beam_width * 5);
+    // (cumulative_size, beam_idx, filter, snapshot)
+    let mut candidates: Vec<(usize, usize, u8, CompressorSnapshot)> =
+        Vec::with_capacity(beam_width * 5);
 
     for y in 0..height {
         let row = &packed_rows[y * row_bytes..(y + 1) * row_bytes];
@@ -442,6 +446,9 @@ fn filter_image_brute_beam(
         candidates.clear();
 
         for (b, entry) in beam.iter_mut().enumerate() {
+            // Snapshot before trying filters — cheaper than 5 full clones
+            let snap = entry.compressor.snapshot();
+
             for f in 0..5u8 {
                 if cancel.check().is_err() {
                     // On cancel, emit best beam entry so far + remaining rows unfiltered
@@ -456,25 +463,27 @@ fn filter_image_brute_beam(
                     return;
                 }
 
-                // Temporarily extend this beam entry's filtered buffer
+                // Restore to pre-row state and try this filter
+                entry.compressor.restore(snap.clone());
+
                 let start = entry.filtered.len();
                 entry.filtered.push(f);
                 entry
                     .filtered
                     .extend_from_slice(&candidate_data[f as usize]);
 
-                // Clone compressor and evaluate incrementally
-                let mut fork = entry.compressor.clone();
-                match fork.deflate_compress_incremental(
+                if let Ok(size) = entry.compressor.deflate_compress_incremental(
                     &entry.filtered,
                     &mut compress_buf,
                     is_final,
                     Unstoppable,
                 ) {
-                    Ok(size) => {
-                        candidates.push((entry.cumulative_size + size, b, f, fork));
-                    }
-                    Err(_) => {}
+                    candidates.push((
+                        entry.cumulative_size + size,
+                        b,
+                        f,
+                        entry.compressor.snapshot(),
+                    ));
                 }
 
                 // Truncate back
@@ -497,21 +506,30 @@ fn filter_image_brute_beam(
             continue;
         }
 
-        // Build new beam, moving parent buffers when possible to avoid cloning
+        // Build new beam: move parent compressors when possible, clone otherwise,
+        // then restore the winning snapshot into each.
         let mut parent_usage = vec![0usize; beam.len()];
         for &(_, b, _, _) in &candidates {
             parent_usage[b] += 1;
         }
 
         let mut new_beam: Vec<BeamEntry> = Vec::with_capacity(beam_width);
-        for (size, b, f, compressor) in candidates.drain(..) {
+        for (size, b, f, snap) in candidates.drain(..) {
             parent_usage[b] -= 1;
-            let mut filtered = if parent_usage[b] == 0 {
+            let (mut filtered, mut compressor) = if parent_usage[b] == 0 {
                 // Last use of this parent — move instead of clone
-                core::mem::take(&mut beam[b].filtered)
+                let entry = &mut beam[b];
+                (
+                    core::mem::take(&mut entry.filtered),
+                    core::mem::replace(
+                        &mut entry.compressor,
+                        Compressor::new(CompressionLevel::none()),
+                    ),
+                )
             } else {
-                beam[b].filtered.clone()
+                (beam[b].filtered.clone(), beam[b].compressor.clone())
             };
+            compressor.restore(snap);
             filtered.push(f);
             filtered.extend_from_slice(&candidate_data[f as usize]);
             new_beam.push(BeamEntry {
