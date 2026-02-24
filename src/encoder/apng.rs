@@ -1941,6 +1941,205 @@ mod tests {
         assert_eq!(decoded.frames.len(), 2);
     }
 
+    // ── Optimizer-specific tests ────────────────────────────────────
+
+    #[test]
+    fn optimizer_transparent_pixel_roundtrip() {
+        // Tests that frames with alpha=0 pixels round-trip correctly.
+        // This exercises the canvas divergence fix: compress_filtered() zeroes
+        // RGB of alpha=0 pixels, which the optimizer must account for.
+        let w = 8u32;
+        let h = 8u32;
+        let npx = (w * h) as usize;
+
+        // Frame 0: gradient with some transparent pixels
+        let mut f0 = vec![0u8; npx * 4];
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                let off = (y * w as usize + x) * 4;
+                f0[off] = (x * 32) as u8;     // R varies
+                f0[off + 1] = (y * 32) as u8;  // G varies
+                f0[off + 2] = 128;
+                // Make some pixels transparent
+                f0[off + 3] = if x < 2 && y < 2 { 0 } else { 255 };
+            }
+        }
+
+        // Frame 1: same but shift the transparent region
+        let mut f1 = f0.clone();
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                let off = (y * w as usize + x) * 4;
+                // Move transparent region to (6,6)-(7,7)
+                f1[off + 3] = if x >= 6 && y >= 6 { 0 } else { 255 };
+            }
+        }
+
+        // Frame 2: everything opaque
+        let mut f2 = f0.clone();
+        for px in f2.chunks_exact_mut(4) {
+            px[3] = 255;
+        }
+
+        let frames = [
+            ApngFrameInput { pixels: &f0, delay_num: 1, delay_den: 10 },
+            ApngFrameInput { pixels: &f1, delay_num: 1, delay_den: 10 },
+            ApngFrameInput { pixels: &f2, delay_num: 1, delay_den: 10 },
+        ];
+
+        let write_meta = PngWriteMetadata::from_metadata(None);
+        let encoded = encode_apng_truecolor(
+            &frames, w, h, &write_meta, 0, 6,
+            &enough::Unstoppable, &enough::Unstoppable,
+        ).unwrap();
+
+        let decoded = crate::decode::decode_apng(
+            &encoded, &crate::decode::PngDecodeConfig::none(), &enough::Unstoppable,
+        ).unwrap();
+
+        assert_eq!(decoded.frames.len(), 3);
+        for (i, (orig_input, dec_frame)) in frames.iter().zip(decoded.frames.iter()).enumerate() {
+            let dec_buf: Vec<rgb::Rgba<u8>> = dec_frame.pixels.to_rgba8().into_buf();
+            for (j, px) in dec_buf.iter().enumerate() {
+                let off = j * 4;
+                let orig = rgb::Rgba {
+                    r: orig_input.pixels[off],
+                    g: orig_input.pixels[off + 1],
+                    b: orig_input.pixels[off + 2],
+                    a: orig_input.pixels[off + 3],
+                };
+                if orig.a == 0 && px.a == 0 {
+                    continue; // both transparent
+                }
+                assert_eq!(
+                    *px, orig,
+                    "pixel {j} mismatch frame {i}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn optimizer_moving_sprite_roundtrip() {
+        // Static background with a moving opaque sprite — ideal scenario for
+        // dispose/blend optimization (DISPOSE_PREV + OVER gives big savings).
+        let w = 16u32;
+        let h = 16u32;
+        let npx = (w * h) as usize;
+
+        // Blue background
+        let make_frame = |sprite_x: usize, sprite_y: usize| -> Vec<u8> {
+            let mut buf = vec![0u8; npx * 4];
+            for px in buf.chunks_exact_mut(4) {
+                px.copy_from_slice(&[0, 0, 200, 255]); // blue bg
+            }
+            // 4×4 red sprite
+            for sy in 0..4 {
+                for sx in 0..4 {
+                    let x = sprite_x + sx;
+                    let y = sprite_y + sy;
+                    if x < w as usize && y < h as usize {
+                        let off = (y * w as usize + x) * 4;
+                        buf[off..off + 4].copy_from_slice(&[255, 0, 0, 255]);
+                    }
+                }
+            }
+            buf
+        };
+
+        let f0 = make_frame(2, 2);
+        let f1 = make_frame(6, 2);
+        let f2 = make_frame(10, 2);
+        let f3 = make_frame(10, 6);
+        let f4 = make_frame(6, 6);
+
+        let frames: Vec<ApngFrameInput<'_>> = [&f0, &f1, &f2, &f3, &f4]
+            .iter()
+            .map(|f| ApngFrameInput { pixels: f, delay_num: 1, delay_den: 10 })
+            .collect();
+
+        let write_meta = PngWriteMetadata::from_metadata(None);
+        let encoded = encode_apng_truecolor(
+            &frames, w, h, &write_meta, 0, 10,
+            &enough::Unstoppable, &enough::Unstoppable,
+        ).unwrap();
+
+        let decoded = crate::decode::decode_apng(
+            &encoded, &crate::decode::PngDecodeConfig::none(), &enough::Unstoppable,
+        ).unwrap();
+
+        assert_eq!(decoded.frames.len(), 5);
+        for (i, (orig, dec)) in frames.iter().zip(decoded.frames.iter()).enumerate() {
+            let dec_buf: Vec<rgb::Rgba<u8>> = dec.pixels.to_rgba8().into_buf();
+            for (j, px) in dec_buf.iter().enumerate() {
+                let off = j * 4;
+                let orig_px = rgb::Rgba {
+                    r: orig.pixels[off], g: orig.pixels[off + 1],
+                    b: orig.pixels[off + 2], a: orig.pixels[off + 3],
+                };
+                assert_eq!(*px, orig_px, "pixel {j} mismatch frame {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn optimizer_semi_transparent_roundtrip() {
+        // Tests animation with semi-transparent pixels (0 < alpha < 255).
+        // These cannot use BLEND_OP_OVER for changed pixels, testing
+        // the can_use_over_truecolor safety check.
+        let w = 8u32;
+        let h = 8u32;
+        let npx = (w * h) as usize;
+
+        // Frame 0: semi-transparent red
+        let mut f0 = vec![0u8; npx * 4];
+        for px in f0.chunks_exact_mut(4) {
+            px.copy_from_slice(&[255, 0, 0, 128]);
+        }
+
+        // Frame 1: semi-transparent green (different everywhere)
+        let mut f1 = vec![0u8; npx * 4];
+        for px in f1.chunks_exact_mut(4) {
+            px.copy_from_slice(&[0, 255, 0, 200]);
+        }
+
+        // Frame 2: mix of semi-transparent values
+        let mut f2 = vec![0u8; npx * 4];
+        for (i, px) in f2.chunks_exact_mut(4).enumerate() {
+            let alpha = (50 + (i * 3) % 200) as u8;
+            px.copy_from_slice(&[128, 128, 0, alpha]);
+        }
+
+        let frames = [
+            ApngFrameInput { pixels: &f0, delay_num: 1, delay_den: 10 },
+            ApngFrameInput { pixels: &f1, delay_num: 1, delay_den: 10 },
+            ApngFrameInput { pixels: &f2, delay_num: 1, delay_den: 10 },
+        ];
+
+        let write_meta = PngWriteMetadata::from_metadata(None);
+        let encoded = encode_apng_truecolor(
+            &frames, w, h, &write_meta, 0, 10,
+            &enough::Unstoppable, &enough::Unstoppable,
+        ).unwrap();
+
+        let decoded = crate::decode::decode_apng(
+            &encoded, &crate::decode::PngDecodeConfig::none(), &enough::Unstoppable,
+        ).unwrap();
+
+        assert_eq!(decoded.frames.len(), 3);
+        for (i, (orig, dec)) in frames.iter().zip(decoded.frames.iter()).enumerate() {
+            let dec_buf: Vec<rgb::Rgba<u8>> = dec.pixels.to_rgba8().into_buf();
+            for (j, px) in dec_buf.iter().enumerate() {
+                let off = j * 4;
+                let orig_px = rgb::Rgba {
+                    r: orig.pixels[off], g: orig.pixels[off + 1],
+                    b: orig.pixels[off + 2], a: orig.pixels[off + 3],
+                };
+                assert_eq!(*px, orig_px, "pixel {j} mismatch frame {i}");
+            }
+        }
+    }
+
     // ── Corpus test ─────────────────────────────────────────────────
 
     #[test]
