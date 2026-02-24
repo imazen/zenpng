@@ -26,7 +26,7 @@ use super::{PhaseStat, PhaseStats};
 /// - `refine_efforts`: zenflate efforts to try in Phase 2
 /// - `brute_configs`: (context_rows, eval_effort) for Phase 3 brute-force
 /// - `fork_brute_efforts`: eval efforts for forking brute-force
-/// - `use_zopfli`: whether to run Phase 4 (zopfli)
+/// - `use_recompress`: whether to run Phase 4 (recompression with zenflate best + optional zopfli)
 ///
 /// Monotonicity (higher effort never produces larger output) is enforced by
 /// `zenflate::CompressionLevel::monotonicity_fallback()`, which the compression
@@ -43,8 +43,7 @@ struct EffortParams {
     block_brute_configs: &'static [(usize, u32)],
     fork_brute_efforts: &'static [u32],
     beam_brute_configs: &'static [(u32, usize)], // (eval_level, beam_width)
-    #[allow(dead_code)] // read only with `zopfli` feature
-    use_zopfli: bool,
+    use_recompress: bool,
 }
 
 impl EffortParams {
@@ -96,7 +95,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             1 => Self {
                 zenflate_effort: 1,
@@ -109,7 +108,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             2 => Self {
                 zenflate_effort: 2,
@@ -122,7 +121,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             3 => Self {
                 zenflate_effort: 3,
@@ -135,7 +134,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             4 => Self {
                 zenflate_effort: 4,
@@ -148,7 +147,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             5 => Self {
                 zenflate_effort: 5,
@@ -161,7 +160,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             6 => Self {
                 zenflate_effort: 6,
@@ -174,7 +173,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             7 => Self {
                 zenflate_effort: 7,
@@ -187,7 +186,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             // ── Medium effort (8-15): screen + refine ──
             //
@@ -205,7 +204,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             9 => Self {
                 zenflate_effort: 10,
@@ -218,7 +217,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             10 => Self {
                 zenflate_effort: 12,
@@ -231,7 +230,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             11 => Self {
                 zenflate_effort: 14,
@@ -244,7 +243,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             12 => Self {
                 zenflate_effort: 15,
@@ -257,7 +256,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             13 => Self {
                 zenflate_effort: 17,
@@ -270,7 +269,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             14 => Self {
                 zenflate_effort: 18,
@@ -283,7 +282,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             15 => Self {
                 zenflate_effort: 20,
@@ -296,7 +295,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             // ── High effort (16-23): higher refine, multi-tier ──
             //
@@ -313,7 +312,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             17 => Self {
                 zenflate_effort: 22,
@@ -326,7 +325,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             18 => Self {
                 zenflate_effort: 24,
@@ -339,7 +338,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             19 => Self {
                 zenflate_effort: 24,
@@ -352,7 +351,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             20 => Self {
                 zenflate_effort: 26,
@@ -365,7 +364,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             21 => Self {
                 zenflate_effort: 28,
@@ -378,7 +377,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             22 => Self {
                 zenflate_effort: 28,
@@ -391,7 +390,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             23 => Self {
                 zenflate_effort: 30,
@@ -404,7 +403,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             // ── Max effort (24-30): brute-force + zopfli ──
             24 => Self {
@@ -418,7 +417,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             25 => Self {
                 zenflate_effort: 30,
@@ -431,7 +430,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             26 => Self {
                 zenflate_effort: 30,
@@ -444,7 +443,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[10],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             27 => Self {
                 zenflate_effort: 30,
@@ -457,7 +456,7 @@ impl EffortParams {
                 block_brute_configs: &[],
                 fork_brute_efforts: &[10, 15],
                 beam_brute_configs: &[],
-                use_zopfli: false,
+                use_recompress: false,
             },
             28 => Self {
                 zenflate_effort: 30,
@@ -479,7 +478,7 @@ impl EffortParams {
                 block_brute_configs: &[(5, 1)],
                 fork_brute_efforts: &[10, 15],
                 beam_brute_configs: &[],
-                use_zopfli: cfg!(feature = "zopfli"),
+                use_recompress: true,
             },
             29 => Self {
                 zenflate_effort: 30,
@@ -501,7 +500,7 @@ impl EffortParams {
                 block_brute_configs: &[(5, 1)],
                 fork_brute_efforts: &[10, 15],
                 beam_brute_configs: &[(10, 3)],
-                use_zopfli: cfg!(feature = "zopfli"),
+                use_recompress: true,
             },
             _ => Self {
                 // effort 30
@@ -524,7 +523,7 @@ impl EffortParams {
                 block_brute_configs: &[(5, 1), (5, 4)],
                 fork_brute_efforts: &[10, 15],
                 beam_brute_configs: &[(10, 3), (15, 3)],
-                use_zopfli: cfg!(feature = "zopfli"),
+                use_recompress: true,
             },
         }
     }
@@ -590,6 +589,9 @@ fn try_compress_with_fallbacks(
     let mut level = CompressionLevel::new(effort);
     loop {
         let mut compressor = Compressor::new(level);
+        if level.effort() >= 23 {
+            compressor.set_png_mode(true);
+        }
         let size = try_compress(
             filtered,
             core::slice::from_mut(&mut compressor),
@@ -621,8 +623,8 @@ fn try_compress_with_fallbacks(
 /// context evaluation. Expensive (~3-4s per config on 1024×1024) but can beat
 /// heuristics on complex images.
 ///
-/// **Phase 4 (Zopfli):** Adaptive zopfli compression on the best candidates.
-/// Only at effort >= 28 with the `zopfli` feature enabled.
+/// **Phase 4 (Recompress):** Re-compress best candidates with zenflate effort 30 +
+///   PNG cost biases, at effort >= 28. Optionally also tries zopfli (with `zopfli` feature).
 ///
 /// Each phase checks the deadline before starting.
 pub(crate) fn compress_filtered(
@@ -903,9 +905,8 @@ pub(crate) fn compress_filtered(
     };
     let top_n = screen_results.len().min(params.top_k);
 
-    // Track the best zenflate size per candidate for zopfli ranking later
-    #[cfg(feature = "zopfli")]
-    let mut zopfli_candidates: Vec<(usize, Vec<u8>)> = Vec::new();
+    // Track the best zenflate size per candidate for Phase 4 recompression
+    let mut recompress_candidates: Vec<(usize, Vec<u8>)> = Vec::new();
 
     if opts.parallel && top_n > 1 {
         // ── Parallel refinement ──
@@ -927,6 +928,9 @@ pub(crate) fn compress_filtered(
                             let mut level = CompressionLevel::new(tier_level);
                             loop {
                                 let mut compressor = Compressor::new(level);
+                                if level.effort() >= 23 {
+                                    compressor.set_png_mode(true);
+                                }
                                 if let Ok(len) = compressor.zlib_compress(
                                     filtered_data,
                                     &mut t_compress_buf,
@@ -968,9 +972,8 @@ pub(crate) fn compress_filtered(
                 if !dominated {
                     best_compressed = Some(compressed_data);
                 }
-                #[cfg(feature = "zopfli")]
-                if params.use_zopfli {
-                    zopfli_candidates.push((size, screen_results[idx].1.clone()));
+                if params.use_recompress {
+                    recompress_candidates.push((size, screen_results[idx].1.clone()));
                 }
             }
         }
@@ -984,7 +987,7 @@ pub(crate) fn compress_filtered(
             }
 
             for (_, filtered_data) in &screen_results[..top_n] {
-                let _best_size = try_compress_with_fallbacks(
+                let refine_size = try_compress_with_fallbacks(
                     filtered_data,
                     tier_level,
                     &mut compress_buf,
@@ -993,9 +996,8 @@ pub(crate) fn compress_filtered(
                     opts.cancel,
                 )?;
 
-                #[cfg(feature = "zopfli")]
-                if params.use_zopfli && _best_size < usize::MAX {
-                    zopfli_candidates.push((_best_size, filtered_data.clone()));
+                if params.use_recompress && refine_size < usize::MAX {
+                    recompress_candidates.push((refine_size, filtered_data.clone()));
                 }
             }
         }
@@ -1053,7 +1055,7 @@ pub(crate) fn compress_filtered(
                 &mut filtered,
             );
 
-            let _best_size = try_compress_with_fallbacks(
+            let brute_size = try_compress_with_fallbacks(
                 &filtered,
                 params.zenflate_effort,
                 &mut compress_buf,
@@ -1063,9 +1065,8 @@ pub(crate) fn compress_filtered(
             )?;
             brute_evals += 1;
 
-            #[cfg(feature = "zopfli")]
-            if params.use_zopfli && _best_size < usize::MAX {
-                zopfli_candidates.push((_best_size, filtered.clone()));
+            if params.use_recompress && brute_size < usize::MAX {
+                recompress_candidates.push((brute_size, filtered.clone()));
             }
         }
 
@@ -1089,7 +1090,7 @@ pub(crate) fn compress_filtered(
                 &mut filtered,
             );
 
-            let _best_size = try_compress_with_fallbacks(
+            let block_brute_size = try_compress_with_fallbacks(
                 &filtered,
                 params.zenflate_effort,
                 &mut compress_buf,
@@ -1099,9 +1100,8 @@ pub(crate) fn compress_filtered(
             )?;
             brute_evals += 1;
 
-            #[cfg(feature = "zopfli")]
-            if params.use_zopfli && _best_size < usize::MAX {
-                zopfli_candidates.push((_best_size, filtered.clone()));
+            if params.use_recompress && block_brute_size < usize::MAX {
+                recompress_candidates.push((block_brute_size, filtered.clone()));
             }
         }
 
@@ -1123,7 +1123,7 @@ pub(crate) fn compress_filtered(
                 &mut filtered,
             );
 
-            let _best_size = try_compress_with_fallbacks(
+            let fork_brute_size = try_compress_with_fallbacks(
                 &filtered,
                 params.zenflate_effort,
                 &mut compress_buf,
@@ -1133,9 +1133,8 @@ pub(crate) fn compress_filtered(
             )?;
             brute_evals += 1;
 
-            #[cfg(feature = "zopfli")]
-            if params.use_zopfli && _best_size < usize::MAX {
-                zopfli_candidates.push((_best_size, filtered.clone()));
+            if params.use_recompress && fork_brute_size < usize::MAX {
+                recompress_candidates.push((fork_brute_size, filtered.clone()));
             }
         }
 
@@ -1159,7 +1158,7 @@ pub(crate) fn compress_filtered(
                 &mut filtered,
             );
 
-            let _best_size = try_compress_with_fallbacks(
+            let beam_brute_size = try_compress_with_fallbacks(
                 &filtered,
                 params.zenflate_effort,
                 &mut compress_buf,
@@ -1169,9 +1168,8 @@ pub(crate) fn compress_filtered(
             )?;
             brute_evals += 1;
 
-            #[cfg(feature = "zopfli")]
-            if params.use_zopfli && _best_size < usize::MAX {
-                zopfli_candidates.push((_best_size, filtered.clone()));
+            if params.use_recompress && beam_brute_size < usize::MAX {
+                recompress_candidates.push((beam_brute_size, filtered.clone()));
             }
         }
     }
@@ -1207,34 +1205,55 @@ pub(crate) fn compress_filtered(
         }
     }
 
-    // ---- Phase 4: Zopfli ----
-    #[cfg(feature = "zopfli")]
+    // ---- Phase 4: Recompression ----
+    // Re-compress top candidates with zenflate effort 30 + png_mode.
+    // Optionally also try zenzop (zopfli) if the `zopfli` feature is enabled.
     {
         let phase4_start = if stats.is_some() {
             Some(Instant::now())
         } else {
             None
         };
-        if params.use_zopfli && !zopfli_candidates.is_empty() && !opts.deadline.should_stop() {
+        if params.use_recompress
+            && !recompress_candidates.is_empty()
+            && !opts.deadline.should_stop()
+        {
             // Sort by zenflate size, take top 3
-            zopfli_candidates.sort_by_key(|(size, _)| *size);
-            zopfli_candidates.truncate(3);
+            recompress_candidates.sort_by_key(|(size, _)| *size);
+            recompress_candidates.truncate(3);
 
-            let n_candidates = zopfli_candidates.len();
-            let best = zopfli_adaptive(
-                &zopfli_candidates,
-                opts.cancel,
-                opts.deadline,
-                opts.remaining_ns,
-                &mut best_compressed,
-            )?;
-            if let Some(b) = best {
+            let n_candidates = recompress_candidates.len();
+
+            // Zenflate recompression: effort 30 + png_mode (always available)
+            let zenflate_best =
+                zenflate_recompress(&recompress_candidates, opts.cancel, &mut best_compressed)?;
+            if let Some(b) = zenflate_best {
                 best_compressed = Some(b);
             }
 
+            // Optional zenzop (zopfli) recompression if feature is enabled
+            #[cfg(feature = "zopfli")]
+            {
+                let zopfli_best = zopfli_adaptive(
+                    &recompress_candidates,
+                    opts.cancel,
+                    opts.deadline,
+                    opts.remaining_ns,
+                    &mut best_compressed,
+                )?;
+                if let Some(b) = zopfli_best {
+                    best_compressed = Some(b);
+                }
+            }
+
             if let (Some(s), Some(t)) = (&mut stats, phase4_start) {
+                let label = if cfg!(feature = "zopfli") {
+                    alloc::format!("Recompress+Zopfli ({n_candidates} candidates)")
+                } else {
+                    alloc::format!("Recompress ({n_candidates} candidates)")
+                };
                 s.phases.push(PhaseStat {
-                    name: alloc::format!("Zopfli ({n_candidates} candidates)"),
+                    name: label,
                     duration_ns: t.elapsed().as_nanos() as u64,
                     best_size: best_compressed.as_ref().map_or(0, |b| b.len()),
                     evaluations: n_candidates as u32,
@@ -1427,6 +1446,59 @@ fn write_stored_block_header(out: &mut Vec<u8>, len: usize, is_final: bool) {
     let nlen = !len & 0xFFFF;
     out.push((nlen & 0xFF) as u8);
     out.push(((nlen >> 8) & 0xFF) as u8);
+}
+
+/// Recompress top candidates with zenflate effort 30 + png_mode.
+///
+/// This re-compresses filtered data using zenflate's near-optimal parser
+/// with ECT-derived optimizations and PNG-specific cost biases. Runs
+/// candidates in parallel when multiple are available.
+fn zenflate_recompress(
+    candidates: &[(usize, Vec<u8>)],
+    cancel: &dyn Stop,
+    current_best: &mut Option<Vec<u8>>,
+) -> Result<Option<Vec<u8>>, PngError> {
+    let mut best: Option<Vec<u8>> = None;
+
+    let results: Vec<Result<Vec<u8>, PngError>> = std::thread::scope(|s| {
+        let handles: Vec<_> = candidates
+            .iter()
+            .map(|(_size, data)| {
+                s.spawn(|| {
+                    let mut compressor = Compressor::new(CompressionLevel::new(30));
+                    compressor.set_png_mode(true);
+                    let bound = Compressor::zlib_compress_bound(data.len());
+                    let mut output = vec![0u8; bound];
+                    let len = compressor
+                        .zlib_compress(data, &mut output, cancel)
+                        .map_err(|e| match e {
+                            zenflate::CompressionError::Stopped(reason) => {
+                                PngError::Stopped(reason)
+                            }
+                            other => PngError::InvalidInput(alloc::format!(
+                                "zenflate recompress failed: {other}"
+                            )),
+                        })?;
+                    output.truncate(len);
+                    Ok(output)
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+
+    for result in results {
+        let compressed = result?;
+        let dominated = best.as_ref().is_some_and(|b| compressed.len() >= b.len())
+            || current_best
+                .as_ref()
+                .is_some_and(|b| compressed.len() >= b.len());
+        if !dominated {
+            best = Some(compressed);
+        }
+    }
+
+    Ok(best)
 }
 
 /// Adaptive zopfli compression with time budgeting.
