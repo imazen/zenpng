@@ -300,6 +300,37 @@ pub(crate) fn optimize_palette_order(
     sort_palette_luminance(palette, indices);
 }
 
+/// Apply near-lossless quantization by rounding LSBs of each sample.
+///
+/// For each byte, rounds to the nearest multiple of `2^bits`. This creates
+/// more identical byte values, improving filter residuals and DEFLATE compression.
+/// Alpha channels are NOT quantized (preserving transparency fidelity).
+///
+/// `channels` specifies the number of channels per pixel (3=RGB, 4=RGBA, etc.)
+/// so we can skip the alpha channel for RGBA/GrayAlpha data.
+pub(crate) fn near_lossless_quantize(bytes: &[u8], channels: usize, bits: u8) -> Vec<u8> {
+    if bits == 0 || bits > 4 {
+        return bytes.to_vec();
+    }
+    let step = 1u16 << bits; // 2, 4, 8, or 16
+    let half = step / 2;
+
+    let mut out = bytes.to_vec();
+    let has_alpha = channels == 4 || channels == 2; // RGBA or GrayAlpha
+    let color_channels = if has_alpha { channels - 1 } else { channels };
+
+    for pixel in out.chunks_exact_mut(channels) {
+        for c in &mut pixel[..color_channels] {
+            // Round to nearest multiple of step, clamped to [0, 255]
+            let v = *c as u16;
+            let rounded = ((v + half) / step) * step;
+            *c = rounded.min(255) as u8;
+        }
+        // Alpha channel left untouched
+    }
+    out
+}
+
 /// Encoding decision from image analysis.
 pub(crate) enum OptimalEncoding {
     /// Encode as indexed PNG with this palette and indices.
@@ -587,6 +618,31 @@ mod tests {
         assert_eq!(indices[0], 2);
         // Index 1 was dark (50) → now at position 0
         assert_eq!(indices[1], 0);
+    }
+
+    #[test]
+    fn near_lossless_1bit() {
+        // RGB pixels: round to nearest even (step=2)
+        let bytes = [127, 128, 129, 0, 1, 255];
+        let result = near_lossless_quantize(&bytes, 3, 1);
+        assert_eq!(result[0], 128); // 127 → 128 (nearest even)
+        assert_eq!(result[1], 128); // 128 → 128 (already even)
+        assert_eq!(result[2], 130); // 129 → 130 (nearest even)
+        assert_eq!(result[3], 0); // 0 → 0
+        assert_eq!(result[4], 2); // 1 → 2 (nearest even)
+        assert_eq!(result[5], 255); // 255 → min(256,255)=255 (clamped)
+    }
+
+    #[test]
+    fn near_lossless_preserves_alpha() {
+        // RGBA: alpha channel should NOT be quantized
+        let bytes = [127, 128, 129, 200]; // R G B A
+        let result = near_lossless_quantize(&bytes, 4, 2);
+        // R,G,B rounded to nearest 4
+        assert_eq!(result[0], 128); // 127 → 128
+        assert_eq!(result[1], 128); // 128 → 128
+        assert_eq!(result[2], 128); // 129 → 128
+        assert_eq!(result[3], 200); // Alpha preserved
     }
 
     #[test]
