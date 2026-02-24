@@ -1,0 +1,1309 @@
+<!DOCTYPE html>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta content="width=device-width, initial-scale=1, shrink-to-fit=no" name="viewport">
+    <style>
+    .header th {
+        padding-bottom: 0.7em;
+    }
+    .passes-all {
+        background: #81c784;
+    }
+    .passes-most {
+        background: #aed581;
+    }
+    .passes-lots, .passes-unclear {
+        background: #dce775;
+    }
+    .passes-none {
+        background: #e57373;
+    }
+    .note {
+        margin-left: 2em;
+    }
+    .tests  table {
+        margin-left: 1em;
+        /* width: 96%; */
+    }
+    .tests table td.result {
+        width:8em;
+    }
+    .tests table td.testname {
+        width:30em
+    }
+    footer {
+        margin-top: 1.5em;
+    }
+    #apng img.decorative {
+        float: right;
+    }
+    </style>
+    <link rel="stylesheet" href="https://www.w3.org/StyleSheets/TR/2021/base.css">
+    <style>
+        body {
+            max-width:55em;
+        }
+    </style>
+
+    <body>
+        <div class="head">
+            <p data-fill-with="logo"><a class="logo" href="https://www.w3.org/"> <img alt="W3C" height="48" src="https://www.w3.org/StyleSheets/TR/2021/logos/W3C" width="72"> </a> </p>
+  
+            <h1>PNG, Third Edition:<br>Implementation Report</h1>
+            <dl>
+                <dt>Editor:</dt>
+                <dd>Chris Lilley</dd>
+                <dt>Last modified:</dt>
+                <dd>2025-06-04</dd>
+            </dl>
+            <nav id="toc">
+                <details class="toc">
+                    <summary>Table of Contents</summary>
+                    <ol class="toc">
+                        <li><a href="#apng">Animated PNG (APNG)</a></li>
+                        <li><a href="#cicp">Coding Independent Code Points (CICP)</a></li>
+                        <li><a href="#color-priority">Priority of color space information</a></li>
+                        <li><a href="#mastering">Mastering Display Color Volume</a></li>
+                        <li><a href="#light">Content Light Level Information</a></li>
+                        <li><a href="#ICC">ICC profile version</a></li>
+                        <li><a href="#exif">Exchangeable Image File (Exif)</a></li>
+                        <li><a href="#palette">Invalid Palette Indexes</a></li>
+                        <li><a href="#invalid-ancillary">Unknown, Invalid Ancillary Chunks</a></li>
+                    </ol>
+                </details>
+            </nav>
+            
+        </div>
+        <main>
+
+            <section id="intro">
+                <h2>Introduction</h2>
+                <p>
+                    This report summarizes the implementation status
+                    of <a href="https://w3c.github.io/PNG-spec/">PNG, Third Edition</a>
+                    at the time of publication:
+                    in browsers, image authoring tools,
+                    image viewers and other image utilities.
+                </p>
+
+                <p>
+                    The <a href="https://www.w3.org/TR/png-3/#changes-20031110">changes 
+                    in PNG Third Edition</a>,
+                    compared to the Second Edition
+                    are divided into new (or newly-standardized) features,
+                    substantive changes to existing features,
+                    and many editorial corrections and clarifications.
+                </p>
+		        <p>
+                    This implementation report is on 
+                    <a href="https://github.com/w3c/png/tree/main/Implementation_Report_3e">GitHub</a>.
+		        </p>
+                
+            </section>
+
+            <section id="apng">
+                <h2>1. Animated PNG (APNG)</h2>
+                <p>
+                    <img class="decorative" src="./img/APNG-Icos4D.png" alt="">Although
+                    proposed in 2007 
+                    and widely implemented in browsers between 2009 and 2017,
+                    APNG had not been adopted by the ad-hoc group
+                    which produced the early PNG specifications.
+                    PNG Third Edition retrospectively standardizes this useful extension.
+                    APNG has a <a href="https://w3c.github.io/PNG-spec/#image-apng">distinct Internet Media type</a> (MIME type) registered and standardized in PNG Third Edition.
+                </p>
+                <p>
+                    APNG is directly supported at the OS level in <strong>iOS 9.0+</strong>, <strong>macOS 10.11+</strong> and <strong>tvOS 9.0+</strong>. APNG is used for animated stickers in <a href="https://en.wikipedia.org/wiki/IMessage"><strong>iMessage</strong></a>.
+                </p>
+                <p>
+                    Implemented in <strong>Blink-based browsers</strong> (Google Chrome, Microsoft Edge, Samsung Internet, etc), in <strong>Mozilla Firefox</strong>, 
+                    in <strong>Ladybird</strong>,
+                    and in <strong>WebKit-based browsers</strong>
+                    (where it relies on the macOS or iOS platform support for APNG).</p>
+
+                <p>
+                    <button><a href="https://caniuse.com/apng">Can I Use APNG</a></button>
+                </p>
+                <p>
+                    Implemented in <a href="https://apngasm.sourceforge.net/"><strong>APNG Assembler</strong></a> for converting a static sequence of images into APNG, and decompiling APNG to a set of static PNG images. Includes <a href="http://littlesvr.ca/apng/inter-frame.html">automatic inter-frame optimization</a>.
+                </p>
+                <p>
+                    Implemented in Bandisoft <a href="https://www.bandisoft.com/bandiview/"><strong>Bandiview</strong></a>, which also has <a href="https://www.bandisoft.com/bandiview/help/about-hdr/">HDR support</a>, although not yet for HDR PNG.
+                </p>
+                <figure>
+                    <img src="./img/BandiView.png" alt="screenshot of BandiView displaying an animated PNG">
+                    <figcaption>BandiView displaying an animated PNG</figcaption>
+                </figure>
+
+                <p>
+                    Implemented in <a href="http://www.rw-designer.com/image-editor"><strong>RealWorld Paint 2013.1+</strong>
+                    for creating and editing APNG</a>.
+                </p>
+
+                <p>
+                    Implemented in <a href="https://www.xnview.com/en/xnviewmp/"><strong>XnSoft XnView MP</strong></a>
+                </p>
+
+                <p>
+                    Various low-level and utility tools support APNG:
+                </p>
+
+                <ul>
+                    <li><a href="https://www.getpaint.net/"><strong>Paint.net</strong></a> with the <a href="https://www.isimonbrown.co.uk/animated-image/"><strong>animated image APNG plugin</strong></a></li>
+                    <li><a href="https://vdubapngmod.sourceforge.net/"><strong>VirtualDub APNG Mod</strong></a></li>
+                    <li><a href="http://www.gamani.com/apng.htm"><strong>GIF Movie Gear, v4.2+</strong></a></li>
+                    <li><a href="https://sourceforge.net/projects/apng/files/APNG_Optimizer/"><strong>APNG Optimizer</strong></a></li>
+                    <li><a href="http://entropymine.com/jason/tweakpng/"><strong>TweakPNG</strong></a></li>
+                    <li><a href="https://github.com/pnggroup/pngcheck"><strong>pngcheck</strong></a></li>
+                </ul>
+
+                <p>
+                    In terms of libraries, APNG is supported by:
+                </p>
+
+                <ul>
+                    <li><a href="https://github.com/randy408/libspng"><strong>libspng</strong></a> with <a href="https://github.com/randy408/libspng/pull/252">patch</a></li>
+                    <li><a href="https://libpng.sourceforge.io/index.html"><strong>libpng</strong></a> with the <a href="https://sourceforge.net/projects/libpng-apng/"><strong>unofficial APNG patch</strong></a>, which has a <a href="http://littlesvr.ca/apng/tutorial/book1.html">tutorial</a>.</li>
+                    <li><a href="https://github.com/onevcat/APNGKit"><strong>APNGKit</strong></a>.</li>
+                    <li><a href="https://www.qt.io/"><strong>Qt image library</strong></a> with <a href="https://github.com/mistificator/qapng"><strong>QtApng</strong></a></li>
+                </ul>
+
+                <section class="tests" id="acTL">
+                    <h3>Animation control tests</h3>
+                    <table>
+                        <tr class="header">
+                            <th><a href="https://wpt.fyi/results/png/apng?label=master&product=chrome%5Bexperimental%5D&product=edge%5Bexperimental%5D&product=firefox%5Bexperimental%5D&product=safari%5Bexperimental%5D&product=ladybird&q=actl">Live Results</a></th>
+                            <th>Chrome 137</th>
+                            <th>Edge 137</th>
+                            <th>Firefox 141</th>
+                            <th>Safari TP 217</th>
+                            <th>Ladybird 1</th>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">acTL-plays-one.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">acTL-plays-two.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                    </table>
+
+                    <table>
+                        <tr class="header">
+                            <th>Manual tests</th>
+                            <th>Chrome 137</th>
+                            <th>Edge 137</th>
+                            <th>Firefox 141</th>
+                            <th>Safari TP 217</th>
+                            <th>Ladybird 1</th>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">acTL-plays-one-manual.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">acTL-plays-two-manual.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">acTL-plays-zero-manual.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                    </table>
+                </section>
+
+
+                <section class="tests" id="fcTL">
+                        <h3>Frame control tests</h3>
+                    <table>
+                        <tr class="header">
+                            <th><a href="https://wpt.fyi/results/png/apng?label=master&product=chrome%5Bexperimental%5D&product=edge%5Bexperimental%5D&product=firefox%5Bexperimental%5D&product=safari%5Bexperimental%5D&product=ladybird&q=fctl">Live Results</a></th>
+                            <th>Chrome 137</th>
+                            <th>Edge 137</th>
+                            <th>Firefox 141</th>
+                            <th>Safari TP 217</th>
+                            <th>Ladybird 1</th>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-acTL-ordering.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-none"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-blend-over-repeatedly.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-blend-over-solid.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-blend-source-nearly-transparent.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-blend-source-solid.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-blend-source-transparent.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-dispose-background-final.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-dispose-background.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-dispose-before-region-background.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-dispose-in-region-background.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-dispose-in-region-none.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-dispose-in-region-previous.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-none"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-dispose-none.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-dispose-previous-final.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-dispose-previous-first.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-dispose-previous.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-none"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                    </table>
+
+                    <table>
+                        <tr class="header">
+                            <th>Manual tests</th>
+                            <th>Chrome 137</th>
+                            <th>Edge 137</th>
+                            <th>Firefox 141</th>
+                            <th>Safari TP 217</th>
+                            <th>Ladybird 1</th>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-delay-16bit-manual.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-delay-basic-manual.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-delay-rounding-manual.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-delay-zero-denom-manual.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fcTL-delay-zero-num-manual.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                    </table>
+                </section>
+
+                <section class="tests" id="fdAT">
+                    <h3>Frame data tests</h3>
+                    <table>
+                        <tr class="header">
+                            <th><a href="https://wpt.fyi/results/png/apng?label=master&product=chrome%5Bexperimental%5D&product=edge%5Bexperimental%5D&product=firefox%5Bexperimental%5D&product=safari%5Bexperimental%5D&product=ladybird&q=fdat">Live Results</a></th>
+                            <th>Chrome 137</th>
+                            <th>Edge 137</th>
+                            <th>Firefox 141</th>
+                            <th>Safari TP 217</th>
+                            <th>Ladybird 1</th>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fdAT-16bit.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-none"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fdAT-1bit-PLTE-tRNS.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-none"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fdAT-1bit-PLTE.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fdAT-2bit-PLTE-tRNS.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fdAT-8bit-gray-alpha.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-none"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fdAT-8bit-gray.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fDAT-inherits-cICP.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fdAT-split-basic.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">fdAT-split-zero-length.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                    </table>
+                </section>
+
+                <section class="tests" id="APNG">
+                    <h3>General APNG tests</h3>
+                    <table>
+                        <tr class="header">
+                            <th><a href="https://wpt.fyi/results/png/apng?label=master&product=chrome%5Bexperimental%5D&product=edge%5Bexperimental%5D&product=firefox%5Bexperimental%5D&product=safari%5Bexperimental%5D&product=ladybird&q=first">Live Results</a></th>
+                            <th>Chrome 137</th>
+                            <th>Edge 137</th>
+                            <th>Firefox 141</th>
+                            <th>Safari TP 217</th>
+                            <th>Ladybird 1</th>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">first-frame-IDAT.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">first-frame-not-IDAT.html </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                    </table>
+                    <h3>APNG timeout test</h3>
+                    <table>
+                        <tr class="header">
+                            <th><a href="https://wpt.fyi/results/apng?label=master&product=chrome%5Bexperimental%5D&product=edge%5Bexperimental%5D&product=firefox%5Bexperimental%5D&product=safari%5Bexperimental%5D&product=ladybird&q=timeout">Live Results</a></th>
+                            <th>Chrome 137</th>
+                            <th>Edge 137</th>
+                            <th>Firefox 141</th>
+                            <th>Safari TP 217</th>
+                            <th>Ladybird 1</th>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">animated-png-timeout.html  </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                    </table>
+                    <h3>APNG Media Type test</h3>
+                    <table>
+                        <tr class="header">
+                            <th><a href="https://wpt.fyi/results/apng?label=master&product=chrome%5Bexperimental%5D&product=edge%5Bexperimental%5D&product=firefox%5Bexperimental%5D&product=safari%5Bexperimental%5D&product=ladybird&q=source">Live Results</a></th>
+                            <th>Chrome 137</th>
+                            <th>Edge 137</th>
+                            <th>Firefox 141</th>
+                            <th>Safari TP 217</th>
+                            <th>Ladybird 1</th>
+                        </tr>
+                        <tr class="test">
+                            <td class="testname">supported-in-source-type.html  </td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                            <td class="result passes-all"></td>
+                        </tr>
+                    </table>
+                
+                </section>
+
+                <section id="cicp">
+                    <h2>2. Coding Independent Code Points (CICP) from ITU-R H.273</h2>
+                    <p>
+                        Originally developed for color space signalling in video workflows,
+                        CICP is also used in image formats such as HEIF, AVIF and JPEG-XL.
+                        CICP is more compact, and designed to signal the use of specific mathematically represented
+
+                        color primaries, transfer functions, matrix coefficients, and signal quantizations vs 
+
+                        ICC profiles, which were originally created to match color between different mediums (display, print, scan).
+
+                        PNG Third Edition <a href="https://w3c.github.io/png/#cICP-chunk">adds support for CICP metadata</a> .
+                    </p>
+                    <p>
+                        The widely used library <a href="https://libpng.sourceforge.io/">libpng</a>
+                        supports  CICP in PNG (both reading and writing) as of
+                        <a href="https://github.com/pnggroup/libpng/blob/libpng16/ANNOUNCE">varsion  
+                        1.6.45</a>.
+                    </p>
+                    <p>
+                        Implemented in <strong>Blink-based browsers</strong> (Google Chrome, Microsoft Edge, Samsung Internet, etc), 
+                        in <strong>Mozilla Firefox</strong>,
+                        in <strong>Ladybird</strong>,
+                        and in <strong>WebKit-based browsers</strong>
+                        where it uses the macOS or iOS platform to implement CICP.
+                    </p>
+                   
+                    <p>Implemented in <strong>FFMPEG-dev</strong> for reading and writing PNG:</p>
+                    <ul>
+                        <li><blockquote>
+                            <a href="https://ffmpeg.org/pipermail/ffmpeg-devel/2023-January/305765.html">The cICP chunk allows the PNG color space to be tagged with any of the
+                                enum values in H.273, not just sRGB, and it is defined in the working
+                                draft of the PNG specification (3rd edition). libavutil/pixfmt.h uses
+                                exact the same values as H.273 so these are translated as-is. This
+                                commit also adds support for writing the cICP chunk for video frames
+                                tagged as anything that isn't sRGB. It still writes cHRM and gAMA as a
+                                fallback.</a>
+                        </blockquote></li>
+                    </ul>
+                    <p>Implemented in <a href="https://affinity.serif.com/en-us/photo/"><strong>Affinity Photo 2</strong></a></p>
+                    <ul>
+                        <li><a href="https://affinity.help/photo2/en-US.lproj/index.html?page=pages/Appendix/fileformat.html&title=Supported%20file%20formats">Includes 32-bit HDR support with an Alpha Channel (PNG specification - Third edition) for interchanging HDR broadcast imagery in a lossless format. CICP's Full-Range-Flag is supported to differentiate between Full/Narrow Range quantizations. Legacy PNG files exported from Photoshop with CICP data embedded in an ICC profile can be imported.</a></li>
+                    </ul>
+		    <p>Implemented in <a href="https://www.avid.com/media-composer"><strong>Avid Media Composer</strong></a></p>
+                    <figure>
+                        <img src="./img/Affinity-23bit-HDR-PNG.png" alt="what's new in Affinity apps">
+                        <figcaption>Affinity apps respect 'cICP' when importing and exporting HDR PNG</figcaption>
+                    </figure>
+                    <p>Implemented in <a href="https://mediaarea.net/en/MediaInfo"><strong>MediaInfo from MediaArea</strong></a></p>
+                    <ul>
+                        <li><a href="https://mediaarea.net/MediaInfo/ChangeLog">MediaInfo is used throughout the broadcast industry and via the CLI version within softaware. MediaInfo Parses PNG 3rd Edition cICP, mDCV, cLLI metadata into logical values</a></li>
+                    </ul>
+                    <figure>
+                        <img src="./img/MediaInfo.png" alt="what's new in MediaInfo">
+                        <figcaption>MediaInfo parsing 'cICP', 'mDCV', and 'cLLI' from PNGs</figcaption>
+                    </figure>
+                    <p>Implemented in <a href="https://www.pixelmator.com/pro/">Pixelmator Pro 3.5 <strong></strong></a> and <a href="https://www.pixelmator.com/photomator/"><strong></strong>Photomator 3.3</a> image editors.</p>
+                    <p>Implemented in <strong>Adobe Photoshop, Lightroom and Camera Raw, MacOS ProApps, Compressor, Final Cut Pro</strong></p>
+                    <!-- need version details and, preferably, link -->
+                    <p>Implemented in <strong>libavif</strong> for export of AVIF to PNG and import from PNG into AVIF:</p>
+                    <ul>
+                        <li><a href="https://github.com/AOMediaCodec/libavif/pull/1422">Writes primaries and transfer characteritics info in decoded png</a></li>
+                    </ul>
+
+                    <p>Implemented in 
+                        <a href="https://www.blackmagicdesign.com/products/davinciresolve"><strong>DaVinci 
+                            Resolve 20</strong></a> for reading and writing.</p>
+
+                    <figure>
+                        <img src="./img/DaVinci-CICP.png" alt="">
+                        <figcaption>DaVinci Resolve 20 detecting color space from 'cICP' in PNG</figcaption>
+                    </figure>
+
+                    <p>Implemented in <a href="https://github.com/pnggroup/pngcheck"><strong>pngcheck</strong></a>,
+                    a command-line PNG validator.</p>
+
+                    <p>Implemented in <a href="https://github.com/ProgramMax/png_cicp_editor"><strong>png_cicp_editor</strong> </a>,
+                     a command-line tool to add 'cICP' chunks to existing PNG files.</p>
+    
+                    <section class="tests" id="cicp-chunk">
+                        <h3>CICP tests</h3>
+                        <table>
+                            <tr class="header">
+                                <th><a href="https://wpt.fyi/results/png?label=master&product=chrome%5Bexperimental%5D&product=edge%5Bexperimental%5D&product=firefox%5Bexperimental%5D&product=safari%5Bexperimental%5D&product=ladybird&q=cicp">Live Results</a></th>
+                                <th>Chrome 137</th>
+                                <th>Edge 137</th>
+                                <th>Firefox 141</th>
+                                <th>Safari TP 217</th>
+                                <th>Ladybird 1</th>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">cicp-chunk.html </td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">cICP-wins.html  </td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                        </table>
+                        <h3>CICP in APNG tests</h3>
+                        <table>
+                            <tr class="header">
+                                <th><a href="https://wpt.fyi/results/png/apng?label=master&product=chrome%5Bexperimental%5D&product=edge%5Bexperimental%5D&product=firefox%5Bexperimental%5D&product=safari%5Bexperimental%5D&product=ladybird&q=cicp">Live Results</a></th>
+                                <th>Chrome 137</th>
+                                <th>Edge 137</th>
+                                <th>Firefox 141</th>
+                                <th>Safari TP 217</th>
+                                <th>Ladybird 1</th>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">fDAT-inherits-cICP.html</td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                        </table>
+                    </section>
+                </section>
+
+                <section id="color-priority">
+                    <h2>3. Priority of color space information</h2>
+                    <p>
+                        In the case where more than one 
+                        source of color space information
+                        is provided,
+                        PNG Third Edition now
+                        <a href="https://w3c.github.io/PNG-spec/#4Concepts.ColourSpaces">defines</a> the priority order.
+                    </p>
+
+                    <section class="tests" id="priorities">
+                        <h3>cICP wins over iCCP</h3>
+                        <table>
+                            <tr class="header">
+                                <th><a href="https://wpt.fyi/results/png?label=master&product=chrome%5Bexperimental%5D&product=edge%5Bexperimental%5D&product=firefox%5Bexperimental%5D&product=safari%5Bexperimental%5D&product=ladybird&q=wins">Live Results</a></th>
+                                <th>Chrome 137</th>
+                                <th>Edge 137</th>
+                                <th>Firefox 141</th>
+                                <th>Safari TP 217</th>
+                                <th>Ladybird 1</th>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">cICP-wins.html </td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                        </table>
+                        <h3>iCCP wins over sRGB</h3>
+                        <table>
+                            <tr class="header">
+                                <th><a href="https://wpt.fyi/results/css/css-color?label=master&product=chrome%5Bexperimental%5D&product=edge%5Bexperimental%5D&product=firefox%5Bexperimental%5D&product=safari%5Bexperimental%5D&product=ladybird&q=tagged">Live Results</a></th>
+                                <th>Chrome 137</th>
+                                <th>Edge 137</th>
+                                <th>Firefox 141</th>
+                                <th>Safari TP 217</th>
+                                <th>Ladybird 1</th>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">tagged-images-004.html </td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+
+                            </tr>
+                        </table>
+                    </section>
+                </section>
+
+                <section id="mastering">
+                    <h2>4. Mastering Display Color Volume</h2>
+                    <p>
+                        This metadata, 
+                        which is commonly found with HDR content in the 
+                        BT.2100-PQ colorspace,
+                        describes the color characteristics of the monitor 
+                        used to create the content.
+                    </p>
+                    <p>
+                        PNG Third Edition adds the 
+                        <a href="https://w3c.github.io/PNG-spec/#mDCV-chunk">mDCV</a>
+                        chunk for this purpose.
+                    </p>
+                    <p>
+                        Implemented in <strong>Blink-based browsers</strong> (Google Chrome, Microsoft Edge, Samsung Internet, etc):
+                    </p>
+                    <ul>
+                        <li><a href="https://chromium-review.googlesource.com/c/chromium/src/+/4748191">The PNG specification now includes “mDCV” and “cLLI” chunks that can
+                        encode mastering and content light level metadata. This change exposes
+                        such metadata so that it may be used for tone mapping.</a></li>
+                    </ul>
+                    <p>Implemented in <strong>FFMPEG v2</strong> for reading and writing PNG:</p>
+                    <ul>
+                        <li><a href="https://ffmpeg.org/pipermail/ffmpeg-devel/2024-February/321178.html">This adds support for cLLI and mDCV chunks in the PNG specification</a></li>
+                    </ul>
+                    <p>
+                        Implemented in a JavaScript PNG file chunk inspector:
+                    </p>
+                    <figure>
+                        <img src="./img/inspector-mDCV2.png" alt="screenshot showing an mDCV chunk">
+                        <figcaption>PNG file chunk inspector: decoding 'cICP' and 'mDCV' chunks</figcaption>
+                    </figure>
+                    <p>
+                        Tone-mapping to the consumer display can benefit
+                        from knowing this metadata;
+                        it is also required for HDR10 compatibility.
+                        Currently there is no mandated tone mapping operator
+                        and thus the results of tone-mapping
+                        <em>cannot be verified in an automatic test</em>.
+                    </p>
+                    <p>
+                        MediaInfo (see cICP section) also parses the mDCV chunk</em>.
+                    </p>
+                    <p>Implemented in <a href="https://github.com/pnggroup/pngcheck"><strong>pngcheck</strong></a>.</p>
+                </section>
+
+                <section id="light">
+                    <h2>5. Content Light Level Information</h2>
+                    <p>
+                        This metadata, 
+                        which is commonly found with HDR content in the 
+                        BT.2100-PQ colorspace,
+                        describes the 
+                        maximum value of the frame average light level (MaxFALL)
+                        and the
+                        Maximum Content Light Level (MaxCLL).
+                        Knowing this information up-front is required
+                        for consistent and timely tone mapping,
+                        particularly for long animation sequences,
+                        where computing it for all frames in real time
+                        is impractical.
+                    </p>
+                    <p>
+                        PNG Third Edition adds the 
+                        <a href="https://w3c.github.io/PNG-spec/#cLLI-chunk">cLLI</a>
+                        chunk for this purpose.
+                    </p>
+                    <p>
+                        Implemented in <strong>Blink-based browsers</strong> (Google Chrome, Microsoft Edge, Samsung Internet, etc):
+                    </p>
+                    <ul><li><a href="https://chromium-review.googlesource.com/c/chromium/src/+/4748191">The PNG specification now includes “mDCV” and “cLLI” chunks that can
+                        encode mastering and content light level metadata. This change exposes
+                        such metadata so that it may be used for tone mapping.</a></li></ul>
+                    <p>Implemented in <strong>FFMPEG v2</strong> for reading and writing PNG:</p>
+                    <ul>
+                        <li><a href="https://ffmpeg.org/pipermail/ffmpeg-devel/2024-February/321178.html">This adds support for cLLI and mDCV chunks in the PNG specification</a></li>
+                    </ul>
+                    <p>
+                        Implemented in a JavaScript PNG file chunk inspector:
+                    </p>
+                    <figure>
+                        <img src="./img/inspector-cLLi.png" alt="screenshot showing a cLLI chunk">
+                        <figcaption>PNG file chunk inspector: decoding 'cLLI' chunk</figcaption>
+                    </figure>
+                    <p>
+                        Tone-mapping to the consumer display can benefit
+                        from knowing this metadata;
+                        it is also required for HDR10 compatibility.
+                        Currently there is no mandated tone mapping operator
+                        and thus the results of tone-mapping
+                        <em>cannot be verified in an automatic test</em>.
+                    </p>
+                    <p>
+                        MediaInfo (see cICP section) also parses the cLLI chunk</em>.
+                    </p>
+                    <p>Implemented in <a href="https://github.com/pnggroup/pngcheck"><strong>pngcheck</strong></a>.</p>
+                </section>
+
+                <section id="ICC">
+                    <h2>6. ICC profile version</h2>
+                    <p>
+                        PNG Second Edition only referenced the then-current v2 of International Color Consortium (ICC) profiles, although it had since become industry practice to also use higher versions such as 4.3.
+                    </p>
+                    <p>
+                        PNG Third Edition clarified that the <a href="https://w3c.github.io/PNG-spec/#11iCCP" class="chunk">iCCP</a> chunk, which contains the ICC profile, can contain profiles conforming to any version of the ICC.1 specification.
+                    </p>
+                    <p>
+                        (There is also a newer ICC.2 specification, known as ICCMax;
+                        this is not currently supported in browsers,
+                        and PNG does not currently provide a way to embed ICC.2 profiles).
+                    </p>
+
+                    <section class="tests" id="iCCP">
+                        <h3>Baseline tests</h3>
+                        <table>
+                            <tr class="header">
+                                <th><a href="https://svgees.us/PNG/iCCP/tests.html">Manual tests</a> 
+                                (<a href="https://svgees.us/PNG/iCCP/results.html">Archived results</a>)  </th>
+                                <th>Chrome 137</th>
+                                <th>Edge 137</th>
+                                <th>Firefox 141</th>
+                                <th>Safari TP 217</th>
+                                <th>Ladybird 1</th>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">'sRGB' chunk, relative colorimetric intent</td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">untagged image, must be treated as sRGB</td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                        </table>
+                        <h3>ICC v2 profiles</h3>
+                        <table>
+                            <tr class="header">
+                                <th><a href="https://svgees.us/PNG/iCCP/tests.html">Manual tests</a> 
+                                (<a href="https://svgees.us/PNG/iCCP/results.html">Archived results</a>)  </th>
+                                <th>Chrome 137</th>
+                                <th>Edge 137</th>
+                                <th>Firefox 141</th>
+                                <th>Safari TP 217</th>
+                                <th>Ladybird 1</th>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">sRGB with red and green colorants swapped</td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">CIE RGB, L* TRC</td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">ProPhoto RGB, gamma 1.8</td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                        </table>
+                        <h3>ICC v4 profiles</h3>
+                        <table>
+                            <tr class="header">
+                                <th><a href="https://svgees.us/PNG/iCCP/tests.html">Manual tests</a> 
+                                (<a href="https://svgees.us/PNG/iCCP/results.html">Archived results</a>)  </th>
+                                <th>Chrome 137</th>
+                                <th>Edge 137</th>
+                                <th>Firefox 141</th>
+                                <th>Safari TP 217</th>
+                                <th>Ladybird 1</th>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">CIE RGB, L* TRC</td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">ProPhoto RGB, gamma 1.8</td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">Display P3</td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                        </table>
+                    </section>
+                </section>
+
+                <!--  add untagged images as sRGB -->
+
+                <section id="exif">
+                    <h2>7. Exchangeable Image File (Exif)</h2>
+                    <p>
+                        Widely used in other image formats such as JPEG/JFIF,
+                        EXIF metadata is also available in PNG.
+                        PNG Third Edition moves the definition of the <code>eXIf</code> chunk,
+                        which was already in the <a href="https://w3c.github.io/PNG-spec/extensions/Overview.html">PNG Extensions document</a>,
+                        into the <a href="https://w3c.github.io/PNG-spec/#eXIf">main specification</a>.
+                    </p>
+                    <h3>Passive metadata</h3>
+                    <p>
+                        Exif mostly contains passive metadata 
+                        (such as copyright, lens focal length, image creation time)
+                        which does not affect the display of the image. 
+                        It is useful to be able to store this in PNG,
+                        in the same way that it is stored in other image formats such as JPEG or TIFF.
+                        This enables a common workflow for image metadata handling, 
+                        regardless of image format.
+                    </p>
+                    <figure>
+                        <img src="./img/Gimp-Exif-viewer.png" alt="">
+                        <figcaption>GNU Image Manipulation Program (GIMP), displaying Exif metadata</figcaption>
+                    </figure>
+                    <p>
+                        <a href="https://exiftool.org/"><strong>ExifTool</strong>, by Phil Harvey</a> 
+                        supports <a href="https://exiftool.org/TagNames/PNG.html">reading 
+                        and writing PNG metadata</a>, including 
+                        <a href="https://exiftool.org/TagNames/Exif.html">Exif</a>.
+                    </p>
+                    <p>
+                        The <a href="https://pillow.readthedocs.io/en/stable/"><strong>Python Imaging Library</strong>, 
+                        Pillow</a> supports reading and writing 
+                        <a href="https://pillow.readthedocs.io/en/latest/handbook/image-file-formats.html#png">Exif in PNG</a>
+                    </p>
+                    <p>
+                        <a href="https://exiv2.org/"><strong>Exiv2</strong></a>,
+                        a C++ imaging library, supports both 
+                        <a href="https://dev.exiv2.org/projects/exiv2/wiki/Supported_image_formats">reading and writing Exif in PNG</a>
+                    </p>
+
+                    <h3>Display-affecting metadata</h3>
+
+                    <p>
+                        A couple of items in Exif can affect image display, 
+                        and the <em>image orientation</em> is one example. 
+                        Notably, direct printing from a camera uses Exif orientation. 
+                        However, the detected orientation can easily be incorrect 
+                        if the camera is tilted away from the horizontal.
+                    </p>
+
+                    <p>
+                        Removing metadata is a common technique when images are prepared for the web. 
+                        Usually the aim is to reduce filesize, 
+                        but in the case of Exif which can contain thumbnails, 
+                        which are often not updated by image editors, 
+                        it can also be a privacy-protecting feature.
+                    </p>
+
+                    <p>
+                        An online image optimization tool, 
+                        <a href="https://www.freeconvert.com/png-converter"><strong>PNG Converter</strong></a>,
+                        optionally strips metadata to reduce filesize.
+                        To avoid changing the orientation,
+                        it can also rotate the image data
+                        based on Exif orientation.
+                    </p>
+
+                    <figure>
+                        <img src="./img/auto-orient.png" alt="">
+                        <figcaption>Auto Orient and Strip Metadata options in PNG Converter</figcaption>
+                    </figure>
+
+                    <figure>
+                        <img src="./img/Gimp-PNG-import-rotate-Exif.png" alt="">
+                        <figcaption>GNU Image Manipulation Program (GIMP), showing optional image rotate when opening a PNG image</figcaption>
+                    </figure>
+
+                    <p>
+                        The Web Platform places a constraint on Exif image metadata that affects layout, 
+                        such as image orientation:
+                        it is <a href="https://drafts.csswg.org/css-images-3/#url-metadata">required</a> 
+                        to be placed <em>before the image data</em>.
+                        PNG Third Edition <em>enforces</em> that constraint, for Exif in PNG.
+                    </p>
+                    <p>
+                        Respecting Exif image-orientation for PNG images
+                        in CSS (with <code>image-orientation</code>)
+                        is implemented in  <strong>WebKit-based browsers</strong>.
+                    </p>
+                    <p>
+                        Respecting Exif image orientation for PNG images 
+                        in Canvas 2D is implemented in  <strong>WebKit-based browsers</strong> 
+                        and <strong>Blink-based browsers</strong>.
+                    </p>
+                    <p>
+                        <strong>Blink-based browsers</strong> (Google Chrome, 
+                        Microsoft Edge, Samsung Internet, etc), 
+                        and <strong>Mozilla Firefox</strong> implement Exif orientation 
+                        in CSS for JPEG/JFIF images, 
+                        and are expected to implement it for PNG as well.
+                        (<a href="https://issues.chromium.org/issues/40125224">Chrome bug</a> and <a href="https://bugzilla.mozilla.org/show_bug.cgi?id=1682759">Firefox bug</a>).
+                    </p>
+
+                    <section class="tests" id="exif-chunk">
+                        <h3>Exif in Canvas 2D tests (PNG)</h3>
+                        <table>
+                            <tr class="header">
+                                <th><a href="https://wpt.fyi/results/png?label=master&product=chrome%5Bexperimental%5D&product=edge%5Bexperimental%5D&product=firefox%5Bexperimental%5D&product=safari%5Bexperimental%5D&product=ladybird&q=exif">Live Results</a></th>
+                                <th>Chrome 137</th>
+                                <th>Edge 137</th>
+                                <th>Firefox 141</th>
+                                <th>Safari TP 217</th>
+                                <th>Ladybird 1</th>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">exif-chunk.html  </td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-none"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                        </table>
+                        </section>
+
+                        <p>
+                        <a href="https://www.w3.org/TR/css-images-3/">CSS Images 3</a> defines
+                        a property, 
+                        <a href="https://www.w3.org/TR/css-images-3/#the-image-orientation"><code>image-orientation</code></a>
+                        solely to override incorrect orientation information 
+                        which was automatically added by a camera or scanner.
+                        This property is <strong>optional to implement</strong>,
+                        making it hard to test.
+                    </p>
+
+                    <section class="tests" id="image-orientation"></section>
+                        <h3>Exif in CSS tests (JPEG)</h3>
+                        <table>
+                            <tr class="header">
+                                <th><a href="https://wpt.fyi/results/css/css-images/image-orientation/image-orientation-from-image.html?label=experimental&label=master&aligned">Live Results</a></th>
+                                <th>Chrome 137</th>
+                                <th>Edge 137</th>
+                                <th>Firefox 141</th>
+                                <th>Safari TP 217</th>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">image-orientation-from-image.html </td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                        <!-- </table>
+                        <table> -->
+                            <tr class="header">
+                                <th><a href="https://wpt.fyi/results/css/css-images/image-orientation/image-orientation-from-image-embedded-content.html?label=experimental&label=master&aligned">Live Results</a></th>
+                                <th>Chrome 137</th>
+                                <th>Edge 137</th>
+                                <th>Firefox 141</th>
+                                <th>Safari TP 217</th>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">image-orientation-from-image-embedded-content.html </td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                        </table>
+                        <h3>Exif in CSS tests (PNG)</h3>
+                        
+                        <table>
+                            <tr class="header">
+                                <th><a href="https://wpt.fyi/results/css/css-images/image-orientation?label=master&product=chrome%5Bexperimental%5D&product=edge%5Bexperimental%5D&product=firefox%5Bexperimental%5D&product=safari%5Bexperimental%5D&product=ladybird&q=exif">Live Results</a></th>
+                                <th>Chrome 137</th>
+                                <th>Edge 137</th>
+                                <th>Firefox 141</th>
+                                <th>Safari TP 217</th>
+                                <th>Ladybird 1</th>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">image-orientation-exif-png.html [<a href="#wooly">1</a>]</td>
+                                <td class="result passes-none"></td>
+                                <td class="result passes-none"></td>
+                                <td class="result passes-none"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-none"></td>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">image-orientation-exif-png-2.html </td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                            <tr class="test">
+                                <td class="testname">image-orientation-exif-png-3.html</td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                                <td class="result passes-all"></td>
+                            </tr>
+                        </table>
+
+                        <p id="wooly">1. Note that CSS Images 3 
+                            <a href="https://drafts.csswg.org/css-images-3/#url-metadata">makes 
+                                this hard to test</a> for the CSS <code>image-orientation</code> property,
+                                if the metadata occurs after the image data.
+                        </p>
+                        <p>The correct rendering for the <code>image-orientation</code> CSS tests
+                        depends on the resolution of several CSS Images 3 issues:</p>
+                        <ul>
+                            <li><a href="https://github.com/w3c/csswg-drafts/issues/5173">Images on the web</a></li>
+                            <li><a href="https://github.com/w3c/csswg-drafts/issues/4165">Should CSS decorative images respect EXIF-orientation by default</a></li>
+                            <li><a href="https://github.com/w3c/csswg-drafts/issues/4666">image-orientation and canvas drawImage</a></li>
+                            <li><a href="https://github.com/w3c/csswg-drafts/issues/11114">Should EXIF 
+                                image orientation data be ignored if it comes after the image data in the encoded image?</a></li>
+                            <li><a href="https://github.com/web-platform-tests/wpt/issues/18549">Write Tests for Image-Orientation Initial Value</a></li>
+                        </ul>
+                        <p>
+                            Results for those tests are, nevertheless, 
+                            reported here as an indication of the current
+                            implementation status.
+                        </p>
+
+                </section>
+
+                <section id="palette">
+                    <h2>8. Invalid Palette Indexes</h2>
+
+                    <p>
+                        PNG supports palette images, 
+                        where each pixel contains an index
+                        into a palette (a table of colors)
+                        rather than holding an RGB value directly.
+                        The handling of an invalid palette index
+                        (for example, index 20 when there are only 16 colors)
+                        was previously undefined.
+                    </p>
+                    <p>
+                        PNG Third Edition has <a href="https://w3c.github.io/PNG-spec/#13Decoders.Errors">standardized</a> 
+                        a common error recovery method,
+                        where pixels with undefined indexes are rendered as opaque black.
+                        This gives improved interoperability.
+                    </p>
+
+                    <section class="tests" id="trns-chunk">
+                        <h3>Invalid tRNS handling</h3>
+                            <table>
+                                <tr class="header">
+                                    <th><a href="https://wpt.fyi/results/png?label=master&product=chrome%5Bexperimental%5D&product=edge%5Bexperimental%5D&product=firefox%5Bexperimental%5D&product=safari%5Bexperimental%5D&product=ladybird&product=servo&q=trns-chunk">Live Results</a></th>
+                                    <th>Chrome 137</th>
+                                    <th>Edge 137</th>
+                                    <th>Firefox 141</th>
+                                    <th>Safari TP 217</th>
+                                    <th>Servo 0</th>
+                                    <th>Ladybird 1</th>
+                                </tr>
+                                <tr class="test">
+                                    <td class="testname">trns-chunk.html</td>
+                                    <td class="result passes-all"></td>
+                                    <td class="result passes-all"></td>
+                                    <td class="result passes-all"></td>
+                                    <td class="result passes-all"></td>
+                                    <td class="result passes-all"></td>
+                                    <td class="result passes-all"></td>
+                                </tr>
+                            </table>
+                        </section>
+                </section>
+
+                <section id="invalid-ancillary">
+                    <h2>9. Unknown, Invalid Ancillary Chunks</h2>
+
+                    <p>
+                        PNG Third Edition has 
+                        <a href="https://w3c.github.io/PNG-spec/#13Decoders.Errors">clarified</a>
+                        that encountering an unknown ancillary chunk is never an error.
+                        This includes invalid ancillary chunks.
+                        This error recovery gives improved interoperability.
+                    </p>
+
+                    <section class="tests" id="error-recovery">
+                        <h3>Invalid Ancillary</h3>
+                            <table>
+                                <tr class="header">
+                                    <th><a href="https://wpt.fyi/results/png/errors?label=master&product=chrome%5Bexperimental%5D&product=edge%5Bexperimental%5D&product=firefox%5Bexperimental%5D&product=safari%5Bexperimental%5D&product=ladybird&product=servo">Live Results</a></th>
+                                    <th>Chrome 137</th>
+                                    <th>Edge 137</th>
+                                    <th>Firefox 141</th>
+                                    <th>Safari TP 217</th>
+                                    <th>Servo 0</th>
+                                    <th>Ladybird 1</th>
+                                </tr>
+                                <tr class="test">
+                                    <td class="testname">unknown-ancillary-error-recovery.html </td>
+                                    <td class="result passes-all"></td>
+                                    <td class="result passes-all"></td>
+                                    <td class="result passes-none"></td>
+                                    <td class="result passes-none"></td>
+                                    <td class="result passes-all"></td>
+                                    <td class="result passes-none"></td>
+                                </tr>
+                                <tr class="test">
+                                    <td class="testname">unknown-ancillary-error-recovery-2.html </td>
+                                    <td class="result passes-all"></td>
+                                    <td class="result passes-all"></td>
+                                    <td class="result passes-all"></td>
+                                    <td class="result passes-all"></td>
+                                    <td class="result passes-all"></td>
+                                    <td class="result passes-all"></td>
+                                </tr>
+                            </table>
+                        </section>
+                </section>
+
+            </section>
+        </main>
+        <footer>
+            <hr>
+            <address>Chris Lilley</address>
+        </footer>
+    </body>
