@@ -215,29 +215,19 @@ indices across frames, eliminating flicker). Delta regions are computed on index
 directly (1 byte/pixel) rather than RGBA pixels. `encode_apng_auto()` checks the quality
 gate per frame and bails to truecolor if any frame fails, reporting worst-case metrics.
 
-### 6-way APNG dispose/blend optimization (not yet implemented)
-zenpng's APNG encoder hardcodes `dispose_op=NONE` + `blend_op=SOURCE` on every frame
-(`src/encoder/apng.rs` lines 192-193, 251-252). apngasm evaluates all 6 combinations per
-frame transition:
+### 6-way APNG dispose/blend optimization
+Implemented in `src/encoder/apng.rs`. Evaluates all 6 dispose/blend combinations
+(3 dispose × 2 blend) per frame using greedy 1-step lookahead. For each frame:
+1. Build SOURCE and OVER candidate subframes
+2. Trial-compress both at effort 2 (Paeth + Turbo, ~5ms each)
+3. For each of 3 dispose options, evaluate next frame's best candidate
+4. Pick (dispose, blend) minimizing current_size + next_frame_best_size
 
-- **3 dispose ops** × **2 blend ops** = 6 candidates per frame
-  - Dispose None: previous frame stays as-is
-  - Dispose Background: clear previous frame's rect to transparent before compositing
-  - Dispose Previous: restore the frame before the previous one
-  - Blend Source: overwrite pixels in the region
-  - Blend Over: alpha-composite (unchanged pixels → fully transparent → compresses well)
-
-apngasm trial-compresses each candidate at low quality (zlib L2), picks the smallest, then
-re-compresses the winner at L9. The Blend Over path is particularly valuable: unchanged pixels
-become `[0,0,0,0]` (transparent), creating long zero runs that deflate loves. Dispose
-Background/Previous matter when animations cycle between states or have recurring backgrounds.
-
-Implementation approach: for each frame i, build 6 candidate subframes from the 6
-dispose/blend combos, trial-compress each at L1-L2 with zenflate, pick the winner, then
-compress at the target level. Needs a "prev-prev" frame buffer for Dispose Previous. The
-trial compression is cheap (same as Phase 1 screening in `compress.rs`). This is the single
-biggest APNG compression win available — can reduce APNG file sizes by 20-50% on typical
-animations.
+Active when effort > 2 and >1 frame. Per-frame overhead: ~8 trial compressions × ~5ms.
+Canvas state tracks compress_filtered's transparent pixel zeroing via
+`zero_transparent_rgb_region()` to maintain decoder/optimizer consistency.
+BLEND_OP_OVER safety: `can_use_over_truecolor/indexed()` verifies all changed pixels
+have target_alpha==255 or canvas_alpha==0.
 
 ### APNG color type downconversion (not yet implemented)
 zenpng hardcodes RGBA8 (`color_type=6`) for all APNG truecolor output. apngasm's
@@ -265,11 +255,11 @@ and no quantization (palette only when image already has ≤256 exact colors). z
 dominates on per-frame compression: zenflate L12 > zlib L9, 9 heuristic + 3 brute-force
 strategies, zenquant perceptual quantization. Optimizations worth adopting from apngasm:
 
-1. **Transparent pixel zeroing** — zero RGB on alpha==0 pixels
-2. **6-way dispose/blend optimization** — trial-compress all 6 combos per frame
+1. ~~**Transparent pixel zeroing**~~ — done (compress_filtered)
+2. ~~**6-way dispose/blend optimization**~~ — done (optimize_apng_truecolor/indexed)
 3. **Color type downconversion** — RGBA→RGB when opaque (25% savings), grayscale detection
 4. **Duplicate frame merging** — combine identical consecutive frames
-5. **Exact-palette detection** — use indexed color when ≤256 unique colors across all frames (no quantization needed)
+5. ~~**Exact-palette detection**~~ — done (try_build_exact_palette)
 
 ## Known Issues
 
