@@ -459,13 +459,16 @@ fn filter_image_brute_beam(
 
                 // Clone compressor and evaluate incrementally
                 let mut fork = entry.compressor.clone();
-                if let Ok(size) = fork.deflate_compress_incremental(
+                match fork.deflate_compress_incremental(
                     &entry.filtered,
                     &mut compress_buf,
                     is_final,
                     Unstoppable,
                 ) {
-                    candidates.push((entry.cumulative_size + size, b, f, fork));
+                    Ok(size) => {
+                        candidates.push((entry.cumulative_size + size, b, f, fork));
+                    }
+                    Err(_) => {}
                 }
 
                 // Truncate back
@@ -476,6 +479,17 @@ fn filter_image_brute_beam(
         // Sort by cumulative size, keep top beam_width
         candidates.sort_by_key(|(size, ..)| *size);
         candidates.truncate(beam_width);
+
+        // If all candidates failed (compress_buf too small for incremental output),
+        // fall back: keep existing beam entries, append filter 0 (None) to each.
+        if candidates.is_empty() {
+            for entry in &mut beam {
+                entry.filtered.push(0);
+                entry.filtered.extend_from_slice(&candidate_data[0]);
+            }
+            prev_row.copy_from_slice(row);
+            continue;
+        }
 
         // Build new beam, moving parent buffers when possible to avoid cloning
         let mut parent_usage = vec![0usize; beam.len()];
