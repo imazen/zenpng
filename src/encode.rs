@@ -269,7 +269,11 @@ pub fn encode_gray16(
 
 /// Low-level encode: raw bytes to PNG with metadata and config applied.
 ///
-/// Uses zenflate multi-strategy compression for all color types.
+/// Automatically optimizes color type and bit depth for smallest output:
+/// - RGBA → RGB (strip opaque alpha), GrayscaleAlpha, or Grayscale
+/// - RGB → Grayscale (when R==G==B)
+/// - 16-bit → 8-bit (when all samples fit in 8 bits)
+/// - Truecolor → Indexed (when ≤256 unique colors)
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_raw(
     bytes: &[u8],
@@ -283,23 +287,78 @@ pub(crate) fn encode_raw(
     deadline: &dyn Stop,
 ) -> Result<Vec<u8>, PngError> {
     let effort = config.compression.effort();
-    let opts = config.compress_options(cancel, deadline, None);
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = config.source_gamma;
     write_meta.srgb_intent = config.srgb_intent;
     write_meta.chromaticities = config.chromaticities;
 
-    crate::encoder::write_truecolor_png(
-        bytes,
-        width,
-        height,
-        color_type.to_png_byte(),
-        bit_depth.to_png_byte(),
-        &write_meta,
-        effort,
-        opts,
-    )
+    let w = width as usize;
+    let h = height as usize;
+
+    // Auto-optimize color type and bit depth
+    let optimization = match (color_type, bit_depth) {
+        (ColorType::Rgba, BitDepth::Eight) => {
+            crate::optimize::optimize_rgba8(bytes, w, h)
+        }
+        (ColorType::Rgb, BitDepth::Eight) => {
+            crate::optimize::optimize_rgb8(bytes, w, h)
+        }
+        (_, BitDepth::Sixteen) => {
+            crate::optimize::optimize_16bit(bytes, w, h, color_type.to_png_byte())
+        }
+        _ => crate::optimize::OptimalEncoding::Original,
+    };
+
+    match optimization {
+        crate::optimize::OptimalEncoding::Indexed {
+            palette_rgb,
+            palette_alpha,
+            indices,
+        } => {
+            let opts = config.compress_options(cancel, deadline, None);
+            crate::encoder::write_indexed_png(
+                &indices,
+                width,
+                height,
+                &palette_rgb,
+                palette_alpha.as_deref(),
+                &write_meta,
+                effort,
+                opts,
+            )
+        }
+        crate::optimize::OptimalEncoding::Truecolor {
+            bytes: opt_bytes,
+            color_type: opt_ct,
+            bit_depth: opt_bd,
+        } => {
+            let opts = config.compress_options(cancel, deadline, None);
+            crate::encoder::write_truecolor_png(
+                &opt_bytes,
+                width,
+                height,
+                opt_ct,
+                opt_bd,
+                &write_meta,
+                effort,
+                opts,
+            )
+        }
+        crate::optimize::OptimalEncoding::Original => {
+            let opts = config.compress_options(cancel, deadline, None);
+            crate::encoder::write_truecolor_png(
+                bytes,
+                width,
+                height,
+                color_type.to_png_byte(),
+                bit_depth.to_png_byte(),
+                &write_meta,
+                effort,
+                opts,
+            )
+        }
+    }
 }
 
 /// Encode RGB8 pixels to PNG, returning per-phase compression statistics.
@@ -355,6 +414,9 @@ pub fn encode_rgba8_with_stats(
 }
 
 /// Low-level encode with stats: raw bytes to PNG with per-phase timing.
+///
+/// Applies the same auto-optimization as `encode_raw` (color type reduction,
+/// bit depth reduction, auto-indexing).
 #[cfg(feature = "_dev")]
 #[allow(clippy::too_many_arguments)]
 fn encode_raw_with_stats(
@@ -369,20 +431,66 @@ fn encode_raw_with_stats(
     deadline: &dyn Stop,
 ) -> Result<(Vec<u8>, crate::encoder::PhaseStats), PngError> {
     let effort = config.compression.effort();
-    let opts = config.compress_options(cancel, deadline, None);
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = config.source_gamma;
     write_meta.srgb_intent = config.srgb_intent;
     write_meta.chromaticities = config.chromaticities;
 
+    let w = width as usize;
+    let h = height as usize;
+
+    // Determine optimal encoding (same logic as encode_raw)
+    let (eff_bytes, eff_ct, eff_bd) = match (color_type, bit_depth) {
+        (ColorType::Rgba, BitDepth::Eight) => {
+            match crate::optimize::optimize_rgba8(bytes, w, h) {
+                crate::optimize::OptimalEncoding::Truecolor {
+                    bytes: ob,
+                    color_type: ct,
+                    bit_depth: bd,
+                } => (Some(ob), ct, bd),
+                crate::optimize::OptimalEncoding::Indexed { .. } => {
+                    // Stats path doesn't support indexed; fall through to truecolor
+                    (None, color_type.to_png_byte(), bit_depth.to_png_byte())
+                }
+                crate::optimize::OptimalEncoding::Original => {
+                    (None, color_type.to_png_byte(), bit_depth.to_png_byte())
+                }
+            }
+        }
+        (ColorType::Rgb, BitDepth::Eight) => {
+            match crate::optimize::optimize_rgb8(bytes, w, h) {
+                crate::optimize::OptimalEncoding::Truecolor {
+                    bytes: ob,
+                    color_type: ct,
+                    bit_depth: bd,
+                } => (Some(ob), ct, bd),
+                _ => (None, color_type.to_png_byte(), bit_depth.to_png_byte()),
+            }
+        }
+        (_, BitDepth::Sixteen) => {
+            match crate::optimize::optimize_16bit(bytes, w, h, color_type.to_png_byte()) {
+                crate::optimize::OptimalEncoding::Truecolor {
+                    bytes: ob,
+                    color_type: ct,
+                    bit_depth: bd,
+                } => (Some(ob), ct, bd),
+                _ => (None, color_type.to_png_byte(), bit_depth.to_png_byte()),
+            }
+        }
+        _ => (None, color_type.to_png_byte(), bit_depth.to_png_byte()),
+    };
+
+    let pixel_data = eff_bytes.as_deref().unwrap_or(bytes);
+    let opts = config.compress_options(cancel, deadline, None);
+
     let mut stats = crate::encoder::PhaseStats::default();
     let png = crate::encoder::write_truecolor_png_with_stats(
-        bytes,
+        pixel_data,
         width,
         height,
-        color_type.to_png_byte(),
-        bit_depth.to_png_byte(),
+        eff_ct,
+        eff_bd,
         &write_meta,
         effort,
         opts,
