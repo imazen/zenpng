@@ -1,8 +1,8 @@
-/// Benchmark zoint (joint deflate+quantization) across images and settings.
+/// Benchmark joint deflate+quantization optimization across images and settings.
 ///
-/// Usage: cargo run --release --features zoint --example zoint_bench [-- /path/to/png/dir]
+/// Usage: cargo run --release --features joint --example joint_bench [-- /path/to/png/dir]
 ///
-/// Tests: standard Png vs PngZoint at varying tolerances, dither strengths,
+/// Tests: standard Png vs PngJoint at varying tolerances, dither strengths,
 /// and quality presets. Reports file size savings and MPE quality impact.
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -56,7 +56,7 @@ fn encode_with_config(
     let enc_config = EncodeConfig::default();
     let rgba_slice: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(img.buf().as_slice());
 
-    // Quantize (includes zoint if PngZoint format)
+    // Quantize (includes joint optimization if PngJoint format)
     let result = zenquant::quantize_rgba(
         rgba_slice,
         img.width(),
@@ -78,7 +78,7 @@ fn encode_with_config(
     .ok()?;
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
-    // Compute fast-ssim2 on the ACTUAL indices (including zoint modifications)
+    // Compute fast-ssim2 on the ACTUAL indices (including joint modifications)
     let mpe_result = zenquant::_internals::compute_mpe_rgba(
         rgba_slice,
         result.palette_rgba(),
@@ -169,38 +169,38 @@ fn main() {
     eprintln!("Loaded {} images\n", images.len());
 
     // === Test 1: Tolerance sweep at default settings ===
-    println!("=== Tolerance sweep (Png dither=0.5 vs PngZoint dither=0.3) ===");
+    println!("=== Tolerance sweep (Png dither=0.5 vs PngJoint dither=0.3) ===");
     println!(
         "{:30} {:>5} {:>8} {:>8} {:>7} {:>7} {:>7} {:>7} {:>7}",
-        "Image", "tol", "std", "zoint", "save%", "ss2_s", "ss2_z", "Δss2", "mpe_z"
+        "Image", "tol", "std", "joint", "save%", "ss2_s", "ss2_z", "Δss2", "mpe_z"
     );
     println!("{}", "-".repeat(110));
 
     for tol in [0.005, 0.01, 0.015, 0.02, 0.03] {
         let mut total_std = 0usize;
-        let mut total_zoint = 0usize;
+        let mut total_joint = 0usize;
 
         for (name, img) in &images {
             let std_config = QuantizeConfig::new(OutputFormat::Png)
                 .compute_quality_metric(true);
-            let zoint_config = QuantizeConfig::new(OutputFormat::PngZoint)
-                ._zoint_tolerance(tol)
+            let joint_config = QuantizeConfig::new(OutputFormat::PngJoint)
+                ._joint_tolerance(tol)
                 .compute_quality_metric(true);
 
             let std_res = match encode_with_config(img, &std_config) {
                 Some(r) => r,
                 None => continue,
             };
-            let zoint_res = match encode_with_config(img, &zoint_config) {
+            let joint_res = match encode_with_config(img, &joint_config) {
                 Some(r) => r,
                 None => continue,
             };
 
             total_std += std_res.size;
-            total_zoint += zoint_res.size;
+            total_joint += joint_res.size;
 
-            let save = (1.0 - zoint_res.size as f64 / std_res.size as f64) * 100.0;
-            let delta_ss2 = match (std_res.ssim2, zoint_res.ssim2) {
+            let save = (1.0 - joint_res.size as f64 / std_res.size as f64) * 100.0;
+            let delta_ss2 = match (std_res.ssim2, joint_res.ssim2) {
                 (Some(s), Some(z)) => Some(z - s),
                 _ => None,
             };
@@ -209,19 +209,19 @@ fn main() {
                 truncate_name(name, 30),
                 tol,
                 std_res.size,
-                zoint_res.size,
+                joint_res.size,
                 save,
                 fmt_ss2(std_res.ssim2),
-                fmt_ss2(zoint_res.ssim2),
+                fmt_ss2(joint_res.ssim2),
                 delta_ss2.map_or("  n/a".into(), |d| format!("{:+.1}", d)),
-                fmt_mpe(zoint_res.mpe),
+                fmt_mpe(joint_res.mpe),
             );
         }
 
-        let save = (1.0 - total_zoint as f64 / total_std as f64) * 100.0;
+        let save = (1.0 - total_joint as f64 / total_std as f64) * 100.0;
         println!(
             "{:30} {:5.3} {:>8} {:>8} {:>+6.1}%",
-            "** TOTAL **", tol, total_std, total_zoint, save
+            "** TOTAL **", tol, total_std, total_joint, save
         );
         println!();
     }
@@ -230,13 +230,13 @@ fn main() {
     println!("\n=== Dither strength sweep (tol=0.01) ===");
     println!(
         "{:30} {:>7} {:>8} {:>8} {:>7} {:>7} {:>7}",
-        "Image", "dither", "std", "zoint", "save%", "mpe_z", "ss2_z"
+        "Image", "dither", "std", "joint", "save%", "mpe_z", "ss2_z"
     );
     println!("{}", "-".repeat(95));
 
     for dither_str in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
         let mut total_std = 0usize;
-        let mut total_zoint = 0usize;
+        let mut total_joint = 0usize;
 
         for (name, img) in &images {
             let base_std = if dither_str == 0.0 {
@@ -244,45 +244,45 @@ fn main() {
             } else {
                 QuantizeConfig::new(OutputFormat::Png)._dither_strength(dither_str)
             };
-            let base_zoint = if dither_str == 0.0 {
-                QuantizeConfig::new(OutputFormat::PngZoint)
+            let base_joint = if dither_str == 0.0 {
+                QuantizeConfig::new(OutputFormat::PngJoint)
                     ._no_dither()
-                    ._zoint_tolerance(0.01)
+                    ._joint_tolerance(0.01)
             } else {
-                QuantizeConfig::new(OutputFormat::PngZoint)
+                QuantizeConfig::new(OutputFormat::PngJoint)
                     ._dither_strength(dither_str)
-                    ._zoint_tolerance(0.01)
+                    ._joint_tolerance(0.01)
             };
 
             let std_res = match encode_with_config(img, &base_std) {
                 Some(r) => r,
                 None => continue,
             };
-            let zoint_res = match encode_with_config(img, &base_zoint) {
+            let joint_res = match encode_with_config(img, &base_joint) {
                 Some(r) => r,
                 None => continue,
             };
 
             total_std += std_res.size;
-            total_zoint += zoint_res.size;
+            total_joint += joint_res.size;
 
-            let save = (1.0 - zoint_res.size as f64 / std_res.size as f64) * 100.0;
+            let save = (1.0 - joint_res.size as f64 / std_res.size as f64) * 100.0;
             println!(
                 "{:30} {:>7.2} {:>8} {:>8} {:>+6.1}% {:>7} {:>7}",
                 truncate_name(name, 30),
                 dither_str,
                 std_res.size,
-                zoint_res.size,
+                joint_res.size,
                 save,
-                fmt_mpe(zoint_res.mpe),
-                fmt_ss2(zoint_res.ssim2),
+                fmt_mpe(joint_res.mpe),
+                fmt_ss2(joint_res.ssim2),
             );
         }
 
-        let save = (1.0 - total_zoint as f64 / total_std as f64) * 100.0;
+        let save = (1.0 - total_joint as f64 / total_std as f64) * 100.0;
         println!(
             "{:30} {:>7.2} {:>8} {:>8} {:>+6.1}%",
-            "** TOTAL **", dither_str, total_std, total_zoint, save
+            "** TOTAL **", dither_str, total_std, total_joint, save
         );
         println!();
     }
@@ -296,27 +296,27 @@ fn main() {
     println!("{}", "-".repeat(105));
 
     let mut ft_std = 0usize;
-    let mut ft_zoint = 0usize;
+    let mut ft_joint = 0usize;
     let mut bt_std = 0usize;
-    let mut bt_zoint = 0usize;
+    let mut bt_joint = 0usize;
 
     for (name, img) in &images {
         let fast_std = QuantizeConfig::new(OutputFormat::Png)
             .quality(Quality::Fast);
-        let fast_zoint = QuantizeConfig::new(OutputFormat::PngZoint)
+        let fast_joint = QuantizeConfig::new(OutputFormat::PngJoint)
             .quality(Quality::Fast)
-            ._zoint_tolerance(0.01);
+            ._joint_tolerance(0.01);
         let best_std = QuantizeConfig::new(OutputFormat::Png)
             .quality(Quality::Best);
-        let best_zoint = QuantizeConfig::new(OutputFormat::PngZoint)
+        let best_joint = QuantizeConfig::new(OutputFormat::PngJoint)
             .quality(Quality::Best)
-            ._zoint_tolerance(0.01);
+            ._joint_tolerance(0.01);
 
         let fs = match encode_with_config(img, &fast_std) {
             Some(r) => r,
             None => continue,
         };
-        let fz = match encode_with_config(img, &fast_zoint) {
+        let fz = match encode_with_config(img, &fast_joint) {
             Some(r) => r,
             None => continue,
         };
@@ -324,15 +324,15 @@ fn main() {
             Some(r) => r,
             None => continue,
         };
-        let bz = match encode_with_config(img, &best_zoint) {
+        let bz = match encode_with_config(img, &best_joint) {
             Some(r) => r,
             None => continue,
         };
 
         ft_std += fs.size;
-        ft_zoint += fz.size;
+        ft_joint += fz.size;
         bt_std += bs.size;
-        bt_zoint += bz.size;
+        bt_joint += bz.size;
 
         let fs_save = (1.0 - fz.size as f64 / fs.size as f64) * 100.0;
         let bs_save = (1.0 - bz.size as f64 / bs.size as f64) * 100.0;
@@ -354,64 +354,180 @@ fn main() {
         "{:30} {:>8} {:>8} {:>+6.1}% {:>7} {:>8} {:>8} {:>+6.1}%",
         "** TOTAL **",
         ft_std,
-        ft_zoint,
-        (1.0 - ft_zoint as f64 / ft_std as f64) * 100.0,
+        ft_joint,
+        (1.0 - ft_joint as f64 / ft_std as f64) * 100.0,
         "",
         bt_std,
-        bt_zoint,
-        (1.0 - bt_zoint as f64 / bt_std as f64) * 100.0,
+        bt_joint,
+        (1.0 - bt_joint as f64 / bt_std as f64) * 100.0,
     );
 
-    // === Test 4: target_ssim2 interaction ===
+    // === Test 4: PngMinSize vs PngJoint vs Png ===
+    println!("\n\n=== PngMinSize vs PngJoint vs Png (tol=0.01) ===");
+    println!(
+        "{:30} {:>8} {:>8} {:>8} {:>7} {:>7} {:>7} {:>7} {:>7}",
+        "Image", "png", "joint", "minsize", "z_sav%", "m_sav%", "ss2_p", "ss2_z", "ss2_m"
+    );
+    println!("{}", "-".repeat(120));
+
+    let mut ms_total_png = 0usize;
+    let mut ms_total_joint = 0usize;
+    let mut ms_total_minsize = 0usize;
+
+    for (name, img) in &images {
+        let png_config = QuantizeConfig::new(OutputFormat::Png)
+            .compute_quality_metric(true);
+        let joint_config = QuantizeConfig::new(OutputFormat::PngJoint)
+            ._joint_tolerance(0.01)
+            .compute_quality_metric(true);
+        let minsize_config = QuantizeConfig::new(OutputFormat::PngMinSize)
+            ._joint_tolerance(0.01)
+            .compute_quality_metric(true);
+
+        let png_res = match encode_with_config(img, &png_config) {
+            Some(r) => r,
+            None => continue,
+        };
+        let joint_res = match encode_with_config(img, &joint_config) {
+            Some(r) => r,
+            None => continue,
+        };
+        let minsize_res = match encode_with_config(img, &minsize_config) {
+            Some(r) => r,
+            None => continue,
+        };
+
+        ms_total_png += png_res.size;
+        ms_total_joint += joint_res.size;
+        ms_total_minsize += minsize_res.size;
+
+        let z_save = (1.0 - joint_res.size as f64 / png_res.size as f64) * 100.0;
+        let m_save = (1.0 - minsize_res.size as f64 / png_res.size as f64) * 100.0;
+        println!(
+            "{:30} {:>8} {:>8} {:>8} {:>+6.1}% {:>+6.1}% {:>7} {:>7} {:>7}",
+            truncate_name(name, 30),
+            png_res.size,
+            joint_res.size,
+            minsize_res.size,
+            z_save,
+            m_save,
+            fmt_ss2(png_res.ssim2),
+            fmt_ss2(joint_res.ssim2),
+            fmt_ss2(minsize_res.ssim2),
+        );
+    }
+
+    let z_save = (1.0 - ms_total_joint as f64 / ms_total_png as f64) * 100.0;
+    let m_save = (1.0 - ms_total_minsize as f64 / ms_total_png as f64) * 100.0;
+    println!(
+        "{:30} {:>8} {:>8} {:>8} {:>+6.1}% {:>+6.1}%",
+        "** TOTAL **", ms_total_png, ms_total_joint, ms_total_minsize, z_save, m_save
+    );
+
+    // === Test 5: target_ssim2 interaction ===
     println!("\n\n=== target_ssim2 interaction (tol=0.01) ===");
     println!(
         "{:30} {:>6} {:>8} {:>8} {:>7} {:>7} {:>7}",
-        "Image", "tgt_s2", "std", "zoint", "save%", "mpe_z", "ss2_z"
+        "Image", "tgt_s2", "std", "joint", "save%", "mpe_z", "ss2_z"
     );
     println!("{}", "-".repeat(90));
 
     for target in [90.0_f32, 80.0, 70.0] {
         let mut total_std = 0usize;
-        let mut total_zoint = 0usize;
+        let mut total_joint = 0usize;
 
         for (name, img) in &images {
             let std_config = QuantizeConfig::new(OutputFormat::Png)
                 .target_ssim2(target);
-            let zoint_config = QuantizeConfig::new(OutputFormat::PngZoint)
+            let joint_config = QuantizeConfig::new(OutputFormat::PngJoint)
                 .target_ssim2(target)
-                ._zoint_tolerance(0.01);
+                ._joint_tolerance(0.01);
 
             let std_res = match encode_with_config(img, &std_config) {
                 Some(r) => r,
                 None => continue,
             };
-            let zoint_res = match encode_with_config(img, &zoint_config) {
+            let joint_res = match encode_with_config(img, &joint_config) {
                 Some(r) => r,
                 None => continue,
             };
 
             total_std += std_res.size;
-            total_zoint += zoint_res.size;
+            total_joint += joint_res.size;
 
-            let save = (1.0 - zoint_res.size as f64 / std_res.size as f64) * 100.0;
+            let save = (1.0 - joint_res.size as f64 / std_res.size as f64) * 100.0;
             println!(
                 "{:30} {:>6.1} {:>8} {:>8} {:>+6.1}% {:>7} {:>7}",
                 truncate_name(name, 30),
                 target,
                 std_res.size,
-                zoint_res.size,
+                joint_res.size,
                 save,
-                fmt_mpe(zoint_res.mpe),
-                fmt_ss2(zoint_res.ssim2),
+                fmt_mpe(joint_res.mpe),
+                fmt_ss2(joint_res.ssim2),
             );
         }
 
-        let save = (1.0 - total_zoint as f64 / total_std as f64) * 100.0;
+        let save = (1.0 - total_joint as f64 / total_std as f64) * 100.0;
         println!(
             "{:30} {:>6.1} {:>8} {:>8} {:>+6.1}%",
-            "** TOTAL **", target, total_std, total_zoint, save
+            "** TOTAL **", target, total_std, total_joint, save
         );
         println!();
+    }
+
+    // === Test 6: Dither mode comparison for PngMinSize ===
+    println!("\n\n=== PngMinSize dither mode comparison (tol=0.01) ===");
+    println!(
+        "{:30} {:>10} {:>8} {:>7} {:>7}",
+        "Image", "dither", "size", "ss2", "mpe"
+    );
+    println!("{}", "-".repeat(75));
+
+    let dither_modes: &[(&str, fn(QuantizeConfig) -> QuantizeConfig)] = &[
+        ("BlueNoise", |c| c),  // PngMinSize default
+        ("Linear", |c| c._linear_dither()),
+        ("Linear+d0.2", |c| c._linear_dither()._dither_strength(0.2)),
+        ("Linear+d0.3", |c| c._linear_dither()._dither_strength(0.3)),
+        ("Adaptive", |c| c._adaptive_dither()._dither_strength(0.1)),
+        ("Adaptive+d0.3", |c| c._adaptive_dither()._dither_strength(0.3)),
+        ("SierraLite", |c| c._sierra_lite_dither()._dither_strength(0.1)),
+        ("None", |c| c._no_dither()),
+    ];
+
+    // Track totals per mode
+    let mut mode_totals: Vec<(String, usize)> = dither_modes.iter().map(|(n, _)| (n.to_string(), 0)).collect();
+
+    for (name, img) in &images {
+        for (i, (mode_name, apply_fn)) in dither_modes.iter().enumerate() {
+            let config = apply_fn(
+                QuantizeConfig::new(OutputFormat::PngMinSize)
+                    ._joint_tolerance(0.01)
+                    .compute_quality_metric(true),
+            );
+
+            let res = match encode_with_config(img, &config) {
+                Some(r) => r,
+                None => continue,
+            };
+
+            mode_totals[i].1 += res.size;
+
+            println!(
+                "{:30} {:>10} {:>8} {:>7} {:>7}",
+                if i == 0 { truncate_name(name, 30) } else { String::new() },
+                mode_name,
+                res.size,
+                fmt_ss2(res.ssim2),
+                fmt_mpe(res.mpe),
+            );
+        }
+        println!();
+    }
+
+    println!("--- TOTALS ---");
+    for (mode_name, total) in &mode_totals {
+        println!("{:>10}: {:>8}", mode_name, total);
     }
 }
 
