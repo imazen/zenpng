@@ -142,7 +142,14 @@ pub(crate) fn filter_image(
             beam_width,
         } => {
             filter_image_brute_beam(
-                packed_rows, row_bytes, height, bpp, eval_level, beam_width, cancel, out,
+                packed_rows,
+                row_bytes,
+                height,
+                bpp,
+                eval_level,
+                beam_width,
+                cancel,
+                out,
             );
         }
         _ => {
@@ -438,10 +445,7 @@ fn filter_image_brute_beam(
             for f in 0..5u8 {
                 if cancel.check().is_err() {
                     // On cancel, emit best beam entry so far + remaining rows unfiltered
-                    let best = beam
-                        .into_iter()
-                        .min_by_key(|e| e.cumulative_size)
-                        .unwrap();
+                    let best = beam.into_iter().min_by_key(|e| e.cumulative_size).unwrap();
                     out.extend_from_slice(&best.filtered);
                     for rem_y in y..height {
                         out.push(0);
@@ -455,7 +459,9 @@ fn filter_image_brute_beam(
                 // Temporarily extend this beam entry's filtered buffer
                 let start = entry.filtered.len();
                 entry.filtered.push(f);
-                entry.filtered.extend_from_slice(&candidate_data[f as usize]);
+                entry
+                    .filtered
+                    .extend_from_slice(&candidate_data[f as usize]);
 
                 // Clone compressor and evaluate incrementally
                 let mut fork = entry.compressor.clone();
@@ -520,10 +526,7 @@ fn filter_image_brute_beam(
     }
 
     // Output best beam entry's filtered data
-    let best = beam
-        .into_iter()
-        .min_by_key(|e| e.cumulative_size)
-        .unwrap();
+    let best = beam.into_iter().min_by_key(|e| e.cumulative_size).unwrap();
     *out = best.filtered;
 }
 

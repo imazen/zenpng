@@ -1,0 +1,104 @@
+# Plan: APNG Color Type Downconversion
+
+## Problem
+`encode_apng()` always produces RGBA8 (color_type=6) output, even when input frames are:
+- All opaque → could use RGB8 (color_type=2, 3 bpp, 25% raw savings)
+- All grayscale → could use GrayA8 (color_type=4, 2 bpp, 50% savings)
+- All grayscale + opaque → could use Gray8 (color_type=0, 1 bpp, 75% savings)
+- ≤256 unique RGBA colors across all frames → could use Indexed (color_type=3, 1 bpp)
+
+APNG gauntlet: 12 RGB + 3 GrayA + 12 Indexed originals all get bloated by 33-400%.
+
+## Approach: Convert frames upfront, generalize optimizer to any bpp
+
+### Step 1: Generalize `compute_delta_region` and `extract_subframe` to take `bpp`
+
+Currently there are duplicate functions:
+- `compute_delta_region` (hardcoded bpp=4) and `compute_delta_region_indexed` (hardcoded bpp=1)
+- `extract_subframe` (hardcoded bpp=4) and `extract_subframe_indexed` (hardcoded bpp=1)
+
+Unify into single functions taking a `bpp` parameter. Delete the indexed-specific versions
+and update `optimize_apng_indexed` + `lookahead_next_frame_size_indexed` to call the generic versions.
+
+**File: `src/encoder/apng.rs`**
+
+### Step 2: Generalize `optimize_apng_truecolor` to take `bpp`
+
+Change signature to accept `bpp: usize`. Updates needed:
+- Replace `let bpp = 4usize;` with the parameter
+- `can_use_over_truecolor` and `build_over_subframe`: only call when bpp has alpha (bpp==2 or bpp==4)
+- When bpp has no alpha (1 or 3): skip OVER evaluation, always use BLEND_SOURCE
+- `zero_transparent_rgb_region`: only call when bpp==4
+- `minimal_subframe`: already takes bpp ✓
+
+Also update `lookahead_next_frame_size` — it calls `compute_delta_region` (now generic)
+and `can_use_over_truecolor` (conditionally).
+
+**File: `src/encoder/apng.rs`**
+
+### Step 3: Generalize `encode_apng_truecolor` to take `color_type` and `bpp`
+
+Change signature to accept `color_type: u8, bpp: usize`. Updates:
+- Write correct color_type in IHDR (line 1056)
+- Pass bpp through to optimizer and compress_filtered calls
+- Frame 0 data: use `frame_pixels` directly (already converted)
+- Optimized subframes: already correct bpp from optimizer
+
+**File: `src/encoder/apng.rs`**
+
+### Step 4: Add frame analysis and conversion in `encode_apng`
+
+In `src/encode.rs`, before calling `encode_apng_truecolor`:
+
+1. **Analyze all frames** for is_opaque and is_grayscale:
+   - Single pass per frame, early exit on first non-matching pixel
+   - Must hold for ALL frames (APNG has one IHDR for all frames)
+
+2. **Check exact palette** across all frames (≤256 unique RGBA colors):
+   - Use existing `try_build_exact_palette` from `src/indexed.rs`
+   - If yes → route to `encode_apng_indexed_from_indices` (already exists)
+
+3. **Determine target color type** (in priority order):
+   - Grayscale + opaque → Gray8 (color_type=0, bpp=1)
+   - Grayscale → GrayA8 (color_type=4, bpp=2)
+   - Opaque → RGB8 (color_type=2, bpp=3)
+   - Otherwise → RGBA8 (color_type=6, bpp=4) (unchanged)
+
+4. **Convert frame data** to target format:
+   - Reuse existing `rgba8_to_rgb8`, `rgba8_to_gray8`, `rgba8_to_gray_alpha8` from optimize.rs
+   - Build converted frame buffers, pass to `encode_apng_truecolor` with correct color_type/bpp
+
+**File: `src/encode.rs`**
+
+### Step 5: Handle `build_over_subframe` for GrayA (bpp=2)
+
+Currently `build_over_subframe` has alpha-specific dirty transparency logic hardcoded for bpp=4.
+For bpp=2 (GrayA), the same concept applies: unchanged pixels get alpha=0, and dirty transparency
+copies the gray value from the row above.
+
+Add a bpp==2 case alongside the existing bpp==4 case. For bpp==1 and bpp==3 (no alpha),
+this function is never called (OVER is skipped).
+
+**File: `src/encoder/apng.rs`**
+
+### Step 6: Handle `can_use_over_truecolor` for GrayA (bpp=2)
+
+Currently checks `target_px[3]` and `canvas_px[3]` for alpha. For bpp=2, alpha is at index 1.
+Generalize the alpha index: `bpp - 1` (works for both bpp=2 and bpp=4).
+
+**File: `src/encoder/apng.rs`**
+
+## Files Modified
+1. `src/encoder/apng.rs` — Generalize optimizer and encoder to any bpp/color_type
+2. `src/encode.rs` — Add analysis, conversion, and routing in encode_apng()
+3. `src/indexed.rs` — Make `try_build_exact_palette` pub(crate) if not already
+
+## Testing
+- Run existing `cargo test` (roundtrip tests in apng.rs already verify pixel-exact output)
+- Run `apng_bench` on gauntlet to measure improvement
+- Verify that RGB, GrayA, and Indexed originals now produce smaller output
+
+## NOT changing
+- Public API signature of `encode_apng()` (still takes RGBA8 frames)
+- Indexed APNG path (already works correctly)
+- APNG auto/quantization path (separate feature)

@@ -241,10 +241,7 @@ pub(crate) fn split_palette_rgba(palette: &[[u8; 4]]) -> (Vec<u8>, Vec<u8>) {
 /// Similar colors get adjacent indices, which produces smaller filter residuals
 /// and better DEFLATE compression. Uses the standard BT.601 luminance formula
 /// with a secondary sort on hue (R-B difference) for stability.
-pub(crate) fn sort_palette_luminance(
-    palette: &mut Vec<[u8; 4]>,
-    indices: &mut [u8],
-) {
+pub(crate) fn sort_palette_luminance(palette: &mut Vec<[u8; 4]>, indices: &mut [u8]) {
     let n = palette.len();
     if n <= 1 {
         return;
@@ -284,10 +281,7 @@ pub(crate) fn sort_palette_luminance(
 /// affects index values, which affects PNG filter residuals and DEFLATE
 /// compression. This function tries luminance sort vs the original order
 /// and picks the winner based on actual compressed size at a quick effort level.
-pub(crate) fn optimize_palette_order(
-    palette: &mut Vec<[u8; 4]>,
-    indices: &mut [u8],
-) {
+pub(crate) fn optimize_palette_order(palette: &mut Vec<[u8; 4]>, indices: &mut [u8]) {
     // For very small palettes (≤4 colors), sorting doesn't help enough to justify cost
     if palette.len() <= 4 {
         sort_palette_luminance(palette, indices);
@@ -379,8 +373,13 @@ pub(crate) fn optimize_rgba8(bytes: &[u8], width: usize, height: usize) -> Optim
         let truecolor_raw = (1 + width * truecolor_bpp) * height;
 
         // Palette overhead: PLTE chunk (12 + 3*n) + tRNS chunk if transparency (12 + n)
-        let palette_overhead =
-            12 + 3 * n_colors + if exact.has_transparency { 12 + n_colors } else { 0 };
+        let palette_overhead = 12
+            + 3 * n_colors
+            + if exact.has_transparency {
+                12 + n_colors
+            } else {
+                0
+            };
 
         // Indexed is worthwhile when palette_overhead + indexed_raw < truecolor_raw.
         // Use a small margin to account for DEFLATE favoring smaller alphabets.

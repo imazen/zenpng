@@ -15,13 +15,12 @@ use std::time::Instant;
 use enough::Unstoppable;
 
 fn main() {
-    let path = std::env::args().nth(1).unwrap_or_else(|| {
-        "/home/lilith/work/codec-corpus/gb82-sc/0001.png".to_string()
-    });
+    let path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "/home/lilith/work/codec-corpus/gb82-sc/0001.png".to_string());
 
     let source = std::fs::read(&path).expect("read");
-    let decoded =
-        zenpng::decode(&source, &zenpng::PngDecodeConfig::none(), &Unstoppable).unwrap();
+    let decoded = zenpng::decode(&source, &zenpng::PngDecodeConfig::none(), &Unstoppable).unwrap();
 
     let (w, h) = (decoded.info.width as usize, decoded.info.height as usize);
     let (pixel_bytes, bpp): (Vec<u8>, usize) = match &decoded.pixels {
@@ -59,10 +58,7 @@ fn main() {
 
     // Measure single-filter application
     let mut single_filtered: Vec<Vec<u8>> = Vec::new();
-    eprintln!(
-        "{:<18} {:>8} {:>10}",
-        "Filter", "Time ms", "MP/s"
-    );
+    eprintln!("{:<18} {:>8} {:>10}", "Filter", "Time ms", "MP/s");
     eprintln!("{}", "-".repeat(38));
 
     for (f, name) in filter_names.iter().enumerate() {
@@ -75,7 +71,12 @@ fn main() {
         }
         let ms = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
         let mp_s = megapixels / (ms / 1000.0);
-        eprintln!("{:<18} {:>8.2} {:>10.0}", format!("Single({name})"), ms, mp_s);
+        eprintln!(
+            "{:<18} {:>8.2} {:>10.0}",
+            format!("Single({name})"),
+            ms,
+            mp_s
+        );
         single_filtered.push(filtered);
     }
 
@@ -98,7 +99,12 @@ fn main() {
         }
         let ms = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
         let mp_s = megapixels / (ms / 1000.0);
-        eprintln!("{:<18} {:>8.2} {:>10.0}", format!("Adaptive({name})"), ms, mp_s);
+        eprintln!(
+            "{:<18} {:>8.2} {:>10.0}",
+            format!("Adaptive({name})"),
+            ms,
+            mp_s
+        );
         adaptive_filtered.push(filtered);
     }
 
@@ -120,7 +126,13 @@ fn main() {
         let bound = zenflate::Compressor::zlib_compress_bound(test_data.len());
         let mut buf = vec![0u8; bound];
 
-        let iters = if effort <= 4 { 10 } else if effort <= 10 { 5 } else { 3 };
+        let iters = if effort <= 4 {
+            10
+        } else if effort <= 10 {
+            5
+        } else {
+            3
+        };
         let mut size = 0;
         let t = Instant::now();
         for _ in 0..iters {
@@ -170,15 +182,18 @@ fn main() {
     };
 
     eprintln!("Single filter cost:   {:.2} ms", single_filter_ms);
-    eprintln!("Adaptive filter cost: {:.2} ms (5 filters + scoring)", adaptive_filter_ms);
+    eprintln!(
+        "Adaptive filter cost: {:.2} ms (5 filters + scoring)",
+        adaptive_filter_ms
+    );
     eprintln!();
 
     // Strategy counts to evaluate: 1, 3, 5, 9
     let strategy_configs = [
-        (1, "1 (single)", 1, 0),    // 1 single filter
-        (3, "3 (minimal)", 1, 2),   // 1 single + 2 adaptive (rough approximation)
-        (5, "5 (fast)", 1, 4),      // 1 single + 4 adaptive
-        (9, "9 (full)", 5, 4),      // 5 single + 4 adaptive
+        (1, "1 (single)", 1, 0),  // 1 single filter
+        (3, "3 (minimal)", 1, 2), // 1 single + 2 adaptive (rough approximation)
+        (5, "5 (fast)", 1, 4),    // 1 single + 4 adaptive
+        (9, "9 (full)", 5, 4),    // 5 single + 4 adaptive
     ];
 
     eprintln!(
@@ -198,7 +213,8 @@ fn main() {
             // Filter cost: each strategy filters once
             // Single strategies: just 1 filter pass each
             // Adaptive strategies: 5 filter passes + scoring each
-            let filter_total = n_single as f64 * single_filter_ms + n_adaptive as f64 * adaptive_filter_ms;
+            let filter_total =
+                n_single as f64 * single_filter_ms + n_adaptive as f64 * adaptive_filter_ms;
             let compress_total = n as f64 * compress_per_strategy;
             let total = filter_total + compress_total;
             let mp_s = megapixels / (total / 1000.0);
@@ -228,7 +244,13 @@ fn main() {
             ..Default::default()
         };
 
-        let iters = if effort <= 4 { 5 } else if effort <= 10 { 3 } else { 2 };
+        let iters = if effort <= 4 {
+            5
+        } else if effort <= 10 {
+            3
+        } else {
+            2
+        };
         let mut size = 0;
         let t = Instant::now();
         for _ in 0..iters {

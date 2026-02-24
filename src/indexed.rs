@@ -101,7 +101,10 @@ struct ExactPalette {
 /// Returns `None` if more than 256 unique colors are found (early exit).
 ///
 /// Each entry in `frame_pixels` is a flat `&[u8]` of RGBA8 pixels (4 bytes each).
-fn try_build_exact_palette(frame_pixels: &[&[u8]], pixels_per_frame: usize) -> Option<ExactPalette> {
+fn try_build_exact_palette(
+    frame_pixels: &[&[u8]],
+    pixels_per_frame: usize,
+) -> Option<ExactPalette> {
     let mut color_to_index: HashMap<[u8; 4], u8> = HashMap::with_capacity(257);
     let mut palette_rgba: Vec<[u8; 4]> = Vec::with_capacity(256);
 
@@ -371,54 +374,51 @@ pub fn encode_apng_indexed(
     let pixels_per_frame = w * h;
 
     // Fast path: if ≤256 unique colors across all frames, use exact palette
-    let frame_pixel_slices: Vec<&[u8]> = frames
-        .iter()
-        .map(|f| &f.pixels[..expected_len])
-        .collect();
+    let frame_pixel_slices: Vec<&[u8]> = frames.iter().map(|f| &f.pixels[..expected_len]).collect();
 
-    let (palette_rgba, all_indices) =
-        if let Some(exact) = try_build_exact_palette(&frame_pixel_slices, pixels_per_frame) {
-            (exact.palette_rgba, exact.frame_indices)
-        } else {
-            // Quantization path: >256 unique colors, use zenquant
-            let frame_refs: Vec<ImgRef<'_, zenquant::RGBA<u8>>> = frames
-                .iter()
-                .map(|f| {
-                    let pixels: &[zenquant::RGBA<u8>] =
-                        bytemuck::cast_slice(&f.pixels[..expected_len]);
-                    ImgRef::new(pixels, w, h)
-                })
-                .collect();
+    let (palette_rgba, all_indices) = if let Some(exact) =
+        try_build_exact_palette(&frame_pixel_slices, pixels_per_frame)
+    {
+        (exact.palette_rgba, exact.frame_indices)
+    } else {
+        // Quantization path: >256 unique colors, use zenquant
+        let frame_refs: Vec<ImgRef<'_, zenquant::RGBA<u8>>> = frames
+            .iter()
+            .map(|f| {
+                let pixels: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(&f.pixels[..expected_len]);
+                ImgRef::new(pixels, w, h)
+            })
+            .collect();
 
-            let palette_result = zenquant::build_palette_rgba(&frame_refs, quant_config)?;
-            let palette_rgba_ref = palette_result.palette_rgba();
+        let palette_result = zenquant::build_palette_rgba(&frame_refs, quant_config)?;
+        let palette_rgba_ref = palette_result.palette_rgba();
 
-            let mut indices_list: Vec<Vec<u8>> = Vec::with_capacity(frames.len());
-            let mut prev_indices: Option<Vec<u8>> = None;
+        let mut indices_list: Vec<Vec<u8>> = Vec::with_capacity(frames.len());
+        let mut prev_indices: Option<Vec<u8>> = None;
 
-            for frame_ref in &frame_refs {
-                cancel.check()?;
+        for frame_ref in &frame_refs {
+            cancel.check()?;
 
-                let (frame_buf, fw, fh) = frame_ref.to_contiguous_buf();
-                let remap_result = if let Some(prev) = &prev_indices {
-                    palette_result.remap_rgba_with_prev(
-                        frame_buf.as_ref(),
-                        fw,
-                        fh,
-                        quant_config,
-                        prev,
-                    )?
-                } else {
-                    palette_result.remap_rgba(frame_buf.as_ref(), fw, fh, quant_config)?
-                };
+            let (frame_buf, fw, fh) = frame_ref.to_contiguous_buf();
+            let remap_result = if let Some(prev) = &prev_indices {
+                palette_result.remap_rgba_with_prev(
+                    frame_buf.as_ref(),
+                    fw,
+                    fh,
+                    quant_config,
+                    prev,
+                )?
+            } else {
+                palette_result.remap_rgba(frame_buf.as_ref(), fw, fh, quant_config)?
+            };
 
-                let indices = remap_result.indices().to_vec();
-                prev_indices = Some(indices.clone());
-                indices_list.push(indices);
-            }
+            let indices = remap_result.indices().to_vec();
+            prev_indices = Some(indices.clone());
+            indices_list.push(indices);
+        }
 
-            (palette_rgba_ref.to_vec(), indices_list)
-        };
+        (palette_rgba_ref.to_vec(), indices_list)
+    };
 
     let effort = config.encode.compression.effort();
     let mut write_meta = crate::encoder::PngWriteMetadata::from_metadata(metadata);
@@ -479,10 +479,7 @@ pub fn encode_apng_auto(
     let pixels_per_frame = w * h;
 
     // Fast path: if ≤256 unique colors across all frames, use exact palette (zero loss)
-    let frame_pixel_slices: Vec<&[u8]> = frames
-        .iter()
-        .map(|f| &f.pixels[..expected_len])
-        .collect();
+    let frame_pixel_slices: Vec<&[u8]> = frames.iter().map(|f| &f.pixels[..expected_len]).collect();
 
     if let Some(exact) = try_build_exact_palette(&frame_pixel_slices, pixels_per_frame) {
         let effort = config.encode.compression.effort();

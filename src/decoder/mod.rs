@@ -182,8 +182,15 @@ pub(crate) fn decode_png(
 
         let skip_adler = limits.skip_decompression_checksum;
         if let Some(all_pixels) = try_decode_stored(
-            data, first_idat_pos, skip_crc, skip_adler,
-            h, stride, raw_row_bytes, bpp, cancel,
+            data,
+            first_idat_pos,
+            skip_crc,
+            skip_adler,
+            h,
+            stride,
+            raw_row_bytes,
+            bpp,
+            cancel,
         ) {
             let all_pixels = all_pixels?;
             reader.finish_metadata();
@@ -191,8 +198,10 @@ pub(crate) fn decode_png(
             let ancillary = reader.ancillary();
             let info = build_png_info(&ihdr, ancillary);
             warnings.extend(crate::decode::detect_color_warnings(
-                ancillary.srgb_intent, ancillary.gamma,
-                ancillary.chrm.as_ref(), ancillary.cicp.as_ref(),
+                ancillary.srgb_intent,
+                ancillary.gamma,
+                ancillary.chrm.as_ref(),
+                ancillary.cicp.as_ref(),
                 ancillary.icc_profile.as_deref(),
             ));
             let pixels = if ihdr.color_type == 6 {
@@ -200,7 +209,11 @@ pub(crate) fn decode_png(
             } else {
                 PixelData::Rgb8(ImgVec::new(vec_u8_to_rgb8(all_pixels), w, h))
             };
-            return Ok(PngDecodeOutput { pixels, info, warnings });
+            return Ok(PngDecodeOutput {
+                pixels,
+                info,
+                warnings,
+            });
         }
 
         // Standard streaming path
@@ -341,7 +354,7 @@ fn try_decode_stored(
     skip_crc: bool,
     skip_adler: bool,
     height: usize,
-    stride: usize,       // raw_row_bytes + 1 (filter byte)
+    stride: usize, // raw_row_bytes + 1 (filter byte)
     raw_row_bytes: usize,
     bpp: usize,
     cancel: &dyn Stop,
@@ -363,7 +376,10 @@ fn try_decode_stored(
         }
         if !skip_crc {
             let stored_crc = u32::from_be_bytes(file_data[data_end..crc_end].try_into().unwrap());
-            let computed = zenflate::crc32(zenflate::crc32(0, &chunk_type), &file_data[data_start..data_end]);
+            let computed = zenflate::crc32(
+                zenflate::crc32(0, &chunk_type),
+                &file_data[data_start..data_end],
+            );
             if stored_crc != computed {
                 return Some(Err(PngError::Decode("CRC mismatch in IDAT chunk".into())));
             }
@@ -425,12 +441,16 @@ fn try_decode_stored(
         }
         zpos += 1;
         if zpos + 4 > zlib_end {
-            return Some(Err(PngError::Decode("truncated stored block header".into())));
+            return Some(Err(PngError::Decode(
+                "truncated stored block header".into(),
+            )));
         }
         let len = u16::from_le_bytes([zlib[zpos], zlib[zpos + 1]]) as usize;
         let nlen = u16::from_le_bytes([zlib[zpos + 2], zlib[zpos + 3]]) as usize;
         if len != (!nlen & 0xFFFF) {
-            return Some(Err(PngError::Decode("stored block LEN/NLEN mismatch".into())));
+            return Some(Err(PngError::Decode(
+                "stored block LEN/NLEN mismatch".into(),
+            )));
         }
         zpos += 4;
         if zpos + len > zlib_end {
@@ -479,12 +499,16 @@ fn try_decode_stored(
 
         // Copy row data into output
         let dest_start = y * raw_row_bytes;
-        cursor.read_into(zlib, &mut all_pixels[dest_start..dest_start + raw_row_bytes]);
+        cursor.read_into(
+            zlib,
+            &mut all_pixels[dest_start..dest_start + raw_row_bytes],
+        );
 
         // Unfilter if needed
         if fb != 0 {
             if y == 0 {
-                if let Err(e) = row::unfilter_row(fb, &mut all_pixels[..raw_row_bytes], &zeros, bpp) {
+                if let Err(e) = row::unfilter_row(fb, &mut all_pixels[..raw_row_bytes], &zeros, bpp)
+                {
                     return Some(Err(e));
                 }
             } else {
@@ -510,7 +534,11 @@ struct SpanCursor<'a> {
 
 impl<'a> SpanCursor<'a> {
     fn new(spans: &'a [(usize, usize)]) -> Self {
-        Self { spans, idx: 0, off: 0 }
+        Self {
+            spans,
+            idx: 0,
+            off: 0,
+        }
     }
 
     fn read_byte(&mut self, zlib: &[u8]) -> u8 {
@@ -533,7 +561,8 @@ impl<'a> SpanCursor<'a> {
             let (start, len) = self.spans[self.idx];
             let avail = len - self.off;
             let n = avail.min(dest.len() - written);
-            dest[written..written + n].copy_from_slice(&zlib[start + self.off..start + self.off + n]);
+            dest[written..written + n]
+                .copy_from_slice(&zlib[start + self.off..start + self.off + n]);
             written += n;
             self.off += n;
             if self.off >= len {
@@ -2073,7 +2102,11 @@ mod tests {
     fn corrupt_ihdr_crc_accepted_by_default() {
         let png = craft_valid_1x1_png();
         let corrupt = corrupt_chunk_crc(&png, b"IHDR");
-        let result = decode_png(&corrupt, &crate::decode::PngDecodeConfig::none(), &Unstoppable);
+        let result = decode_png(
+            &corrupt,
+            &crate::decode::PngDecodeConfig::none(),
+            &Unstoppable,
+        );
         assert!(
             result.is_ok(),
             "corrupt IHDR CRC should be accepted by default: {:?}",
@@ -2097,7 +2130,11 @@ mod tests {
     fn corrupt_idat_crc_accepted_by_default() {
         let png = craft_valid_1x1_png();
         let corrupt = corrupt_chunk_crc(&png, b"IDAT");
-        let result = decode_png(&corrupt, &crate::decode::PngDecodeConfig::none(), &Unstoppable);
+        let result = decode_png(
+            &corrupt,
+            &crate::decode::PngDecodeConfig::none(),
+            &Unstoppable,
+        );
         assert!(
             result.is_ok(),
             "corrupt IDAT CRC should be accepted by default: {:?}",
@@ -2114,14 +2151,21 @@ mod tests {
             &crate::decode::PngDecodeConfig::strict(),
             &Unstoppable,
         );
-        assert!(result.is_err(), "corrupt Adler-32 should be rejected with strict");
+        assert!(
+            result.is_err(),
+            "corrupt Adler-32 should be rejected with strict"
+        );
     }
 
     #[test]
     fn corrupt_adler32_accepted_by_default() {
         let png = craft_valid_1x1_png();
         let corrupt = corrupt_idat_adler(&png);
-        let result = decode_png(&corrupt, &crate::decode::PngDecodeConfig::none(), &Unstoppable);
+        let result = decode_png(
+            &corrupt,
+            &crate::decode::PngDecodeConfig::none(),
+            &Unstoppable,
+        );
         assert!(
             result.is_ok(),
             "corrupt Adler-32 should be accepted by default: {:?}",
@@ -2154,7 +2198,11 @@ mod tests {
         let path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/regression/badadler.png");
         let data = std::fs::read(&path).unwrap();
-        let result = decode_png(&data, &crate::decode::PngDecodeConfig::strict(), &Unstoppable);
+        let result = decode_png(
+            &data,
+            &crate::decode::PngDecodeConfig::strict(),
+            &Unstoppable,
+        );
         assert!(
             result.is_err(),
             "badadler.png should be rejected with strict"

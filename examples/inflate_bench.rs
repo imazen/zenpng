@@ -40,12 +40,14 @@ fn main() {
         use enough::Unstoppable;
         let mut d = zenflate::Decompressor::new();
         let mut out = vec![0u8; dec_size];
-        d.zlib_decompress(&zlib_data, &mut out, &Unstoppable).unwrap();
+        d.zlib_decompress(&zlib_data, &mut out, &Unstoppable)
+            .unwrap();
 
         let t = Instant::now();
         for _ in 0..iters {
             let mut d = zenflate::Decompressor::new();
-            d.zlib_decompress(&zlib_data, &mut out, &Unstoppable).unwrap();
+            d.zlib_decompress(&zlib_data, &mut out, &Unstoppable)
+                .unwrap();
             std::hint::black_box(&out);
         }
         let ms = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
@@ -172,8 +174,7 @@ fn extract_idat_payload(png: &[u8]) -> Vec<u8> {
     let mut result = Vec::new();
     let mut pos = 8; // skip signature
     while pos + 12 <= png.len() {
-        let length =
-            u32::from_be_bytes(png[pos..pos + 4].try_into().unwrap()) as usize;
+        let length = u32::from_be_bytes(png[pos..pos + 4].try_into().unwrap()) as usize;
         let chunk_type: [u8; 4] = png[pos + 4..pos + 8].try_into().unwrap();
         let data_start = pos + 8;
         let data_end = data_start + length;
