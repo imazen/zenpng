@@ -353,20 +353,55 @@ pub(crate) enum OptimalEncoding {
 pub(crate) fn optimize_rgba8(bytes: &[u8], width: usize, height: usize) -> OptimalEncoding {
     let analysis = analyze_rgba8(bytes, width, height);
 
-    // Prefer indexed if ≤256 unique colors (biggest win)
-    if let Some(mut exact) = analysis.exact_palette {
-        optimize_palette_order(&mut exact.palette_rgba, &mut exact.indices);
-        let (rgb, alpha) = split_palette_rgba(&exact.palette_rgba);
-        let palette_alpha = if exact.has_transparency {
-            Some(alpha)
-        } else {
-            None
-        };
-        return OptimalEncoding::Indexed {
-            palette_rgb: rgb,
-            palette_alpha,
-            indices: exact.indices,
-        };
+    // Determine the best truecolor encoding first, so we can compare against indexed.
+    let truecolor_bpp = if analysis.is_grayscale && analysis.is_opaque {
+        1 // Gray8
+    } else if analysis.is_grayscale {
+        2 // GrayscaleAlpha8
+    } else if analysis.is_opaque {
+        3 // RGB8
+    } else {
+        4 // RGBA8
+    };
+
+    // Try indexed if ≤256 unique colors, but only if it's actually smaller.
+    // Indexed adds palette overhead (PLTE + possibly tRNS chunks) but reduces
+    // per-pixel data to 1 byte. For small images with many unique colors,
+    // the palette overhead can exceed the savings.
+    if let Some(ref exact) = analysis.exact_palette {
+        let n_colors = exact.palette_rgba.len();
+        let n_pixels = width * height;
+
+        // Estimate raw data sizes (filter byte + pixel data per row):
+        // Indexed: (1 + width) * height
+        // Truecolor: (1 + width * bpp) * height
+        let indexed_raw = (1 + width) * height;
+        let truecolor_raw = (1 + width * truecolor_bpp) * height;
+
+        // Palette overhead: PLTE chunk (12 + 3*n) + tRNS chunk if transparency (12 + n)
+        let palette_overhead =
+            12 + 3 * n_colors + if exact.has_transparency { 12 + n_colors } else { 0 };
+
+        // Indexed is worthwhile when palette_overhead + indexed_raw < truecolor_raw.
+        // Use a small margin to account for DEFLATE favoring smaller alphabets.
+        let indexed_cost = palette_overhead + indexed_raw;
+        let use_indexed = indexed_cost < truecolor_raw || n_pixels >= 512;
+
+        if use_indexed {
+            let mut exact = analysis.exact_palette.unwrap();
+            optimize_palette_order(&mut exact.palette_rgba, &mut exact.indices);
+            let (rgb, alpha) = split_palette_rgba(&exact.palette_rgba);
+            let palette_alpha = if exact.has_transparency {
+                Some(alpha)
+            } else {
+                None
+            };
+            return OptimalEncoding::Indexed {
+                palette_rgb: rgb,
+                palette_alpha,
+                indices: exact.indices,
+            };
+        }
     }
 
     // Grayscale + opaque → Gray8 (4:1 reduction)
@@ -403,15 +438,31 @@ pub(crate) fn optimize_rgba8(bytes: &[u8], width: usize, height: usize) -> Optim
 pub(crate) fn optimize_rgb8(bytes: &[u8], width: usize, height: usize) -> OptimalEncoding {
     let analysis = analyze_rgb8(bytes, width, height);
 
-    // Prefer indexed if ≤256 unique colors
-    if let Some(mut exact) = analysis.exact_palette {
-        optimize_palette_order(&mut exact.palette_rgba, &mut exact.indices);
-        let (rgb, _alpha) = split_palette_rgba(&exact.palette_rgba);
-        return OptimalEncoding::Indexed {
-            palette_rgb: rgb,
-            palette_alpha: None,
-            indices: exact.indices,
-        };
+    let truecolor_bpp: usize = if analysis.is_grayscale { 1 } else { 3 };
+
+    // Try indexed if ≤256 unique colors, but only when the palette overhead
+    // is worthwhile compared to the truecolor alternative.
+    if let Some(ref exact) = analysis.exact_palette {
+        let n_colors = exact.palette_rgba.len();
+        let n_pixels = width * height;
+
+        let indexed_raw = (1 + width) * height;
+        let truecolor_raw = (1 + width * truecolor_bpp) * height;
+        let palette_overhead = 12 + 3 * n_colors; // PLTE chunk, no tRNS for RGB
+
+        let indexed_cost = palette_overhead + indexed_raw;
+        let use_indexed = indexed_cost < truecolor_raw || n_pixels >= 512;
+
+        if use_indexed {
+            let mut exact = analysis.exact_palette.unwrap();
+            optimize_palette_order(&mut exact.palette_rgba, &mut exact.indices);
+            let (rgb, _alpha) = split_palette_rgba(&exact.palette_rgba);
+            return OptimalEncoding::Indexed {
+                palette_rgb: rgb,
+                palette_alpha: None,
+                indices: exact.indices,
+            };
+        }
     }
 
     // Grayscale → Gray8 (3:1 reduction)
