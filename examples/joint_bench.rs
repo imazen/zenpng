@@ -10,18 +10,13 @@ use std::time::Instant;
 use imgref::ImgVec;
 use rgb::Rgba;
 
-use zenpng::{EncodeConfig, PngDecodeConfig, encode_indexed_rgba8, decode};
+use zenpng::{EncodeConfig, PngDecodeConfig, decode, encode_indexed_rgba8};
 
 use zenquant::{OutputFormat, Quality, QuantizeConfig};
 
 fn load_png_as_rgba(path: &Path) -> Option<ImgVec<Rgba<u8>>> {
     let data = std::fs::read(path).ok()?;
-    let decoded = decode(
-        &data,
-        &PngDecodeConfig::none(),
-        &enough::Unstoppable,
-    )
-    .ok()?;
+    let decoded = decode(&data, &PngDecodeConfig::none(), &enough::Unstoppable).ok()?;
     let w = decoded.info.width as usize;
     let h = decoded.info.height as usize;
     let rgba_img = decoded.pixels.into_rgba8();
@@ -49,21 +44,13 @@ struct EncResult {
     elapsed_ms: u64,
 }
 
-fn encode_with_config(
-    img: &ImgVec<Rgba<u8>>,
-    quant_config: &QuantizeConfig,
-) -> Option<EncResult> {
+fn encode_with_config(img: &ImgVec<Rgba<u8>>, quant_config: &QuantizeConfig) -> Option<EncResult> {
     let enc_config = EncodeConfig::default();
     let rgba_slice: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(img.buf().as_slice());
 
     // Quantize (includes joint optimization if PngJoint format)
-    let result = zenquant::quantize_rgba(
-        rgba_slice,
-        img.width(),
-        img.height(),
-        quant_config,
-    )
-    .ok()?;
+    let result =
+        zenquant::quantize_rgba(rgba_slice, img.width(), img.height(), quant_config).ok()?;
 
     // Encode to PNG from the quantized result
     let start = Instant::now();
@@ -181,8 +168,7 @@ fn main() {
         let mut total_joint = 0usize;
 
         for (name, img) in &images {
-            let std_config = QuantizeConfig::new(OutputFormat::Png)
-                .compute_quality_metric(true);
+            let std_config = QuantizeConfig::new(OutputFormat::Png).compute_quality_metric(true);
             let joint_config = QuantizeConfig::new(OutputFormat::PngJoint)
                 ._joint_tolerance(tol)
                 .compute_quality_metric(true);
@@ -301,13 +287,11 @@ fn main() {
     let mut bt_joint = 0usize;
 
     for (name, img) in &images {
-        let fast_std = QuantizeConfig::new(OutputFormat::Png)
-            .quality(Quality::Fast);
+        let fast_std = QuantizeConfig::new(OutputFormat::Png).quality(Quality::Fast);
         let fast_joint = QuantizeConfig::new(OutputFormat::PngJoint)
             .quality(Quality::Fast)
             ._joint_tolerance(0.01);
-        let best_std = QuantizeConfig::new(OutputFormat::Png)
-            .quality(Quality::Best);
+        let best_std = QuantizeConfig::new(OutputFormat::Png).quality(Quality::Best);
         let best_joint = QuantizeConfig::new(OutputFormat::PngJoint)
             .quality(Quality::Best)
             ._joint_tolerance(0.01);
@@ -375,8 +359,7 @@ fn main() {
     let mut ms_total_minsize = 0usize;
 
     for (name, img) in &images {
-        let png_config = QuantizeConfig::new(OutputFormat::Png)
-            .compute_quality_metric(true);
+        let png_config = QuantizeConfig::new(OutputFormat::Png).compute_quality_metric(true);
         let joint_config = QuantizeConfig::new(OutputFormat::PngJoint)
             ._joint_tolerance(0.01)
             .compute_quality_metric(true);
@@ -437,8 +420,7 @@ fn main() {
         let mut total_joint = 0usize;
 
         for (name, img) in &images {
-            let std_config = QuantizeConfig::new(OutputFormat::Png)
-                .target_ssim2(target);
+            let std_config = QuantizeConfig::new(OutputFormat::Png).target_ssim2(target);
             let joint_config = QuantizeConfig::new(OutputFormat::PngJoint)
                 .target_ssim2(target)
                 ._joint_tolerance(0.01);
@@ -485,18 +467,25 @@ fn main() {
     println!("{}", "-".repeat(75));
 
     let dither_modes: &[(&str, fn(QuantizeConfig) -> QuantizeConfig)] = &[
-        ("BlueNoise", |c| c),  // PngMinSize default
+        ("BlueNoise", |c| c), // PngMinSize default
         ("Linear", |c| c._linear_dither()),
         ("Linear+d0.2", |c| c._linear_dither()._dither_strength(0.2)),
         ("Linear+d0.3", |c| c._linear_dither()._dither_strength(0.3)),
         ("Adaptive", |c| c._adaptive_dither()._dither_strength(0.1)),
-        ("Adaptive+d0.3", |c| c._adaptive_dither()._dither_strength(0.3)),
-        ("SierraLite", |c| c._sierra_lite_dither()._dither_strength(0.1)),
+        ("Adaptive+d0.3", |c| {
+            c._adaptive_dither()._dither_strength(0.3)
+        }),
+        ("SierraLite", |c| {
+            c._sierra_lite_dither()._dither_strength(0.1)
+        }),
         ("None", |c| c._no_dither()),
     ];
 
     // Track totals per mode
-    let mut mode_totals: Vec<(String, usize)> = dither_modes.iter().map(|(n, _)| (n.to_string(), 0)).collect();
+    let mut mode_totals: Vec<(String, usize)> = dither_modes
+        .iter()
+        .map(|(n, _)| (n.to_string(), 0))
+        .collect();
 
     for (name, img) in &images {
         for (i, (mode_name, apply_fn)) in dither_modes.iter().enumerate() {
@@ -515,7 +504,11 @@ fn main() {
 
             println!(
                 "{:30} {:>10} {:>8} {:>7} {:>7}",
-                if i == 0 { truncate_name(name, 30) } else { String::new() },
+                if i == 0 {
+                    truncate_name(name, 30)
+                } else {
+                    String::new()
+                },
                 mode_name,
                 res.size,
                 fmt_ss2(res.ssim2),

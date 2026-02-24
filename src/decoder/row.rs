@@ -101,8 +101,7 @@ impl<'a> zenflate::InputSource for IdatSource<'a> {
             if !self.skip_crc {
                 let stored_crc =
                     u32::from_be_bytes(self.data[data_end..crc_end].try_into().unwrap());
-                let computed_crc =
-                    crc32(crc32(0, &chunk_type), &self.data[data_start..data_end]);
+                let computed_crc = crc32(crc32(0, &chunk_type), &self.data[data_start..data_end]);
                 if stored_crc != computed_crc {
                     return Err(PngError::Decode("CRC mismatch in IDAT chunk".into()));
                 }
@@ -220,8 +219,7 @@ impl<'a> zenflate::InputSource for FdatSource<'a> {
             if !self.skip_crc {
                 let stored_crc =
                     u32::from_be_bytes(self.data[data_end..crc_end].try_into().unwrap());
-                let computed_crc =
-                    crc32(crc32(0, &chunk_type), &self.data[data_start..data_end]);
+                let computed_crc = crc32(crc32(0, &chunk_type), &self.data[data_start..data_end]);
                 if stored_crc != computed_crc {
                     return Err(PngError::Decode("CRC mismatch in fdAT chunk".into()));
                 }
@@ -421,7 +419,11 @@ impl<'a> RowDecoder<'a> {
     /// The caller owns both buffers — typically `prev` is the previous row in
     /// the output buffer (via `split_at_mut`), eliminating the prev_row copy.
     /// For row 0, pass a zeroed slice.
-    pub fn next_raw_row_direct(&mut self, dest: &mut [u8], prev: &[u8]) -> Option<Result<(), PngError>> {
+    pub fn next_raw_row_direct(
+        &mut self,
+        dest: &mut [u8],
+        prev: &[u8],
+    ) -> Option<Result<(), PngError>> {
         if self.rows_yielded >= self.ihdr.height {
             return None;
         }

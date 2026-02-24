@@ -438,7 +438,7 @@ impl zencodec_types::Encoder for PngEncoder<'_> {
 
 /// Accumulated frame data for APNG encoding.
 struct AccumulatedFrame {
-    pixels: Vec<u8>,     // RGBA8 canvas-sized
+    pixels: Vec<u8>, // RGBA8 canvas-sized
     duration_ms: u32,
 }
 
@@ -572,9 +572,10 @@ impl zencodec_types::FrameEncoder for PngFrameEncoder {
     }
 
     fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), PngError> {
-        let frame = self.building_frame.as_mut().ok_or_else(|| {
-            PngError::InvalidInput("push_rows called without begin_frame".into())
-        })?;
+        let frame = self
+            .building_frame
+            .as_mut()
+            .ok_or_else(|| PngError::InvalidInput("push_rows called without begin_frame".into()))?;
 
         let rgba = Self::pixels_to_rgba8(&rows)?;
         let row_count = rows.rows();
@@ -584,9 +585,10 @@ impl zencodec_types::FrameEncoder for PngFrameEncoder {
     }
 
     fn end_frame(&mut self) -> Result<(), PngError> {
-        let frame = self.building_frame.take().ok_or_else(|| {
-            PngError::InvalidInput("end_frame called without begin_frame".into())
-        })?;
+        let frame = self
+            .building_frame
+            .take()
+            .ok_or_else(|| PngError::InvalidInput("end_frame called without begin_frame".into()))?;
 
         self.frames.push(AccumulatedFrame {
             pixels: frame.pixels,
@@ -979,7 +981,6 @@ impl zencodec_types::FrameDecoder for PngFrameDecoder {
             "PNG frame_decoder: next_frame_into not yet implemented".into(),
         ))
     }
-
 }
 
 // ── Pixel conversion helpers ─────────────────────────────────────────
@@ -2648,7 +2649,7 @@ mod tests {
 
     #[test]
     fn clli_mdcv_roundtrip() {
-        use zencodec_types::{ContentLightLevel, MetadataView, MasteringDisplay};
+        use zencodec_types::{ContentLightLevel, MasteringDisplay, MetadataView};
 
         let pixels = vec![
             Rgb::<u8> {

@@ -390,11 +390,7 @@ fn blit_region(
 /// This matches `compress_filtered()`'s transparent pixel zeroing behavior,
 /// keeping the optimizer's canvas consistent with the decoder's actual canvas
 /// state after decompressing and compositing encoded frame data.
-fn zero_transparent_rgb_region(
-    canvas: &mut [u8],
-    canvas_w: usize,
-    region: &DeltaRegion,
-) {
+fn zero_transparent_rgb_region(canvas: &mut [u8], canvas_w: usize, region: &DeltaRegion) {
     let rx = region.x as usize;
     let ry = region.y as usize;
     let rw = region.width as usize;
@@ -484,14 +480,8 @@ fn optimize_apng_truecolor(
                 let mut best_total = usize::MAX;
 
                 for d in [DISPOSE_NONE, DISPOSE_BG, DISPOSE_PREV] {
-                    let lookahead_canvas = apply_dispose_copy(
-                        &canvas,
-                        w,
-                        &full_region,
-                        d,
-                        bpp,
-                        Some(&pre_composite),
-                    );
+                    let lookahead_canvas =
+                        apply_dispose_copy(&canvas, w, &full_region, d, bpp, Some(&pre_composite));
 
                     let next_size = lookahead_next_frame_size(
                         &lookahead_canvas,
@@ -555,25 +545,15 @@ fn optimize_apng_truecolor(
         // Trial compress SOURCE
         let source_row_bytes = source_region.width as usize * bpp;
         let source_height = source_region.height as usize;
-        let source_size = trial_compress_size(
-            &source_sub,
-            source_row_bytes,
-            source_height,
-            bpp,
-            cancel,
-        )?;
+        let source_size =
+            trial_compress_size(&source_sub, source_row_bytes, source_height, bpp, cancel)?;
 
         // Try OVER only if all changed pixels can be correctly represented
         let (best_blend, best_blend_size, best_sub) =
             if can_use_over_truecolor(target, &canvas, w, &source_region) {
                 let over_sub = build_over_subframe(target, &canvas, w, &source_region, bpp);
-                let over_size = trial_compress_size(
-                    &over_sub,
-                    source_row_bytes,
-                    source_height,
-                    bpp,
-                    cancel,
-                )?;
+                let over_size =
+                    trial_compress_size(&over_sub, source_row_bytes, source_height, bpp, cancel)?;
                 if over_size < source_size {
                     (BLEND_OVER, over_size, over_sub)
                 } else {
@@ -600,14 +580,8 @@ fn optimize_apng_truecolor(
             let mut best_total = usize::MAX;
 
             for d in [DISPOSE_NONE, DISPOSE_BG, DISPOSE_PREV] {
-                let lookahead_canvas = apply_dispose_copy(
-                    &canvas,
-                    w,
-                    &source_region,
-                    d,
-                    bpp,
-                    Some(&pre_composite),
-                );
+                let lookahead_canvas =
+                    apply_dispose_copy(&canvas, w, &source_region, d, bpp, Some(&pre_composite));
 
                 let next_size = lookahead_next_frame_size(
                     &lookahead_canvas,
@@ -706,10 +680,7 @@ fn optimize_apng_indexed(
     let npx = w * h;
 
     // Find transparent palette entry (alpha == 0)
-    let transparent_idx = palette_rgba
-        .iter()
-        .position(|e| e[3] == 0)
-        .map(|i| i as u8);
+    let transparent_idx = palette_rgba.iter().position(|e| e[3] == 0).map(|i| i as u8);
 
     let mut optimized = Vec::with_capacity(frame_indices.len());
     let mut canvas = vec![0u8; npx]; // initial canvas (index 0)
@@ -729,8 +700,7 @@ fn optimize_apng_indexed(
             };
 
             let row_bytes = w;
-            let best_blend_size =
-                trial_compress_size(target, row_bytes, h, bpp, cancel)?;
+            let best_blend_size = trial_compress_size(target, row_bytes, h, bpp, cancel)?;
 
             let pre_composite = canvas.clone();
             canvas.copy_from_slice(&target[..npx]);
@@ -743,14 +713,8 @@ fn optimize_apng_indexed(
                 let mut best_total = usize::MAX;
 
                 for d in [DISPOSE_NONE, DISPOSE_BG, DISPOSE_PREV] {
-                    let lookahead = apply_dispose_copy(
-                        &canvas,
-                        w,
-                        &full_region,
-                        d,
-                        bpp,
-                        Some(&pre_composite),
-                    );
+                    let lookahead =
+                        apply_dispose_copy(&canvas, w, &full_region, d, bpp, Some(&pre_composite));
 
                     let next_size = lookahead_next_frame_size_indexed(
                         &lookahead,
@@ -821,8 +785,7 @@ fn optimize_apng_indexed(
             if can_use_over_indexed(target, &canvas, w, &source_region, palette_rgba) {
                 let over_sub =
                     build_over_subframe_indexed(target, &canvas, w, &source_region, tidx);
-                let over_size =
-                    trial_compress_size(&over_sub, row_bytes, height, bpp, cancel)?;
+                let over_size = trial_compress_size(&over_sub, row_bytes, height, bpp, cancel)?;
                 if over_size < source_size {
                     (BLEND_OVER, over_size, over_sub)
                 } else {
@@ -856,14 +819,8 @@ fn optimize_apng_indexed(
             let mut best_total = usize::MAX;
 
             for d in [DISPOSE_NONE, DISPOSE_BG, DISPOSE_PREV] {
-                let lookahead = apply_dispose_copy(
-                    &canvas,
-                    w,
-                    &source_region,
-                    d,
-                    bpp,
-                    Some(&pre_composite),
-                );
+                let lookahead =
+                    apply_dispose_copy(&canvas, w, &source_region, d, bpp, Some(&pre_composite));
 
                 let next_size = lookahead_next_frame_size_indexed(
                     &lookahead,
@@ -933,10 +890,8 @@ fn lookahead_next_frame_size_indexed(
 
     if let Some(tidx) = transparent_idx {
         if can_use_over_indexed(next_target, canvas, w, &next_region, palette_rgba) {
-            let next_over =
-                build_over_subframe_indexed(next_target, canvas, w, &next_region, tidx);
-            let over_size =
-                trial_compress_size(&next_over, row_bytes, height, bpp, cancel)?;
+            let next_over = build_over_subframe_indexed(next_target, canvas, w, &next_region, tidx);
+            let over_size = trial_compress_size(&next_over, row_bytes, height, bpp, cancel)?;
             Ok(source_size.min(over_size))
         } else {
             Ok(source_size)
@@ -1034,7 +989,12 @@ pub(crate) fn encode_apng_truecolor(
     // Run optimizer when effort > 2 and >1 frame (otherwise trial = final, no benefit)
     let use_optimizer = effort > 2 && frames.len() > 1;
     let optimized = if use_optimizer {
-        Some(optimize_apng_truecolor(frames, canvas_width, canvas_height, cancel)?)
+        Some(optimize_apng_truecolor(
+            frames,
+            canvas_width,
+            canvas_height,
+            cancel,
+        )?)
     } else {
         None
     };
@@ -1074,7 +1034,12 @@ pub(crate) fn encode_apng_truecolor(
             let (region_w, region_h, region_x, region_y) = if i == 0 {
                 (canvas_width, canvas_height, 0u32, 0u32)
             } else {
-                (opt.region.width, opt.region.height, opt.region.x, opt.region.y)
+                (
+                    opt.region.width,
+                    opt.region.height,
+                    opt.region.x,
+                    opt.region.y,
+                )
             };
 
             write_fctl(
@@ -1105,15 +1070,8 @@ pub(crate) fn encode_apng_truecolor(
                 deadline,
                 remaining_ns: None,
             };
-            let compressed = compress_filtered(
-                sub_data,
-                sub_row_bytes,
-                sub_height,
-                bpp,
-                effort,
-                opts,
-                None,
-            )?;
+            let compressed =
+                compress_filtered(sub_data, sub_row_bytes, sub_height, bpp, effort, opts, None)?;
 
             if i == 0 {
                 write_chunk(&mut out, b"IDAT", &compressed);
@@ -1374,7 +1332,12 @@ pub(crate) fn encode_apng_indexed_from_indices(
             let (region_w, region_h, region_x, region_y) = if i == 0 {
                 (canvas_width, canvas_height, 0u32, 0u32)
             } else {
-                (opt.region.width, opt.region.height, opt.region.x, opt.region.y)
+                (
+                    opt.region.width,
+                    opt.region.height,
+                    opt.region.x,
+                    opt.region.y,
+                )
             };
 
             let sub_indices = if i == 0 {
@@ -1411,15 +1374,8 @@ pub(crate) fn encode_apng_indexed_from_indices(
                 deadline,
                 remaining_ns: None,
             };
-            let compressed = compress_filtered(
-                &packed,
-                row_bytes,
-                region_h as usize,
-                1,
-                effort,
-                opts,
-                None,
-            )?;
+            let compressed =
+                compress_filtered(&packed, row_bytes, region_h as usize, 1, effort, opts, None)?;
 
             if i == 0 {
                 write_chunk(&mut out, b"IDAT", &compressed);
@@ -1452,8 +1408,7 @@ pub(crate) fn encode_apng_indexed_from_indices(
                     canvas_height,
                 ) {
                     Some(region) => {
-                        let sub =
-                            extract_subframe_indexed(curr_indices, canvas_width, &region);
+                        let sub = extract_subframe_indexed(curr_indices, canvas_width, &region);
                         (region.x, region.y, region.width, region.height, sub)
                     }
                     None => (0, 0, 1, 1, vec![curr_indices[0]]),
@@ -1488,15 +1443,8 @@ pub(crate) fn encode_apng_indexed_from_indices(
                 deadline,
                 remaining_ns: None,
             };
-            let compressed = compress_filtered(
-                &packed,
-                row_bytes,
-                region_h as usize,
-                1,
-                effort,
-                opts,
-                None,
-            )?;
+            let compressed =
+                compress_filtered(&packed, row_bytes, region_h as usize, 1, effort, opts, None)?;
 
             if i == 0 {
                 write_chunk(&mut out, b"IDAT", &compressed);
@@ -1976,8 +1924,8 @@ mod tests {
         for y in 0..h as usize {
             for x in 0..w as usize {
                 let off = (y * w as usize + x) * 4;
-                f0[off] = (x * 32) as u8;     // R varies
-                f0[off + 1] = (y * 32) as u8;  // G varies
+                f0[off] = (x * 32) as u8; // R varies
+                f0[off + 1] = (y * 32) as u8; // G varies
                 f0[off + 2] = 128;
                 // Make some pixels transparent
                 f0[off + 3] = if x < 2 && y < 2 { 0 } else { 255 };
@@ -2001,20 +1949,42 @@ mod tests {
         }
 
         let frames = [
-            ApngFrameInput { pixels: &f0, delay_num: 1, delay_den: 10 },
-            ApngFrameInput { pixels: &f1, delay_num: 1, delay_den: 10 },
-            ApngFrameInput { pixels: &f2, delay_num: 1, delay_den: 10 },
+            ApngFrameInput {
+                pixels: &f0,
+                delay_num: 1,
+                delay_den: 10,
+            },
+            ApngFrameInput {
+                pixels: &f1,
+                delay_num: 1,
+                delay_den: 10,
+            },
+            ApngFrameInput {
+                pixels: &f2,
+                delay_num: 1,
+                delay_den: 10,
+            },
         ];
 
         let write_meta = PngWriteMetadata::from_metadata(None);
         let encoded = encode_apng_truecolor(
-            &frames, w, h, &write_meta, 0, 6,
-            &enough::Unstoppable, &enough::Unstoppable,
-        ).unwrap();
+            &frames,
+            w,
+            h,
+            &write_meta,
+            0,
+            6,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
 
         let decoded = crate::decode::decode_apng(
-            &encoded, &crate::decode::PngDecodeConfig::none(), &enough::Unstoppable,
-        ).unwrap();
+            &encoded,
+            &crate::decode::PngDecodeConfig::none(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
 
         assert_eq!(decoded.frames.len(), 3);
         for (i, (orig_input, dec_frame)) in frames.iter().zip(decoded.frames.iter()).enumerate() {
@@ -2030,10 +2000,7 @@ mod tests {
                 if orig.a == 0 && px.a == 0 {
                     continue; // both transparent
                 }
-                assert_eq!(
-                    *px, orig,
-                    "pixel {j} mismatch frame {i}"
-                );
+                assert_eq!(*px, orig, "pixel {j} mismatch frame {i}");
             }
         }
     }
@@ -2074,18 +2041,32 @@ mod tests {
 
         let frames: Vec<ApngFrameInput<'_>> = [&f0, &f1, &f2, &f3, &f4]
             .iter()
-            .map(|f| ApngFrameInput { pixels: f, delay_num: 1, delay_den: 10 })
+            .map(|f| ApngFrameInput {
+                pixels: f,
+                delay_num: 1,
+                delay_den: 10,
+            })
             .collect();
 
         let write_meta = PngWriteMetadata::from_metadata(None);
         let encoded = encode_apng_truecolor(
-            &frames, w, h, &write_meta, 0, 10,
-            &enough::Unstoppable, &enough::Unstoppable,
-        ).unwrap();
+            &frames,
+            w,
+            h,
+            &write_meta,
+            0,
+            10,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
 
         let decoded = crate::decode::decode_apng(
-            &encoded, &crate::decode::PngDecodeConfig::none(), &enough::Unstoppable,
-        ).unwrap();
+            &encoded,
+            &crate::decode::PngDecodeConfig::none(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
 
         assert_eq!(decoded.frames.len(), 5);
         for (i, (orig, dec)) in frames.iter().zip(decoded.frames.iter()).enumerate() {
@@ -2093,8 +2074,10 @@ mod tests {
             for (j, px) in dec_buf.iter().enumerate() {
                 let off = j * 4;
                 let orig_px = rgb::Rgba {
-                    r: orig.pixels[off], g: orig.pixels[off + 1],
-                    b: orig.pixels[off + 2], a: orig.pixels[off + 3],
+                    r: orig.pixels[off],
+                    g: orig.pixels[off + 1],
+                    b: orig.pixels[off + 2],
+                    a: orig.pixels[off + 3],
                 };
                 assert_eq!(*px, orig_px, "pixel {j} mismatch frame {i}");
             }
@@ -2130,20 +2113,42 @@ mod tests {
         }
 
         let frames = [
-            ApngFrameInput { pixels: &f0, delay_num: 1, delay_den: 10 },
-            ApngFrameInput { pixels: &f1, delay_num: 1, delay_den: 10 },
-            ApngFrameInput { pixels: &f2, delay_num: 1, delay_den: 10 },
+            ApngFrameInput {
+                pixels: &f0,
+                delay_num: 1,
+                delay_den: 10,
+            },
+            ApngFrameInput {
+                pixels: &f1,
+                delay_num: 1,
+                delay_den: 10,
+            },
+            ApngFrameInput {
+                pixels: &f2,
+                delay_num: 1,
+                delay_den: 10,
+            },
         ];
 
         let write_meta = PngWriteMetadata::from_metadata(None);
         let encoded = encode_apng_truecolor(
-            &frames, w, h, &write_meta, 0, 10,
-            &enough::Unstoppable, &enough::Unstoppable,
-        ).unwrap();
+            &frames,
+            w,
+            h,
+            &write_meta,
+            0,
+            10,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
 
         let decoded = crate::decode::decode_apng(
-            &encoded, &crate::decode::PngDecodeConfig::none(), &enough::Unstoppable,
-        ).unwrap();
+            &encoded,
+            &crate::decode::PngDecodeConfig::none(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
 
         assert_eq!(decoded.frames.len(), 3);
         for (i, (orig, dec)) in frames.iter().zip(decoded.frames.iter()).enumerate() {
@@ -2151,8 +2156,10 @@ mod tests {
             for (j, px) in dec_buf.iter().enumerate() {
                 let off = j * 4;
                 let orig_px = rgb::Rgba {
-                    r: orig.pixels[off], g: orig.pixels[off + 1],
-                    b: orig.pixels[off + 2], a: orig.pixels[off + 3],
+                    r: orig.pixels[off],
+                    g: orig.pixels[off + 1],
+                    b: orig.pixels[off + 2],
+                    a: orig.pixels[off + 3],
                 };
                 assert_eq!(*px, orig_px, "pixel {j} mismatch frame {i}");
             }

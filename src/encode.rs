@@ -317,7 +317,8 @@ pub(crate) fn encode_raw(
             ColorType::GrayscaleAlpha => 2,
             ColorType::Rgba => 4,
         };
-        nl_bytes = crate::optimize::near_lossless_quantize(bytes, channels, config.near_lossless_bits);
+        nl_bytes =
+            crate::optimize::near_lossless_quantize(bytes, channels, config.near_lossless_bits);
         &nl_bytes
     } else {
         bytes
@@ -325,12 +326,8 @@ pub(crate) fn encode_raw(
 
     // Auto-optimize color type and bit depth
     let optimization = match (color_type, bit_depth) {
-        (ColorType::Rgba, BitDepth::Eight) => {
-            crate::optimize::optimize_rgba8(bytes, w, h)
-        }
-        (ColorType::Rgb, BitDepth::Eight) => {
-            crate::optimize::optimize_rgb8(bytes, w, h)
-        }
+        (ColorType::Rgba, BitDepth::Eight) => crate::optimize::optimize_rgba8(bytes, w, h),
+        (ColorType::Rgb, BitDepth::Eight) => crate::optimize::optimize_rgb8(bytes, w, h),
         (_, BitDepth::Sixteen) => {
             crate::optimize::optimize_16bit(bytes, w, h, color_type.to_png_byte())
         }
@@ -485,16 +482,14 @@ fn encode_raw_with_stats(
                 }
             }
         }
-        (ColorType::Rgb, BitDepth::Eight) => {
-            match crate::optimize::optimize_rgb8(bytes, w, h) {
-                crate::optimize::OptimalEncoding::Truecolor {
-                    bytes: ob,
-                    color_type: ct,
-                    bit_depth: bd,
-                } => (Some(ob), ct, bd),
-                _ => (None, color_type.to_png_byte(), bit_depth.to_png_byte()),
-            }
-        }
+        (ColorType::Rgb, BitDepth::Eight) => match crate::optimize::optimize_rgb8(bytes, w, h) {
+            crate::optimize::OptimalEncoding::Truecolor {
+                bytes: ob,
+                color_type: ct,
+                bit_depth: bd,
+            } => (Some(ob), ct, bd),
+            _ => (None, color_type.to_png_byte(), bit_depth.to_png_byte()),
+        },
         (_, BitDepth::Sixteen) => {
             match crate::optimize::optimize_16bit(bytes, w, h, color_type.to_png_byte()) {
                 crate::optimize::OptimalEncoding::Truecolor {

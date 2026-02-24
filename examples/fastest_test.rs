@@ -23,8 +23,7 @@ fn main() {
         "/home/lilith/work/codec-corpus/qoi-benchmark/screenshot_web/reddit.com.png".to_string()
     });
     let source = std::fs::read(&path).expect("read");
-    let decoded =
-        zenpng::decode(&source, &zenpng::PngDecodeConfig::none(), &Unstoppable).unwrap();
+    let decoded = zenpng::decode(&source, &zenpng::PngDecodeConfig::none(), &Unstoppable).unwrap();
 
     let (w, h) = (decoded.info.width, decoded.info.height);
     let bpp_label = match &decoded.pixels {
@@ -69,7 +68,10 @@ fn main() {
         });
         println!(
             "{:<14} {:>8.1}ms  {:.2}M  ({:.0} MB/s)",
-            "farbfeld", ms, size as f64 / 1e6, raw as f64 / ms / 1000.0
+            "farbfeld",
+            ms,
+            size as f64 / 1e6,
+            raw as f64 / ms / 1000.0
         );
     }
 
@@ -82,7 +84,10 @@ fn main() {
         });
         println!(
             "{:<14} {:>8.1}ms  {:.2}M  ({:.0} MB/s)",
-            "memcpy", ms, pixel_bytes.len() as f64 / 1e6, raw as f64 / ms / 1000.0
+            "memcpy",
+            ms,
+            pixel_bytes.len() as f64 / 1e6,
+            raw as f64 / ms / 1000.0
         );
     }
 
@@ -153,7 +158,9 @@ fn main() {
         });
         println!(
             "{:<14} {:>8.1}ms  ({:.0} MB/s)",
-            "zenpng", ms, raw as f64 / ms / 1000.0
+            "zenpng",
+            ms,
+            raw as f64 / ms / 1000.0
         );
     }
 
@@ -167,7 +174,9 @@ fn main() {
         });
         println!(
             "{:<14} {:>8.1}ms  ({:.0} MB/s)",
-            "png", ms, raw as f64 / ms / 1000.0
+            "png",
+            ms,
+            raw as f64 / ms / 1000.0
         );
     }
 
@@ -204,7 +213,9 @@ fn main() {
         });
         println!(
             "{:<14} {:>8.1}ms  ({:.0} MB/s)",
-            "zenpng", ms, raw as f64 / ms / 1000.0
+            "zenpng",
+            ms,
+            raw as f64 / ms / 1000.0
         );
     }
 
@@ -217,7 +228,9 @@ fn main() {
         });
         println!(
             "{:<14} {:>8.1}ms  ({:.0} MB/s)",
-            "zenpng-lenient", ms, raw as f64 / ms / 1000.0
+            "zenpng-lenient",
+            ms,
+            raw as f64 / ms / 1000.0
         );
     }
 
@@ -232,7 +245,9 @@ fn main() {
         });
         println!(
             "{:<14} {:>8.1}ms  ({:.0} MB/s)",
-            "png", ms, raw as f64 / ms / 1000.0
+            "png",
+            ms,
+            raw as f64 / ms / 1000.0
         );
     }
 
@@ -244,7 +259,9 @@ fn main() {
         });
         println!(
             "{:<14} {:>8.1}ms  ({:.0} MB/s)",
-            "lodepng", ms, raw as f64 / ms / 1000.0
+            "lodepng",
+            ms,
+            raw as f64 / ms / 1000.0
         );
     }
 
@@ -262,7 +279,9 @@ fn main() {
         });
         println!(
             "{:<14} {:>8.1}ms  ({:.0} MB/s)",
-            "zenpng", ms, raw as f64 / ms / 1000.0
+            "zenpng",
+            ms,
+            raw as f64 / ms / 1000.0
         );
     }
 
@@ -274,7 +293,9 @@ fn main() {
         });
         println!(
             "{:<14} {:>8.1}ms  ({:.0} MB/s)",
-            "zenpng-lenient", ms, raw as f64 / ms / 1000.0
+            "zenpng-lenient",
+            ms,
+            raw as f64 / ms / 1000.0
         );
     }
 
@@ -288,7 +309,9 @@ fn main() {
         });
         println!(
             "{:<14} {:>8.1}ms  ({:.0} MB/s)",
-            "png", ms, raw as f64 / ms / 1000.0
+            "png",
+            ms,
+            raw as f64 / ms / 1000.0
         );
     }
 
@@ -299,7 +322,9 @@ fn main() {
         });
         println!(
             "{:<14} {:>8.1}ms  ({:.0} MB/s)",
-            "lodepng", ms, raw as f64 / ms / 1000.0
+            "lodepng",
+            ms,
+            raw as f64 / ms / 1000.0
         );
     }
 }
