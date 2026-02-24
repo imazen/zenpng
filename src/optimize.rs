@@ -540,12 +540,13 @@ pub(crate) fn optimize_rgba8(bytes: &[u8], width: usize, height: usize) -> Optim
             // Sub-byte gray + tRNS
             let tc = analysis.transparent_color.unwrap();
             let gray_val = tc[0]; // R==G==B for grayscale
-            let scaled_val = gray_val / match bd {
-                1 => 255,
-                2 => 85,
-                4 => 17,
-                _ => 1,
-            };
+            let scaled_val = gray_val
+                / match bd {
+                    1 => 255,
+                    2 => 85,
+                    4 => 17,
+                    _ => 1,
+                };
             // Strip alpha, keep only opaque + transparent pixels
             let scaled = gray8_to_subbyte(&gray8, bd);
             return OptimalEncoding::Truecolor {

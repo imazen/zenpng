@@ -30,10 +30,16 @@ struct DeltaRegion {
     height: u32,
 }
 
-/// Find the bounding box of differing pixels between two canvas-sized RGBA8 frames.
+/// Find the bounding box of differing pixels between two canvas-sized frames.
 ///
 /// Returns `None` if the frames are identical.
-fn compute_delta_region(prev: &[u8], curr: &[u8], w: u32, h: u32) -> Option<DeltaRegion> {
+fn compute_delta_region(
+    prev: &[u8],
+    curr: &[u8],
+    w: u32,
+    h: u32,
+    bpp: usize,
+) -> Option<DeltaRegion> {
     let w = w as usize;
     let h = h as usize;
     let mut min_x = w;
@@ -42,10 +48,10 @@ fn compute_delta_region(prev: &[u8], curr: &[u8], w: u32, h: u32) -> Option<Delt
     let mut max_y = 0usize;
 
     for y in 0..h {
-        let row_start = y * w * 4;
+        let row_start = y * w * bpp;
         for x in 0..w {
-            let off = row_start + x * 4;
-            if prev[off..off + 4] != curr[off..off + 4] {
+            let off = row_start + x * bpp;
+            if prev[off..off + bpp] != curr[off..off + bpp] {
                 min_x = min_x.min(x);
                 max_x = max_x.max(x);
                 min_y = min_y.min(y);
@@ -66,18 +72,18 @@ fn compute_delta_region(prev: &[u8], curr: &[u8], w: u32, h: u32) -> Option<Delt
     })
 }
 
-/// Extract a rectangular subregion from a canvas-sized RGBA8 buffer.
-fn extract_subframe(pixels: &[u8], canvas_w: u32, region: &DeltaRegion) -> Vec<u8> {
+/// Extract a rectangular subregion from a canvas-sized buffer.
+fn extract_subframe(pixels: &[u8], canvas_w: u32, region: &DeltaRegion, bpp: usize) -> Vec<u8> {
     let canvas_w = canvas_w as usize;
     let rw = region.width as usize;
     let rh = region.height as usize;
     let rx = region.x as usize;
     let ry = region.y as usize;
 
-    let mut out = Vec::with_capacity(rw * rh * 4);
+    let mut out = Vec::with_capacity(rw * rh * bpp);
     for y in ry..ry + rh {
-        let row_start = (y * canvas_w + rx) * 4;
-        out.extend_from_slice(&pixels[row_start..row_start + rw * 4]);
+        let row_start = (y * canvas_w + rx) * bpp;
+        out.extend_from_slice(&pixels[row_start..row_start + rw * bpp]);
     }
     out
 }
@@ -121,13 +127,19 @@ fn trial_compress_size(
 /// - target alpha == 255 (OVER with opaque source replaces entirely), OR
 /// - canvas alpha == 0 (OVER onto transparent canvas = direct placement)
 ///
-/// Returns false if any changed pixel violates this condition.
+/// For RGB (bpp=3): always returns false — OVER requires alpha to be useful.
 fn can_use_over_truecolor(
     target: &[u8],
     canvas: &[u8],
     canvas_w: usize,
     region: &DeltaRegion,
+    bpp: usize,
 ) -> bool {
+    // OVER blend requires alpha channel
+    if bpp != 4 {
+        return false;
+    }
+
     let rx = region.x as usize;
     let ry = region.y as usize;
     let rw = region.width as usize;
@@ -427,16 +439,18 @@ fn minimal_subframe(target: &[u8], bpp: usize) -> (DeltaRegion, Vec<u8>) {
 /// Uses greedy 1-step lookahead: for each frame, picks the (dispose, blend) combo
 /// that minimizes current_size + next_frame_best_size.
 ///
-/// Returns optimized frame data with chosen dispose_op/blend_op per frame.
+/// `frame_data` is the pixel data for each frame (may be RGBA or RGB, depending on bpp).
+/// `bpp` is 4 for RGBA or 3 for RGB.
 fn optimize_apng_truecolor(
     frames: &[ApngFrameInput<'_>],
+    frame_data: &[&[u8]],
     canvas_w: u32,
     canvas_h: u32,
+    bpp: usize,
     cancel: &dyn Stop,
 ) -> Result<Vec<OptimizedFrame>, PngError> {
     let w = canvas_w as usize;
     let h = canvas_h as usize;
-    let bpp = 4usize;
     let npx = w * h;
 
     let mut optimized = Vec::with_capacity(frames.len());
@@ -445,7 +459,7 @@ fn optimize_apng_truecolor(
     for i in 0..frames.len() {
         cancel.check()?;
 
-        let target = frames[i].pixels;
+        let target = frame_data[i];
 
         // Frame 0 always uses full canvas as its region (IDAT constraint).
         // For frames 1+, compute delta region normally.
@@ -468,18 +482,30 @@ fn optimize_apng_truecolor(
 
             // Composite frame 0 onto canvas
             canvas.copy_from_slice(&target[..npx * bpp]);
-            // Zero RGB of alpha=0 pixels to match compress_filtered behavior
-            zero_transparent_rgb_region(&mut canvas, w, &full_region);
+            // Zero RGB of alpha=0 pixels to match compress_filtered behavior (RGBA only)
+            if bpp == 4 {
+                zero_transparent_rgb_region(&mut canvas, w, &full_region);
+            }
 
             // Choose dispose via lookahead (if not last frame)
             let best_dispose = if frames.len() == 1 {
                 DISPOSE_NONE
             } else {
-                let next_target = frames[1].pixels;
+                let next_target = frame_data[1];
                 let mut best_dispose = DISPOSE_NONE;
                 let mut best_total = usize::MAX;
 
-                for d in [DISPOSE_NONE, DISPOSE_BG, DISPOSE_PREV] {
+                // DISPOSE_BG clears to fully transparent black per APNG spec.
+                // DISPOSE_PREV on frame 0 restores the initial transparent canvas.
+                // For RGB (bpp=3) there's no alpha channel, so either operation
+                // creates transparent regions the decoder can't represent correctly.
+                // Frame 0 can only safely use DISPOSE_NONE for non-RGBA color types.
+                let dispose_ops: &[u8] = if bpp == 4 {
+                    &[DISPOSE_NONE, DISPOSE_BG, DISPOSE_PREV]
+                } else {
+                    &[DISPOSE_NONE]
+                };
+                for &d in dispose_ops {
                     let lookahead_canvas =
                         apply_dispose_copy(&canvas, w, &full_region, d, bpp, Some(&pre_composite));
 
@@ -516,13 +542,13 @@ fn optimize_apng_truecolor(
                 dispose_op: best_dispose,
                 blend_op: BLEND_SOURCE,
                 region: full_region,
-                subframe: Vec::new(), // frame 0 uses frame.pixels directly
+                subframe: Vec::new(), // frame 0 uses frame_data directly
             });
             continue;
         }
 
         // Frames 1+: compute delta region
-        let source_region = compute_delta_region(&canvas, target, canvas_w, canvas_h);
+        let source_region = compute_delta_region(&canvas, target, canvas_w, canvas_h, bpp);
 
         if source_region.is_none() {
             // Identical frame: minimal 1×1, no optimization needed
@@ -540,7 +566,7 @@ fn optimize_apng_truecolor(
         let source_region = source_region.unwrap();
 
         // Build SOURCE subframe
-        let source_sub = extract_subframe(target, canvas_w, &source_region);
+        let source_sub = extract_subframe(target, canvas_w, &source_region, bpp);
 
         // Trial compress SOURCE
         let source_row_bytes = source_region.width as usize * bpp;
@@ -550,7 +576,7 @@ fn optimize_apng_truecolor(
 
         // Try OVER only if all changed pixels can be correctly represented
         let (best_blend, best_blend_size, best_sub) =
-            if can_use_over_truecolor(target, &canvas, w, &source_region) {
+            if can_use_over_truecolor(target, &canvas, w, &source_region, bpp) {
                 let over_sub = build_over_subframe(target, &canvas, w, &source_region, bpp);
                 let over_size =
                     trial_compress_size(&over_sub, source_row_bytes, source_height, bpp, cancel)?;
@@ -568,18 +594,25 @@ fn optimize_apng_truecolor(
 
         // Composite frame onto canvas (blit target pixels into canvas)
         blit_region(&mut canvas, target, w, &source_region, bpp);
-        // Zero RGB of alpha=0 pixels to match compress_filtered behavior
-        zero_transparent_rgb_region(&mut canvas, w, &source_region);
+        // Zero RGB of alpha=0 pixels to match compress_filtered behavior (RGBA only)
+        if bpp == 4 {
+            zero_transparent_rgb_region(&mut canvas, w, &source_region);
+        }
 
         // Choose dispose via lookahead (except last frame)
         let best_dispose = if i == frames.len() - 1 {
             DISPOSE_NONE
         } else {
-            let next_target = frames[i + 1].pixels;
+            let next_target = frame_data[i + 1];
             let mut best_dispose = DISPOSE_NONE;
             let mut best_total = usize::MAX;
 
-            for d in [DISPOSE_NONE, DISPOSE_BG, DISPOSE_PREV] {
+            let dispose_ops: &[u8] = if bpp == 4 {
+                &[DISPOSE_NONE, DISPOSE_BG, DISPOSE_PREV]
+            } else {
+                &[DISPOSE_NONE, DISPOSE_PREV]
+            };
+            for &d in dispose_ops {
                 let lookahead_canvas =
                     apply_dispose_copy(&canvas, w, &source_region, d, bpp, Some(&pre_composite));
 
@@ -635,7 +668,7 @@ fn lookahead_next_frame_size(
     bpp: usize,
     cancel: &dyn Stop,
 ) -> Result<usize, PngError> {
-    let next_region = compute_delta_region(canvas, next_target, canvas_w, canvas_h);
+    let next_region = compute_delta_region(canvas, next_target, canvas_w, canvas_h, bpp);
 
     if next_region.is_none() {
         // Identical: minimal frame, ~20 bytes compressed
@@ -647,11 +680,11 @@ fn lookahead_next_frame_size(
     let height = next_region.height as usize;
 
     // SOURCE
-    let next_source = extract_subframe(next_target, canvas_w, &next_region);
+    let next_source = extract_subframe(next_target, canvas_w, &next_region, bpp);
     let source_size = trial_compress_size(&next_source, row_bytes, height, bpp, cancel)?;
 
     // OVER (only if safe)
-    if can_use_over_truecolor(next_target, canvas, w, &next_region) {
+    if can_use_over_truecolor(next_target, canvas, w, &next_region, bpp) {
         let next_over = build_over_subframe(next_target, canvas, w, &next_region, bpp);
         let over_size = trial_compress_size(&next_over, row_bytes, height, bpp, cancel)?;
         Ok(source_size.min(over_size))
@@ -967,8 +1000,23 @@ impl SeqCounter {
 
 // ── Truecolor APNG encode ───────────────────────────────────────────
 
+/// Check if all RGBA8 frames are fully opaque (all alpha == 255).
+///
+/// When true, we can encode as RGB (color_type=2, bpp=3) for 25% raw savings.
+fn all_frames_opaque(frames: &[ApngFrameInput<'_>], expected_len: usize) -> bool {
+    for frame in frames {
+        for chunk in frame.pixels[..expected_len].chunks_exact(4) {
+            if chunk[3] != 255 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// Encode canvas-sized RGBA8 frames into a truecolor APNG file.
 ///
+/// Automatically detects fully opaque animations and encodes as RGB (25% savings).
 /// When effort > 2 and there are multiple frames, runs 6-way dispose/blend
 /// optimization to find the best per-frame combination, then compresses each
 /// optimized subframe at the target effort level.
@@ -984,15 +1032,33 @@ pub(crate) fn encode_apng_truecolor(
     deadline: &dyn Stop,
 ) -> Result<Vec<u8>, PngError> {
     let num_frames = frames.len() as u32;
-    let bpp = 4usize; // RGBA8
+    let expected_rgba = canvas_width as usize * canvas_height as usize * 4;
+
+    // Detect all-opaque → use RGB (color_type=2, bpp=3, 25% raw savings)
+    let is_opaque = all_frames_opaque(frames, expected_rgba);
+    let (bpp, color_type): (usize, u8) = if is_opaque { (3, 2) } else { (4, 6) };
+
+    // Convert frames to RGB if opaque
+    let rgb_frames: Vec<Vec<u8>>;
+    let frame_data: Vec<&[u8]> = if is_opaque {
+        rgb_frames = frames
+            .iter()
+            .map(|f| crate::optimize::rgba8_to_rgb8(&f.pixels[..expected_rgba]))
+            .collect();
+        rgb_frames.iter().map(|v| v.as_slice()).collect()
+    } else {
+        frames.iter().map(|f| &f.pixels[..expected_rgba]).collect()
+    };
 
     // Run optimizer when effort > 2 and >1 frame (otherwise trial = final, no benefit)
     let use_optimizer = effort > 2 && frames.len() > 1;
     let optimized = if use_optimizer {
         Some(optimize_apng_truecolor(
             frames,
+            &frame_data,
             canvas_width,
             canvas_height,
+            bpp,
             cancel,
         )?)
     } else {
@@ -1000,7 +1066,7 @@ pub(crate) fn encode_apng_truecolor(
     };
 
     // Estimate output size
-    let frame_size_est = canvas_width as usize * canvas_height as usize * 4;
+    let frame_size_est = canvas_width as usize * canvas_height as usize * bpp;
     let est = 8 + 25 + 20 + 38 + frame_size_est + metadata_size_estimate(write_meta);
     let mut out = Vec::with_capacity(est);
     let mut seq = SeqCounter::new();
@@ -1008,12 +1074,12 @@ pub(crate) fn encode_apng_truecolor(
     // PNG signature
     out.extend_from_slice(&PNG_SIGNATURE);
 
-    // IHDR: canvas dimensions, 8-bit RGBA
+    // IHDR: canvas dimensions, detected color type
     let mut ihdr = [0u8; 13];
     ihdr[0..4].copy_from_slice(&canvas_width.to_be_bytes());
     ihdr[4..8].copy_from_slice(&canvas_height.to_be_bytes());
     ihdr[8] = 8; // bit depth
-    ihdr[9] = 6; // color type: RGBA
+    ihdr[9] = color_type;
     write_chunk(&mut out, b"IHDR", &ihdr);
 
     // Metadata chunks (before IDAT)
@@ -1059,7 +1125,7 @@ pub(crate) fn encode_apng_truecolor(
             let sub_height = region_h as usize;
             let sub_data = if i == 0 {
                 // Frame 0 always uses full canvas pixels
-                frame.pixels
+                frame_data[0]
             } else {
                 &opt.subframe
             };
@@ -1107,21 +1173,21 @@ pub(crate) fn encode_apng_truecolor(
             remaining_ns: None,
         };
         let compressed0 =
-            compress_filtered(frame0.pixels, row_bytes, height, bpp, effort, opts, None)?;
+            compress_filtered(frame_data[0], row_bytes, height, bpp, effort, opts, None)?;
         write_chunk(&mut out, b"IDAT", &compressed0);
 
         // Frames 1+: fcTL + fdAT with delta regions
         for i in 1..frames.len() {
             cancel.check()?;
 
-            let prev = frames[i - 1].pixels;
-            let curr = frames[i].pixels;
+            let prev = frame_data[i - 1];
+            let curr = frame_data[i];
             let frame = &frames[i];
 
             let (region, subframe) =
-                match compute_delta_region(prev, curr, canvas_width, canvas_height) {
+                match compute_delta_region(prev, curr, canvas_width, canvas_height, bpp) {
                     Some(region) => {
-                        let sub = extract_subframe(curr, canvas_width, &region);
+                        let sub = extract_subframe(curr, canvas_width, &region, bpp);
                         (region, sub)
                     }
                     None => {
@@ -1485,7 +1551,7 @@ mod tests {
         let off2 = ((2 * w + 2) * 4) as usize;
         curr[off2] = 128;
 
-        let region = compute_delta_region(&prev, &curr, w, h).unwrap();
+        let region = compute_delta_region(&prev, &curr, w, h, 4).unwrap();
         assert_eq!(region.x, 1);
         assert_eq!(region.y, 1);
         assert_eq!(region.width, 2);
@@ -1497,7 +1563,7 @@ mod tests {
         let w = 4u32;
         let h = 4u32;
         let frame = vec![42u8; (w * h * 4) as usize];
-        assert!(compute_delta_region(&frame, &frame, w, h).is_none());
+        assert!(compute_delta_region(&frame, &frame, w, h, 4).is_none());
     }
 
     #[test]
@@ -1522,7 +1588,7 @@ mod tests {
             width: 2,
             height: 2,
         };
-        let sub = extract_subframe(&pixels, w, &region);
+        let sub = extract_subframe(&pixels, w, &region, 4);
         assert_eq!(sub.len(), 2 * 2 * 4);
         assert_eq!(&sub[0..4], &[1, 2, 3, 4]);
         assert_eq!(&sub[4..8], &[5, 6, 7, 8]);

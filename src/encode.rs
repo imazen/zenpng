@@ -479,11 +479,19 @@ fn encode_raw_with_stats(
                 } => (Some(ob), ct, bd, trns),
                 crate::optimize::OptimalEncoding::Indexed { .. } => {
                     // Stats path doesn't support indexed; fall through to truecolor
-                    (None, color_type.to_png_byte(), bit_depth.to_png_byte(), None)
+                    (
+                        None,
+                        color_type.to_png_byte(),
+                        bit_depth.to_png_byte(),
+                        None,
+                    )
                 }
-                crate::optimize::OptimalEncoding::Original => {
-                    (None, color_type.to_png_byte(), bit_depth.to_png_byte(), None)
-                }
+                crate::optimize::OptimalEncoding::Original => (
+                    None,
+                    color_type.to_png_byte(),
+                    bit_depth.to_png_byte(),
+                    None,
+                ),
             }
         }
         (ColorType::Rgb, BitDepth::Eight) => match crate::optimize::optimize_rgb8(bytes, w, h) {
@@ -493,7 +501,12 @@ fn encode_raw_with_stats(
                 bit_depth: bd,
                 trns,
             } => (Some(ob), ct, bd, trns),
-            _ => (None, color_type.to_png_byte(), bit_depth.to_png_byte(), None),
+            _ => (
+                None,
+                color_type.to_png_byte(),
+                bit_depth.to_png_byte(),
+                None,
+            ),
         },
         (_, BitDepth::Sixteen) => {
             match crate::optimize::optimize_16bit(bytes, w, h, color_type.to_png_byte()) {
@@ -503,10 +516,20 @@ fn encode_raw_with_stats(
                     bit_depth: bd,
                     trns,
                 } => (Some(ob), ct, bd, trns),
-                _ => (None, color_type.to_png_byte(), bit_depth.to_png_byte(), None),
+                _ => (
+                    None,
+                    color_type.to_png_byte(),
+                    bit_depth.to_png_byte(),
+                    None,
+                ),
             }
         }
-        _ => (None, color_type.to_png_byte(), bit_depth.to_png_byte(), None),
+        _ => (
+            None,
+            color_type.to_png_byte(),
+            bit_depth.to_png_byte(),
+            None,
+        ),
     };
 
     let pixel_data = eff_bytes.as_deref().unwrap_or(bytes);
