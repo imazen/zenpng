@@ -13,6 +13,13 @@ use crate::error::PngError;
 use super::CompressOptions;
 use super::compress::compress_filtered;
 
+// APNG dispose/blend operation constants
+const DISPOSE_NONE: u8 = 0;
+const DISPOSE_BG: u8 = 1;
+const DISPOSE_PREV: u8 = 2;
+const BLEND_SOURCE: u8 = 0;
+const BLEND_OVER: u8 = 1;
+
 // ── Delta region computation ────────────────────────────────────────
 
 /// Bounding box of pixels that differ between two frames.
@@ -73,6 +80,851 @@ fn extract_subframe(pixels: &[u8], canvas_w: u32, region: &DeltaRegion) -> Vec<u
         out.extend_from_slice(&pixels[row_start..row_start + rw * 4]);
     }
     out
+}
+
+// ── 6-way dispose/blend optimization ─────────────────────────────────
+
+/// Result of per-frame dispose/blend optimization.
+struct OptimizedFrame {
+    dispose_op: u8,
+    blend_op: u8,
+    region: DeltaRegion,
+    /// Pre-filtered subframe data (raw pixels, not yet PNG-compressed).
+    subframe: Vec<u8>,
+}
+
+/// Trial-compress a subframe at effort 2 (Paeth + Turbo), return compressed size.
+///
+/// Used for comparing dispose/blend candidates cheaply. The compressed data is
+/// discarded — only the size matters for the comparison.
+fn trial_compress_size(
+    subframe: &[u8],
+    row_bytes: usize,
+    height: usize,
+    bpp: usize,
+    cancel: &dyn Stop,
+) -> Result<usize, PngError> {
+    let opts = CompressOptions {
+        parallel: false,
+        cancel,
+        deadline: &enough::Unstoppable,
+        remaining_ns: None,
+    };
+    let compressed = compress_filtered(subframe, row_bytes, height, bpp, 2, opts, None)?;
+    Ok(compressed.len())
+}
+
+/// Check if BLEND_OP_OVER can correctly represent all changed pixels in a region.
+///
+/// OVER alpha-composites the subframe onto the canvas. For a changed pixel, writing
+/// the target value via OVER only produces the correct result when:
+/// - target alpha == 255 (OVER with opaque source replaces entirely), OR
+/// - canvas alpha == 0 (OVER onto transparent canvas = direct placement)
+///
+/// Returns false if any changed pixel violates this condition.
+fn can_use_over_truecolor(
+    target: &[u8],
+    canvas: &[u8],
+    canvas_w: usize,
+    region: &DeltaRegion,
+) -> bool {
+    let rx = region.x as usize;
+    let ry = region.y as usize;
+    let rw = region.width as usize;
+    let rh = region.height as usize;
+
+    for dy in 0..rh {
+        let y = ry + dy;
+        for dx in 0..rw {
+            let x = rx + dx;
+            let off = (y * canvas_w + x) * 4;
+            let target_px = &target[off..off + 4];
+            let canvas_px = &canvas[off..off + 4];
+
+            if target_px != canvas_px {
+                // Changed pixel: check if OVER can reproduce it
+                if target_px[3] < 255 && canvas_px[3] > 0 {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Build an OVER subframe for truecolor RGBA8.
+///
+/// For BLEND_OP_OVER, unchanged pixels MUST be `[0,0,0,0]` (transparent) so that
+/// alpha compositing produces a no-op for those pixels. Changed pixels use their
+/// actual target values.
+///
+/// Caller must verify `can_use_over_truecolor()` first.
+fn build_over_subframe(
+    target: &[u8],
+    canvas: &[u8],
+    canvas_w: usize,
+    region: &DeltaRegion,
+    bpp: usize,
+) -> Vec<u8> {
+    let rw = region.width as usize;
+    let rh = region.height as usize;
+    let rx = region.x as usize;
+    let ry = region.y as usize;
+
+    let mut result = Vec::with_capacity(rw * rh * bpp);
+
+    for dy in 0..rh {
+        let y = ry + dy;
+        for dx in 0..rw {
+            let x = rx + dx;
+            let off = (y * canvas_w + x) * bpp;
+
+            let target_px = &target[off..off + bpp];
+            let canvas_px = &canvas[off..off + bpp];
+
+            if target_px == canvas_px {
+                // Unchanged: must be transparent for OVER no-op
+                result.extend_from_slice(&[0u8; 4][..bpp]);
+            } else {
+                result.extend_from_slice(target_px);
+            }
+        }
+    }
+
+    result
+}
+
+/// Check if BLEND_OP_OVER can correctly represent all changed pixels for indexed color.
+///
+/// For indexed OVER, writing target_idx composites palette[target_idx] onto the canvas.
+/// This is correct only when palette[target_idx].alpha == 255 (opaque, replaces entirely)
+/// OR when the canvas pixel's palette entry has alpha == 0 (transparent canvas).
+///
+/// Since indexed canvas tracking is by index, we check palette alpha of the target index
+/// and whether the canvas index maps to a transparent palette entry.
+#[cfg(feature = "quantize")]
+fn can_use_over_indexed(
+    target_indices: &[u8],
+    canvas_indices: &[u8],
+    canvas_w: usize,
+    region: &DeltaRegion,
+    palette_rgba: &[[u8; 4]],
+) -> bool {
+    let rx = region.x as usize;
+    let ry = region.y as usize;
+    let rw = region.width as usize;
+    let rh = region.height as usize;
+
+    for dy in 0..rh {
+        let y = ry + dy;
+        for dx in 0..rw {
+            let x = rx + dx;
+            let off = y * canvas_w + x;
+            if target_indices[off] != canvas_indices[off] {
+                let target_alpha = palette_rgba[target_indices[off] as usize][3];
+                let canvas_alpha = palette_rgba[canvas_indices[off] as usize][3];
+                if target_alpha < 255 && canvas_alpha > 0 {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Build an OVER subframe for indexed color.
+///
+/// Unchanged pixels use `transparent_idx` so OVER compositing is a no-op.
+/// Changed pixels use their actual target index.
+///
+/// Caller must verify `can_use_over_indexed()` first.
+#[cfg(feature = "quantize")]
+fn build_over_subframe_indexed(
+    target_indices: &[u8],
+    canvas_indices: &[u8],
+    canvas_w: usize,
+    region: &DeltaRegion,
+    transparent_idx: u8,
+) -> Vec<u8> {
+    let rw = region.width as usize;
+    let rh = region.height as usize;
+    let rx = region.x as usize;
+    let ry = region.y as usize;
+
+    let mut result = Vec::with_capacity(rw * rh);
+
+    for dy in 0..rh {
+        let y = ry + dy;
+        for dx in 0..rw {
+            let x = rx + dx;
+            let off = y * canvas_w + x;
+
+            if target_indices[off] == canvas_indices[off] {
+                result.push(transparent_idx);
+            } else {
+                result.push(target_indices[off]);
+            }
+        }
+    }
+
+    result
+}
+
+/// Apply a dispose operation to the canvas in place.
+///
+/// - DISPOSE_NONE: no-op (canvas already has the composited result)
+/// - DISPOSE_BG: fill the region with transparent black `[0,0,0,0]`
+/// - DISPOSE_PREV: copy the saved pre-composite region back
+fn apply_dispose_in_place(
+    canvas: &mut [u8],
+    canvas_w: usize,
+    region: &DeltaRegion,
+    dispose_op: u8,
+    bpp: usize,
+    pre_composite: Option<&[u8]>,
+) {
+    match dispose_op {
+        DISPOSE_NONE => {} // no-op
+        DISPOSE_BG => {
+            let rx = region.x as usize;
+            let ry = region.y as usize;
+            let rw = region.width as usize;
+            let rh = region.height as usize;
+            for dy in 0..rh {
+                let y = ry + dy;
+                let start = (y * canvas_w + rx) * bpp;
+                let end = start + rw * bpp;
+                canvas[start..end].fill(0);
+            }
+        }
+        DISPOSE_PREV => {
+            if let Some(saved) = pre_composite {
+                let rx = region.x as usize;
+                let ry = region.y as usize;
+                let rw = region.width as usize;
+                let rh = region.height as usize;
+                for dy in 0..rh {
+                    let y = ry + dy;
+                    let canvas_start = (y * canvas_w + rx) * bpp;
+                    let saved_start = dy * rw * bpp;
+                    canvas[canvas_start..canvas_start + rw * bpp]
+                        .copy_from_slice(&saved[saved_start..saved_start + rw * bpp]);
+                }
+            }
+        }
+        _ => {} // unknown dispose, treat as NONE
+    }
+}
+
+/// Save a rectangular region from the canvas (for DISPOSE_PREV).
+fn save_region(canvas: &[u8], canvas_w: usize, region: &DeltaRegion, bpp: usize) -> Vec<u8> {
+    let rx = region.x as usize;
+    let ry = region.y as usize;
+    let rw = region.width as usize;
+    let rh = region.height as usize;
+
+    let mut saved = Vec::with_capacity(rw * rh * bpp);
+    for dy in 0..rh {
+        let y = ry + dy;
+        let start = (y * canvas_w + rx) * bpp;
+        saved.extend_from_slice(&canvas[start..start + rw * bpp]);
+    }
+    saved
+}
+
+/// Copy a canvas and apply a dispose operation to the copy.
+/// Returns the modified copy (lookahead canvas).
+fn apply_dispose_copy(
+    canvas: &[u8],
+    canvas_w: usize,
+    region: &DeltaRegion,
+    dispose_op: u8,
+    bpp: usize,
+    pre_composite: Option<&[u8]>,
+) -> Vec<u8> {
+    let mut copy = canvas.to_vec();
+    apply_dispose_in_place(&mut copy, canvas_w, region, dispose_op, bpp, pre_composite);
+    copy
+}
+
+/// Blit (overwrite) the target frame's pixels into the canvas at the given region.
+fn blit_region(
+    canvas: &mut [u8],
+    target: &[u8],
+    canvas_w: usize,
+    region: &DeltaRegion,
+    bpp: usize,
+) {
+    let rx = region.x as usize;
+    let ry = region.y as usize;
+    let rw = region.width as usize;
+    let rh = region.height as usize;
+    for dy in 0..rh {
+        let y = ry + dy;
+        let start = (y * canvas_w + rx) * bpp;
+        canvas[start..start + rw * bpp].copy_from_slice(&target[start..start + rw * bpp]);
+    }
+}
+
+/// Zero RGB channels of fully-transparent (alpha=0) pixels in a canvas region.
+///
+/// This matches `compress_filtered()`'s transparent pixel zeroing behavior,
+/// keeping the optimizer's canvas consistent with the decoder's actual canvas
+/// state after decompressing and compositing encoded frame data.
+fn zero_transparent_rgb_region(
+    canvas: &mut [u8],
+    canvas_w: usize,
+    region: &DeltaRegion,
+) {
+    let rx = region.x as usize;
+    let ry = region.y as usize;
+    let rw = region.width as usize;
+    let rh = region.height as usize;
+
+    for dy in 0..rh {
+        let y = ry + dy;
+        let row_start = (y * canvas_w + rx) * 4;
+        for px in canvas[row_start..row_start + rw * 4].chunks_exact_mut(4) {
+            if px[3] == 0 {
+                px[0] = 0;
+                px[1] = 0;
+                px[2] = 0;
+            }
+        }
+    }
+}
+
+/// Build a minimal 1×1 subframe at (0,0) for identical frames.
+fn minimal_subframe(target: &[u8], bpp: usize) -> (DeltaRegion, Vec<u8>) {
+    let region = DeltaRegion {
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+    };
+    (region, target[..bpp].to_vec())
+}
+
+// ── Truecolor APNG optimization ──────────────────────────────────────
+
+/// Optimize APNG truecolor frames by evaluating all 6 dispose/blend combinations.
+///
+/// Uses greedy 1-step lookahead: for each frame, picks the (dispose, blend) combo
+/// that minimizes current_size + next_frame_best_size.
+///
+/// Returns optimized frame data with chosen dispose_op/blend_op per frame.
+fn optimize_apng_truecolor(
+    frames: &[ApngFrameInput<'_>],
+    canvas_w: u32,
+    canvas_h: u32,
+    cancel: &dyn Stop,
+) -> Result<Vec<OptimizedFrame>, PngError> {
+    let w = canvas_w as usize;
+    let h = canvas_h as usize;
+    let bpp = 4usize;
+    let npx = w * h;
+
+    let mut optimized = Vec::with_capacity(frames.len());
+    let mut canvas = vec![0u8; npx * bpp]; // transparent initial canvas
+
+    for i in 0..frames.len() {
+        cancel.check()?;
+
+        let target = frames[i].pixels;
+
+        // Frame 0 always uses full canvas as its region (IDAT constraint).
+        // For frames 1+, compute delta region normally.
+        if i == 0 {
+            let full_region = DeltaRegion {
+                x: 0,
+                y: 0,
+                width: canvas_w,
+                height: canvas_h,
+            };
+
+            // Frame 0: blend is always SOURCE (OVER on transparent canvas is equivalent
+            // but adds no compression benefit since all pixels are "changed")
+            // Trial-compress to get size for lookahead comparison
+            let row_bytes = w * bpp;
+            let best_blend_size = trial_compress_size(target, row_bytes, h, bpp, cancel)?;
+
+            // Save pre-composite (entire canvas = all zeros for frame 0)
+            let pre_composite = canvas.clone();
+
+            // Composite frame 0 onto canvas
+            canvas.copy_from_slice(&target[..npx * bpp]);
+            // Zero RGB of alpha=0 pixels to match compress_filtered behavior
+            zero_transparent_rgb_region(&mut canvas, w, &full_region);
+
+            // Choose dispose via lookahead (if not last frame)
+            let best_dispose = if frames.len() == 1 {
+                DISPOSE_NONE
+            } else {
+                let next_target = frames[1].pixels;
+                let mut best_dispose = DISPOSE_NONE;
+                let mut best_total = usize::MAX;
+
+                for d in [DISPOSE_NONE, DISPOSE_BG, DISPOSE_PREV] {
+                    let lookahead_canvas = apply_dispose_copy(
+                        &canvas,
+                        w,
+                        &full_region,
+                        d,
+                        bpp,
+                        Some(&pre_composite),
+                    );
+
+                    let next_size = lookahead_next_frame_size(
+                        &lookahead_canvas,
+                        next_target,
+                        canvas_w,
+                        canvas_h,
+                        w,
+                        bpp,
+                        cancel,
+                    )?;
+
+                    let total = best_blend_size + next_size;
+                    if total < best_total {
+                        best_total = total;
+                        best_dispose = d;
+                    }
+                }
+                best_dispose
+            };
+
+            // Apply chosen dispose
+            apply_dispose_in_place(
+                &mut canvas,
+                w,
+                &full_region,
+                best_dispose,
+                bpp,
+                Some(&pre_composite),
+            );
+
+            optimized.push(OptimizedFrame {
+                dispose_op: best_dispose,
+                blend_op: BLEND_SOURCE,
+                region: full_region,
+                subframe: Vec::new(), // frame 0 uses frame.pixels directly
+            });
+            continue;
+        }
+
+        // Frames 1+: compute delta region
+        let source_region = compute_delta_region(&canvas, target, canvas_w, canvas_h);
+
+        if source_region.is_none() {
+            // Identical frame: minimal 1×1, no optimization needed
+            let (region, sub) = minimal_subframe(target, bpp);
+            optimized.push(OptimizedFrame {
+                dispose_op: DISPOSE_NONE,
+                blend_op: BLEND_SOURCE,
+                region,
+                subframe: sub,
+            });
+            // Canvas unchanged
+            continue;
+        }
+
+        let source_region = source_region.unwrap();
+
+        // Build SOURCE subframe
+        let source_sub = extract_subframe(target, canvas_w, &source_region);
+
+        // Trial compress SOURCE
+        let source_row_bytes = source_region.width as usize * bpp;
+        let source_height = source_region.height as usize;
+        let source_size = trial_compress_size(
+            &source_sub,
+            source_row_bytes,
+            source_height,
+            bpp,
+            cancel,
+        )?;
+
+        // Try OVER only if all changed pixels can be correctly represented
+        let (best_blend, best_blend_size, best_sub) =
+            if can_use_over_truecolor(target, &canvas, w, &source_region) {
+                let over_sub = build_over_subframe(target, &canvas, w, &source_region, bpp);
+                let over_size = trial_compress_size(
+                    &over_sub,
+                    source_row_bytes,
+                    source_height,
+                    bpp,
+                    cancel,
+                )?;
+                if over_size < source_size {
+                    (BLEND_OVER, over_size, over_sub)
+                } else {
+                    (BLEND_SOURCE, source_size, source_sub)
+                }
+            } else {
+                (BLEND_SOURCE, source_size, source_sub)
+            };
+
+        // Save pre-composite region (for DISPOSE_PREV)
+        let pre_composite = save_region(&canvas, w, &source_region, bpp);
+
+        // Composite frame onto canvas (blit target pixels into canvas)
+        blit_region(&mut canvas, target, w, &source_region, bpp);
+        // Zero RGB of alpha=0 pixels to match compress_filtered behavior
+        zero_transparent_rgb_region(&mut canvas, w, &source_region);
+
+        // Choose dispose via lookahead (except last frame)
+        let best_dispose = if i == frames.len() - 1 {
+            DISPOSE_NONE
+        } else {
+            let next_target = frames[i + 1].pixels;
+            let mut best_dispose = DISPOSE_NONE;
+            let mut best_total = usize::MAX;
+
+            for d in [DISPOSE_NONE, DISPOSE_BG, DISPOSE_PREV] {
+                let lookahead_canvas = apply_dispose_copy(
+                    &canvas,
+                    w,
+                    &source_region,
+                    d,
+                    bpp,
+                    Some(&pre_composite),
+                );
+
+                let next_size = lookahead_next_frame_size(
+                    &lookahead_canvas,
+                    next_target,
+                    canvas_w,
+                    canvas_h,
+                    w,
+                    bpp,
+                    cancel,
+                )?;
+
+                let total = best_blend_size + next_size;
+                if total < best_total {
+                    best_total = total;
+                    best_dispose = d;
+                }
+            }
+            best_dispose
+        };
+
+        // Apply chosen dispose to canvas for next iteration
+        apply_dispose_in_place(
+            &mut canvas,
+            w,
+            &source_region,
+            best_dispose,
+            bpp,
+            Some(&pre_composite),
+        );
+
+        optimized.push(OptimizedFrame {
+            dispose_op: best_dispose,
+            blend_op: best_blend,
+            region: source_region,
+            subframe: best_sub,
+        });
+    }
+
+    Ok(optimized)
+}
+
+/// Compute the best trial-compressed size for the next frame against a given canvas.
+///
+/// Evaluates both SOURCE and OVER blend modes, returns the smaller size.
+fn lookahead_next_frame_size(
+    canvas: &[u8],
+    next_target: &[u8],
+    canvas_w: u32,
+    canvas_h: u32,
+    w: usize,
+    bpp: usize,
+    cancel: &dyn Stop,
+) -> Result<usize, PngError> {
+    let next_region = compute_delta_region(canvas, next_target, canvas_w, canvas_h);
+
+    if next_region.is_none() {
+        // Identical: minimal frame, ~20 bytes compressed
+        return Ok(20);
+    }
+
+    let next_region = next_region.unwrap();
+    let row_bytes = next_region.width as usize * bpp;
+    let height = next_region.height as usize;
+
+    // SOURCE
+    let next_source = extract_subframe(next_target, canvas_w, &next_region);
+    let source_size = trial_compress_size(&next_source, row_bytes, height, bpp, cancel)?;
+
+    // OVER (only if safe)
+    if can_use_over_truecolor(next_target, canvas, w, &next_region) {
+        let next_over = build_over_subframe(next_target, canvas, w, &next_region, bpp);
+        let over_size = trial_compress_size(&next_over, row_bytes, height, bpp, cancel)?;
+        Ok(source_size.min(over_size))
+    } else {
+        Ok(source_size)
+    }
+}
+
+// ── Indexed APNG optimization ────────────────────────────────────────
+
+/// Optimize APNG indexed frames by evaluating dispose/blend combinations.
+///
+/// If a transparent palette entry exists, evaluates all 6 combos (SOURCE + OVER).
+/// Otherwise, evaluates 3 dispose options with SOURCE only.
+#[cfg(feature = "quantize")]
+fn optimize_apng_indexed(
+    frame_indices: &[Vec<u8>],
+    palette_rgba: &[[u8; 4]],
+    canvas_w: u32,
+    canvas_h: u32,
+    cancel: &dyn Stop,
+) -> Result<Vec<OptimizedFrame>, PngError> {
+    let w = canvas_w as usize;
+    let h = canvas_h as usize;
+    let bpp = 1usize;
+    let npx = w * h;
+
+    // Find transparent palette entry (alpha == 0)
+    let transparent_idx = palette_rgba
+        .iter()
+        .position(|e| e[3] == 0)
+        .map(|i| i as u8);
+
+    let mut optimized = Vec::with_capacity(frame_indices.len());
+    let mut canvas = vec![0u8; npx]; // initial canvas (index 0)
+
+    for i in 0..frame_indices.len() {
+        cancel.check()?;
+
+        let target = &frame_indices[i];
+
+        // Frame 0: full canvas region, SOURCE only, just choose dispose
+        if i == 0 {
+            let full_region = DeltaRegion {
+                x: 0,
+                y: 0,
+                width: canvas_w,
+                height: canvas_h,
+            };
+
+            let row_bytes = w;
+            let best_blend_size =
+                trial_compress_size(target, row_bytes, h, bpp, cancel)?;
+
+            let pre_composite = canvas.clone();
+            canvas.copy_from_slice(&target[..npx]);
+
+            let best_dispose = if frame_indices.len() == 1 {
+                DISPOSE_NONE
+            } else {
+                let next_target = &frame_indices[1];
+                let mut best_dispose = DISPOSE_NONE;
+                let mut best_total = usize::MAX;
+
+                for d in [DISPOSE_NONE, DISPOSE_BG, DISPOSE_PREV] {
+                    let lookahead = apply_dispose_copy(
+                        &canvas,
+                        w,
+                        &full_region,
+                        d,
+                        bpp,
+                        Some(&pre_composite),
+                    );
+
+                    let next_size = lookahead_next_frame_size_indexed(
+                        &lookahead,
+                        next_target,
+                        canvas_w,
+                        canvas_h,
+                        w,
+                        transparent_idx,
+                        palette_rgba,
+                        cancel,
+                    )?;
+
+                    let total = best_blend_size + next_size;
+                    if total < best_total {
+                        best_total = total;
+                        best_dispose = d;
+                    }
+                }
+                best_dispose
+            };
+
+            apply_dispose_in_place(
+                &mut canvas,
+                w,
+                &full_region,
+                best_dispose,
+                bpp,
+                Some(&pre_composite),
+            );
+
+            optimized.push(OptimizedFrame {
+                dispose_op: best_dispose,
+                blend_op: BLEND_SOURCE,
+                region: full_region,
+                subframe: Vec::new(),
+            });
+            continue;
+        }
+
+        // Frames 1+
+        let source_region = compute_delta_region_indexed(&canvas, target, canvas_w, canvas_h);
+
+        if source_region.is_none() {
+            let region = DeltaRegion {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            };
+            optimized.push(OptimizedFrame {
+                dispose_op: DISPOSE_NONE,
+                blend_op: BLEND_SOURCE,
+                region,
+                subframe: vec![target[0]],
+            });
+            continue;
+        }
+
+        let source_region = source_region.unwrap();
+        let source_sub = extract_subframe_indexed(target, canvas_w, &source_region);
+        let row_bytes = source_region.width as usize;
+        let height = source_region.height as usize;
+
+        let source_size = trial_compress_size(&source_sub, row_bytes, height, bpp, cancel)?;
+
+        // OVER only possible with a transparent palette entry AND safe pixels
+        let (best_blend, best_blend_size, best_sub) = if let Some(tidx) = transparent_idx {
+            if can_use_over_indexed(target, &canvas, w, &source_region, palette_rgba) {
+                let over_sub =
+                    build_over_subframe_indexed(target, &canvas, w, &source_region, tidx);
+                let over_size =
+                    trial_compress_size(&over_sub, row_bytes, height, bpp, cancel)?;
+                if over_size < source_size {
+                    (BLEND_OVER, over_size, over_sub)
+                } else {
+                    (BLEND_SOURCE, source_size, source_sub)
+                }
+            } else {
+                (BLEND_SOURCE, source_size, source_sub)
+            }
+        } else {
+            (BLEND_SOURCE, source_size, source_sub)
+        };
+
+        // Save pre-composite (for DISPOSE_PREV)
+        let pre_composite = save_region(&canvas, w, &source_region, bpp);
+
+        // Blit target indices onto canvas
+        for dy in 0..source_region.height as usize {
+            let y = source_region.y as usize + dy;
+            for dx in 0..source_region.width as usize {
+                let x = source_region.x as usize + dx;
+                canvas[y * w + x] = target[y * w + x];
+            }
+        }
+
+        // Choose dispose via lookahead (except last frame)
+        let best_dispose = if i == frame_indices.len() - 1 {
+            DISPOSE_NONE
+        } else {
+            let next_target = &frame_indices[i + 1];
+            let mut best_dispose = DISPOSE_NONE;
+            let mut best_total = usize::MAX;
+
+            for d in [DISPOSE_NONE, DISPOSE_BG, DISPOSE_PREV] {
+                let lookahead = apply_dispose_copy(
+                    &canvas,
+                    w,
+                    &source_region,
+                    d,
+                    bpp,
+                    Some(&pre_composite),
+                );
+
+                let next_size = lookahead_next_frame_size_indexed(
+                    &lookahead,
+                    next_target,
+                    canvas_w,
+                    canvas_h,
+                    w,
+                    transparent_idx,
+                    palette_rgba,
+                    cancel,
+                )?;
+
+                let total = best_blend_size + next_size;
+                if total < best_total {
+                    best_total = total;
+                    best_dispose = d;
+                }
+            }
+            best_dispose
+        };
+
+        apply_dispose_in_place(
+            &mut canvas,
+            w,
+            &source_region,
+            best_dispose,
+            bpp,
+            Some(&pre_composite),
+        );
+
+        optimized.push(OptimizedFrame {
+            dispose_op: best_dispose,
+            blend_op: best_blend,
+            region: source_region,
+            subframe: best_sub,
+        });
+    }
+
+    Ok(optimized)
+}
+
+/// Compute the best trial-compressed size for the next indexed frame.
+#[cfg(feature = "quantize")]
+fn lookahead_next_frame_size_indexed(
+    canvas: &[u8],
+    next_target: &[u8],
+    canvas_w: u32,
+    canvas_h: u32,
+    w: usize,
+    transparent_idx: Option<u8>,
+    palette_rgba: &[[u8; 4]],
+    cancel: &dyn Stop,
+) -> Result<usize, PngError> {
+    let bpp = 1usize;
+    let next_region = compute_delta_region_indexed(canvas, next_target, canvas_w, canvas_h);
+
+    if next_region.is_none() {
+        return Ok(20);
+    }
+
+    let next_region = next_region.unwrap();
+    let row_bytes = next_region.width as usize;
+    let height = next_region.height as usize;
+
+    let next_source = extract_subframe_indexed(next_target, canvas_w, &next_region);
+    let source_size = trial_compress_size(&next_source, row_bytes, height, bpp, cancel)?;
+
+    if let Some(tidx) = transparent_idx {
+        if can_use_over_indexed(next_target, canvas, w, &next_region, palette_rgba) {
+            let next_over =
+                build_over_subframe_indexed(next_target, canvas, w, &next_region, tidx);
+            let over_size =
+                trial_compress_size(&next_over, row_bytes, height, bpp, cancel)?;
+            Ok(source_size.min(over_size))
+        } else {
+            Ok(source_size)
+        }
+    } else {
+        Ok(source_size)
+    }
 }
 
 // ── Chunk writing helpers ───────────────────────────────────────────
@@ -142,6 +994,10 @@ impl SeqCounter {
 // ── Truecolor APNG encode ───────────────────────────────────────────
 
 /// Encode canvas-sized RGBA8 frames into a truecolor APNG file.
+///
+/// When effort > 2 and there are multiple frames, runs 6-way dispose/blend
+/// optimization to find the best per-frame combination, then compresses each
+/// optimized subframe at the target effort level.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_apng_truecolor(
     frames: &[ApngFrameInput<'_>],
@@ -154,6 +1010,15 @@ pub(crate) fn encode_apng_truecolor(
     deadline: &dyn Stop,
 ) -> Result<Vec<u8>, PngError> {
     let num_frames = frames.len() as u32;
+    let bpp = 4usize; // RGBA8
+
+    // Run optimizer when effort > 2 and >1 frame (otherwise trial = final, no benefit)
+    let use_optimizer = effort > 2 && frames.len() > 1;
+    let optimized = if use_optimizer {
+        Some(optimize_apng_truecolor(frames, canvas_width, canvas_height, cancel)?)
+    } else {
+        None
+    };
 
     // Estimate output size
     let frame_size_est = canvas_width as usize * canvas_height as usize * 4;
@@ -168,8 +1033,8 @@ pub(crate) fn encode_apng_truecolor(
     let mut ihdr = [0u8; 13];
     ihdr[0..4].copy_from_slice(&canvas_width.to_be_bytes());
     ihdr[4..8].copy_from_slice(&canvas_height.to_be_bytes());
-    ihdr[8] = 8;  // bit depth
-    ihdr[9] = 6;  // color type: RGBA
+    ihdr[8] = 8; // bit depth
+    ihdr[9] = 6; // color type: RGBA
     write_chunk(&mut out, b"IHDR", &ihdr);
 
     // Metadata chunks (before IDAT)
@@ -178,103 +1043,151 @@ pub(crate) fn encode_apng_truecolor(
     // acTL
     write_actl(&mut out, num_frames, num_plays);
 
-    // Frame 0: fcTL + IDAT (full canvas)
-    let frame0 = &frames[0];
-    write_fctl(
-        &mut out,
-        seq.next(), // seq 0
-        canvas_width,
-        canvas_height,
-        0,
-        0,
-        frame0.delay_num,
-        frame0.delay_den,
-        0, // dispose_op = NONE
-        0, // blend_op = SOURCE
-    );
+    if let Some(ref opt_frames) = optimized {
+        // ── Optimized path: use per-frame dispose/blend from optimizer ──
+        for (i, opt) in opt_frames.iter().enumerate() {
+            cancel.check()?;
 
-    // Compress frame 0
-    let bpp = 4; // RGBA8
-    let row_bytes = canvas_width as usize * bpp;
-    let height = canvas_height as usize;
-    let opts = CompressOptions {
-        parallel: false,
-        cancel,
-        deadline,
-        remaining_ns: None,
-    };
-    let compressed0 = compress_filtered(
-        frame0.pixels,
-        row_bytes,
-        height,
-        bpp,
-        effort,
-        opts,
-        None,
-    )?;
-    write_chunk(&mut out, b"IDAT", &compressed0);
+            let frame = &frames[i];
+            let fctl_seq = seq.next();
 
-    // Frames 1+: fcTL + fdAT with delta regions
-    for i in 1..frames.len() {
-        cancel.check()?;
-
-        let prev = frames[i - 1].pixels;
-        let curr = frames[i].pixels;
-        let frame = &frames[i];
-
-        let (region, subframe) =
-            match compute_delta_region(prev, curr, canvas_width, canvas_height) {
-                Some(region) => {
-                    let sub = extract_subframe(curr, canvas_width, &region);
-                    (region, sub)
-                }
-                None => {
-                    // Identical frames: emit a minimal 1x1 frame at (0,0)
-                    let region = DeltaRegion {
-                        x: 0,
-                        y: 0,
-                        width: 1,
-                        height: 1,
-                    };
-                    let sub = curr[..4].to_vec();
-                    (region, sub)
-                }
+            // Frame 0 uses full canvas as region (optimizer knows this)
+            let (region_w, region_h, region_x, region_y) = if i == 0 {
+                (canvas_width, canvas_height, 0u32, 0u32)
+            } else {
+                (opt.region.width, opt.region.height, opt.region.x, opt.region.y)
             };
 
-        let fctl_seq = seq.next();
+            write_fctl(
+                &mut out,
+                fctl_seq,
+                region_w,
+                region_h,
+                region_x,
+                region_y,
+                frame.delay_num,
+                frame.delay_den,
+                opt.dispose_op,
+                opt.blend_op,
+            );
+
+            let sub_row_bytes = region_w as usize * bpp;
+            let sub_height = region_h as usize;
+            let sub_data = if i == 0 {
+                // Frame 0 always uses full canvas pixels
+                frame.pixels
+            } else {
+                &opt.subframe
+            };
+
+            let opts = CompressOptions {
+                parallel: false,
+                cancel,
+                deadline,
+                remaining_ns: None,
+            };
+            let compressed = compress_filtered(
+                sub_data,
+                sub_row_bytes,
+                sub_height,
+                bpp,
+                effort,
+                opts,
+                None,
+            )?;
+
+            if i == 0 {
+                write_chunk(&mut out, b"IDAT", &compressed);
+            } else {
+                let fdat_seq = seq.next();
+                write_fdat(&mut out, fdat_seq, &compressed);
+            }
+        }
+    } else {
+        // ── Unoptimized path: hardcoded NONE/SOURCE (effort ≤ 2 or single frame) ──
+
+        // Frame 0: fcTL + IDAT (full canvas)
+        let frame0 = &frames[0];
         write_fctl(
             &mut out,
-            fctl_seq,
-            region.width,
-            region.height,
-            region.x,
-            region.y,
-            frame.delay_num,
-            frame.delay_den,
-            0, // dispose_op = NONE
-            0, // blend_op = SOURCE
+            seq.next(),
+            canvas_width,
+            canvas_height,
+            0,
+            0,
+            frame0.delay_num,
+            frame0.delay_den,
+            DISPOSE_NONE,
+            BLEND_SOURCE,
         );
 
-        let sub_row_bytes = region.width as usize * bpp;
-        let sub_height = region.height as usize;
+        let row_bytes = canvas_width as usize * bpp;
+        let height = canvas_height as usize;
         let opts = CompressOptions {
             parallel: false,
             cancel,
             deadline,
             remaining_ns: None,
         };
-        let compressed = compress_filtered(
-            &subframe,
-            sub_row_bytes,
-            sub_height,
-            bpp,
-            effort,
-            opts,
-            None,
-        )?;
+        let compressed0 =
+            compress_filtered(frame0.pixels, row_bytes, height, bpp, effort, opts, None)?;
+        write_chunk(&mut out, b"IDAT", &compressed0);
 
-        let fdat_seq = seq.next();
-        write_fdat(&mut out, fdat_seq, &compressed);
+        // Frames 1+: fcTL + fdAT with delta regions
+        for i in 1..frames.len() {
+            cancel.check()?;
+
+            let prev = frames[i - 1].pixels;
+            let curr = frames[i].pixels;
+            let frame = &frames[i];
+
+            let (region, subframe) =
+                match compute_delta_region(prev, curr, canvas_width, canvas_height) {
+                    Some(region) => {
+                        let sub = extract_subframe(curr, canvas_width, &region);
+                        (region, sub)
+                    }
+                    None => {
+                        let (region, sub) = minimal_subframe(curr, bpp);
+                        (region, sub)
+                    }
+                };
+
+            let fctl_seq = seq.next();
+            write_fctl(
+                &mut out,
+                fctl_seq,
+                region.width,
+                region.height,
+                region.x,
+                region.y,
+                frame.delay_num,
+                frame.delay_den,
+                DISPOSE_NONE,
+                BLEND_SOURCE,
+            );
+
+            let sub_row_bytes = region.width as usize * bpp;
+            let sub_height = region.height as usize;
+            let opts = CompressOptions {
+                parallel: false,
+                cancel,
+                deadline,
+                remaining_ns: None,
+            };
+            let compressed = compress_filtered(
+                &subframe,
+                sub_row_bytes,
+                sub_height,
+                bpp,
+                effort,
+                opts,
+                None,
+            )?;
+
+            let fdat_seq = seq.next();
+            write_fdat(&mut out, fdat_seq, &compressed);
+        }
     }
 
     // IEND
@@ -385,7 +1298,11 @@ pub(crate) fn encode_apng_indexed_from_indices(
         None
     });
 
-    let est = 8 + 25 + 20 + (12 + n_colors * 3) + 38 * num_frames as usize
+    let est = 8
+        + 25
+        + 20
+        + (12 + n_colors * 3)
+        + 38 * num_frames as usize
         + metadata_size_estimate(write_meta);
     let mut out = Vec::with_capacity(est);
     let mut seq = SeqCounter::new();
@@ -415,73 +1332,159 @@ pub(crate) fn encode_apng_indexed_from_indices(
         write_chunk(&mut out, b"tRNS", trns);
     }
 
-    // Encode each frame using pre-built index buffers
-    for (i, frame) in frames.iter().enumerate() {
-        cancel.check()?;
-
-        let curr_indices = &frame_indices[i];
-
-        // Determine delta region from index buffers
-        let (region_x, region_y, region_w, region_h, sub_indices) = if i == 0 {
-            // Frame 0: full canvas
-            (0u32, 0u32, canvas_width, canvas_height, curr_indices.clone())
-        } else {
-            let prev_indices = &frame_indices[i - 1];
-            match compute_delta_region_indexed(prev_indices, curr_indices, canvas_width, canvas_height) {
-                Some(region) => {
-                    let sub = extract_subframe_indexed(curr_indices, canvas_width, &region);
-                    (region.x, region.y, region.width, region.height, sub)
-                }
-                None => {
-                    // Identical: minimal 1x1 frame
-                    (0, 0, 1, 1, vec![curr_indices[0]])
-                }
-            }
-        };
-
-        // Pack indices
-        let packed =
-            super::pack_all_rows(&sub_indices, region_w as usize, region_h as usize, bit_depth);
-        let row_bytes = super::packed_row_bytes(region_w as usize, bit_depth);
-
-        // Write fcTL
-        let fctl_seq = seq.next();
-        write_fctl(
-            &mut out,
-            fctl_seq,
-            region_w,
-            region_h,
-            region_x,
-            region_y,
-            frame.delay_num,
-            frame.delay_den,
-            0, // dispose_op = NONE
-            0, // blend_op = SOURCE
-        );
-
-        // Compress
-        let opts = CompressOptions {
-            parallel: false,
+    // Run optimizer when effort > 2 and >1 frame
+    let use_optimizer = effort > 2 && frames.len() > 1;
+    let optimized = if use_optimizer {
+        Some(optimize_apng_indexed(
+            frame_indices,
+            palette_rgba,
+            canvas_width,
+            canvas_height,
             cancel,
-            deadline,
-            remaining_ns: None,
-        };
-        let compressed = compress_filtered(
-            &packed,
-            row_bytes,
-            region_h as usize,
-            1, // bpp=1 for indexed
-            effort,
-            opts,
-            None,
-        )?;
+        )?)
+    } else {
+        None
+    };
 
-        // Write IDAT (frame 0) or fdAT (frames 1+)
-        if i == 0 {
-            write_chunk(&mut out, b"IDAT", &compressed);
-        } else {
-            let fdat_seq = seq.next();
-            write_fdat(&mut out, fdat_seq, &compressed);
+    if let Some(ref opt_frames) = optimized {
+        // ── Optimized path ──
+        for (i, opt) in opt_frames.iter().enumerate() {
+            cancel.check()?;
+
+            let frame = &frames[i];
+            let (region_w, region_h, region_x, region_y) = if i == 0 {
+                (canvas_width, canvas_height, 0u32, 0u32)
+            } else {
+                (opt.region.width, opt.region.height, opt.region.x, opt.region.y)
+            };
+
+            let sub_indices = if i == 0 {
+                frame_indices[0].clone()
+            } else {
+                opt.subframe.clone()
+            };
+
+            let packed = super::pack_all_rows(
+                &sub_indices,
+                region_w as usize,
+                region_h as usize,
+                bit_depth,
+            );
+            let row_bytes = super::packed_row_bytes(region_w as usize, bit_depth);
+
+            let fctl_seq = seq.next();
+            write_fctl(
+                &mut out,
+                fctl_seq,
+                region_w,
+                region_h,
+                region_x,
+                region_y,
+                frame.delay_num,
+                frame.delay_den,
+                opt.dispose_op,
+                opt.blend_op,
+            );
+
+            let opts = CompressOptions {
+                parallel: false,
+                cancel,
+                deadline,
+                remaining_ns: None,
+            };
+            let compressed = compress_filtered(
+                &packed,
+                row_bytes,
+                region_h as usize,
+                1,
+                effort,
+                opts,
+                None,
+            )?;
+
+            if i == 0 {
+                write_chunk(&mut out, b"IDAT", &compressed);
+            } else {
+                let fdat_seq = seq.next();
+                write_fdat(&mut out, fdat_seq, &compressed);
+            }
+        }
+    } else {
+        // ── Unoptimized path ──
+        for (i, frame) in frames.iter().enumerate() {
+            cancel.check()?;
+
+            let curr_indices = &frame_indices[i];
+
+            let (region_x, region_y, region_w, region_h, sub_indices) = if i == 0 {
+                (
+                    0u32,
+                    0u32,
+                    canvas_width,
+                    canvas_height,
+                    curr_indices.clone(),
+                )
+            } else {
+                let prev_indices = &frame_indices[i - 1];
+                match compute_delta_region_indexed(
+                    prev_indices,
+                    curr_indices,
+                    canvas_width,
+                    canvas_height,
+                ) {
+                    Some(region) => {
+                        let sub =
+                            extract_subframe_indexed(curr_indices, canvas_width, &region);
+                        (region.x, region.y, region.width, region.height, sub)
+                    }
+                    None => (0, 0, 1, 1, vec![curr_indices[0]]),
+                }
+            };
+
+            let packed = super::pack_all_rows(
+                &sub_indices,
+                region_w as usize,
+                region_h as usize,
+                bit_depth,
+            );
+            let row_bytes = super::packed_row_bytes(region_w as usize, bit_depth);
+
+            let fctl_seq = seq.next();
+            write_fctl(
+                &mut out,
+                fctl_seq,
+                region_w,
+                region_h,
+                region_x,
+                region_y,
+                frame.delay_num,
+                frame.delay_den,
+                DISPOSE_NONE,
+                BLEND_SOURCE,
+            );
+
+            let opts = CompressOptions {
+                parallel: false,
+                cancel,
+                deadline,
+                remaining_ns: None,
+            };
+            let compressed = compress_filtered(
+                &packed,
+                row_bytes,
+                region_h as usize,
+                1,
+                effort,
+                opts,
+                None,
+            )?;
+
+            if i == 0 {
+                write_chunk(&mut out, b"IDAT", &compressed);
+            } else {
+                let fdat_seq = seq.next();
+                write_fdat(&mut out, fdat_seq, &compressed);
+            }
         }
     }
 
@@ -490,7 +1493,6 @@ pub(crate) fn encode_apng_indexed_from_indices(
 
     Ok(out)
 }
-
 
 // ── Tests ───────────────────────────────────────────────────────────
 
@@ -1051,7 +2053,8 @@ mod tests {
                         continue; // both transparent — RGB may differ due to zeroing
                     }
                     assert_eq!(
-                        o, r,
+                        o,
+                        r,
                         "pixel {j} mismatch frame {i} for {:?}",
                         path.file_name()
                     );
