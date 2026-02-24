@@ -2526,6 +2526,182 @@ mod tests {
     }
 
     #[test]
+    fn subbyte_gray_1bit_roundtrip() {
+        // 4x2 RGBA image: black and white only → should encode as 1-bit gray
+        let mut pixels = Vec::new();
+        for i in 0..8 {
+            let v = if i % 2 == 0 { 0u8 } else { 255u8 };
+            pixels.push(Rgba {
+                r: v,
+                g: v,
+                b: v,
+                a: 255,
+            });
+        }
+        let img = imgref::ImgVec::new(pixels.clone(), 4, 2);
+
+        let encoded = crate::encode::encode_rgba8(
+            img.as_ref(),
+            None,
+            &EncodeConfig::default(),
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+
+        let decoded =
+            crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
+                .unwrap();
+        // Verify pixel-exact roundtrip (decoded may be Gray or RGBA)
+        let decoded_rgba = decoded.pixels.to_rgba8();
+        for (i, (orig, dec)) in pixels.iter().zip(decoded_rgba.buf().iter()).enumerate() {
+            assert_eq!(
+                (orig.r, orig.g, orig.b, orig.a),
+                (dec.r, dec.g, dec.b, dec.a),
+                "pixel {i} mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn subbyte_gray_4bit_roundtrip() {
+        // Gray values: 0, 17, 34, ..., 255 (all divisible by 17) → 4-bit gray
+        let mut pixels = Vec::new();
+        for i in 0..16 {
+            let v = (i * 17) as u8;
+            pixels.push(Rgba {
+                r: v,
+                g: v,
+                b: v,
+                a: 255,
+            });
+        }
+        let img = imgref::ImgVec::new(pixels.clone(), 4, 4);
+
+        let encoded = crate::encode::encode_rgba8(
+            img.as_ref(),
+            None,
+            &EncodeConfig::default(),
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+
+        let decoded =
+            crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
+                .unwrap();
+        let decoded_rgba = decoded.pixels.to_rgba8();
+        for (i, (orig, dec)) in pixels.iter().zip(decoded_rgba.buf().iter()).enumerate() {
+            assert_eq!(
+                (orig.r, orig.g, orig.b, orig.a),
+                (dec.r, dec.g, dec.b, dec.a),
+                "pixel {i} mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn rgba_trns_gray_roundtrip() {
+        // 10x10 grayscale RGBA with one transparent color
+        // Transparent gray=0 (unique — doesn't appear opaque)
+        let mut pixels = Vec::new();
+        for i in 0..100 {
+            if i == 0 {
+                pixels.push(Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 0,
+                }); // transparent
+            } else {
+                let v = ((i % 15) * 17 + 17) as u8; // 17..255, avoids 0
+                pixels.push(Rgba {
+                    r: v,
+                    g: v,
+                    b: v,
+                    a: 255,
+                });
+            }
+        }
+        let img = imgref::ImgVec::new(pixels.clone(), 10, 10);
+
+        let encoded = crate::encode::encode_rgba8(
+            img.as_ref(),
+            None,
+            &EncodeConfig::default(),
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+
+        let decoded =
+            crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
+                .unwrap();
+        let decoded_rgba = decoded.pixels.to_rgba8();
+        for (i, (orig, dec)) in pixels.iter().zip(decoded_rgba.buf().iter()).enumerate() {
+            if orig.a == 0 && dec.a == 0 {
+                continue; // both transparent, RGB may differ
+            }
+            assert_eq!(
+                (orig.r, orig.g, orig.b, orig.a),
+                (dec.r, dec.g, dec.b, dec.a),
+                "pixel {i} mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn rgba_trns_rgb_roundtrip() {
+        // >256 unique colors with one transparent color → should use RGB+tRNS
+        let mut pixels = Vec::new();
+        for r in 0..20u8 {
+            for g in 0..21u8 {
+                let b = 128u8;
+                pixels.push(Rgba {
+                    r: r.wrapping_mul(13),
+                    g: g.wrapping_mul(12),
+                    b,
+                    a: 255,
+                });
+            }
+        }
+        // Make first pixel transparent with unique RGB
+        pixels[0] = Rgba {
+            r: 3,
+            g: 7,
+            b: 11,
+            a: 0,
+        };
+        let w = 20;
+        let h = pixels.len() / w;
+        let img = imgref::ImgVec::new(pixels.clone(), w, h);
+
+        let encoded = crate::encode::encode_rgba8(
+            img.as_ref(),
+            None,
+            &EncodeConfig::default(),
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+
+        let decoded =
+            crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
+                .unwrap();
+        let decoded_rgba = decoded.pixels.to_rgba8();
+        for (i, (orig, dec)) in pixels.iter().zip(decoded_rgba.buf().iter()).enumerate() {
+            if orig.a == 0 && dec.a == 0 {
+                continue;
+            }
+            assert_eq!(
+                (orig.r, orig.g, orig.b, orig.a),
+                (dec.r, dec.g, dec.b, dec.a),
+                "pixel {i} mismatch"
+            );
+        }
+    }
+
+    #[test]
     fn zencodec_u16_encode_decode() {
         // Test the zencodec trait path for U16
         let pixels = vec![

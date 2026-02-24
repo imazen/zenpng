@@ -2232,6 +2232,145 @@ mod tests {
         }
     }
 
+    // ── APNG opaque RGB downconversion test ───────────────────────
+
+    #[test]
+    fn opaque_apng_rgb_roundtrip() {
+        let w = 8u32;
+        let h = 8u32;
+        let npx = (w * h) as usize;
+
+        // Frame 0: all red, fully opaque
+        let mut f0 = vec![0u8; npx * 4];
+        for px in f0.chunks_exact_mut(4) {
+            px.copy_from_slice(&[255, 0, 0, 255]);
+        }
+
+        // Frame 1: all blue, fully opaque
+        let mut f1 = vec![0u8; npx * 4];
+        for px in f1.chunks_exact_mut(4) {
+            px.copy_from_slice(&[0, 0, 255, 255]);
+        }
+
+        // Frame 2: mixed colors with some black, fully opaque
+        let mut f2 = vec![0u8; npx * 4];
+        for (i, px) in f2.chunks_exact_mut(4).enumerate() {
+            let r = ((i * 7) % 256) as u8;
+            let g = ((i * 13) % 256) as u8;
+            let b = ((i * 31) % 256) as u8;
+            px.copy_from_slice(&[r, g, b, 255]);
+        }
+
+        let frames = [
+            ApngFrameInput {
+                pixels: &f0,
+                delay_num: 100,
+                delay_den: 1000,
+            },
+            ApngFrameInput {
+                pixels: &f1,
+                delay_num: 100,
+                delay_den: 1000,
+            },
+            ApngFrameInput {
+                pixels: &f2,
+                delay_num: 100,
+                delay_den: 1000,
+            },
+        ];
+
+        let write_meta = PngWriteMetadata::from_metadata(None);
+        let encoded = encode_apng_truecolor(
+            &frames,
+            w,
+            h,
+            &write_meta,
+            0,
+            6,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+
+        // Verify IHDR has color_type=2 (RGB) since all frames are opaque
+        // IHDR is at offset 8 (signature) + 8 (chunk header), color_type at +9
+        assert_eq!(encoded[8 + 8 + 9], 2, "expected RGB color_type in IHDR");
+
+        // Decode and verify pixel-exact roundtrip
+        let decoded = crate::decode::decode_apng(
+            &encoded,
+            &crate::decode::PngDecodeConfig::none(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+
+        assert_eq!(decoded.frames.len(), 3);
+
+        let all_source = [&f0, &f1, &f2];
+        for (i, (frame, &src)) in decoded.frames.iter().zip(all_source.iter()).enumerate() {
+            let decoded_rgba = frame.pixels.to_rgba8();
+            let buf = decoded_rgba.buf();
+            for (j, px) in buf.iter().enumerate() {
+                let off = j * 4;
+                let orig = rgb::Rgba {
+                    r: src[off],
+                    g: src[off + 1],
+                    b: src[off + 2],
+                    a: src[off + 3],
+                };
+                assert_eq!(*px, orig, "pixel {j} mismatch frame {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn semi_transparent_apng_stays_rgba() {
+        let w = 4u32;
+        let h = 4u32;
+        let npx = (w * h) as usize;
+
+        // Frame 0: opaque red
+        let mut f0 = vec![0u8; npx * 4];
+        for px in f0.chunks_exact_mut(4) {
+            px.copy_from_slice(&[255, 0, 0, 255]);
+        }
+
+        // Frame 1: semi-transparent green
+        let mut f1 = vec![0u8; npx * 4];
+        for px in f1.chunks_exact_mut(4) {
+            px.copy_from_slice(&[0, 255, 0, 128]); // alpha=128
+        }
+
+        let frames = [
+            ApngFrameInput {
+                pixels: &f0,
+                delay_num: 100,
+                delay_den: 1000,
+            },
+            ApngFrameInput {
+                pixels: &f1,
+                delay_num: 100,
+                delay_den: 1000,
+            },
+        ];
+
+        let write_meta = PngWriteMetadata::from_metadata(None);
+        let encoded = encode_apng_truecolor(
+            &frames,
+            w,
+            h,
+            &write_meta,
+            0,
+            6,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+
+        // Verify IHDR has color_type=6 (RGBA) since frame 1 has semi-transparency
+        assert_eq!(encoded[8 + 8 + 9], 6, "expected RGBA color_type in IHDR");
+    }
+
     // ── Corpus test ─────────────────────────────────────────────────
 
     #[test]
