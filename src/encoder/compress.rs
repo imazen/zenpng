@@ -61,12 +61,18 @@ impl EffortParams {
     fn from_effort_and_bpp(effort: u32, bpp: usize) -> Self {
         let mut params = Self::from_effort(effort);
 
-        // Content-aware adjustment: indexed images (bpp=1) benefit heavily from
-        // brute-force filter selection (30%+ improvement for graphic content)
-        // while the overhead is small since rows are narrow (1 byte/pixel).
-        // Enable lightweight brute-force at effort 16+ for indexed content.
-        if bpp == 1 && effort >= 16 && effort < 24 && params.brute_configs.is_empty() {
-            params.brute_configs = &[(5, 1)];
+        // Content-aware adjustment: narrow-row images (low bpp) benefit heavily
+        // from brute-force filter selection while the overhead is small since
+        // rows have fewer bytes per pixel.
+        //
+        // bpp=1 (indexed/gray8): 30%+ improvement for graphic content, cheap rows
+        // bpp=2 (gray+alpha/gray16): similar pattern, still relatively narrow
+        if params.brute_configs.is_empty() {
+            if bpp == 1 && effort >= 16 && effort < 24 {
+                params.brute_configs = &[(5, 1)];
+            } else if bpp == 2 && effort >= 20 && effort < 24 {
+                params.brute_configs = &[(5, 1)];
+            }
         }
 
         params
@@ -859,6 +865,19 @@ pub(crate) fn compress_filtered(
     // Sort by screen size — best first
     screen_results.sort_by_key(|(size, _)| *size);
 
+    // Adaptive effort allocation: measure filter strategy variance.
+    // If all strategies produce nearly identical sizes, filter choice barely
+    // matters (common for photographic content) and brute-force Phase 3
+    // would waste time without improving compression.
+    let filter_variance_low = if screen_results.len() >= 3 {
+        let best = screen_results[0].0;
+        let worst = screen_results[screen_results.len() - 1].0;
+        // <1% spread across all strategies → filter choice is unimportant
+        best > 0 && (worst as f64 / best as f64) < 1.01
+    } else {
+        false
+    };
+
     if let (Some(s), Some(t)) = (&mut stats, phase_start) {
         let tried = screen_results.len();
         s.phases.push(PhaseStat {
@@ -1014,7 +1033,7 @@ pub(crate) fn compress_filtered(
         None
     };
     let mut brute_evals = 0u32;
-    if can_brute_force && !opts.deadline.should_stop() {
+    if can_brute_force && !opts.deadline.should_stop() && !filter_variance_low {
         for &(context_rows, eval_level) in brute_configs {
             if opts.deadline.should_stop() {
                 break;
