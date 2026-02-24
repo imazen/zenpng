@@ -166,7 +166,8 @@ pub(crate) fn write_truecolor_png(
         let compressed = compress_filtered(&packed, row_bytes, h, 1, effort, opts, None)?;
 
         let trns_size = trns.map_or(0, |t| 12 + t.len());
-        let est = 8 + 25 + trns_size + (12 + compressed.len()) + 12 + metadata_size_estimate(write_meta);
+        let est =
+            8 + 25 + trns_size + (12 + compressed.len()) + 12 + metadata_size_estimate(write_meta);
         let mut out = Vec::with_capacity(est);
 
         out.extend_from_slice(&PNG_SIGNATURE);
@@ -226,7 +227,8 @@ pub(crate) fn write_truecolor_png(
         let idat_data_len = 2 + 5 * num_blocks + total_filtered + 4; // zlib wrapper
 
         let trns_size = trns.map_or(0, |t| 12 + t.len());
-        let est = 8 + 25 + trns_size + (12 + idat_data_len) + 12 + metadata_size_estimate(write_meta);
+        let est =
+            8 + 25 + trns_size + (12 + idat_data_len) + 12 + metadata_size_estimate(write_meta);
         let mut out = Vec::with_capacity(est);
 
         out.extend_from_slice(&PNG_SIGNATURE);
@@ -271,7 +273,8 @@ pub(crate) fn write_truecolor_png(
 
     // Assemble PNG
     let trns_size = trns.map_or(0, |t| 12 + t.len());
-    let est = 8 + 25 + trns_size + (12 + compressed.len()) + 12 + metadata_size_estimate(write_meta);
+    let est =
+        8 + 25 + trns_size + (12 + compressed.len()) + 12 + metadata_size_estimate(write_meta);
     let mut out = Vec::with_capacity(est);
 
     out.extend_from_slice(&PNG_SIGNATURE);
