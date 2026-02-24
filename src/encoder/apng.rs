@@ -152,11 +152,16 @@ fn can_use_over_truecolor(
     true
 }
 
-/// Build an OVER subframe for truecolor RGBA8.
+/// Build an OVER subframe for truecolor RGBA8 with dirty transparency.
 ///
-/// For BLEND_OP_OVER, unchanged pixels MUST be `[0,0,0,0]` (transparent) so that
-/// alpha compositing produces a no-op for those pixels. Changed pixels use their
-/// actual target values.
+/// For BLEND_OP_OVER, unchanged pixels MUST have alpha=0 (transparent) so that
+/// alpha compositing produces a no-op. Changed pixels use their actual values.
+///
+/// **Dirty transparency optimization:** for unchanged pixels, instead of always
+/// using `[0,0,0,0]`, we copy RGB from the pixel directly above (row dy-1).
+/// This creates zero residuals for the Up filter (the most common winner for
+/// animation frames with static backgrounds). First-row unchanged pixels use
+/// `[0,0,0,0]` since there's no row above.
 ///
 /// Caller must verify `can_use_over_truecolor()` first.
 fn build_over_subframe(
@@ -171,7 +176,8 @@ fn build_over_subframe(
     let rx = region.x as usize;
     let ry = region.y as usize;
 
-    let mut result = Vec::with_capacity(rw * rh * bpp);
+    let row_stride = rw * bpp;
+    let mut result = Vec::with_capacity(rh * row_stride);
 
     for dy in 0..rh {
         let y = ry + dy;
@@ -183,8 +189,21 @@ fn build_over_subframe(
             let canvas_px = &canvas[off..off + bpp];
 
             if target_px == canvas_px {
-                // Unchanged: must be transparent for OVER no-op
-                result.extend_from_slice(&[0u8; 4][..bpp]);
+                // Unchanged pixel: alpha must be 0 for OVER no-op.
+                // Use dirty transparency: copy RGB from row above to minimize
+                // Up filter residuals (3 out of 4 bytes become zero residuals).
+                if dy > 0 && bpp == 4 {
+                    let above_off = result.len() - row_stride;
+                    let ar = result[above_off];
+                    let ag = result[above_off + 1];
+                    let ab = result[above_off + 2];
+                    result.push(ar);
+                    result.push(ag);
+                    result.push(ab);
+                    result.push(0); // alpha = 0
+                } else {
+                    result.extend_from_slice(&[0u8; 4][..bpp]);
+                }
             } else {
                 result.extend_from_slice(target_px);
             }
