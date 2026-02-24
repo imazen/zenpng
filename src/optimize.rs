@@ -7,6 +7,8 @@
 //! - RGBA → RGB (strip unused alpha channel)
 //! - RGBA/RGB → Grayscale (when R==G==B for all pixels)
 //! - RGBA → GrayscaleAlpha (grayscale with varying alpha)
+//! - Gray8 → Gray 1/2/4-bit (sub-byte packing)
+//! - RGBA/RGB → Gray/RGB + tRNS (binary alpha with single transparent color)
 //! - 16-bit → 8-bit (when all samples fit in 8 bits)
 //! - Truecolor → Indexed (when ≤256 unique colors)
 
@@ -19,6 +21,15 @@ pub(crate) struct ImageAnalysis {
     pub is_grayscale: bool,
     /// All alpha values are 255 (fully opaque).
     pub is_opaque: bool,
+    /// Minimum grayscale bit depth that losslessly represents all gray values.
+    /// Only meaningful when `is_grayscale` is true.
+    /// 1-bit: all values ∈ {0, 255}; 2-bit: all % 85 == 0; 4-bit: all % 17 == 0; else 8.
+    pub min_gray_bit_depth: u8,
+    /// All alpha values are exactly 0 or 255 (binary transparency).
+    pub is_binary_alpha: bool,
+    /// The single RGB color of all alpha=0 pixels, if exactly one such color exists.
+    /// `None` if no transparent pixels, or 2+ distinct transparent colors.
+    pub transparent_color: Option<[u8; 3]>,
     /// Number of unique colors (capped at 257 = "more than 256").
     #[allow(dead_code)]
     pub unique_color_count: usize,
@@ -40,16 +51,28 @@ pub(crate) struct ExactPaletteData {
 ///
 /// Single pass through all pixels, collecting:
 /// - Grayscale detection (R==G==B)
-/// - Alpha channel analysis (all opaque?)
+/// - Alpha channel analysis (all opaque? binary alpha?)
+/// - Sub-byte gray bit depth (1/2/4/8)
+/// - Single transparent color detection
 /// - Unique color counting with early exit at 257
 pub(crate) fn analyze_rgba8(bytes: &[u8], width: usize, height: usize) -> ImageAnalysis {
     let npixels = width * height;
     let mut is_grayscale = true;
     let mut is_opaque = true;
+    let mut is_binary_alpha = true;
     let mut color_map: HashMap<[u8; 4], u8> = HashMap::with_capacity(257);
     let mut palette: Vec<[u8; 4]> = Vec::with_capacity(256);
     let mut palette_overflow = false;
     let mut has_transparency = false;
+
+    // Sub-byte gray tracking: can we fit all gray values in fewer bits?
+    let mut can_1bit = true; // all values ∈ {0, 255}
+    let mut can_2bit = true; // all values % 85 == 0
+    let mut can_4bit = true; // all values % 17 == 0
+
+    // Single transparent color tracking
+    let mut transparent_color: Option<[u8; 3]> = None;
+    let mut multi_transparent = false;
 
     for i in 0..npixels {
         let off = i * 4;
@@ -64,6 +87,34 @@ pub(crate) fn analyze_rgba8(bytes: &[u8], width: usize, height: usize) -> ImageA
         if a != 255 {
             is_opaque = false;
             has_transparency = true;
+            if a != 0 {
+                is_binary_alpha = false;
+            } else if !multi_transparent {
+                // Alpha == 0: track the transparent color
+                let tc = [r, g, b];
+                match transparent_color {
+                    None => transparent_color = Some(tc),
+                    Some(prev) if prev != tc => {
+                        multi_transparent = true;
+                        transparent_color = None;
+                    }
+                    _ => {} // same color, fine
+                }
+            }
+        }
+
+        // Sub-byte gray: only track when still possibly grayscale
+        if is_grayscale && can_4bit {
+            if r % 17 != 0 {
+                can_4bit = false;
+                can_2bit = false;
+                can_1bit = false;
+            } else if can_2bit && r % 85 != 0 {
+                can_2bit = false;
+                can_1bit = false;
+            } else if can_1bit && r != 0 && r != 255 {
+                can_1bit = false;
+            }
         }
 
         if !palette_overflow {
@@ -77,6 +128,21 @@ pub(crate) fn analyze_rgba8(bytes: &[u8], width: usize, height: usize) -> ImageA
                 }
             }
         }
+    }
+
+    let min_gray_bit_depth = if can_1bit {
+        1
+    } else if can_2bit {
+        2
+    } else if can_4bit {
+        4
+    } else {
+        8
+    };
+
+    // If all pixels are opaque, binary_alpha is trivially true but not useful
+    if is_opaque {
+        is_binary_alpha = true;
     }
 
     let unique_color_count = if palette_overflow { 257 } else { palette.len() };
@@ -100,6 +166,9 @@ pub(crate) fn analyze_rgba8(bytes: &[u8], width: usize, height: usize) -> ImageA
     ImageAnalysis {
         is_grayscale,
         is_opaque,
+        min_gray_bit_depth,
+        is_binary_alpha,
+        transparent_color,
         unique_color_count,
         exact_palette,
     }
@@ -114,6 +183,11 @@ pub(crate) fn analyze_rgb8(bytes: &[u8], width: usize, height: usize) -> ImageAn
     let mut palette: Vec<[u8; 4]> = Vec::with_capacity(256);
     let mut palette_overflow = false;
 
+    // Sub-byte gray tracking
+    let mut can_1bit = true;
+    let mut can_2bit = true;
+    let mut can_4bit = true;
+
     for i in 0..npixels {
         let off = i * 3;
         let r = bytes[off];
@@ -122,6 +196,20 @@ pub(crate) fn analyze_rgb8(bytes: &[u8], width: usize, height: usize) -> ImageAn
 
         if is_grayscale && (r != g || r != b) {
             is_grayscale = false;
+        }
+
+        // Sub-byte gray tracking
+        if is_grayscale && can_4bit {
+            if r % 17 != 0 {
+                can_4bit = false;
+                can_2bit = false;
+                can_1bit = false;
+            } else if can_2bit && r % 85 != 0 {
+                can_2bit = false;
+                can_1bit = false;
+            } else if can_1bit && r != 0 && r != 255 {
+                can_1bit = false;
+            }
         }
 
         if !palette_overflow {
@@ -136,6 +224,16 @@ pub(crate) fn analyze_rgb8(bytes: &[u8], width: usize, height: usize) -> ImageAn
             }
         }
     }
+
+    let min_gray_bit_depth = if can_1bit {
+        1
+    } else if can_2bit {
+        2
+    } else if can_4bit {
+        4
+    } else {
+        8
+    };
 
     let unique_color_count = if palette_overflow { 257 } else { palette.len() };
 
@@ -158,6 +256,9 @@ pub(crate) fn analyze_rgb8(bytes: &[u8], width: usize, height: usize) -> ImageAn
     ImageAnalysis {
         is_grayscale,
         is_opaque: true,
+        min_gray_bit_depth,
+        is_binary_alpha: true,
+        transparent_color: None,
         unique_color_count,
         exact_palette,
     }
@@ -221,6 +322,46 @@ pub(crate) fn rgb8_to_gray8(rgb: &[u8]) -> Vec<u8> {
         gray.push(rgb[i * 3]); // R (== G == B)
     }
     gray
+}
+
+/// Check if a transparent color also appears with alpha=255 anywhere in the image.
+///
+/// If the transparent color is "exclusive" (never appears opaque), we can use a
+/// tRNS chunk to represent it. If it also appears opaque, tRNS would make those
+/// opaque pixels transparent too, so we can't use it.
+///
+/// Only called when binary alpha + single transparent color detected.
+pub(crate) fn trns_color_is_exclusive(bytes: &[u8], transparent_color: [u8; 3]) -> bool {
+    let npixels = bytes.len() / 4;
+    for i in 0..npixels {
+        let off = i * 4;
+        let a = bytes[off + 3];
+        if a == 255
+            && bytes[off] == transparent_color[0]
+            && bytes[off + 1] == transparent_color[1]
+            && bytes[off + 2] == transparent_color[2]
+        {
+            return false; // same RGB appears opaque — can't use tRNS
+        }
+    }
+    true
+}
+
+/// Scale 8-bit grayscale values down to sub-byte depth.
+///
+/// - 1-bit: v/255 (0→0, 255→1)
+/// - 2-bit: v/85  (0→0, 85→1, 170→2, 255→3)
+/// - 4-bit: v/17  (0→0, 17→1, ... 255→15)
+///
+/// Caller must ensure all values are valid for the target bit depth.
+pub(crate) fn gray8_to_subbyte(gray8: &[u8], bit_depth: u8) -> Vec<u8> {
+    let divisor = match bit_depth {
+        1 => 255u8,
+        2 => 85,
+        4 => 17,
+        _ => return gray8.to_vec(),
+    };
+    gray8.iter().map(|&v| v / divisor).collect()
 }
 
 /// Split an RGBA palette into separate RGB and alpha arrays for PNG.
@@ -338,30 +479,85 @@ pub(crate) enum OptimalEncoding {
         bytes: Vec<u8>,
         color_type: u8,
         bit_depth: u8,
+        /// Optional tRNS chunk data for binary transparency.
+        /// For grayscale: `[0, gray_value]` (2 bytes, big-endian u16).
+        /// For RGB: `[0, R, 0, G, 0, B]` (6 bytes, 3× big-endian u16).
+        trns: Option<Vec<u8>>,
     },
     /// No optimization: use original data as-is.
     Original,
 }
 
 /// Determine the optimal encoding for RGBA8 pixel data.
+///
+/// Priority order (smallest estimated raw size first):
+/// 1. Sub-byte gray (1/2/4-bit, no alpha)
+/// 2. Sub-byte gray + tRNS (binary alpha, single exclusive transparent color)
+/// 3. Indexed (≤256 unique colors)
+/// 4. Gray8 + tRNS
+/// 5. Gray8 (opaque)
+/// 6. GrayscaleAlpha8
+/// 7. RGB8 + tRNS
+/// 8. RGB8 (opaque)
+/// 9. Original (RGBA8)
 pub(crate) fn optimize_rgba8(bytes: &[u8], width: usize, height: usize) -> OptimalEncoding {
     let analysis = analyze_rgba8(bytes, width, height);
 
-    // Determine the best truecolor encoding first, so we can compare against indexed.
-    let truecolor_bpp = if analysis.is_grayscale && analysis.is_opaque {
-        1 // Gray8
+    // Check if tRNS is usable: binary alpha + single transparent color + exclusive
+    let trns_usable = analysis.is_binary_alpha
+        && !analysis.is_opaque
+        && analysis.transparent_color.is_some()
+        && trns_color_is_exclusive(bytes, analysis.transparent_color.unwrap());
+
+    // For sub-byte/tRNS paths, compute the effective bpp for cost estimation
+    let truecolor_bpp = if analysis.is_grayscale && (analysis.is_opaque || trns_usable) {
+        1 // Gray (+ optional tRNS)
     } else if analysis.is_grayscale {
         2 // GrayscaleAlpha8
-    } else if analysis.is_opaque {
-        3 // RGB8
+    } else if analysis.is_opaque || trns_usable {
+        3 // RGB (+ optional tRNS)
     } else {
         4 // RGBA8
     };
 
+    // Sub-byte grayscale: massive savings (2-8x vs Gray8)
+    if analysis.is_grayscale && analysis.min_gray_bit_depth < 8 {
+        let gray8 = rgba8_to_gray8(bytes);
+        let bd = analysis.min_gray_bit_depth;
+
+        if analysis.is_opaque {
+            // Sub-byte gray, no alpha
+            let scaled = gray8_to_subbyte(&gray8, bd);
+            return OptimalEncoding::Truecolor {
+                bytes: scaled,
+                color_type: 0,
+                bit_depth: bd,
+                trns: None,
+            };
+        }
+
+        if trns_usable {
+            // Sub-byte gray + tRNS
+            let tc = analysis.transparent_color.unwrap();
+            let gray_val = tc[0]; // R==G==B for grayscale
+            let scaled_val = gray_val / match bd {
+                1 => 255,
+                2 => 85,
+                4 => 17,
+                _ => 1,
+            };
+            // Strip alpha, keep only opaque + transparent pixels
+            let scaled = gray8_to_subbyte(&gray8, bd);
+            return OptimalEncoding::Truecolor {
+                bytes: scaled,
+                color_type: 0,
+                bit_depth: bd,
+                trns: Some(vec![0, scaled_val]),
+            };
+        }
+    }
+
     // Try indexed if ≤256 unique colors, but only if it's actually smaller.
-    // Indexed adds palette overhead (PLTE + possibly tRNS chunks) but reduces
-    // per-pixel data to 1 byte. For small images with many unique colors,
-    // the palette overhead can exceed the savings.
     if let Some(ref exact) = analysis.exact_palette {
         let n_colors = exact.palette_rgba.len();
         let n_pixels = width * height;
@@ -381,8 +577,6 @@ pub(crate) fn optimize_rgba8(bytes: &[u8], width: usize, height: usize) -> Optim
                 0
             };
 
-        // Indexed is worthwhile when palette_overhead + indexed_raw < truecolor_raw.
-        // Use a small margin to account for DEFLATE favoring smaller alphabets.
         let indexed_cost = palette_overhead + indexed_raw;
         let use_indexed = indexed_cost < truecolor_raw || n_pixels >= 512;
 
@@ -403,12 +597,27 @@ pub(crate) fn optimize_rgba8(bytes: &[u8], width: usize, height: usize) -> Optim
         }
     }
 
+    // Grayscale + tRNS (binary transparency, 8-bit)
+    if analysis.is_grayscale && trns_usable {
+        let tc = analysis.transparent_color.unwrap();
+        let gray_val = tc[0];
+        // Strip alpha channel — transparent pixels become the tRNS key color
+        let gray8 = rgba8_to_gray8(bytes);
+        return OptimalEncoding::Truecolor {
+            bytes: gray8,
+            color_type: 0,
+            bit_depth: 8,
+            trns: Some(vec![0, gray_val]),
+        };
+    }
+
     // Grayscale + opaque → Gray8 (4:1 reduction)
     if analysis.is_grayscale && analysis.is_opaque {
         return OptimalEncoding::Truecolor {
             bytes: rgba8_to_gray8(bytes),
             color_type: 0,
             bit_depth: 8,
+            trns: None,
         };
     }
 
@@ -418,6 +627,19 @@ pub(crate) fn optimize_rgba8(bytes: &[u8], width: usize, height: usize) -> Optim
             bytes: rgba8_to_gray_alpha8(bytes),
             color_type: 4,
             bit_depth: 8,
+            trns: None,
+        };
+    }
+
+    // RGB + tRNS (binary transparency, single transparent color)
+    if trns_usable {
+        let tc = analysis.transparent_color.unwrap();
+        let rgb = rgba8_to_rgb8(bytes);
+        return OptimalEncoding::Truecolor {
+            bytes: rgb,
+            color_type: 2,
+            bit_depth: 8,
+            trns: Some(vec![0, tc[0], 0, tc[1], 0, tc[2]]),
         };
     }
 
@@ -427,6 +649,7 @@ pub(crate) fn optimize_rgba8(bytes: &[u8], width: usize, height: usize) -> Optim
             bytes: rgba8_to_rgb8(bytes),
             color_type: 2,
             bit_depth: 8,
+            trns: None,
         };
     }
 
@@ -439,15 +662,27 @@ pub(crate) fn optimize_rgb8(bytes: &[u8], width: usize, height: usize) -> Optima
 
     let truecolor_bpp: usize = if analysis.is_grayscale { 1 } else { 3 };
 
-    // Try indexed if ≤256 unique colors, but only when the palette overhead
-    // is worthwhile compared to the truecolor alternative.
+    // Sub-byte grayscale (no tRNS for RGB — no alpha channel)
+    if analysis.is_grayscale && analysis.min_gray_bit_depth < 8 {
+        let gray8 = rgb8_to_gray8(bytes);
+        let bd = analysis.min_gray_bit_depth;
+        let scaled = gray8_to_subbyte(&gray8, bd);
+        return OptimalEncoding::Truecolor {
+            bytes: scaled,
+            color_type: 0,
+            bit_depth: bd,
+            trns: None,
+        };
+    }
+
+    // Try indexed if ≤256 unique colors
     if let Some(ref exact) = analysis.exact_palette {
         let n_colors = exact.palette_rgba.len();
         let n_pixels = width * height;
 
         let indexed_raw = (1 + width) * height;
         let truecolor_raw = (1 + width * truecolor_bpp) * height;
-        let palette_overhead = 12 + 3 * n_colors; // PLTE chunk, no tRNS for RGB
+        let palette_overhead = 12 + 3 * n_colors;
 
         let indexed_cost = palette_overhead + indexed_raw;
         let use_indexed = indexed_cost < truecolor_raw || n_pixels >= 512;
@@ -470,6 +705,7 @@ pub(crate) fn optimize_rgb8(bytes: &[u8], width: usize, height: usize) -> Optima
             bytes: rgb8_to_gray8(bytes),
             color_type: 0,
             bit_depth: 8,
+            trns: None,
         };
     }
 
@@ -507,6 +743,7 @@ pub(crate) fn optimize_16bit(
                     bytes: reduced,
                     color_type,
                     bit_depth: 8,
+                    trns: None,
                 },
                 other => other,
             }
@@ -518,6 +755,7 @@ pub(crate) fn optimize_16bit(
                     bytes: reduced,
                     color_type,
                     bit_depth: 8,
+                    trns: None,
                 },
                 other => other,
             }
@@ -528,6 +766,7 @@ pub(crate) fn optimize_16bit(
                 bytes: reduced,
                 color_type,
                 bit_depth: 8,
+                trns: None,
             }
         }
     }

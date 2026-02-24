@@ -127,6 +127,14 @@ pub(crate) fn write_indexed_png(
 }
 
 /// Encode truecolor/grayscale pixel data into a complete PNG file.
+///
+/// `trns` is optional tRNS chunk data for binary transparency:
+/// - Grayscale: 2 bytes `[0, gray_value]` (big-endian u16)
+/// - RGB: 6 bytes `[0, R, 0, G, 0, B]` (3× big-endian u16)
+///
+/// For sub-byte grayscale (bit_depth < 8), `pixel_bytes` must contain
+/// pre-scaled sample values (0..2^bit_depth), one byte per sample.
+/// This function handles bit-packing into rows.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_truecolor_png(
     pixel_bytes: &[u8],
@@ -134,12 +142,52 @@ pub(crate) fn write_truecolor_png(
     height: u32,
     color_type: u8,
     bit_depth: u8,
+    trns: Option<&[u8]>,
     write_meta: &PngWriteMetadata<'_>,
     effort: u32,
     opts: CompressOptions<'_>,
 ) -> Result<Vec<u8>, PngError> {
     let w = width as usize;
     let h = height as usize;
+
+    // Sub-byte grayscale path: pack samples and compress
+    if color_type == 0 && bit_depth < 8 {
+        // pixel_bytes has one byte per sample (pre-scaled to bit_depth range)
+        let expected_samples = w * h;
+        if pixel_bytes.len() < expected_samples {
+            return Err(PngError::InvalidInput(alloc::format!(
+                "pixel buffer too small: need {expected_samples} samples, got {}",
+                pixel_bytes.len()
+            )));
+        }
+        let packed = pack_all_rows(pixel_bytes, w, h, bit_depth);
+        let row_bytes = packed_row_bytes(w, bit_depth);
+
+        let compressed = compress_filtered(&packed, row_bytes, h, 1, effort, opts, None)?;
+
+        let trns_size = trns.map_or(0, |t| 12 + t.len());
+        let est = 8 + 25 + trns_size + (12 + compressed.len()) + 12 + metadata_size_estimate(write_meta);
+        let mut out = Vec::with_capacity(est);
+
+        out.extend_from_slice(&PNG_SIGNATURE);
+
+        let mut ihdr = [0u8; 13];
+        ihdr[0..4].copy_from_slice(&width.to_be_bytes());
+        ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+        ihdr[8] = bit_depth;
+        ihdr[9] = color_type;
+        write_chunk(&mut out, b"IHDR", &ihdr);
+        write_all_metadata(&mut out, write_meta)?;
+
+        if let Some(trns_data) = trns {
+            write_chunk(&mut out, b"tRNS", trns_data);
+        }
+
+        write_chunk(&mut out, b"IDAT", &compressed);
+        write_chunk(&mut out, b"IEND", &[]);
+
+        return Ok(out);
+    }
 
     let channels: usize = match color_type {
         0 => 1, // Grayscale
@@ -177,7 +225,8 @@ pub(crate) fn write_truecolor_png(
         };
         let idat_data_len = 2 + 5 * num_blocks + total_filtered + 4; // zlib wrapper
 
-        let est = 8 + 25 + (12 + idat_data_len) + 12 + metadata_size_estimate(write_meta);
+        let trns_size = trns.map_or(0, |t| 12 + t.len());
+        let est = 8 + 25 + trns_size + (12 + idat_data_len) + 12 + metadata_size_estimate(write_meta);
         let mut out = Vec::with_capacity(est);
 
         out.extend_from_slice(&PNG_SIGNATURE);
@@ -189,6 +238,10 @@ pub(crate) fn write_truecolor_png(
         ihdr[9] = color_type;
         write_chunk(&mut out, b"IHDR", &ihdr);
         write_all_metadata(&mut out, write_meta)?;
+
+        if let Some(trns_data) = trns {
+            write_chunk(&mut out, b"tRNS", trns_data);
+        }
 
         // Write IDAT chunk directly: length + type + inline zlib data + CRC
         out.extend_from_slice(&(idat_data_len as u32).to_be_bytes());
@@ -217,7 +270,8 @@ pub(crate) fn write_truecolor_png(
     )?;
 
     // Assemble PNG
-    let est = 8 + 25 + (12 + compressed.len()) + 12 + metadata_size_estimate(write_meta);
+    let trns_size = trns.map_or(0, |t| 12 + t.len());
+    let est = 8 + 25 + trns_size + (12 + compressed.len()) + 12 + metadata_size_estimate(write_meta);
     let mut out = Vec::with_capacity(est);
 
     out.extend_from_slice(&PNG_SIGNATURE);
@@ -235,6 +289,11 @@ pub(crate) fn write_truecolor_png(
 
     // Color metadata and generic metadata (before IDAT)
     write_all_metadata(&mut out, write_meta)?;
+
+    // tRNS chunk (after metadata, before IDAT)
+    if let Some(trns_data) = trns {
+        write_chunk(&mut out, b"tRNS", trns_data);
+    }
 
     // IDAT
     write_chunk(&mut out, b"IDAT", &compressed);
@@ -254,6 +313,7 @@ pub(crate) fn write_truecolor_png_with_stats(
     height: u32,
     color_type: u8,
     bit_depth: u8,
+    trns: Option<&[u8]>,
     write_meta: &PngWriteMetadata<'_>,
     effort: u32,
     opts: CompressOptions<'_>,
@@ -261,6 +321,43 @@ pub(crate) fn write_truecolor_png_with_stats(
 ) -> Result<Vec<u8>, PngError> {
     let w = width as usize;
     let h = height as usize;
+
+    // Sub-byte grayscale path
+    if color_type == 0 && bit_depth < 8 {
+        let expected_samples = w * h;
+        if pixel_bytes.len() < expected_samples {
+            return Err(PngError::InvalidInput(alloc::format!(
+                "pixel buffer too small: need {expected_samples} samples, got {}",
+                pixel_bytes.len()
+            )));
+        }
+        let packed = pack_all_rows(pixel_bytes, w, h, bit_depth);
+        let row_bytes = packed_row_bytes(w, bit_depth);
+
+        let compressed = compress_filtered(&packed, row_bytes, h, 1, effort, opts, Some(stats))?;
+
+        let trns_size = trns.map_or(0, |t| 12 + t.len());
+        let est =
+            8 + 25 + trns_size + (12 + compressed.len()) + 12 + metadata_size_estimate(write_meta);
+        let mut out = Vec::with_capacity(est);
+
+        out.extend_from_slice(&PNG_SIGNATURE);
+
+        let mut ihdr = [0u8; 13];
+        ihdr[0..4].copy_from_slice(&width.to_be_bytes());
+        ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+        ihdr[8] = bit_depth;
+        ihdr[9] = color_type;
+        write_chunk(&mut out, b"IHDR", &ihdr);
+        write_all_metadata(&mut out, write_meta)?;
+        if let Some(trns_data) = trns {
+            write_chunk(&mut out, b"tRNS", trns_data);
+        }
+        write_chunk(&mut out, b"IDAT", &compressed);
+        write_chunk(&mut out, b"IEND", &[]);
+
+        return Ok(out);
+    }
 
     let channels: usize = match color_type {
         0 => 1,
@@ -295,7 +392,9 @@ pub(crate) fn write_truecolor_png_with_stats(
         Some(stats),
     )?;
 
-    let est = 8 + 25 + (12 + compressed.len()) + 12 + metadata_size_estimate(write_meta);
+    let trns_size = trns.map_or(0, |t| 12 + t.len());
+    let est =
+        8 + 25 + trns_size + (12 + compressed.len()) + 12 + metadata_size_estimate(write_meta);
     let mut out = Vec::with_capacity(est);
 
     out.extend_from_slice(&PNG_SIGNATURE);
@@ -308,6 +407,9 @@ pub(crate) fn write_truecolor_png_with_stats(
     write_chunk(&mut out, b"IHDR", &ihdr);
 
     write_all_metadata(&mut out, write_meta)?;
+    if let Some(trns_data) = trns {
+        write_chunk(&mut out, b"tRNS", trns_data);
+    }
     write_chunk(&mut out, b"IDAT", &compressed);
     write_chunk(&mut out, b"IEND", &[]);
 

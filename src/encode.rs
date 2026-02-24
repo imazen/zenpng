@@ -356,6 +356,7 @@ pub(crate) fn encode_raw(
             bytes: opt_bytes,
             color_type: opt_ct,
             bit_depth: opt_bd,
+            trns,
         } => {
             let opts = config.compress_options(cancel, deadline, None);
             crate::encoder::write_truecolor_png(
@@ -364,6 +365,7 @@ pub(crate) fn encode_raw(
                 height,
                 opt_ct,
                 opt_bd,
+                trns.as_deref(),
                 &write_meta,
                 effort,
                 opts,
@@ -377,6 +379,7 @@ pub(crate) fn encode_raw(
                 height,
                 color_type.to_png_byte(),
                 bit_depth.to_png_byte(),
+                None,
                 &write_meta,
                 effort,
                 opts,
@@ -465,20 +468,21 @@ fn encode_raw_with_stats(
     let h = height as usize;
 
     // Determine optimal encoding (same logic as encode_raw)
-    let (eff_bytes, eff_ct, eff_bd) = match (color_type, bit_depth) {
+    let (eff_bytes, eff_ct, eff_bd, eff_trns) = match (color_type, bit_depth) {
         (ColorType::Rgba, BitDepth::Eight) => {
             match crate::optimize::optimize_rgba8(bytes, w, h) {
                 crate::optimize::OptimalEncoding::Truecolor {
                     bytes: ob,
                     color_type: ct,
                     bit_depth: bd,
-                } => (Some(ob), ct, bd),
+                    trns,
+                } => (Some(ob), ct, bd, trns),
                 crate::optimize::OptimalEncoding::Indexed { .. } => {
                     // Stats path doesn't support indexed; fall through to truecolor
-                    (None, color_type.to_png_byte(), bit_depth.to_png_byte())
+                    (None, color_type.to_png_byte(), bit_depth.to_png_byte(), None)
                 }
                 crate::optimize::OptimalEncoding::Original => {
-                    (None, color_type.to_png_byte(), bit_depth.to_png_byte())
+                    (None, color_type.to_png_byte(), bit_depth.to_png_byte(), None)
                 }
             }
         }
@@ -487,8 +491,9 @@ fn encode_raw_with_stats(
                 bytes: ob,
                 color_type: ct,
                 bit_depth: bd,
-            } => (Some(ob), ct, bd),
-            _ => (None, color_type.to_png_byte(), bit_depth.to_png_byte()),
+                trns,
+            } => (Some(ob), ct, bd, trns),
+            _ => (None, color_type.to_png_byte(), bit_depth.to_png_byte(), None),
         },
         (_, BitDepth::Sixteen) => {
             match crate::optimize::optimize_16bit(bytes, w, h, color_type.to_png_byte()) {
@@ -496,11 +501,12 @@ fn encode_raw_with_stats(
                     bytes: ob,
                     color_type: ct,
                     bit_depth: bd,
-                } => (Some(ob), ct, bd),
-                _ => (None, color_type.to_png_byte(), bit_depth.to_png_byte()),
+                    trns,
+                } => (Some(ob), ct, bd, trns),
+                _ => (None, color_type.to_png_byte(), bit_depth.to_png_byte(), None),
             }
         }
-        _ => (None, color_type.to_png_byte(), bit_depth.to_png_byte()),
+        _ => (None, color_type.to_png_byte(), bit_depth.to_png_byte(), None),
     };
 
     let pixel_data = eff_bytes.as_deref().unwrap_or(bytes);
@@ -513,6 +519,7 @@ fn encode_raw_with_stats(
         height,
         eff_ct,
         eff_bd,
+        eff_trns.as_deref(),
         &write_meta,
         effort,
         opts,
