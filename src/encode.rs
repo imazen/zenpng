@@ -33,6 +33,18 @@ pub struct EncodeConfig {
     pub srgb_intent: Option<u8>,
     /// Chromaticities for cHRM chunk.
     pub chromaticities: Option<PngChromaticities>,
+    /// Near-lossless: number of least-significant bits to round (0-4).
+    ///
+    /// When set to N > 0, each 8-bit sample has its lowest N bits rounded
+    /// to the nearest multiple of 2^N. This creates more byte repetition
+    /// that PNG filters and DEFLATE exploit for smaller files.
+    ///
+    /// Quality impact is imperceptible at 1-2 bits. At 3-4 bits, there's
+    /// a visible but minor quality reduction, with significant compression
+    /// gains (typically 20-50% smaller for photographic content).
+    ///
+    /// Default: 0 (lossless). Does not affect indexed (palette) encoding.
+    pub near_lossless_bits: u8,
 }
 
 impl EncodeConfig {
@@ -295,6 +307,21 @@ pub(crate) fn encode_raw(
 
     let w = width as usize;
     let h = height as usize;
+
+    // Near-lossless: quantize LSBs for better compression (8-bit only)
+    let nl_bytes;
+    let bytes = if config.near_lossless_bits > 0 && bit_depth == BitDepth::Eight {
+        let channels: usize = match color_type {
+            ColorType::Grayscale => 1,
+            ColorType::Rgb => 3,
+            ColorType::GrayscaleAlpha => 2,
+            ColorType::Rgba => 4,
+        };
+        nl_bytes = crate::optimize::near_lossless_quantize(bytes, channels, config.near_lossless_bits);
+        &nl_bytes
+    } else {
+        bytes
+    };
 
     // Auto-optimize color type and bit depth
     let optimization = match (color_type, bit_depth) {
