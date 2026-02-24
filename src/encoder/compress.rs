@@ -40,7 +40,9 @@ struct EffortParams {
     top_k: usize,
     refine_efforts: &'static [u32],
     brute_configs: &'static [(usize, u32)],
+    block_brute_configs: &'static [(usize, u32)],
     fork_brute_efforts: &'static [u32],
+    beam_brute_configs: &'static [(u32, usize)], // (eval_level, beam_width)
     #[allow(dead_code)] // read only with `zopfli` feature
     use_zopfli: bool,
 }
@@ -85,7 +87,9 @@ impl EffortParams {
                 top_k: 1,
                 refine_efforts: &[],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             1 => Self {
@@ -96,7 +100,9 @@ impl EffortParams {
                 top_k: 1,
                 refine_efforts: &[],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             2 => Self {
@@ -107,7 +113,9 @@ impl EffortParams {
                 top_k: 1,
                 refine_efforts: &[],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             3 => Self {
@@ -118,7 +126,9 @@ impl EffortParams {
                 top_k: 1,
                 refine_efforts: &[],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             4 => Self {
@@ -129,7 +139,9 @@ impl EffortParams {
                 top_k: 1,
                 refine_efforts: &[],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             5 => Self {
@@ -140,7 +152,9 @@ impl EffortParams {
                 top_k: 1,
                 refine_efforts: &[],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             6 => Self {
@@ -151,7 +165,9 @@ impl EffortParams {
                 top_k: 1,
                 refine_efforts: &[],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             7 => Self {
@@ -162,7 +178,9 @@ impl EffortParams {
                 top_k: 1,
                 refine_efforts: &[],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             // ── Medium effort (8-15): screen + refine ──
@@ -178,7 +196,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[8],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             9 => Self {
@@ -189,7 +209,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[10],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             10 => Self {
@@ -200,7 +222,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[12],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             11 => Self {
@@ -211,7 +235,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[14],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             12 => Self {
@@ -222,7 +248,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[15],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             13 => Self {
@@ -233,7 +261,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[17],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             14 => Self {
@@ -244,7 +274,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[18],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             15 => Self {
@@ -255,7 +287,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[20],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             // ── High effort (16-23): higher refine, multi-tier ──
@@ -270,7 +304,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[20, 22],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             17 => Self {
@@ -281,7 +317,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[22],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             18 => Self {
@@ -292,7 +330,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[22, 24],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             19 => Self {
@@ -303,7 +343,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[24],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             20 => Self {
@@ -314,7 +356,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[24, 26],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             21 => Self {
@@ -325,7 +369,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[26, 28],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             22 => Self {
@@ -336,7 +382,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[28],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             23 => Self {
@@ -347,7 +395,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[28, 30],
                 brute_configs: &[],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             // ── Max effort (24-30): brute-force + zopfli ──
@@ -359,7 +409,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[28, 30],
                 brute_configs: &[(5, 1)],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             25 => Self {
@@ -370,7 +422,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[28, 30],
                 brute_configs: &[(5, 1), (5, 4)],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             26 => Self {
@@ -381,7 +435,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[30],
                 brute_configs: &[(5, 1), (5, 4)],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[1],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             27 => Self {
@@ -392,7 +448,9 @@ impl EffortParams {
                 top_k: 3,
                 refine_efforts: &[30],
                 brute_configs: &[(5, 1), (5, 4)],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[1, 4],
+                beam_brute_configs: &[],
                 use_zopfli: false,
             },
             28 => Self {
@@ -412,7 +470,9 @@ impl EffortParams {
                     (8, 1),
                     (8, 4),
                 ],
+                block_brute_configs: &[(5, 1)],
                 fork_brute_efforts: &[1, 4],
+                beam_brute_configs: &[],
                 use_zopfli: cfg!(feature = "zopfli"),
             },
             29 => Self {
@@ -432,7 +492,9 @@ impl EffortParams {
                     (8, 1),
                     (8, 4),
                 ],
+                block_brute_configs: &[(5, 1)],
                 fork_brute_efforts: &[1, 4],
+                beam_brute_configs: &[(1, 3)],
                 use_zopfli: cfg!(feature = "zopfli"),
             },
             _ => Self {
@@ -453,7 +515,9 @@ impl EffortParams {
                     (8, 1),
                     (8, 4),
                 ],
+                block_brute_configs: &[(5, 1), (5, 4)],
                 fork_brute_efforts: &[1, 4],
+                beam_brute_configs: &[(1, 3), (4, 3)],
                 use_zopfli: cfg!(feature = "zopfli"),
             },
         }
@@ -936,8 +1000,13 @@ pub(crate) fn compress_filtered(
     // Brute-force filtering is expensive (~3-4s per config), so compress at
     // the highest effort only. We already have lower-effort results from Phase 2.
     let brute_configs = params.brute_configs;
+    let block_brute_configs = params.block_brute_configs;
     let fork_brute_levels = params.fork_brute_efforts;
-    let can_brute_force = !brute_configs.is_empty() || !fork_brute_levels.is_empty();
+    let beam_brute_configs = params.beam_brute_configs;
+    let can_brute_force = !brute_configs.is_empty()
+        || !block_brute_configs.is_empty()
+        || !fork_brute_levels.is_empty()
+        || !beam_brute_configs.is_empty();
 
     let phase3_start = if stats.is_some() && can_brute_force {
         Some(Instant::now())
@@ -958,6 +1027,42 @@ pub(crate) fn compress_filtered(
                 height,
                 bpp,
                 Strategy::BruteForce {
+                    context_rows,
+                    eval_level,
+                },
+                opts.cancel,
+                &mut filtered,
+            );
+
+            let _best_size = try_compress_with_fallbacks(
+                &filtered,
+                params.zenflate_effort,
+                &mut compress_buf,
+                &mut verify_buf,
+                &mut best_compressed,
+                opts.cancel,
+            )?;
+            brute_evals += 1;
+
+            #[cfg(feature = "zopfli")]
+            if params.use_zopfli && _best_size < usize::MAX {
+                zopfli_candidates.push((_best_size, filtered.clone()));
+            }
+        }
+
+        // Block-wise brute-force: exhaustive search within multi-row blocks.
+        for &(context_rows, eval_level) in block_brute_configs {
+            if opts.deadline.should_stop() {
+                break;
+            }
+
+            filtered.clear();
+            filter_image(
+                packed_rows,
+                row_bytes,
+                height,
+                bpp,
+                Strategy::BruteForceBlock {
                     context_rows,
                     eval_level,
                 },
@@ -1014,6 +1119,42 @@ pub(crate) fn compress_filtered(
                 zopfli_candidates.push((_best_size, filtered.clone()));
             }
         }
+
+        // Beam search: maintains K best partial filter sequences across rows.
+        for &(eval_level, beam_width) in beam_brute_configs {
+            if opts.deadline.should_stop() {
+                break;
+            }
+
+            filtered.clear();
+            filter_image(
+                packed_rows,
+                row_bytes,
+                height,
+                bpp,
+                Strategy::BruteForceBeam {
+                    eval_level,
+                    beam_width,
+                },
+                opts.cancel,
+                &mut filtered,
+            );
+
+            let _best_size = try_compress_with_fallbacks(
+                &filtered,
+                params.zenflate_effort,
+                &mut compress_buf,
+                &mut verify_buf,
+                &mut best_compressed,
+                opts.cancel,
+            )?;
+            brute_evals += 1;
+
+            #[cfg(feature = "zopfli")]
+            if params.use_zopfli && _best_size < usize::MAX {
+                zopfli_candidates.push((_best_size, filtered.clone()));
+            }
+        }
     }
 
     if let (Some(s), Some(t)) = (&mut stats, phase3_start) {
@@ -1022,9 +1163,19 @@ pub(crate) fn compress_filtered(
                 .iter()
                 .map(|(ctx, ev)| alloc::format!("ctx{ctx}/E{ev}"))
                 .chain(
+                    block_brute_configs
+                        .iter()
+                        .map(|(ctx, ev)| alloc::format!("blk-ctx{ctx}/E{ev}")),
+                )
+                .chain(
                     fork_brute_levels
                         .iter()
                         .map(|l| alloc::format!("fork-E{l}")),
+                )
+                .chain(
+                    beam_brute_configs
+                        .iter()
+                        .map(|(ev, k)| alloc::format!("beam-E{ev}/K{k}")),
                 )
                 .collect::<Vec<_>>()
                 .join(",");

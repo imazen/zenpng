@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use enough::Stop;
-use zenflate::{CompressionLevel, Compressor};
+use zenflate::{CompressionLevel, Compressor, Unstoppable};
 
 /// Heuristic strategies to screen in Phase 1.
 pub(crate) const HEURISTIC_STRATEGIES: &[Strategy] = &[
@@ -75,6 +75,15 @@ pub(crate) enum Strategy {
     BruteForceFork {
         eval_level: u32,
     },
+    /// Beam search over incremental DEFLATE state. Maintains `beam_width`
+    /// best partial filter sequences instead of greedily committing to one.
+    /// At each row, expands each beam entry by all 5 filters (K×5 candidates),
+    /// keeps the top K by cumulative compressed size. Finds better filter
+    /// sequences than greedy BruteForceFork at ~K× the cost.
+    BruteForceBeam {
+        eval_level: u32,
+        beam_width: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -128,6 +137,14 @@ pub(crate) fn filter_image(
         Strategy::BruteForceFork { eval_level } => {
             filter_image_brute_fork(packed_rows, row_bytes, height, bpp, eval_level, cancel, out);
         }
+        Strategy::BruteForceBeam {
+            eval_level,
+            beam_width,
+        } => {
+            filter_image_brute_beam(
+                packed_rows, row_bytes, height, bpp, eval_level, beam_width, cancel, out,
+            );
+        }
         _ => {
             filter_image_heuristic(packed_rows, row_bytes, height, bpp, strategy, out);
         }
@@ -166,14 +183,14 @@ fn filter_image_heuristic(
                 for f in 0..5u8 {
                     apply_filter(f, row, &prev_row, bpp, &mut candidates[f as usize]);
                 }
-                let best_f =
-                    pick_best_filter(&candidates, heuristic, scratch.as_mut().unwrap());
+                let best_f = pick_best_filter(&candidates, heuristic, scratch.as_mut().unwrap());
                 out.push(best_f);
                 out.extend_from_slice(&candidates[best_f as usize]);
             }
             Strategy::BruteForce { .. }
             | Strategy::BruteForceBlock { .. }
-            | Strategy::BruteForceFork { .. } => unreachable!(),
+            | Strategy::BruteForceFork { .. }
+            | Strategy::BruteForceBeam { .. } => unreachable!(),
         }
 
         prev_row.copy_from_slice(row);
@@ -306,9 +323,7 @@ fn filter_image_brute_fork(
                 // On cancel, emit remaining rows with filter 0
                 for rem_y in y..height {
                     out.push(0);
-                    out.extend_from_slice(
-                        &packed_rows[rem_y * row_bytes..(rem_y + 1) * row_bytes],
-                    );
+                    out.extend_from_slice(&packed_rows[rem_y * row_bytes..(rem_y + 1) * row_bytes]);
                 }
                 return;
             }
@@ -357,6 +372,145 @@ fn filter_image_brute_fork(
 
         prev_row.copy_from_slice(row);
     }
+}
+
+/// Beam search filter selection using incremental DEFLATE state.
+///
+/// Maintains `beam_width` best partial filter sequences instead of greedily
+/// committing to one. At each row, expands each beam entry by all 5 filters
+/// (K×5 candidates), evaluates via incremental DEFLATE compression, and keeps
+/// the top K by cumulative compressed size. The winning entry's filtered data
+/// becomes the output.
+///
+/// This finds better filter sequences than greedy BruteForceFork at ~K× the
+/// cost, because suboptimal choices at row Y can be recovered when they enable
+/// better compression at subsequent rows.
+#[allow(clippy::too_many_arguments)]
+fn filter_image_brute_beam(
+    packed_rows: &[u8],
+    row_bytes: usize,
+    height: usize,
+    bpp: usize,
+    eval_level: u32,
+    beam_width: usize,
+    cancel: &dyn Stop,
+    out: &mut Vec<u8>,
+) {
+    if height == 0 {
+        return;
+    }
+
+    let filtered_row_size = row_bytes + 1;
+    let compress_bound = Compressor::deflate_compress_bound(filtered_row_size * height);
+    let mut compress_buf = vec![0u8; compress_bound];
+
+    struct BeamEntry {
+        compressor: Compressor,
+        cumulative_size: usize,
+        filtered: Vec<u8>,
+    }
+
+    let mut beam = vec![BeamEntry {
+        compressor: Compressor::new(CompressionLevel::new(eval_level)),
+        cumulative_size: 0,
+        filtered: Vec::with_capacity(filtered_row_size * height),
+    }];
+
+    let mut candidate_data: Vec<Vec<u8>> = (0..5).map(|_| vec![0u8; row_bytes]).collect();
+    let mut prev_row = vec![0u8; row_bytes];
+
+    // (cumulative_size, beam_idx, filter, compressor)
+    let mut candidates: Vec<(usize, usize, u8, Compressor)> = Vec::with_capacity(beam_width * 5);
+
+    for y in 0..height {
+        let row = &packed_rows[y * row_bytes..(y + 1) * row_bytes];
+        let is_final = y == height - 1;
+
+        // Compute all 5 filter variants for this row
+        for f in 0..5u8 {
+            apply_filter(f, row, &prev_row, bpp, &mut candidate_data[f as usize]);
+        }
+
+        // Evaluate all beam × filter combinations
+        candidates.clear();
+
+        for (b, entry) in beam.iter_mut().enumerate() {
+            for f in 0..5u8 {
+                if cancel.check().is_err() {
+                    // On cancel, emit best beam entry so far + remaining rows unfiltered
+                    let best = beam
+                        .into_iter()
+                        .min_by_key(|e| e.cumulative_size)
+                        .unwrap();
+                    out.extend_from_slice(&best.filtered);
+                    for rem_y in y..height {
+                        out.push(0);
+                        out.extend_from_slice(
+                            &packed_rows[rem_y * row_bytes..(rem_y + 1) * row_bytes],
+                        );
+                    }
+                    return;
+                }
+
+                // Temporarily extend this beam entry's filtered buffer
+                let start = entry.filtered.len();
+                entry.filtered.push(f);
+                entry.filtered.extend_from_slice(&candidate_data[f as usize]);
+
+                // Clone compressor and evaluate incrementally
+                let mut fork = entry.compressor.clone();
+                if let Ok(size) = fork.deflate_compress_incremental(
+                    &entry.filtered,
+                    &mut compress_buf,
+                    is_final,
+                    Unstoppable,
+                ) {
+                    candidates.push((entry.cumulative_size + size, b, f, fork));
+                }
+
+                // Truncate back
+                entry.filtered.truncate(start);
+            }
+        }
+
+        // Sort by cumulative size, keep top beam_width
+        candidates.sort_by_key(|(size, ..)| *size);
+        candidates.truncate(beam_width);
+
+        // Build new beam, moving parent buffers when possible to avoid cloning
+        let mut parent_usage = vec![0usize; beam.len()];
+        for &(_, b, _, _) in &candidates {
+            parent_usage[b] += 1;
+        }
+
+        let mut new_beam: Vec<BeamEntry> = Vec::with_capacity(beam_width);
+        for (size, b, f, compressor) in candidates.drain(..) {
+            parent_usage[b] -= 1;
+            let mut filtered = if parent_usage[b] == 0 {
+                // Last use of this parent — move instead of clone
+                core::mem::take(&mut beam[b].filtered)
+            } else {
+                beam[b].filtered.clone()
+            };
+            filtered.push(f);
+            filtered.extend_from_slice(&candidate_data[f as usize]);
+            new_beam.push(BeamEntry {
+                compressor,
+                cumulative_size: size,
+                filtered,
+            });
+        }
+
+        beam = new_beam;
+        prev_row.copy_from_slice(row);
+    }
+
+    // Output best beam entry's filtered data
+    let best = beam
+        .into_iter()
+        .min_by_key(|e| e.cumulative_size)
+        .unwrap();
+    *out = best.filtered;
 }
 
 /// Pre-compute all 5 filter outputs for every row.
@@ -426,17 +580,13 @@ pub(crate) fn filter_image_from_precomputed(
                     scratch,
                 );
                 out.push(best_f);
-                out.extend_from_slice(precomputed_row(
-                    precomputed,
-                    row_bytes,
-                    y,
-                    best_f as usize,
-                ));
+                out.extend_from_slice(precomputed_row(precomputed, row_bytes, y, best_f as usize));
             }
         }
         Strategy::BruteForce { .. }
         | Strategy::BruteForceBlock { .. }
-        | Strategy::BruteForceFork { .. } => {
+        | Strategy::BruteForceFork { .. }
+        | Strategy::BruteForceBeam { .. } => {
             unreachable!("brute force strategies not supported with precomputed filters");
         }
     }
@@ -688,11 +838,7 @@ fn pick_best_filter(
     heuristic: AdaptiveHeuristic,
     scratch: &mut HeuristicScratch,
 ) -> u8 {
-    score_candidates(
-        |f| &candidates[f as usize],
-        &heuristic,
-        scratch,
-    )
+    score_candidates(|f| &candidates[f as usize], &heuristic, scratch)
 }
 
 /// Score 5 filter candidates and return the best filter index.
