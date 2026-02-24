@@ -1054,12 +1054,12 @@ mod tests {
         assert_eq!(decoded.info.height, 64);
     }
 
-    #[cfg(feature = "zoint")]
+    #[cfg(feature = "joint")]
     #[test]
-    fn roundtrip_zoint_indexed_png() {
+    fn roundtrip_joint_indexed_png() {
         let img = test_image_4x4();
         let config = EncodeConfig::default();
-        let quant = QuantizeConfig::new(OutputFormat::PngZoint);
+        let quant = QuantizeConfig::new(OutputFormat::PngJoint);
 
         let encoded = encode_indexed_rgba8(
             img.as_ref(),
@@ -1086,9 +1086,9 @@ mod tests {
         assert_eq!(decoded.info.height, 4);
     }
 
-    #[cfg(feature = "zoint")]
+    #[cfg(feature = "joint")]
     #[test]
-    fn zoint_produces_smaller_or_equal_output() {
+    fn joint_produces_smaller_or_equal_output() {
         // 64x64 gradient: enough pixels for compression differences to appear
         let mut pixels = Vec::with_capacity(64 * 64);
         for y in 0..64u32 {
@@ -1116,12 +1116,12 @@ mod tests {
         )
         .unwrap();
 
-        // Zoint indexed PNG
-        let quant_zoint = QuantizeConfig::new(OutputFormat::PngZoint);
-        let zoint = encode_indexed_rgba8(
+        // Joint indexed PNG
+        let quant_joint = QuantizeConfig::new(OutputFormat::PngJoint);
+        let joint = encode_indexed_rgba8(
             img.as_ref(),
             &config,
-            &quant_zoint,
+            &quant_joint,
             None,
             &enough::Unstoppable,
             &enough::Unstoppable,
@@ -1135,34 +1135,34 @@ mod tests {
             &enough::Unstoppable,
         )
         .unwrap();
-        let dec_zoint = crate::decode::decode(
-            &zoint,
+        let dec_joint = crate::decode::decode(
+            &joint,
             &crate::decode::PngDecodeConfig::none(),
             &enough::Unstoppable,
         )
         .unwrap();
         assert_eq!(dec_standard.info.width, 64);
-        assert_eq!(dec_zoint.info.width, 64);
+        assert_eq!(dec_joint.info.width, 64);
 
-        // Zoint should produce same or smaller output
+        // Joint should produce same or smaller output
         // (on small test images, the overhead of joint optimization may not
         // always win, so we allow up to 5% larger as a sanity check)
-        let ratio = zoint.len() as f64 / standard.len() as f64;
+        let ratio = joint.len() as f64 / standard.len() as f64;
         assert!(
             ratio < 1.05,
-            "zoint output ({}) much larger than standard ({}) — ratio {:.3}",
-            zoint.len(),
+            "joint output ({}) much larger than standard ({}) — ratio {:.3}",
+            joint.len(),
             standard.len(),
             ratio,
         );
     }
 
-    #[cfg(feature = "zoint")]
+    #[cfg(feature = "joint")]
     #[test]
-    fn zoint_auto_encode_roundtrip() {
+    fn joint_auto_encode_roundtrip() {
         let img = test_image_4x4();
         let config = EncodeConfig::default();
-        let quant = QuantizeConfig::new(OutputFormat::PngZoint);
+        let quant = QuantizeConfig::new(OutputFormat::PngJoint);
 
         let result = encode_rgba8_auto(
             img.as_ref(),
@@ -1189,9 +1189,9 @@ mod tests {
         assert_eq!(decoded.info.height, 4);
     }
 
-    #[cfg(feature = "zoint")]
+    #[cfg(feature = "joint")]
     #[test]
-    fn zoint_compression_comparison() {
+    fn joint_compression_comparison() {
         fn compare(name: &str, img: ImgRef<'_, Rgba<u8>>, tolerance: f32) {
             let config = EncodeConfig::default();
 
@@ -1206,25 +1206,25 @@ mod tests {
             )
             .unwrap();
 
-            let quant_zoint =
-                QuantizeConfig::new(OutputFormat::PngZoint)._zoint_tolerance(tolerance);
-            let zoint = encode_indexed_rgba8(
+            let quant_joint =
+                QuantizeConfig::new(OutputFormat::PngJoint)._joint_tolerance(tolerance);
+            let joint = encode_indexed_rgba8(
                 img,
                 &config,
-                &quant_zoint,
+                &quant_joint,
                 None,
                 &enough::Unstoppable,
                 &enough::Unstoppable,
             )
             .unwrap();
 
-            let saving_pct = (1.0 - zoint.len() as f64 / standard.len() as f64) * 100.0;
+            let saving_pct = (1.0 - joint.len() as f64 / standard.len() as f64) * 100.0;
             eprintln!(
                 "{:30} tol={:.3} {:>7} -> {:>7} ({:+.1}%)",
                 name,
                 tolerance,
                 standard.len(),
-                zoint.len(),
+                joint.len(),
                 saving_pct,
             );
         }
