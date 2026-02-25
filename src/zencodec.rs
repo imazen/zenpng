@@ -26,6 +26,8 @@ static ENCODE_CAPS: CodecCapabilities = CodecCapabilities::new()
     .with_encode_exif(true)
     .with_encode_xmp(true)
     .with_native_gray(true)
+    .with_native_alpha(true)
+    .with_native_16bit(true)
     .with_cheap_probe(true)
     .with_lossless(true)
     .with_effort_range(0, 10);
@@ -35,7 +37,11 @@ static DECODE_CAPS: CodecCapabilities = CodecCapabilities::new()
     .with_decode_exif(true)
     .with_decode_xmp(true)
     .with_native_gray(true)
-    .with_cheap_probe(true);
+    .with_native_alpha(true)
+    .with_native_16bit(true)
+    .with_cheap_probe(true)
+    .with_decode_into(true)
+    .with_decode_animation(true);
 
 // ── Supported descriptors ────────────────────────────────────────────
 
