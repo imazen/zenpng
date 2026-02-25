@@ -1663,6 +1663,7 @@ fn compress_with_zopfli_n(
     use std::io::Write;
     let options = zenzop::Options {
         iteration_count: core::num::NonZeroU64::new(iterations.max(1)).unwrap(),
+        enhanced: true,
         ..Default::default()
     };
     let mut encoder = zenzop::ZlibEncoder::with_stop(options, Vec::new(), stop)
