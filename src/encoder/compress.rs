@@ -84,7 +84,7 @@ impl EffortParams {
     fn from_effort(effort: u32) -> Self {
         if effort > 30 {
             // Effort 31+: Maniac Phase 1-3 pipeline + zenflate FullOptimal Phase 4.
-            // FullOptimal iterations = effort - 16 (e.g., effort 46 = 30 iterations).
+            // FullOptimal iterations = (effort - 16) * 2 (e.g., effort 31 = 30i, 46 = 60i).
             return Self {
                 zenflate_effort: 30,
                 strategies: HEURISTIC_STRATEGIES,

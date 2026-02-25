@@ -35,10 +35,10 @@ fn main() {
 
     let efforts: &[(&str, u32)] = &[
         ("E30 (NearOptimal)", 30),
-        ("E31 (FullOpt 15i)", 31),
-        ("E36 (FullOpt 20i)", 36),
-        ("E46 (FullOpt 30i)", 46),
-        ("E76 (FullOpt 60i)", 76),
+        ("E31 (FullOpt 30i)", 31),
+        ("E36 (FullOpt 40i)", 36),
+        ("E46 (FullOpt 60i)", 46),
+        ("E76 (FullOpt 120i)", 76),
     ];
 
     let mut base_size = 0usize;
@@ -136,9 +136,9 @@ fn main() {
 
     // zenflate FullOptimal at various efforts
     for &(label, effort) in &[
-        ("zenflate FullOpt 15i (E31)", 31u32),
-        ("zenflate FullOpt 30i (E46)", 46),
-        ("zenflate FullOpt 60i (E76)", 76),
+        ("zenflate FullOpt 30i (E31)", 31u32),
+        ("zenflate FullOpt 60i (E46)", 46),
+        ("zenflate FullOpt 120i (E76)", 76),
     ] {
         let start = Instant::now();
         let mut compressor = zenflate::Compressor::new(zenflate::CompressionLevel::new(effort));
