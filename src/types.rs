@@ -61,7 +61,7 @@ pub enum Compression {
     ///
     /// Effort 0-30 uses zenflate's standard compression strategies.
     /// Effort 31+ enables zenflate's FullOptimal (Zopfli-style forward DP)
-    /// compression in Phase 4 with (effort-16) iterations. Higher effort
+    /// compression in Phase 4 with `(effort-16)*2` iterations. Higher effort
     /// values run more iterations for smaller output at the cost of time.
     Effort(u32),
 }
