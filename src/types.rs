@@ -53,16 +53,21 @@ pub enum Compression {
     /// maximum effort. Extremely slow — minutes per megapixel.
     /// Requires the `zopfli` feature; falls back to `Best` if not enabled.
     Maniac,
-    /// Explicit effort level (0-30, clamped).
+    /// Explicit effort level (0-200).
     ///
     /// Provides fine-grained control between the named presets. Each ~3 effort
     /// points roughly doubles encoding time. Named presets are equivalent to
     /// specific effort values (e.g., `Balanced` = `Effort(10)`).
+    ///
+    /// Effort 0-30 uses zenflate's standard compression strategies.
+    /// Effort 31+ enables zenflate's FullOptimal (Zopfli-style forward DP)
+    /// compression in Phase 4 with (effort-16) iterations. Higher effort
+    /// values run more iterations for smaller output at the cost of time.
     Effort(u32),
 }
 
 impl Compression {
-    /// Get the effort level (0-30) for this compression setting.
+    /// Get the effort level for this compression setting.
     pub fn effort(self) -> u32 {
         match self {
             Compression::None => 0,
@@ -75,7 +80,7 @@ impl Compression {
             Compression::Best => 24,
             Compression::Crush => 28,
             Compression::Maniac => 30,
-            Compression::Effort(e) => e.min(30),
+            Compression::Effort(e) => e.min(200),
         }
     }
 }
