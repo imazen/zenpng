@@ -42,7 +42,8 @@ struct EffortParams {
     brute_configs: &'static [(usize, u32)],
     block_brute_configs: &'static [(usize, u32)],
     fork_brute_efforts: &'static [u32],
-    beam_brute_configs: &'static [(u32, usize)], // (eval_level, beam_width)
+    adaptive_fork_configs: &'static [(u32, usize)], // (eval_level, narrow_to)
+    beam_brute_configs: &'static [(u32, usize)],    // (eval_level, beam_width)
     use_recompress: bool,
 }
 
@@ -94,6 +95,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -107,6 +109,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -120,6 +123,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -133,6 +137,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -146,6 +151,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -159,6 +165,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -172,6 +179,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -185,6 +193,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -203,6 +212,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -216,6 +226,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -229,6 +240,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -242,6 +254,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -255,6 +268,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -268,6 +282,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -281,6 +296,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -294,6 +310,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -311,6 +328,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -324,6 +342,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -337,6 +356,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -350,6 +370,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -363,6 +384,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -376,6 +398,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -389,6 +412,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -402,6 +426,7 @@ impl EffortParams {
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -416,6 +441,7 @@ impl EffortParams {
                 brute_configs: &[(5, 1)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -429,6 +455,7 @@ impl EffortParams {
                 brute_configs: &[(5, 1), (5, 4)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -442,6 +469,7 @@ impl EffortParams {
                 brute_configs: &[(5, 1), (5, 4)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[10],
+                adaptive_fork_configs: &[(15, 2)],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -455,6 +483,7 @@ impl EffortParams {
                 brute_configs: &[(5, 1), (5, 4)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[10, 15],
+                adaptive_fork_configs: &[(15, 2), (22, 2)],
                 beam_brute_configs: &[],
                 use_recompress: false,
             },
@@ -477,6 +506,7 @@ impl EffortParams {
                 ],
                 block_brute_configs: &[(5, 1)],
                 fork_brute_efforts: &[10, 15],
+                adaptive_fork_configs: &[(15, 2), (22, 2)],
                 beam_brute_configs: &[],
                 use_recompress: true,
             },
@@ -499,6 +529,7 @@ impl EffortParams {
                 ],
                 block_brute_configs: &[(5, 1)],
                 fork_brute_efforts: &[10, 15],
+                adaptive_fork_configs: &[(15, 2), (22, 2)],
                 beam_brute_configs: &[(10, 3)],
                 use_recompress: true,
             },
@@ -522,6 +553,7 @@ impl EffortParams {
                 ],
                 block_brute_configs: &[(5, 1), (5, 4)],
                 fork_brute_efforts: &[10, 15],
+                adaptive_fork_configs: &[(15, 2), (22, 2)],
                 beam_brute_configs: &[(10, 3), (15, 3)],
                 use_recompress: true,
             },
@@ -1018,10 +1050,12 @@ pub(crate) fn compress_filtered(
     let block_brute_configs = params.block_brute_configs;
     let fork_brute_levels = params.fork_brute_efforts;
     let beam_brute_configs = params.beam_brute_configs;
+    let adaptive_fork_configs = params.adaptive_fork_configs;
     let can_brute_force = !brute_configs.is_empty()
         || !block_brute_configs.is_empty()
         || !fork_brute_levels.is_empty()
-        || !beam_brute_configs.is_empty();
+        || !beam_brute_configs.is_empty()
+        || !adaptive_fork_configs.is_empty();
 
     let phase3_start = if stats.is_some() && can_brute_force {
         Some(Instant::now())
@@ -1166,6 +1200,42 @@ pub(crate) fn compress_filtered(
                 recompress_candidates.push((beam_brute_size, filtered.clone()));
             }
         }
+
+        // Adaptive narrowing fork: estimates all 5 filters cheaply, then fully
+        // compresses only the top `narrow_to` candidates per row.
+        for &(eval_level, narrow_to) in adaptive_fork_configs {
+            if opts.deadline.should_stop() {
+                break;
+            }
+
+            filtered.clear();
+            filter_image(
+                packed_rows,
+                row_bytes,
+                height,
+                bpp,
+                Strategy::AdaptiveFork {
+                    eval_level,
+                    narrow_to,
+                },
+                opts.cancel,
+                &mut filtered,
+            );
+
+            let adaptive_size = try_compress_with_fallbacks(
+                &filtered,
+                params.zenflate_effort,
+                &mut compress_buf,
+                &mut verify_buf,
+                &mut best_compressed,
+                opts.cancel,
+            )?;
+            brute_evals += 1;
+
+            if params.use_recompress && adaptive_size < usize::MAX {
+                recompress_candidates.push((adaptive_size, filtered.clone()));
+            }
+        }
     }
 
     if let (Some(s), Some(t)) = (&mut stats, phase3_start) {
@@ -1187,6 +1257,11 @@ pub(crate) fn compress_filtered(
                     beam_brute_configs
                         .iter()
                         .map(|(ev, k)| alloc::format!("beam-E{ev}/K{k}")),
+                )
+                .chain(
+                    adaptive_fork_configs
+                        .iter()
+                        .map(|(ev, n)| alloc::format!("afork-E{ev}/N{n}")),
                 )
                 .collect::<Vec<_>>()
                 .join(",");
