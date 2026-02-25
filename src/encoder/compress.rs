@@ -589,9 +589,6 @@ fn try_compress_with_fallbacks(
     let mut level = CompressionLevel::new(effort);
     loop {
         let mut compressor = Compressor::new(level);
-        if level.effort() >= 23 {
-            compressor.set_png_mode(true);
-        }
         let size = try_compress(
             filtered,
             core::slice::from_mut(&mut compressor),
@@ -928,9 +925,6 @@ pub(crate) fn compress_filtered(
                             let mut level = CompressionLevel::new(tier_level);
                             loop {
                                 let mut compressor = Compressor::new(level);
-                                if level.effort() >= 23 {
-                                    compressor.set_png_mode(true);
-                                }
                                 if let Ok(len) = compressor.zlib_compress(
                                     filtered_data,
                                     &mut t_compress_buf,
@@ -1206,7 +1200,7 @@ pub(crate) fn compress_filtered(
     }
 
     // ---- Phase 4: Recompression ----
-    // Re-compress top candidates with zenflate effort 30 + png_mode.
+    // Re-compress top candidates with zenflate effort 30.
     // Optionally also try zenzop (zopfli) if the `zopfli` feature is enabled.
     {
         let phase4_start = if stats.is_some() {
@@ -1224,7 +1218,7 @@ pub(crate) fn compress_filtered(
 
             let n_candidates = recompress_candidates.len();
 
-            // Zenflate recompression: effort 30 + png_mode (always available)
+            // Zenflate recompression: effort 30 (always available)
             let zenflate_best =
                 zenflate_recompress(&recompress_candidates, opts.cancel, &mut best_compressed)?;
             if let Some(b) = zenflate_best {
@@ -1448,11 +1442,11 @@ fn write_stored_block_header(out: &mut Vec<u8>, len: usize, is_final: bool) {
     out.push(((nlen >> 8) & 0xFF) as u8);
 }
 
-/// Recompress top candidates with zenflate effort 30 + png_mode.
+/// Recompress top candidates with zenflate effort 30.
 ///
 /// This re-compresses filtered data using zenflate's near-optimal parser
-/// with ECT-derived optimizations and PNG-specific cost biases. Runs
-/// candidates in parallel when multiple are available.
+/// with ECT-derived optimizations. Runs candidates in parallel when
+/// multiple are available.
 fn zenflate_recompress(
     candidates: &[(usize, Vec<u8>)],
     cancel: &dyn Stop,
@@ -1466,7 +1460,6 @@ fn zenflate_recompress(
             .map(|(_size, data)| {
                 s.spawn(|| {
                     let mut compressor = Compressor::new(CompressionLevel::new(30));
-                    compressor.set_png_mode(true);
                     let bound = Compressor::zlib_compress_bound(data.len());
                     let mut output = vec![0u8; bound];
                     let len = compressor
