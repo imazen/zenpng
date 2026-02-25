@@ -305,7 +305,6 @@ fn filter_image_brute_fork(
     let filtered_row_size = row_bytes + 1; // filter byte + row data
 
     let mut compressor = Compressor::new(CompressionLevel::new(eval_level));
-    compressor.set_png_mode(true);
     let mut candidate_data: Vec<Vec<u8>> = (0..5).map(|_| vec![0u8; row_bytes]).collect();
     let mut prev_row = vec![0u8; row_bytes];
 
@@ -419,7 +418,6 @@ fn filter_image_brute_beam(
     }
 
     let mut init_compressor = Compressor::new(CompressionLevel::new(eval_level));
-    init_compressor.set_png_mode(true);
     let mut beam = vec![BeamEntry {
         compressor: init_compressor,
         cumulative_size: 0,
