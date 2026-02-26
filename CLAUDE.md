@@ -124,7 +124,7 @@ Effort 0-30: standard pipeline. Effort 31+: full pipeline + FullOptimal.
 | Thorough | 13 | 9: HEURISTIC | screen@7 + refine@17 | Lazy |
 | High | 16 | 9: HEURISTIC | screen@7 + refine@[20,22] | Lazy2 |
 | Aggressive | 20 | 9: HEURISTIC | screen@7 + refine@[24,26] | NearOptimal |
-| Best | 24 | 9: HEURISTIC | screen@7 + refine + BF(5,1) | NearOptimal |
+| Best | 24 | 9: HEURISTIC | screen@7 + refine + BF(5,1) + BFF[10] | NearOptimal |
 | Crush | 28 | 9: HEURISTIC | screen@7 + refine + BF sweep + zopfli | NearOptimal |
 | Maniac | 30 | 9: HEURISTIC | screen@7 + refine + BF sweep + zopfli max | NearOptimal |
 
@@ -152,8 +152,8 @@ FullOptimal's compression.
 2. **Phase 2 — Refine**: Top-K candidates re-compressed at `refine_efforts` via
    `try_compress_with_fallbacks()`, which follows zenflate's `monotonicity_fallback()`
    chain automatically.
-3. **Phase 3 — BruteForce**: Per-row brute-force filter selection (effort 24+).
-   BruteForceFork maintains actual DEFLATE state across rows (effort 25+).
+3. **Phase 3 — BruteForce**: Per-row brute-force filter selection (effort 23+).
+   BruteForceFork maintains actual DEFLATE state across rows (effort 24+).
 4. **Phase 4 — Recompress**: At effort 28-30: zopfli adaptive with time budgeting.
    At effort 31+: NearOptimal + FullOptimal (+ optional zenzop).
 

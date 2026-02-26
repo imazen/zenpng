@@ -116,11 +116,11 @@ def main():
         23: '9 strat, screen+refine[28,30]+BF(5,1)',
         24: '9 strat, screen+refine[28,30]+BF(5,1)+BFF[10]',
         25: '9 strat, screen+refine[28,30]+BF(5,1)+BFF[10]+AF(15,2)',
-        26: '9 strat, refine[28,30]+BF+BFF[10]+AF(15,2)',
-        27: '9 strat, refine[28,30]+BF+BFF[10,15]+AF(15,2)(22,2)',
-        28: '9 strat, refine[28,30]+fullBF+BFF[10,15]+AF+recompress',
-        29: '9 strat, refine[28,30]+fullBF+BFF[10,15]+AF+beam(10,3)+recompress',
-        30: '9 strat, refine[28,30]+fullBF+BFF[10,15]+AF+beam+recompress',
+        26: '9 strat, screen+refine[28,30]+BF(5,1)(5,4)+BFF[10]+AF(15,2)',
+        27: '9 strat, screen+refine[28,30]+BF(5,1)(5,4)+BFF[10,15]+AF(15,2)(22,2)',
+        28: '9 strat, screen+refine[28,30]+fullBF+BFF[10,15]+AF+recompress',
+        29: '9 strat, screen+refine[28,30]+fullBF+BFF[10,15]+AF+beam(10,3)+recompress',
+        30: '9 strat, screen+refine[28,30]+fullBF+BFF[10,15]+AF+beam+recompress',
         31: 'full e30+FullOpt(15i)',
     }
 
