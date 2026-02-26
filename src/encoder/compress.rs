@@ -10,8 +10,9 @@ use zenflate::{CompressionLevel, Compressor, Unstoppable};
 use crate::error::PngError;
 
 use super::filter::{
-    FAST_STRATEGIES, HEURISTIC_STRATEGIES, HeuristicScratch, MINIMAL_STRATEGIES, Strategy,
-    filter_image, filter_image_from_precomputed, precompute_all_filters,
+    FAST_STRATEGIES, HEURISTIC_STRATEGIES, HeuristicScratch,
+    MINIMAL_STRATEGIES, Strategy, filter_image, filter_image_from_precomputed,
+    precompute_all_filters,
 };
 use super::{PhaseStat, PhaseStats};
 
@@ -48,6 +49,9 @@ struct EffortParams {
     /// If set, Phase 4 also runs zenflate FullOptimal at this effort level.
     /// Effort 31+ maps to (effort-16) FullOptimal iterations.
     full_optimal_effort: Option<u32>,
+    /// If true, Phase 4 runs ONLY FullOptimal (skips NearOptimal and zenzop).
+    /// Used for E31-45 lean tier where FullOptimal is the sole recompressor.
+    full_optimal_only: bool,
 }
 
 impl EffortParams {
@@ -82,9 +86,9 @@ impl EffortParams {
     }
 
     fn from_effort(effort: u32) -> Self {
-        if effort > 30 {
-            // Effort 31+: Maniac Phase 1-3 pipeline + zenflate FullOptimal Phase 4.
-            // FullOptimal iterations = (effort - 16) * 2 (e.g., effort 31 = 30i, 46 = 60i).
+        if effort > 60 {
+            // Effort 61+: Full Maniac pipeline + FullOptimal.
+            // FullOptimal iterations = effort - 16 (e.g., effort 76 = 60i).
             return Self {
                 zenflate_effort: 30,
                 strategies: HEURISTIC_STRATEGIES,
@@ -108,6 +112,57 @@ impl EffortParams {
                 beam_brute_configs: &[(10, 3), (15, 3)],
                 use_recompress: true,
                 full_optimal_effort: Some(effort),
+                full_optimal_only: false,
+            };
+        }
+        if effort > 45 {
+            // Effort 46-60: 9 strategies + refine + moderate brute-force + FullOptimal.
+            return Self {
+                zenflate_effort: 30,
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: 7,
+                screen_is_final: false,
+                top_k: 3,
+                refine_efforts: &[30],
+                brute_configs: &[(1, 1), (1, 4), (3, 1), (3, 4)],
+                block_brute_configs: &[],
+                fork_brute_efforts: &[10],
+                adaptive_fork_configs: &[],
+                beam_brute_configs: &[],
+                use_recompress: true,
+                full_optimal_effort: Some(effort),
+                full_optimal_only: false,
+            };
+        }
+        if effort > 30 {
+            // Effort 31-45: Lean pipeline — BruteForceFork + zenzop only.
+            //
+            // ECT-9 does exactly 2 things: streaming brute-force filter selection
+            // (LFS_INCREMENTAL) + Zopfli compression. We mirror this approach:
+            // BruteForceFork maintains incremental DEFLATE state and tests all 5
+            // filters per row, then zenzop recompresses the best candidate.
+            //
+            // No screening phase — BFF filter selection always dominates heuristic
+            // screening, so the screening time is wasted. Phase 3 runs BFF and
+            // compresses with zenflate NearOptimal (monotonicity baseline), then
+            // Phase 4 recompresses with zenzop for the final result.
+            //
+            // zenzop iterations = effort - 16 (E31→15i, E46→30i, E76→60i).
+            return Self {
+                zenflate_effort: 30,
+                strategies: &[],
+                screen_effort: 7,
+                screen_is_final: false,
+                top_k: 1,
+                refine_efforts: &[],
+                brute_configs: &[],
+                block_brute_configs: &[],
+                fork_brute_efforts: &[10],
+                adaptive_fork_configs: &[],
+                beam_brute_configs: &[],
+                use_recompress: true,
+                full_optimal_effort: Some(effort),
+                full_optimal_only: true,
             };
         }
         match effort {
@@ -129,6 +184,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             1 => Self {
                 zenflate_effort: 1,
@@ -144,6 +200,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             2 => Self {
                 zenflate_effort: 2,
@@ -159,6 +216,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             3 => Self {
                 zenflate_effort: 3,
@@ -174,6 +232,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             4 => Self {
                 zenflate_effort: 4,
@@ -189,6 +248,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             5 => Self {
                 zenflate_effort: 5,
@@ -204,6 +264,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             6 => Self {
                 zenflate_effort: 6,
@@ -219,6 +280,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             7 => Self {
                 zenflate_effort: 7,
@@ -234,6 +296,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             // ── Medium effort (8-15): screen + refine ──
             //
@@ -254,6 +317,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             9 => Self {
                 zenflate_effort: 10,
@@ -269,6 +333,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             10 => Self {
                 zenflate_effort: 12,
@@ -284,6 +349,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             11 => Self {
                 zenflate_effort: 14,
@@ -299,6 +365,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             12 => Self {
                 zenflate_effort: 15,
@@ -314,6 +381,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             13 => Self {
                 zenflate_effort: 17,
@@ -329,6 +397,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             14 => Self {
                 zenflate_effort: 18,
@@ -344,6 +413,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             15 => Self {
                 zenflate_effort: 20,
@@ -359,6 +429,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             // ── High effort (16-23): higher refine, multi-tier ──
             //
@@ -378,6 +449,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             17 => Self {
                 zenflate_effort: 22,
@@ -393,6 +465,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             18 => Self {
                 zenflate_effort: 24,
@@ -408,6 +481,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             19 => Self {
                 zenflate_effort: 24,
@@ -423,6 +497,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             20 => Self {
                 zenflate_effort: 26,
@@ -438,6 +513,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             21 => Self {
                 zenflate_effort: 28,
@@ -453,6 +529,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             22 => Self {
                 zenflate_effort: 28,
@@ -468,6 +545,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             23 => Self {
                 zenflate_effort: 30,
@@ -483,6 +561,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             // ── Max effort (24-30): brute-force + zopfli ──
             24 => Self {
@@ -499,6 +578,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             25 => Self {
                 zenflate_effort: 30,
@@ -514,6 +594,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             26 => Self {
                 zenflate_effort: 30,
@@ -529,6 +610,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             27 => Self {
                 zenflate_effort: 30,
@@ -544,6 +626,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             28 => Self {
                 zenflate_effort: 30,
@@ -568,6 +651,7 @@ impl EffortParams {
                 beam_brute_configs: &[],
                 use_recompress: true,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             29 => Self {
                 zenflate_effort: 30,
@@ -592,6 +676,7 @@ impl EffortParams {
                 beam_brute_configs: &[(10, 3)],
                 use_recompress: true,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
             _ => Self {
                 // effort 30
@@ -617,6 +702,7 @@ impl EffortParams {
                 beam_brute_configs: &[(10, 3), (15, 3)],
                 use_recompress: true,
                 full_optimal_effort: None,
+                full_optimal_only: false,
             },
         }
     }
@@ -998,6 +1084,14 @@ pub(crate) fn compress_filtered(
     // Track the best zenflate size per candidate for Phase 4 recompression
     let mut recompress_candidates: Vec<(usize, Vec<u8>)> = Vec::new();
 
+    // If no refine tiers but recompress is requested, pass screen results
+    // directly to Phase 4. The screen compressed sizes are used for ranking.
+    if refine_tiers.is_empty() && params.use_recompress {
+        for (size, filtered_data) in &screen_results[..top_n] {
+            recompress_candidates.push((*size, filtered_data.clone()));
+        }
+    }
+
     if opts.parallel && top_n > 1 {
         // ── Parallel refinement ──
         // Each candidate runs through all refine tiers in its own thread.
@@ -1349,59 +1443,117 @@ pub(crate) fn compress_filtered(
             && !recompress_candidates.is_empty()
             && !opts.deadline.should_stop()
         {
-            // Sort by zenflate size, take top 3
+            // Sort by compression size, take top candidates.
+            // Lean tier (full_optimal_only): 1 candidate for speed.
+            // Normal tiers: up to 3 candidates.
             recompress_candidates.sort_by_key(|(size, _)| *size);
-            recompress_candidates.truncate(3);
+            if params.full_optimal_only {
+                recompress_candidates.truncate(1);
+            } else {
+                recompress_candidates.truncate(3);
+            }
 
             let n_candidates = recompress_candidates.len();
 
-            // Zenflate NearOptimal recompression: effort 30 (always available)
-            let zenflate_best =
-                zenflate_recompress(&recompress_candidates, opts.cancel, &mut best_compressed)?;
-            if let Some(b) = zenflate_best {
-                best_compressed = Some(b);
-            }
-
-            // Zenflate FullOptimal recompression: effort 31+ (iterative forward DP)
-            if let Some(fo_effort) = params.full_optimal_effort {
-                if !opts.deadline.should_stop() {
-                    let fo_best = zenflate_full_optimal_recompress(
-                        &recompress_candidates,
-                        fo_effort,
-                        opts.cancel,
-                        &mut best_compressed,
-                    )?;
-                    if let Some(b) = fo_best {
-                        best_compressed = Some(b);
+            if params.full_optimal_only {
+                // Lean tier (E31-45): direct zenzop on top candidate.
+                // zenzop enhanced is ~2.5x faster than zenflate FullOptimal
+                // at equal iteration counts with equal or better compression.
+                // Falls back to FullOptimal when zopfli feature isn't available.
+                #[cfg(feature = "zopfli")]
+                {
+                    let iterations = params
+                        .full_optimal_effort
+                        .unwrap_or(31)
+                        .saturating_sub(16) as u64;
+                    for (_screen_size, filtered_data) in &recompress_candidates {
+                        if opts.cancel.should_stop() {
+                            break;
+                        }
+                        let zopfli_result = compress_with_zopfli_n(
+                            filtered_data,
+                            iterations.max(1),
+                            opts.cancel,
+                        )?;
+                        let dominated = best_compressed
+                            .as_ref()
+                            .is_some_and(|b| zopfli_result.len() >= b.len());
+                        if !dominated {
+                            best_compressed = Some(zopfli_result);
+                        }
                     }
                 }
-            }
+                #[cfg(not(feature = "zopfli"))]
+                {
+                    if let Some(fo_effort) = params.full_optimal_effort {
+                        let fo_best = zenflate_full_optimal_recompress(
+                            &recompress_candidates,
+                            fo_effort,
+                            opts.cancel,
+                            &mut best_compressed,
+                        )?;
+                        if let Some(b) = fo_best {
+                            best_compressed = Some(b);
+                        }
+                    }
+                }
+            } else {
+                // Normal tier: NearOptimal + optional FullOptimal + optional zenzop
+                // Zenflate NearOptimal recompression: effort 30 (always available)
+                let zenflate_best =
+                    zenflate_recompress(&recompress_candidates, opts.cancel, &mut best_compressed)?;
+                if let Some(b) = zenflate_best {
+                    best_compressed = Some(b);
+                }
 
-            // Optional zenzop (zopfli) recompression if feature is enabled
-            #[cfg(feature = "zopfli")]
-            {
-                if !opts.deadline.should_stop() {
-                    let zopfli_best = zopfli_adaptive(
-                        &recompress_candidates,
-                        opts.cancel,
-                        opts.deadline,
-                        opts.remaining_ns,
-                        &mut best_compressed,
-                    )?;
-                    if let Some(b) = zopfli_best {
-                        best_compressed = Some(b);
+                // Zenflate FullOptimal recompression: effort 31+ (iterative forward DP)
+                if let Some(fo_effort) = params.full_optimal_effort {
+                    if !opts.deadline.should_stop() {
+                        let fo_best = zenflate_full_optimal_recompress(
+                            &recompress_candidates,
+                            fo_effort,
+                            opts.cancel,
+                            &mut best_compressed,
+                        )?;
+                        if let Some(b) = fo_best {
+                            best_compressed = Some(b);
+                        }
+                    }
+                }
+
+                // Optional zenzop (zopfli) recompression if feature is enabled
+                #[cfg(feature = "zopfli")]
+                {
+                    if !opts.deadline.should_stop() {
+                        let zopfli_best = zopfli_adaptive(
+                            &recompress_candidates,
+                            opts.cancel,
+                            opts.deadline,
+                            opts.remaining_ns,
+                            &mut best_compressed,
+                        )?;
+                        if let Some(b) = zopfli_best {
+                            best_compressed = Some(b);
+                        }
                     }
                 }
             }
 
             if let (Some(s), Some(t)) = (&mut stats, phase4_start) {
                 let mut label_parts = Vec::new();
-                label_parts.push("NearOpt".to_string());
-                if params.full_optimal_effort.is_some() {
+                if params.full_optimal_only {
+                    #[cfg(feature = "zopfli")]
+                    label_parts.push("Zenzop".to_string());
+                    #[cfg(not(feature = "zopfli"))]
                     label_parts.push("FullOpt".to_string());
-                }
-                if cfg!(feature = "zopfli") {
-                    label_parts.push("Zopfli".to_string());
+                } else {
+                    label_parts.push("NearOpt".to_string());
+                    if params.full_optimal_effort.is_some() {
+                        label_parts.push("FullOpt".to_string());
+                    }
+                    if cfg!(feature = "zopfli") {
+                        label_parts.push("Zopfli".to_string());
+                    }
                 }
                 let label = alloc::format!(
                     "Recompress[{}] ({n_candidates} candidates)",

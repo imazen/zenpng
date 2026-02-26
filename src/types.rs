@@ -60,9 +60,10 @@ pub enum Compression {
     /// specific effort values (e.g., `Balanced` = `Effort(10)`).
     ///
     /// Effort 0-30 uses zenflate's standard compression strategies.
-    /// Effort 31+ enables zenflate's FullOptimal (Zopfli-style forward DP)
-    /// compression in Phase 4 with `(effort-16)*2` iterations. Higher effort
-    /// values run more iterations for smaller output at the cost of time.
+    /// Effort 31+ switches to a lean pipeline: incremental DEFLATE
+    /// brute-force filter selection (BruteForceFork) + zenzop/FullOptimal
+    /// recompression with `effort - 16` iterations. Higher effort values
+    /// run more iterations for smaller output at the cost of time.
     Effort(u32),
 }
 
