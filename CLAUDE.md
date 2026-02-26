@@ -112,13 +112,13 @@ skips Adler-32 computation entirely.
 
 ## Compression Effort Design
 
-Effort 0-30: standard pipeline. Effort 31+: lean/extended pipelines.
+Effort 0-30: standard pipeline. Effort 31+: full pipeline + FullOptimal.
 `Compression::Effort(u32)` for fine-grained control, or named presets:
 
 | Preset | Effort | Strategies | Pipeline | zenflate |
 |---------|--------|------------|----------|----------|
 | None | 0 | 1: None | store | Store |
-| Fastest | 2 | 1: Paeth | screen-only | Turbo |
+| Fastest | 2 | 3: MINIMAL | screen-only | Turbo |
 | Fast | 6 | 5: FAST | screen-only | FastHt |
 | Balanced | 10 | 9: HEURISTIC | screen@7 + refine@12 | Lazy |
 | Thorough | 13 | 9: HEURISTIC | screen@7 + refine@17 | Lazy |
@@ -132,14 +132,16 @@ Effort 0-30: standard pipeline. Effort 31+: lean/extended pipelines.
 
 | Tier | Effort | Pipeline | Recompressor |
 |------|--------|----------|-------------|
-| Lean | 31-45 | BFF@10 only (no screening) | zenzop (effort-16)i |
-| Medium | 46-60 | Full pipeline + BFF@10 | FullOptimal + zenzop |
+| Extended | 31-45 | Full e30 pipeline + FullOptimal | FullOptimal (effort-16)i |
+| Medium | 46-60 | Full pipeline + BF + FullOptimal | FullOptimal + zenzop |
 | Full | 61+ | Full Maniac + all BF variants | FullOptimal + zenzop |
 
-The lean tier (E31-45) mirrors ECT-9's approach: streaming brute-force filter
-selection (BruteForceFork) + Zopfli-style recompression. No heuristic screening
-phase — benchmarking showed screening introduced a correlation mismatch where
-zenflate's ranking selected wrong candidates for zenzop.
+E31-45 runs the complete e30 pipeline (screening, refinement, BF, BFF, beam)
+plus FullOptimal recompression. This guarantees monotonicity vs e30 while
+adding iterative forward DP for further compression. Previously used a
+lean BFF-only pipeline, but benchmarking showed it regressed on 49% of images
+due to correlation mismatch between BFF's Greedy-eval filter selection and
+FullOptimal's compression.
 
 ### 4-phase pipeline (`src/encoder/compress.rs`)
 
@@ -147,21 +149,18 @@ zenflate's ranking selected wrong candidates for zenzop.
 
 1. **Phase 1 — Screen**: Apply filter strategies, compress at `screen_effort`.
    Low effort (0-7): screen IS final pass (no Phase 2).
-   Effort 31-45: no screening (empty strategies).
 2. **Phase 2 — Refine**: Top-K candidates re-compressed at `refine_efforts` via
    `try_compress_with_fallbacks()`, which follows zenflate's `monotonicity_fallback()`
    chain automatically.
 3. **Phase 3 — BruteForce**: Per-row brute-force filter selection (effort 24+).
-   BruteForceBlock permanently disabled (slower AND larger than per-row).
-   BruteForceFork maintains actual DEFLATE state across rows (effort 26+).
+   BruteForceFork maintains actual DEFLATE state across rows (effort 25+).
 4. **Phase 4 — Recompress**: At effort 28-30: zopfli adaptive with time budgeting.
-   At effort 31-45 (lean): direct zenzop with (effort-16) iterations.
-   At effort 46+ (medium/full): NearOptimal + FullOptimal + zenzop.
+   At effort 31+: NearOptimal + FullOptimal (+ optional zenzop).
 
 ### Filter strategy sets (`src/encoder/filter.rs`)
 
-- **MINIMAL** (3): None, Paeth, Adaptive(Bigrams) — effort 3-4
-- **FAST** (5): None, Paeth, Adaptive(MinSum, Bigrams, Entropy) — effort 5-9
+- **MINIMAL** (3): None, Paeth, Adaptive(Bigrams) — effort 2-3
+- **FAST** (5): None, Paeth, Adaptive(MinSum, Bigrams, Entropy) — effort 4-9
 - **HEURISTIC** (9): All 5 Singles + Adaptive(MinSum, Entropy, Bigrams, BigEnt) — effort 10+
 
 BigEnt excluded from FAST — 30-170x slower than MinSum (256KB memset + 65536-entry

@@ -14,7 +14,7 @@
 /// | Preset | Effort | Description |
 /// |---------|--------|-------------|
 /// | `None` | 0 | Uncompressed |
-/// | `Fastest` | 2 | Single filter, turbo DEFLATE |
+/// | `Fastest` | 2 | 3 strategies, turbo DEFLATE |
 /// | `Fast` | 6 | 5 strategies, fast-ht screen only |
 /// | `Balanced` | 10 | 9 strategies, screen + lazy refine |
 /// | `Thorough` | 13 | 9 strategies, screen + lazy+ refine |
