@@ -10,9 +10,8 @@ use zenflate::{CompressionLevel, Compressor, Unstoppable};
 use crate::error::PngError;
 
 use super::filter::{
-    FAST_STRATEGIES, HEURISTIC_STRATEGIES, HeuristicScratch,
-    MINIMAL_STRATEGIES, Strategy, filter_image, filter_image_from_precomputed,
-    precompute_all_filters,
+    FAST_STRATEGIES, HEURISTIC_STRATEGIES, HeuristicScratch, MINIMAL_STRATEGIES, Strategy,
+    filter_image, filter_image_from_precomputed, precompute_all_filters,
 };
 use super::{PhaseStat, PhaseStats};
 
@@ -123,7 +122,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[30],
+                refine_efforts: &[28, 30],
                 brute_configs: &[(1, 1), (1, 4), (3, 1), (3, 4)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[10, 15],
@@ -154,7 +153,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[30],
+                refine_efforts: &[28, 30],
                 brute_configs: &[
                     (1, 1),
                     (1, 4),
@@ -563,7 +562,7 @@ impl EffortParams {
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[28, 30],
-                brute_configs: &[],
+                brute_configs: &[(5, 1)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 adaptive_fork_configs: &[],
@@ -582,7 +581,7 @@ impl EffortParams {
                 refine_efforts: &[28, 30],
                 brute_configs: &[(5, 1)],
                 block_brute_configs: &[],
-                fork_brute_efforts: &[],
+                fork_brute_efforts: &[10],
                 adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
@@ -599,7 +598,7 @@ impl EffortParams {
                 brute_configs: &[(5, 1)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[10],
-                adaptive_fork_configs: &[],
+                adaptive_fork_configs: &[(15, 2)],
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
@@ -611,7 +610,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[30],
+                refine_efforts: &[28, 30],
                 brute_configs: &[(5, 1), (5, 4)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[10],
@@ -627,7 +626,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[30],
+                refine_efforts: &[28, 30],
                 brute_configs: &[(5, 1), (5, 4)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[10, 15],
@@ -643,7 +642,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[30],
+                refine_efforts: &[28, 30],
                 brute_configs: &[
                     (1, 1),
                     (1, 4),
@@ -668,7 +667,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[30],
+                refine_efforts: &[28, 30],
                 brute_configs: &[
                     (1, 1),
                     (1, 4),
@@ -694,7 +693,7 @@ impl EffortParams {
                 screen_effort: 7,
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[30],
+                refine_efforts: &[28, 30],
                 brute_configs: &[
                     (1, 1),
                     (1, 4),
@@ -1471,19 +1470,14 @@ pub(crate) fn compress_filtered(
                 // Falls back to FullOptimal when zopfli feature isn't available.
                 #[cfg(feature = "zopfli")]
                 {
-                    let iterations = params
-                        .full_optimal_effort
-                        .unwrap_or(31)
-                        .saturating_sub(16) as u64;
+                    let iterations =
+                        params.full_optimal_effort.unwrap_or(31).saturating_sub(16) as u64;
                     for (_screen_size, filtered_data) in &recompress_candidates {
                         if opts.cancel.should_stop() {
                             break;
                         }
-                        let zopfli_result = compress_with_zopfli_n(
-                            filtered_data,
-                            iterations.max(1),
-                            opts.cancel,
-                        )?;
+                        let zopfli_result =
+                            compress_with_zopfli_n(filtered_data, iterations.max(1), opts.cancel)?;
                         let dominated = best_compressed
                             .as_ref()
                             .is_some_and(|b| zopfli_result.len() >= b.len());
