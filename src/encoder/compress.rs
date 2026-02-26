@@ -16,7 +16,7 @@ use super::filter::{
 };
 use super::{PhaseStat, PhaseStats};
 
-/// Parameters derived from a single effort value (0-30).
+/// Parameters derived from a single effort value (0-200).
 ///
 /// Each field controls one axis of the compression pipeline:
 /// - `zenflate_effort`: final zenflate effort for Phase 2 / screen-only
@@ -166,7 +166,7 @@ impl EffortParams {
                     (8, 4),
                 ],
                 block_brute_configs: &[],
-                fork_brute_efforts: if effort > 35 { &[10, 15] } else { &[10, 15] },
+                fork_brute_efforts: &[10, 15],
                 adaptive_fork_configs: &[(15, 2), (22, 2)],
                 beam_brute_configs: &[(10, 3), (15, 3)],
                 use_recompress: true,
