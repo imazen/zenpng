@@ -26,9 +26,13 @@ fn main() {
     let mut paths: Vec<PathBuf> = Vec::new();
     collect_pngs(Path::new(&dir), &mut paths);
     paths.sort();
-    // Limit to first 20 images for reasonable bench time
-    if paths.len() > 20 {
-        paths.truncate(20);
+    // Limit to first N images for reasonable bench time
+    let limit: usize = std::env::var("LIMIT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
+    if paths.len() > limit {
+        paths.truncate(limit);
     }
     let n = paths.len();
     eprintln!("Benchmarking {n} images from {dir}");
@@ -46,7 +50,7 @@ fn main() {
         source_size: usize,
         raw_pixels: usize,
         // zenpng levels: Fastest(L1), Fast(L4), Balanced(L6), High(L9), Best(L12), Crush(zopfli)
-        zenpng_sizes: [(usize, f64); 6], // (size, seconds)
+        zenpng_sizes: [(usize, f64); 8], // (size, seconds)
         // External tools (on source PNG): oxipng -o2, oxipng -o4, oxipng -omax,
         //   optipng -o2, optipng -o5, zopflipng, pngcrush, ect -3, ect -9
         external_sizes: Vec<(String, usize, f64)>, // (name, size, seconds)
@@ -88,9 +92,11 @@ fn main() {
             ("High", zenpng::Compression::High),
             ("Best", zenpng::Compression::Best),
             ("Crush", zenpng::Compression::Crush),
+            ("E31", zenpng::Compression::Effort(31)),
+            ("Maniac", zenpng::Compression::Maniac),
         ];
 
-        let mut zenpng_sizes = [(0usize, 0.0f64); 6];
+        let mut zenpng_sizes = [(0usize, 0.0f64); 8];
         for (idx, (level_name, comp)) in levels.iter().enumerate() {
             let config = zenpng::EncodeConfig {
                 compression: *comp,
@@ -218,6 +224,8 @@ fn main() {
         "zenpng-High",
         "zenpng-Best",
         "zenpng-Crush",
+        "zenpng-E31",
+        "zenpng-Maniac",
     ];
 
     for r in &results {
