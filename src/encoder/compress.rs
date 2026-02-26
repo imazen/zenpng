@@ -126,7 +126,7 @@ impl EffortParams {
                 refine_efforts: &[30],
                 brute_configs: &[(1, 1), (1, 4), (3, 1), (3, 4)],
                 block_brute_configs: &[],
-                fork_brute_efforts: &[10],
+                fork_brute_efforts: &[10, 15],
                 adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: true,
@@ -135,19 +135,18 @@ impl EffortParams {
             };
         }
         if effort > 30 {
-            // Effort 31-45: Lean pipeline — BruteForceFork + zenzop only.
+            // Effort 31-45: Lean pipeline — BruteForceFork + FullOptimal.
             //
-            // ECT-9 does exactly 2 things: streaming brute-force filter selection
-            // (LFS_INCREMENTAL) + Zopfli compression. We mirror this approach:
+            // Mirrors ECT's approach: streaming brute-force filter selection
+            // (LFS_INCREMENTAL equivalent) + Zopfli-style squeeze compression.
+            // ECT-9 uses 60 iterations + 8 filter strategies. We use fewer
+            // iterations but match within 0.2% at E31 (15i).
+            //
             // BruteForceFork maintains incremental DEFLATE state and tests all 5
-            // filters per row, then zenzop recompresses the best candidate.
+            // filters per row. E36+ adds a second BFF pass at eval_level=15.
+            // Phase 4 recompresses with zenflate FullOptimal (iterative forward DP).
             //
-            // No screening phase — BFF filter selection always dominates heuristic
-            // screening, so the screening time is wasted. Phase 3 runs BFF and
-            // compresses with zenflate NearOptimal (monotonicity baseline), then
-            // Phase 4 recompresses with zenzop for the final result.
-            //
-            // zenzop iterations = effort - 16 (E31→15i, E46→30i, E76→60i).
+            // FullOptimal iterations = effort - 16 (E31->15i, E36->20i, E46->30i).
             return Self {
                 zenflate_effort: 30,
                 strategies: &[],
@@ -157,7 +156,7 @@ impl EffortParams {
                 refine_efforts: &[],
                 brute_configs: &[],
                 block_brute_configs: &[],
-                fork_brute_efforts: &[10],
+                fork_brute_efforts: if effort > 35 { &[10, 15] } else { &[10] },
                 adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: true,
