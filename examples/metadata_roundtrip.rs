@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use enough::Unstoppable;
-use zencodec_types::{ImageMetadata, PixelData};
+use zencodec_types::{MetadataView, PixelData};
 use zenpng::{EncodeConfig, PngInfo};
 
 fn main() {
@@ -132,7 +132,7 @@ fn main() {
     }
 }
 
-fn build_metadata(info: &PngInfo) -> Option<ImageMetadata<'_>> {
+fn build_metadata(info: &PngInfo) -> Option<MetadataView<'_>> {
     let has_anything = info.icc_profile.is_some()
         || info.cicp.is_some()
         || info.content_light_level.is_some()
@@ -141,7 +141,7 @@ fn build_metadata(info: &PngInfo) -> Option<ImageMetadata<'_>> {
         return None;
     }
 
-    let mut meta = ImageMetadata::none();
+    let mut meta = MetadataView::none();
     if let Some(ref icc) = info.icc_profile {
         meta = meta.with_icc(icc);
     }
@@ -159,7 +159,7 @@ fn build_metadata(info: &PngInfo) -> Option<ImageMetadata<'_>> {
 
 fn reencode(
     pixels: &PixelData,
-    meta: Option<&ImageMetadata<'_>>,
+    meta: Option<&MetadataView<'_>>,
     config: &EncodeConfig,
 ) -> Result<Vec<u8>, zenpng::PngError> {
     let u = &enough::Unstoppable;
