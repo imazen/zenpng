@@ -112,7 +112,7 @@ skips Adler-32 computation entirely.
 
 ## Compression Effort Design
 
-Unified 0-30 effort scale. Each ~3 effort points roughly doubles time.
+Effort 0-30: standard pipeline. Effort 31+: lean/extended pipelines.
 `Compression::Effort(u32)` for fine-grained control, or named presets:
 
 | Preset | Effort | Strategies | Pipeline | zenflate |
@@ -128,19 +128,35 @@ Unified 0-30 effort scale. Each ~3 effort points roughly doubles time.
 | Crush | 28 | 9: HEURISTIC | screen@7 + refine + BF sweep + zopfli | NearOptimal |
 | Maniac | 30 | 9: HEURISTIC | screen@7 + refine + BF sweep + zopfli max | NearOptimal |
 
+### Effort 31+ tiers
+
+| Tier | Effort | Pipeline | Recompressor |
+|------|--------|----------|-------------|
+| Lean | 31-45 | BFF@10 only (no screening) | zenzop (effort-16)i |
+| Medium | 46-60 | Full pipeline + BFF@10 | FullOptimal + zenzop |
+| Full | 61+ | Full Maniac + all BF variants | FullOptimal + zenzop |
+
+The lean tier (E31-45) mirrors ECT-9's approach: streaming brute-force filter
+selection (BruteForceFork) + Zopfli-style recompression. No heuristic screening
+phase — benchmarking showed screening introduced a correlation mismatch where
+zenflate's ranking selected wrong candidates for zenzop.
+
 ### 4-phase pipeline (`src/encoder/compress.rs`)
 
 `EffortParams::from_effort()` maps effort → all pipeline parameters:
 
 1. **Phase 1 — Screen**: Apply filter strategies, compress at `screen_effort`.
    Low effort (0-7): screen IS final pass (no Phase 2).
+   Effort 31-45: no screening (empty strategies).
 2. **Phase 2 — Refine**: Top-K candidates re-compressed at `refine_efforts` via
    `try_compress_with_fallbacks()`, which follows zenflate's `monotonicity_fallback()`
    chain automatically.
 3. **Phase 3 — BruteForce**: Per-row brute-force filter selection (effort 24+).
    BruteForceBlock permanently disabled (slower AND larger than per-row).
    BruteForceFork maintains actual DEFLATE state across rows (effort 26+).
-4. **Phase 4 — Zopfli**: Zopfli adaptive with time budgeting (effort 28+).
+4. **Phase 4 — Recompress**: At effort 28-30: zopfli adaptive with time budgeting.
+   At effort 31-45 (lean): direct zenzop with (effort-16) iterations.
+   At effort 46+ (medium/full): NearOptimal + FullOptimal + zenzop.
 
 ### Filter strategy sets (`src/encoder/filter.rs`)
 
