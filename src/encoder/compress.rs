@@ -135,33 +135,43 @@ impl EffortParams {
             };
         }
         if effort > 30 {
-            // Effort 31-45: Lean pipeline — BruteForceFork + FullOptimal.
+            // Effort 31-45: Full pipeline + FullOptimal recompression.
             //
-            // Mirrors ECT's approach: streaming brute-force filter selection
-            // (LFS_INCREMENTAL equivalent) + Zopfli-style squeeze compression.
-            // ECT-9 uses 60 iterations + 8 filter strategies. We use fewer
-            // iterations but match within 0.2% at E31 (15i).
+            // Includes the complete e30 pipeline (screening, refinement,
+            // brute-force, BFF, beam) to guarantee monotonicity vs e30.
+            // FullOptimal recompression adds iterative forward DP on top.
             //
-            // BruteForceFork maintains incremental DEFLATE state and tests all 5
-            // filters per row. E36+ adds a second BFF pass at eval_level=15.
-            // Phase 4 recompresses with zenflate FullOptimal (iterative forward DP).
+            // Previously used a lean pipeline (BFF only + FullOptimal) which
+            // regressed on 49% of images because BFF's Greedy-eval filter
+            // selection produced suboptimal candidates for FullOptimal.
+            // The full pipeline captures both screening-based and BFF-based
+            // candidates, letting FullOptimal pick the best.
             //
-            // FullOptimal iterations = effort - 16 (E31->15i, E36->20i, E46->30i).
+            // FullOptimal iterations = effort - 16 (E31->15i, E36->20i, E45->29i).
             return Self {
                 zenflate_effort: 30,
-                strategies: &[],
+                strategies: HEURISTIC_STRATEGIES,
                 screen_effort: 7,
                 screen_is_final: false,
-                top_k: 1,
-                refine_efforts: &[],
-                brute_configs: &[],
+                top_k: 3,
+                refine_efforts: &[30],
+                brute_configs: &[
+                    (1, 1),
+                    (1, 4),
+                    (3, 1),
+                    (3, 4),
+                    (5, 1),
+                    (5, 4),
+                    (8, 1),
+                    (8, 4),
+                ],
                 block_brute_configs: &[],
-                fork_brute_efforts: if effort > 35 { &[10, 15] } else { &[10] },
-                adaptive_fork_configs: &[],
-                beam_brute_configs: &[],
+                fork_brute_efforts: if effort > 35 { &[10, 15] } else { &[10, 15] },
+                adaptive_fork_configs: &[(15, 2), (22, 2)],
+                beam_brute_configs: &[(10, 3), (15, 3)],
                 use_recompress: true,
                 full_optimal_effort: Some(effort),
-                full_optimal_only: true,
+                full_optimal_only: false,
             };
         }
         match effort {
@@ -203,7 +213,7 @@ impl EffortParams {
             },
             2 => Self {
                 zenflate_effort: 2,
-                strategies: &[Strategy::Single(4)],
+                strategies: MINIMAL_STRATEGIES,
                 screen_effort: 2,
                 screen_is_final: true,
                 top_k: 1,
@@ -235,7 +245,7 @@ impl EffortParams {
             },
             4 => Self {
                 zenflate_effort: 4,
-                strategies: MINIMAL_STRATEGIES,
+                strategies: FAST_STRATEGIES,
                 screen_effort: 4,
                 screen_is_final: true,
                 top_k: 1,
@@ -455,8 +465,8 @@ impl EffortParams {
                 strategies: HEURISTIC_STRATEGIES,
                 screen_effort: 7,
                 screen_is_final: false,
-                top_k: 3,
-                refine_efforts: &[22],
+                top_k: 4,
+                refine_efforts: &[20, 22],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -487,8 +497,8 @@ impl EffortParams {
                 strategies: HEURISTIC_STRATEGIES,
                 screen_effort: 7,
                 screen_is_final: false,
-                top_k: 3,
-                refine_efforts: &[24],
+                top_k: 4,
+                refine_efforts: &[22, 24],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -535,8 +545,8 @@ impl EffortParams {
                 strategies: HEURISTIC_STRATEGIES,
                 screen_effort: 7,
                 screen_is_final: false,
-                top_k: 3,
-                refine_efforts: &[28],
+                top_k: 4,
+                refine_efforts: &[26, 28],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -586,9 +596,9 @@ impl EffortParams {
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[28, 30],
-                brute_configs: &[(5, 1), (5, 4)],
+                brute_configs: &[(5, 1)],
                 block_brute_configs: &[],
-                fork_brute_efforts: &[],
+                fork_brute_efforts: &[10],
                 adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,

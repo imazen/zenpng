@@ -85,16 +85,16 @@ def main():
         18: 'Lazy2', 19: 'Lazy2', 20: 'Lazy2', 21: 'Lazy2', 22: 'Lazy2',
         23: 'NearOpt', 24: 'NearOpt', 25: 'NearOpt', 26: 'NearOpt', 27: 'NearOpt',
         28: 'NearOpt', 29: 'NearOpt', 30: 'NearOpt',
-        31: 'FullOpt',
+        31: 'NrOp+FO',
     }
 
     # Pipeline phases from compress.rs
     pipeline_notes = {
         0: 'store',
         1: '1 strat, screen-only',
-        2: '1 strat, screen-only',
+        2: '3 strat, screen-only',
         3: '3 strat, screen-only',
-        4: '3 strat, screen-only',
+        4: '5 strat, screen-only',
         5: '5 strat, screen-only',
         6: '5 strat, screen-only',
         7: '5 strat, screen-only',
@@ -107,21 +107,21 @@ def main():
         14: '9 strat, screen+refine[18]',
         15: '9 strat, screen+refine[20]',
         16: '9 strat, screen+refine[20,22]',
-        17: '9 strat, screen+refine[22]',
+        17: '9 strat, screen+refine[20,22] top_k=4',
         18: '9 strat, screen+refine[22,24]',
-        19: '9 strat, screen+refine[24]',
+        19: '9 strat, screen+refine[22,24] top_k=4',
         20: '9 strat, screen+refine[24,26]',
         21: '9 strat, screen+refine[26,28]',
-        22: '9 strat, screen+refine[28]',
+        22: '9 strat, screen+refine[26,28] top_k=4',
         23: '9 strat, screen+refine[28,30]',
         24: '9 strat, screen+refine[28,30]+BF(5,1)',
-        25: '9 strat, screen+refine[28,30]+BF(5,1)(5,4)',
+        25: '9 strat, screen+refine[28,30]+BF(5,1)+BFF[10]',
         26: '9 strat, refine[30]+BF+BFF[10]+AF(15,2)',
         27: '9 strat, refine[30]+BF+BFF[10,15]+AF(15,2)(22,2)',
         28: '9 strat, refine[30]+fullBF+BFF[10,15]+AF+recompress',
         29: '9 strat, refine[30]+fullBF+BFF[10,15]+AF+beam(10,3)+recompress',
         30: '9 strat, refine[30]+fullBF+BFF[10,15]+AF+beam+recompress',
-        31: 'lean: BFF[10]+FullOpt(15i)',
+        31: 'full e30+FullOpt(15i)',
     }
 
     print(f"\n{'Effort':>6} {'Strategy':>8} {'Agg Size':>12} {'vs e0':>8} {'vs prev':>8} {'Med ms':>8} {'Pipeline'}")
