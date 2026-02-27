@@ -1,5 +1,9 @@
 # zenpng
 
+[![CI](https://github.com/imazen/zenpng/actions/workflows/ci.yml/badge.svg)](https://github.com/imazen/zenpng/actions/workflows/ci.yml)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![MSRV: 1.85](https://img.shields.io/badge/MSRV-1.85-blue.svg)](https://blog.rust-lang.org/)
+
 PNG encoder and decoder in safe Rust. SIMD-accelerated unfiltering, a progressive
 4-phase compression engine with 31 effort levels (and 170 more beyond that), APNG
 support, auto-quantization, and full metadata roundtrip.
@@ -88,8 +92,8 @@ use zenpng::{encode_apng, ApngEncodeConfig, ApngFrameInput};
 use enough::Unstoppable;
 
 let frames = vec![
-    ApngFrameInput { pixels: &frame0_rgba, delay_num: 1, delay_den: 30 },
-    ApngFrameInput { pixels: &frame1_rgba, delay_num: 1, delay_den: 30 },
+    ApngFrameInput::new(&frame0_rgba, 1, 30),
+    ApngFrameInput::new(&frame1_rgba, 1, 30),
 ];
 
 let config = ApngEncodeConfig::default();
@@ -183,11 +187,9 @@ ICC profiles, EXIF, and XMP are roundtripped through encode/decode. Color space
 chunks (gAMA, sRGB, cHRM, cICP) are preserved. Set them on `EncodeConfig`:
 
 ```rust
-let config = EncodeConfig {
-    source_gamma: Some(45455),   // 1/2.2
-    srgb_intent: Some(0),       // perceptual
-    ..Default::default()
-};
+let config = EncodeConfig::default()
+    .with_source_gamma(Some(45455))   // 1/2.2
+    .with_srgb_intent(Some(0));       // perceptual
 ```
 
 The decoder warns on conflicting color metadata (e.g., both sRGB and cICP present)
@@ -217,6 +219,14 @@ of instructions (the rest is unfiltering and pixel output).
 The encoder's 4-phase pipeline (screen → refine → brute-force → recompress)
 automatically adjusts to the effort level. See the effort curve chart above
 for the compression-vs-time tradeoff across all 31 standard effort levels.
+
+## MSRV
+
+The minimum supported Rust version is **1.85**.
+
+## AI-Generated Code Notice
+
+Developed with Claude (Anthropic). Not all code manually reviewed. Review critical paths before production use.
 
 ## License
 
