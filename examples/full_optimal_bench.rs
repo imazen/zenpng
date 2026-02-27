@@ -30,7 +30,10 @@ fn main() {
 
     // ── Section 1: End-to-end PNG ──
     println!("\n=== End-to-end PNG encoding ===");
-    println!("{:<30} {:>10} {:>8} {:>8}", "Effort", "Size", "Time", "vs E30");
+    println!(
+        "{:<30} {:>10} {:>8} {:>8}",
+        "Effort", "Size", "Time", "vs E30"
+    );
     println!("{}", "-".repeat(60));
 
     let efforts: &[(&str, u32)] = &[
@@ -78,7 +81,10 @@ fn main() {
                 };
                 println!(
                     "{:<30} {:>10} {:>7.2}s {:>8}",
-                    label, size, elapsed.as_secs_f64(), delta
+                    label,
+                    size,
+                    elapsed.as_secs_f64(),
+                    delta
                 );
             }
             Err(e) => println!("{:<30} ERR: {e}", label),
@@ -95,12 +101,20 @@ fn main() {
         ..Default::default()
     };
     let maniac_png = match &decoded.pixels {
-        zencodec_types::PixelData::Rgb8(img) => {
-            zenpng::encode_rgb8(img.as_ref(), None, &maniac_config, &Unstoppable, &Unstoppable)
-        }
-        zencodec_types::PixelData::Rgba8(img) => {
-            zenpng::encode_rgba8(img.as_ref(), None, &maniac_config, &Unstoppable, &Unstoppable)
-        }
+        zencodec_types::PixelData::Rgb8(img) => zenpng::encode_rgb8(
+            img.as_ref(),
+            None,
+            &maniac_config,
+            &Unstoppable,
+            &Unstoppable,
+        ),
+        zencodec_types::PixelData::Rgba8(img) => zenpng::encode_rgba8(
+            img.as_ref(),
+            None,
+            &maniac_config,
+            &Unstoppable,
+            &Unstoppable,
+        ),
         _ => panic!("unsupported pixel format"),
     }
     .unwrap();
@@ -108,7 +122,10 @@ fn main() {
     let idat_data = extract_idat(&maniac_png);
     let filtered_bytes = decompress_zlib(&idat_data);
 
-    println!("\n=== Raw zlib compression ({} bytes filtered) ===", filtered_bytes.len());
+    println!(
+        "\n=== Raw zlib compression ({} bytes filtered) ===",
+        filtered_bytes.len()
+    );
     println!(
         "{:<35} {:>10} {:>8} {:>10}",
         "Engine", "ZlibSize", "Time", "vs NearOpt"
@@ -130,7 +147,10 @@ fn main() {
         nearopt_size = len;
         println!(
             "{:<35} {:>10} {:>7.2}s {:>10}",
-            "zenflate NearOptimal (E30)", len, elapsed.as_secs_f64(), "baseline"
+            "zenflate NearOptimal (E30)",
+            len,
+            elapsed.as_secs_f64(),
+            "baseline"
         );
     }
 
@@ -152,7 +172,10 @@ fn main() {
         let delta = format!("{:+.3}%", diff / nearopt_size as f64 * 100.0);
         println!(
             "{:<35} {:>10} {:>7.2}s {:>10}",
-            label, len, elapsed.as_secs_f64(), delta
+            label,
+            len,
+            elapsed.as_secs_f64(),
+            delta
         );
     }
 
@@ -180,7 +203,10 @@ fn main() {
             let delta = format!("{:+.3}%", diff / nearopt_size as f64 * 100.0);
             println!(
                 "{:<35} {:>10} {:>7.2}s {:>10}",
-                label, len, elapsed.as_secs_f64(), delta
+                label,
+                len,
+                elapsed.as_secs_f64(),
+                delta
             );
         }
     }
@@ -190,8 +216,7 @@ fn extract_idat(png: &[u8]) -> Vec<u8> {
     let mut idat = Vec::new();
     let mut pos = 8; // skip PNG signature
     while pos + 12 <= png.len() {
-        let len =
-            u32::from_be_bytes([png[pos], png[pos + 1], png[pos + 2], png[pos + 3]]) as usize;
+        let len = u32::from_be_bytes([png[pos], png[pos + 1], png[pos + 2], png[pos + 3]]) as usize;
         let chunk_type = &png[pos + 4..pos + 8];
         if chunk_type == b"IDAT" {
             idat.extend_from_slice(&png[pos + 8..pos + 8 + len]);

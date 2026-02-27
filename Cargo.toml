@@ -42,6 +42,7 @@ quantize = ["dep:zenquant"]
 joint = ["quantize", "zenquant/joint"]
 unchecked = ["zenflate/unchecked"]
 zopfli = ["dep:zenzop"]
+zencodec = []
 _dev = ["archmage/testable_dispatch"]
 
 [[example]]
