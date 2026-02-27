@@ -11,6 +11,11 @@ for e in efforts:
     median_t = t_list[len(t_list)//2]
     agg[e] = (total_size, median_t)
 
+# e31 (Brag) — measured separately via single_effort example
+# Full e30 pipeline + 15 FullOptimal iterations
+agg[31] = (8_310_765, 3515)
+efforts.append(31)
+
 # Pareto frontier (weakly dominated = excluded)
 pts_all = [(e, agg[e][1], agg[e][0]) for e in efforts]
 pareto = []
@@ -26,7 +31,7 @@ for e, t, s in pts_all:
         pareto.append(e)
 
 presets = {1:"Fastest", 2:"Turbo", 7:"Fast", 13:"Balanced", 17:"Thorough", 19:"High",
-           22:"Aggressive", 24:"Intense", 27:"Crush", 30:"Maniac"}
+           22:"Aggressive", 24:"Intense", 27:"Crush", 30:"Maniac", 31:"Brag"}
 
 def color(e):
     if e <= 4: return "#4a90d9"
@@ -34,7 +39,8 @@ def color(e):
     if e == 10: return "#d4a020"
     if e <= 17: return "#e07040"
     if e <= 22: return "#c050c0"
-    return "#7070e0"
+    if e <= 30: return "#7070e0"
+    return "#d04040"  # FullOptimal (31+)
 
 STYLE = """<style>
   :root { --fg: #24292f; --fg2: #57606a; --fg3: #8c959f; --grid: #d0d7de; --bg: #ffffff; }
@@ -180,8 +186,8 @@ fast_svg = gen_chart(
     log_x=False,
 )
 
-# === Chart 2: Detail range (e17-e30, log X) ===
-slow_efforts = list(range(17, 31))  # include e17 as bridge
+# === Chart 2: Detail range (e17-e31, log X) ===
+slow_efforts = list(range(17, 32))  # include e17 as bridge, e31 as Brag
 slow_labels = {
     17: (12, -10, "start"),
     18: (12, 10, "start"),
@@ -191,11 +197,13 @@ slow_labels = {
     27: (12, 10, "start"),
     28: (12, -10, "start"),
     30: (12, 10, "start"),
+    31: (12, -12, "start"),
 }
 slow_legend = [
-    (100, "#e07040", "Lazy (11-17)"),
-    (220, "#c050c0", "Lazy2 (18-22)"),
-    (360, "#7070e0", "NearOpt (23-30)"),
+    (80, "#e07040", "Lazy (11-17)"),
+    (190, "#c050c0", "Lazy2 (18-22)"),
+    (320, "#7070e0", "NearOpt (23-30)"),
+    (470, "#d04040", "FullOpt (31+)"),
 ]
 slow_svg = gen_chart(
     title="Compression vs Encode Time — Detail Range",
@@ -203,9 +211,9 @@ slow_svg = gen_chart(
     x_min_ms=50, x_max_ms=8000,
     x_grid=[100, 200, 300, 500, 1000, 2000, 3000, 5000],
     x_grid_labels=["100ms", "200ms", "300ms", "500ms", "1s", "2s", "3s", "5s"],
-    y_min=8_340_000, y_max=9_000_000,
-    y_grid=[8_400_000, 8_500_000, 8_600_000, 8_700_000, 8_800_000, 8_900_000],
-    y_grid_labels=["8.4M", "8.5M", "8.6M", "8.7M", "8.8M", "8.9M"],
+    y_min=8_280_000, y_max=9_000_000,
+    y_grid=[8_300_000, 8_400_000, 8_500_000, 8_600_000, 8_700_000, 8_800_000, 8_900_000],
+    y_grid_labels=["8.3M", "8.4M", "8.5M", "8.6M", "8.7M", "8.8M", "8.9M"],
     label_offsets=slow_labels,
     legend_items=slow_legend,
     log_x=True,

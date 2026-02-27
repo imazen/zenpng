@@ -24,6 +24,7 @@
 /// | `Intense` | 24 | Full brute-force + near-optimal |
 /// | `Crush` | 27 | Full brute-force + beam search + zenzop |
 /// | `Maniac` | 30 | Maximum standard pipeline |
+/// | `Brag` | 31 | Full pipeline + 15 FullOptimal iterations (beats ECT-9) |
 /// | `Minutes` | 200 | Full pipeline + 184 FullOptimal iterations |
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -57,6 +58,10 @@ pub enum Compression {
     /// search, and zenzop with maximum effort. Requires the `zopfli` feature;
     /// falls back to `Intense` if not enabled.
     Maniac,
+    /// SOTA compression. Full Maniac pipeline plus 15 FullOptimal iterations.
+    /// Beats ECT-9 (60 zopfli iterations) on aggregate. Requires the `zopfli`
+    /// feature for best results.
+    Brag,
     /// Extreme compression with FullOptimal recompression (184 iterations).
     /// Runs the full Maniac pipeline plus iterative forward-DP DEFLATE
     /// parsing. Expect minutes per megapixel. Produces the smallest
@@ -89,6 +94,7 @@ impl Compression {
             Compression::Intense => 24,
             Compression::Crush => 27,
             Compression::Maniac => 30,
+            Compression::Brag => 31,
             Compression::Minutes => 200,
             Compression::Effort(e) => e.min(200),
         }
