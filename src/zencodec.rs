@@ -201,30 +201,78 @@ impl Default for PngEncoderConfig {
 fn effort_to_compression(effort: i32) -> crate::Compression {
     use crate::Compression;
     match effort {
-        ..=0 => Compression::Fastest,
-        1 => Compression::Turbo,
-        2 => Compression::Fast,
-        3 => Compression::Balanced,
-        4..=5 => Compression::Thorough,
+        ..=0 => Compression::None,
+        1 => Compression::Fastest,
+        2 => Compression::Turbo,
+        3 => Compression::Fast,
+        4 => Compression::Balanced,
+        5 => Compression::Thorough,
         6 => Compression::High,
         7 => Compression::Aggressive,
         8 => Compression::Intense,
-        _ => Compression::Crush,
+        9 => Compression::Crush,
+        10 => Compression::Maniac,
+        11 => Compression::Brag,
+        _ => Compression::Minutes,
     }
 }
 
 /// Convert generic quality (0–100) to MPE threshold.
 ///
-/// Exponential curve: `mpe = 0.001 * 10^((100 - quality) / 50)`
-/// - q99 → MPE 0.0010
-/// - q95 → MPE 0.0013
-/// - q90 → MPE 0.0016
-/// - q75 → MPE 0.0032
-/// - q50 → MPE 0.010
-/// - q0  → MPE 0.100
+/// Piecewise-linear interpolation calibrated against JPEG quality equivalences
+/// from zenquant's MPE↔SSIM2↔butteraugli corpus data (1992 images).
+///
+/// | quality | ≈ JPEG q | MPE    |
+/// |---------|----------|--------|
+/// | 100     | lossless | 0.0    |
+/// | 99      | —        | 0.001  |
+/// | 95      | 95       | 0.008  |
+/// | 90      | 90       | 0.012  |
+/// | 85      | 85       | 0.015  |
+/// | 75      | 75       | 0.020  |
+/// | 50      | 50       | 0.028  |
+/// | 30      | 30       | 0.034  |
+/// | 0       | —        | 0.100  |
+///
+/// Values above q99 are near-lossless; values below q30 are increasingly lossy.
 fn quality_to_mpe(quality: f32) -> f32 {
+    // (quality, mpe) — sorted descending by quality
+    // Near-lossless range (99–100) plus JPEG-equivalent calibration points.
+    const TABLE: [(f32, f32); 11] = [
+        (100.0, 0.0),
+        (99.0, 0.001),
+        (95.0, 0.008),
+        (90.0, 0.012),
+        (85.0, 0.015),
+        (80.0, 0.017),
+        (75.0, 0.020),
+        (60.0, 0.025),
+        (50.0, 0.028),
+        (30.0, 0.034),
+        (0.0, 0.100),
+    ];
+
     let quality = quality.clamp(0.0, 100.0);
-    0.001 * 10.0_f32.powf((100.0 - quality) / 50.0)
+
+    // Exact endpoint matches
+    if quality >= TABLE[0].0 {
+        return TABLE[0].1;
+    }
+    let last = TABLE.len() - 1;
+    if quality <= TABLE[last].0 {
+        return TABLE[last].1;
+    }
+
+    // Find the bracketing interval (table is sorted descending by quality)
+    for i in 0..last {
+        let (q_hi, mpe_hi) = TABLE[i];
+        let (q_lo, mpe_lo) = TABLE[i + 1];
+        if quality >= q_lo {
+            let t = (q_hi - quality) / (q_hi - q_lo);
+            return mpe_hi + t * (mpe_lo - mpe_hi);
+        }
+    }
+    TABLE[last].1
 }
 
 impl zencodec_types::EncoderConfig for PngEncoderConfig {
@@ -2320,23 +2368,34 @@ mod tests {
         assert_eq!(enc.generic_effort(), None);
         assert_eq!(enc.is_lossless(), Some(true));
 
-        // Each generic effort level maps to a distinct preset
+        // effort 0 → None (store, no compression)
         let enc = PngEncoderConfig::new().with_generic_effort(0);
         assert_eq!(enc.generic_effort(), Some(0));
-        // effort 0 → Fastest (e1)
 
+        // effort 1 → Fastest
         let enc = PngEncoderConfig::new().with_generic_effort(1);
         assert_eq!(enc.generic_effort(), Some(1));
-        // effort 1 → Turbo (e2)
 
+        // effort 5 → Thorough
         let enc = PngEncoderConfig::new().with_generic_effort(5);
         assert_eq!(enc.generic_effort(), Some(5));
         assert_eq!(enc.is_lossless(), Some(true));
-        // effort 4-5 → Thorough (e17)
 
+        // effort 9 → Crush
         let enc = PngEncoderConfig::new().with_generic_effort(9);
         assert_eq!(enc.generic_effort(), Some(9));
-        // effort 9+ → Crush (e27)
+
+        // effort 10 → Maniac
+        let enc = PngEncoderConfig::new().with_generic_effort(10);
+        assert_eq!(enc.generic_effort(), Some(10));
+
+        // effort 11 → Brag
+        let enc = PngEncoderConfig::new().with_generic_effort(11);
+        assert_eq!(enc.generic_effort(), Some(11));
+
+        // effort 12+ → Minutes
+        let enc = PngEncoderConfig::new().with_generic_effort(12);
+        assert_eq!(enc.generic_effort(), Some(12));
     }
 
     #[test]
@@ -3462,16 +3521,27 @@ mod tests {
 
     #[test]
     fn quality_to_mpe_curve() {
-        // Verify endpoints: q99 ≈ 0.001, q0 = 0.1
-        let mpe_99 = quality_to_mpe(99.0);
-        assert!((mpe_99 - 0.00105).abs() < 0.0005, "q99 mpe={mpe_99}");
+        // Exact table points
+        assert_eq!(quality_to_mpe(100.0), 0.0);
+        assert_eq!(quality_to_mpe(99.0), 0.001);
+        assert_eq!(quality_to_mpe(0.0), 0.100);
 
-        let mpe_0 = quality_to_mpe(0.0);
-        assert!((mpe_0 - 0.1).abs() < 0.01, "q0 mpe={mpe_0}");
+        // JPEG-equivalent calibration points
+        let mpe_95 = quality_to_mpe(95.0);
+        assert!((mpe_95 - 0.008).abs() < 0.001, "q95 mpe={mpe_95}");
 
-        // Mid-range: q50 = 0.01 (10^1 * 0.001)
+        let mpe_90 = quality_to_mpe(90.0);
+        assert!((mpe_90 - 0.012).abs() < 0.001, "q90 mpe={mpe_90}");
+
+        let mpe_75 = quality_to_mpe(75.0);
+        assert!((mpe_75 - 0.020).abs() < 0.001, "q75 mpe={mpe_75}");
+
         let mpe_50 = quality_to_mpe(50.0);
-        assert!((mpe_50 - 0.01).abs() < 0.002, "q50 mpe={mpe_50}");
+        assert!((mpe_50 - 0.028).abs() < 0.001, "q50 mpe={mpe_50}");
+
+        // Interpolated mid-point: q97 between q99 (0.001) and q95 (0.008)
+        let mpe_97 = quality_to_mpe(97.0);
+        assert!(mpe_97 > 0.001 && mpe_97 < 0.008, "q97 mpe={mpe_97}");
 
         // Monotonicity: lower quality → higher MPE (more tolerant)
         assert!(quality_to_mpe(90.0) > quality_to_mpe(99.0));
