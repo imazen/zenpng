@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 378" width="660" height="378">
+<style>
+  :root { --fg: #24292f; --fg2: #57606a; --fg3: #8c959f; --grid: #d0d7de; --bg: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #e6edf3; --fg2: #8b949e; --fg3: #6e7681; --grid: #30363d; --bg: #0d1117; }
+  }
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .tick { font-size: 10.5px; fill: var(--fg2); }
+  .title { font-size: 14px; font-weight: 600; fill: var(--fg); }
+  .elabel { font-size: 9px; font-weight: 500; }
+  .preset { font-size: 8.5px; font-style: italic; }
+  .legend { font-size: 9.5px; fill: var(--fg2); }
+  .axtitle { font-size: 10.5px; fill: var(--fg2); }
+</style>
+<rect width="660" height="378" fill="var(--bg)" rx="6"/>
+<text x="352.0" y="19" text-anchor="middle" class="title">Compression vs Encode Time — Fast Range</text>
+<text x="352.0" y="374" text-anchor="middle" class="axtitle">Median encode time (100 images)</text>
+<text transform="rotate(-90)" x="-180.0" y="14" text-anchor="middle" class="axtitle">Aggregate encoded size</text>
+<line x1="72" y1="312.4" x2="632" y2="312.4" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="66" y="315.9" text-anchor="end" class="tick">9.0M</text>
+<line x1="72" y1="224.1" x2="632" y2="224.1" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="66" y="227.6" text-anchor="end" class="tick">9.5M</text>
+<line x1="72" y1="135.9" x2="632" y2="135.9" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="66" y="139.4" text-anchor="end" class="tick">10.0M</text>
+<line x1="72" y1="47.6" x2="632" y2="47.6" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="66" y="51.1" text-anchor="end" class="tick">10.5M</text>
+<line x1="130.9" y1="30" x2="130.9" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="130.9" y="344" text-anchor="middle" class="tick">10ms</text>
+<line x1="189.9" y1="30" x2="189.9" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="189.9" y="344" text-anchor="middle" class="tick">20ms</text>
+<line x1="248.8" y1="30" x2="248.8" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="248.8" y="344" text-anchor="middle" class="tick">30ms</text>
+<line x1="307.8" y1="30" x2="307.8" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="307.8" y="344" text-anchor="middle" class="tick">40ms</text>
+<line x1="366.7" y1="30" x2="366.7" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="366.7" y="344" text-anchor="middle" class="tick">50ms</text>
+<line x1="425.7" y1="30" x2="425.7" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="425.7" y="344" text-anchor="middle" class="tick">60ms</text>
+<line x1="484.6" y1="30" x2="484.6" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="484.6" y="344" text-anchor="middle" class="tick">70ms</text>
+<line x1="543.6" y1="30" x2="543.6" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="543.6" y="344" text-anchor="middle" class="tick">80ms</text>
+<line x1="602.5" y1="30" x2="602.5" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="602.5" y="344" text-anchor="middle" class="tick">90ms</text>
+<line x1="72" y1="30" x2="72" y2="330" stroke="var(--fg3)" stroke-width="1"/>
+<line x1="72" y1="330" x2="632" y2="330" stroke="var(--fg3)" stroke-width="1"/>
+<path d="M89.7,44.4 L119.2,150.9 L136.8,158.4 L148.6,177.9 L166.3,179.4 L201.7,238.8 L237.1,289.1 L242.9,300.7 L307.8,305.5 L331.4,309.2 L508.2,314.6 L561.3,318.8" fill="none" stroke="var(--fg3)" stroke-width="1" stroke-opacity="0.3"/>
+<circle cx="89.7" cy="44.4" r="3.5" fill="#4a90d9" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="119.2" cy="150.9" r="3.5" fill="#4a90d9" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="136.8" cy="158.4" r="3.5" fill="#4a90d9" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="148.6" cy="177.9" r="3.5" fill="#50b86c" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="154.5" cy="177.4" r="3.0" fill="#50b86c" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="160.4" cy="176.2" r="3.0" fill="#50b86c" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="166.3" cy="158.8" r="3.0" fill="#4a90d9" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="166.3" cy="179.4" r="3.5" fill="#50b86c" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="201.7" cy="238.8" r="3.5" fill="#50b86c" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="237.1" cy="273.3" r="3.0" fill="#d4a020" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="237.1" cy="289.1" r="3.5" fill="#e07040" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="242.9" cy="294.6" r="3.0" fill="#e07040" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="242.9" cy="300.7" r="3.5" fill="#e07040" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="307.8" cy="305.5" r="3.5" fill="#e07040" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="331.4" cy="309.2" r="3.5" fill="#e07040" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="508.2" cy="314.6" r="3.5" fill="#e07040" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="561.3" cy="318.8" r="3.5" fill="#e07040" stroke="var(--bg)" stroke-width="1"/>
+<line x1="92.5" y1="41.6" x2="98.3" y2="35.9" stroke="#4a90d9" stroke-width="0.6" opacity="0.5"/>
+<text x="99.7" y="34.4" text-anchor="start" class="elabel" fill="#4a90d9">e1</text>
+<text x="99.7" y="24.4" text-anchor="start" class="preset" fill="#4a90d9">Fastest</text>
+<line x1="116.6" y1="147.8" x2="110.4" y2="140.4" stroke="#4a90d9" stroke-width="0.6" opacity="0.5"/>
+<text x="109.2" y="138.9" text-anchor="end" class="elabel" fill="#4a90d9">e2</text>
+<text x="109.2" y="128.9" text-anchor="end" class="preset" fill="#4a90d9">Turbo</text>
+<line x1="145.8" y1="180.8" x2="140.0" y2="186.5" stroke="#50b86c" stroke-width="0.6" opacity="0.5"/>
+<text x="138.6" y="187.9" text-anchor="end" class="elabel" fill="#50b86c">e7</text>
+<text x="138.6" y="197.9" text-anchor="end" class="preset" fill="#50b86c">Fast</text>
+<line x1="204.2" y1="235.7" x2="210.4" y2="228.3" stroke="#50b86c" stroke-width="0.6" opacity="0.5"/>
+<text x="211.7" y="226.8" text-anchor="start" class="elabel" fill="#50b86c">e9</text>
+<line x1="239.9" y1="276.1" x2="245.6" y2="281.9" stroke="#d4a020" stroke-width="0.6" opacity="0.5"/>
+<text x="247.1" y="283.3" text-anchor="start" class="elabel" fill="#d4a020">e10</text>
+<line x1="245.8" y1="297.8" x2="251.5" y2="292.1" stroke="#e07040" stroke-width="0.6" opacity="0.5"/>
+<text x="252.9" y="290.7" text-anchor="start" class="elabel" fill="#e07040">e13</text>
+<text x="252.9" y="280.7" text-anchor="start" class="preset" fill="#e07040">Balanced</text>
+<line x1="564.3" y1="321.3" x2="571.7" y2="327.5" stroke="#e07040" stroke-width="0.6" opacity="0.5"/>
+<text x="573.3" y="328.8" text-anchor="start" class="elabel" fill="#e07040">e17</text>
+<text x="573.3" y="338.8" text-anchor="start" class="preset" fill="#e07040">Thorough</text>
+<circle cx="80" cy="362" r="3" fill="#4a90d9"/>
+<text x="86" y="365" class="legend">Turbo (1-4)</text>
+<circle cx="170" cy="362" r="3" fill="#50b86c"/>
+<text x="176" y="365" class="legend">FastHt (5-9)</text>
+<circle cx="275" cy="362" r="3" fill="#d4a020"/>
+<text x="281" y="365" class="legend">Greedy (10)</text>
+<circle cx="380" cy="362" r="3" fill="#e07040"/>
+<text x="386" y="365" class="legend">Lazy (11-17)</text>
+</svg>

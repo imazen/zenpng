@@ -1,0 +1,8 @@
+Benchmark: effort_curve (examples/effort_curve.rs)
+Date: 2026-02-26
+Commit: 0939481 (docs: add effort curve SVG chart and update docs)
+Command: cargo run --release --features _dev --example effort_curve /mnt/v/output/zenpng/test_corpus
+Corpus: 100-image representative test corpus
+Note: All 31 effort levels (e0-e30), per-image size and time.
+      Aggregate curve is perfectly monotonic.
+      177 per-image violations (5.7%) — inherent DEFLATE butterfly effects.

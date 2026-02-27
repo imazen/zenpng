@@ -7,63 +7,70 @@
 /// Controls the trade-off between encoding speed and output file size.
 /// Higher effort produces smaller files but takes longer.
 ///
-/// Named presets map to effort levels on a 0-30 scale. Each ~3 effort
-/// points roughly doubles encoding time. Use [`Effort`](Self::Effort)
-/// for fine-grained control between presets.
+/// Named presets are placed at Pareto-optimal points on the effort curve,
+/// approximately log-spaced in encode time (each step ~2x slower).
+/// Use [`Effort`](Self::Effort) for fine-grained control between presets.
 ///
 /// | Preset | Effort | Description |
 /// |---------|--------|-------------|
 /// | `None` | 0 | Uncompressed |
-/// | `Fastest` | 2 | 3 strategies, turbo DEFLATE |
-/// | `Fast` | 6 | 5 strategies, fast-ht screen only |
-/// | `Balanced` | 10 | 9 strategies, screen + lazy refine |
-/// | `Thorough` | 13 | 9 strategies, screen + lazy+ refine |
-/// | `High` | 16 | Screen + lazy2 multi-tier refine |
-/// | `Aggressive` | 20 | Screen + near-optimal multi-tier |
-/// | `Best` | 24 | Brute-force + near-optimal |
-/// | `Crush` | 28 | Full sweep + zopfli |
-/// | `Maniac` | 30 | Maximum everything |
+/// | `Fastest` | 1 | 1 strategy (Paeth), turbo DEFLATE |
+/// | `Turbo` | 2 | 3 strategies, turbo DEFLATE |
+/// | `Fast` | 7 | 5 strategies, FastHt screen-only |
+/// | `Balanced` | 13 | 9 strategies, screen + lazy refine |
+/// | `Thorough` | 17 | 9 strategies, lazy2 multi-tier + brute-force |
+/// | `High` | 19 | Near-optimal multi-tier + brute-force |
+/// | `Aggressive` | 22 | Near-optimal + extended brute-force |
+/// | `Intense` | 24 | Full brute-force + near-optimal |
+/// | `Crush` | 27 | Full brute-force + beam search + zenzop |
+/// | `Maniac` | 30 | Maximum standard pipeline |
+/// | `Minutes` | 200 | Full pipeline + 184 FullOptimal iterations |
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Compression {
     /// No compression (uncompressed DEFLATE blocks). Maximum speed, maximum size.
     None,
-    /// Fastest compression. Good for large images where speed matters more than size.
+    /// Fastest compression. Single strategy (Paeth) with turbo DEFLATE.
     Fastest,
-    /// Fast compression. Better ratio than `Fastest` with modest speed cost.
+    /// Turbo compression. 3 strategies with turbo DEFLATE.
+    Turbo,
+    /// Fast compression. 5 strategies, FastHt screen-only — the sweet spot of
+    /// the fast range.
     Fast,
     /// Balanced compression (default). Good trade-off for most images.
     #[default]
     Balanced,
-    /// Thorough compression. Double-lazy DEFLATE matching.
+    /// Thorough compression. Lazy2 multi-tier refinement with brute-force.
     Thorough,
-    /// High compression. Multi-tier lazy2 DEFLATE refinement.
+    /// High compression. Near-optimal DEFLATE with brute-force.
     High,
-    /// Aggressive compression. Near-optimal DEFLATE multi-tier.
+    /// Aggressive compression. Near-optimal with extended brute-force.
     Aggressive,
-    /// Best compression with zenflate. Near-optimal multi-pass parser with
-    /// brute-force per-row filter selection. ~10x slower than `Balanced`.
-    Best,
-    /// Ultra compression. Uses zenflate near-optimal for filter selection, then
-    /// zopfli for final DEFLATE compression. ~50x slower than `Balanced`, but
-    /// produces the smallest files. Requires the `zopfli` feature; falls back
-    /// to `Best` if the feature is not enabled.
+    /// Intense compression. Full brute-force filter sweep with near-optimal
+    /// DEFLATE. The strongest level before zenzop enters the picture.
+    Intense,
+    /// Ultra compression. Full brute-force sweep, beam search, and zenzop
+    /// recompression. Requires the `zopfli` feature; falls back to `Intense`
+    /// if the feature is not enabled.
     Crush,
-    /// Maximum possible compression. Full brute-force sweep and zopfli with
-    /// maximum effort. Extremely slow — minutes per megapixel.
-    /// Requires the `zopfli` feature; falls back to `Best` if not enabled.
+    /// Maximum standard-pipeline compression. Full brute-force sweep, beam
+    /// search, and zenzop with maximum effort. Requires the `zopfli` feature;
+    /// falls back to `Intense` if not enabled.
     Maniac,
+    /// Extreme compression with FullOptimal recompression (184 iterations).
+    /// Runs the full Maniac pipeline plus iterative forward-DP DEFLATE
+    /// parsing. Expect minutes per megapixel. Produces the smallest
+    /// possible output. Requires the `zopfli` feature for best results.
+    Minutes,
     /// Explicit effort level (0-200).
     ///
-    /// Provides fine-grained control between the named presets. Each ~3 effort
-    /// points roughly doubles encoding time. Named presets are equivalent to
-    /// specific effort values (e.g., `Balanced` = `Effort(10)`).
+    /// Provides fine-grained control between the named presets. Named presets
+    /// are equivalent to specific effort values (e.g., `Balanced` = `Effort(13)`).
     ///
     /// Effort 0-30 uses zenflate's standard compression strategies.
-    /// Effort 31+ switches to a lean pipeline: incremental DEFLATE
-    /// brute-force filter selection (BruteForceFork) + zenzop/FullOptimal
-    /// recompression with `effort - 16` iterations. Higher effort values
-    /// run more iterations for smaller output at the cost of time.
+    /// Effort 31+ adds FullOptimal recompression with `effort - 16` iterations.
+    /// With the `zopfli` feature, effort 31+ uses zenzop (enhanced zopfli fork)
+    /// for even better results.
     Effort(u32),
 }
 
@@ -72,15 +79,17 @@ impl Compression {
     pub fn effort(self) -> u32 {
         match self {
             Compression::None => 0,
-            Compression::Fastest => 2,
-            Compression::Fast => 6,
-            Compression::Balanced => 10,
-            Compression::Thorough => 13,
-            Compression::High => 16,
-            Compression::Aggressive => 20,
-            Compression::Best => 24,
-            Compression::Crush => 28,
+            Compression::Fastest => 1,
+            Compression::Turbo => 2,
+            Compression::Fast => 7,
+            Compression::Balanced => 13,
+            Compression::Thorough => 17,
+            Compression::High => 19,
+            Compression::Aggressive => 22,
+            Compression::Intense => 24,
+            Compression::Crush => 27,
             Compression::Maniac => 30,
+            Compression::Minutes => 200,
             Compression::Effort(e) => e.min(200),
         }
     }

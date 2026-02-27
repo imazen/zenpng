@@ -118,15 +118,17 @@ Effort 0-30: standard pipeline. Effort 31+: full pipeline + FullOptimal.
 | Preset | Effort | Strategies | Pipeline | zenflate |
 |---------|--------|------------|----------|----------|
 | None | 0 | 1: None | store | Store |
-| Fastest | 2 | 3: MINIMAL | screen-only | Turbo |
-| Fast | 6 | 5: FAST | screen-only | FastHt |
-| Balanced | 10 | 9: HEURISTIC | screen@7 + refine@12 | Lazy |
-| Thorough | 13 | 9: HEURISTIC | screen@7 + refine@17 | Lazy |
-| High | 16 | 9: HEURISTIC | screen@7 + refine@[20,22] | Lazy2 |
-| Aggressive | 20 | 9: HEURISTIC | screen@7 + refine@[24,26] | NearOptimal |
-| Best | 24 | 9: HEURISTIC | screen@7 + refine + BF(5,1) + BFF[10] | NearOptimal |
-| Crush | 28 | 9: HEURISTIC | screen@7 + refine + BF sweep + zopfli | NearOptimal |
-| Maniac | 30 | 9: HEURISTIC | screen@7 + refine + BF sweep + zopfli max | NearOptimal |
+| Fastest | 1 | 1: Paeth | screen-only | Turbo |
+| Turbo | 2 | 3: MINIMAL | screen-only | Turbo |
+| Fast | 7 | 5: FAST | screen-only | FastHt |
+| Balanced | 13 | 9: HEURISTIC | screen@7 + refine@17 | Lazy |
+| Thorough | 17 | 9: HEURISTIC | screen@7 + refine@[20,22] + BF(3,1) | Lazy2 |
+| High | 19 | 9: HEURISTIC | screen@7 + refine@[22,24] + BF(3,1) | Lazy2 |
+| Aggressive | 22 | 9: HEURISTIC | screen@7 + refine@[26,28] | NearOptimal |
+| Intense | 24 | 9: HEURISTIC | screen@7 + refine + BF(5,1) + BFF[10] | NearOptimal |
+| Crush | 27 | 9: HEURISTIC | screen@7 + refine + BF + BFF + AF + beam | NearOptimal |
+| Maniac | 30 | 9: HEURISTIC | screen@7 + refine + full BF/BFF/AF/beam | NearOptimal |
+| Minutes | 200 | 9: HEURISTIC | full Maniac + FullOptimal 184i | FullOptimal |
 
 ### Effort 31+ tiers
 

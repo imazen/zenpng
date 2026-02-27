@@ -1,0 +1,12 @@
+Benchmark: crusher_bench (examples/crusher_bench.rs)
+Date: 2026-02-26
+Commit: 0939481 (docs: add effort curve SVG chart and update docs)
+Command: cargo run --release --features zopfli --example crusher_bench /mnt/v/output/zenpng/test_corpus
+Corpus: 100-image representative test corpus (7 APNG, 45 png-24-32, 48 png-8)
+Note: ECT-9 comparison valid only on still images (13). APNG files excluded
+      because ECT doesn't optimize APNG.
+Key result (still images only):
+  zenpng E31: 1,108,045 bytes (WINS aggregate, 8/13 images)
+  ECT-9:      1,109,219 bytes (+0.11%)
+  zopflipng:  1,114,820 bytes (+0.61%)
+  oxipng-max: 1,117,256 bytes (+0.83%)

@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 378" width="660" height="378">
+<style>
+  :root { --fg: #24292f; --fg2: #57606a; --fg3: #8c959f; --grid: #d0d7de; --bg: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #e6edf3; --fg2: #8b949e; --fg3: #6e7681; --grid: #30363d; --bg: #0d1117; }
+  }
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .tick { font-size: 10.5px; fill: var(--fg2); }
+  .title { font-size: 14px; font-weight: 600; fill: var(--fg); }
+  .elabel { font-size: 9px; font-weight: 500; }
+  .preset { font-size: 8.5px; font-style: italic; }
+  .legend { font-size: 9.5px; fill: var(--fg2); }
+  .axtitle { font-size: 10.5px; fill: var(--fg2); }
+</style>
+<rect width="660" height="378" fill="var(--bg)" rx="6"/>
+<text x="352.0" y="19" text-anchor="middle" class="title">Compression vs Encode Time — Detail Range</text>
+<text x="352.0" y="374" text-anchor="middle" class="axtitle">Median encode time (100 images)</text>
+<text transform="rotate(-90)" x="-180.0" y="14" text-anchor="middle" class="axtitle">Aggregate encoded size</text>
+<line x1="72" y1="302.7" x2="632" y2="302.7" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="66" y="306.2" text-anchor="end" class="tick">8.4M</text>
+<line x1="72" y1="257.3" x2="632" y2="257.3" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="66" y="260.8" text-anchor="end" class="tick">8.5M</text>
+<line x1="72" y1="211.8" x2="632" y2="211.8" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="66" y="215.3" text-anchor="end" class="tick">8.6M</text>
+<line x1="72" y1="166.4" x2="632" y2="166.4" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="66" y="169.9" text-anchor="end" class="tick">8.7M</text>
+<line x1="72" y1="120.9" x2="632" y2="120.9" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="66" y="124.4" text-anchor="end" class="tick">8.8M</text>
+<line x1="72" y1="75.5" x2="632" y2="75.5" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="66" y="79.0" text-anchor="end" class="tick">8.9M</text>
+<line x1="148.5" y1="30" x2="148.5" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="148.5" y="344" text-anchor="middle" class="tick">100ms</text>
+<line x1="225.0" y1="30" x2="225.0" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="225.0" y="344" text-anchor="middle" class="tick">200ms</text>
+<line x1="269.7" y1="30" x2="269.7" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="269.7" y="344" text-anchor="middle" class="tick">300ms</text>
+<line x1="326.1" y1="30" x2="326.1" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="326.1" y="344" text-anchor="middle" class="tick">500ms</text>
+<line x1="402.6" y1="30" x2="402.6" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="402.6" y="344" text-anchor="middle" class="tick">1s</text>
+<line x1="479.0" y1="30" x2="479.0" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="479.0" y="344" text-anchor="middle" class="tick">2s</text>
+<line x1="523.8" y1="30" x2="523.8" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="523.8" y="344" text-anchor="middle" class="tick">3s</text>
+<line x1="580.1" y1="30" x2="580.1" y2="330" stroke="var(--grid)" stroke-width="0.7"/>
+<text x="580.1" y="344" text-anchor="middle" class="tick">5s</text>
+<line x1="72" y1="30" x2="72" y2="330" stroke="var(--fg3)" stroke-width="1"/>
+<line x1="72" y1="330" x2="632" y2="330" stroke="var(--fg3)" stroke-width="1"/>
+<path d="M127.9,46.5 L219.3,239.8 L229.3,248.3 L299.2,269.6 L346.9,287.6 L353.1,299.4 L384.4,307.8 L399.8,314.7 L405.2,315.0 L452.2,317.0 L558.8,318.4 L569.3,319.1 L601.7,319.4" fill="none" stroke="var(--fg3)" stroke-width="1" stroke-opacity="0.3"/>
+<circle cx="127.9" cy="46.5" r="3.5" fill="#e07040" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="219.3" cy="239.8" r="3.5" fill="#c050c0" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="229.3" cy="248.3" r="3.5" fill="#c050c0" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="299.2" cy="269.6" r="3.5" fill="#c050c0" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="346.9" cy="287.6" r="3.5" fill="#c050c0" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="353.1" cy="299.4" r="3.5" fill="#c050c0" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="384.4" cy="307.8" r="3.5" fill="#7070e0" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="399.8" cy="314.7" r="3.5" fill="#7070e0" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="405.2" cy="315.0" r="3.5" fill="#7070e0" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="422.3" cy="315.0" r="3.0" fill="#7070e0" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="452.2" cy="317.0" r="3.5" fill="#7070e0" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="558.8" cy="318.4" r="3.5" fill="#7070e0" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="569.3" cy="319.1" r="3.5" fill="#7070e0" stroke="var(--bg)" stroke-width="1"/>
+<circle cx="601.7" cy="319.4" r="3.5" fill="#7070e0" stroke="var(--bg)" stroke-width="1"/>
+<line x1="131.0" y1="44.0" x2="138.4" y2="37.8" stroke="#e07040" stroke-width="0.6" opacity="0.5"/>
+<text x="139.9" y="36.5" text-anchor="start" class="elabel" fill="#e07040">e17</text>
+<text x="139.9" y="26.5" text-anchor="start" class="preset" fill="#e07040">Thorough</text>
+<line x1="222.4" y1="242.4" x2="229.8" y2="248.5" stroke="#c050c0" stroke-width="0.6" opacity="0.5"/>
+<text x="231.3" y="249.8" text-anchor="start" class="elabel" fill="#c050c0">e18</text>
+<line x1="232.1" y1="245.5" x2="239.9" y2="237.7" stroke="#c050c0" stroke-width="0.6" opacity="0.5"/>
+<text x="241.3" y="236.3" text-anchor="start" class="elabel" fill="#c050c0">e19</text>
+<text x="241.3" y="226.3" text-anchor="start" class="preset" fill="#c050c0">High</text>
+<line x1="356.0" y1="296.6" x2="363.7" y2="288.8" stroke="#c050c0" stroke-width="0.6" opacity="0.5"/>
+<text x="365.1" y="287.4" text-anchor="start" class="elabel" fill="#c050c0">e22</text>
+<text x="365.1" y="277.4" text-anchor="start" class="preset" fill="#c050c0">Aggressive</text>
+<line x1="399.8" y1="310.7" x2="399.8" y2="302.7" stroke="#7070e0" stroke-width="0.6" opacity="0.5"/>
+<text x="399.8" y="300.7" text-anchor="middle" class="elabel" fill="#7070e0">e24</text>
+<text x="399.8" y="290.7" text-anchor="middle" class="preset" fill="#7070e0">Intense</text>
+<line x1="455.3" y1="319.6" x2="462.6" y2="325.7" stroke="#7070e0" stroke-width="0.6" opacity="0.5"/>
+<text x="464.2" y="327.0" text-anchor="start" class="elabel" fill="#7070e0">e27</text>
+<text x="464.2" y="337.0" text-anchor="start" class="preset" fill="#7070e0">Crush</text>
+<line x1="561.9" y1="315.8" x2="569.3" y2="309.7" stroke="#7070e0" stroke-width="0.6" opacity="0.5"/>
+<text x="570.8" y="308.4" text-anchor="start" class="elabel" fill="#7070e0">e28</text>
+<line x1="604.8" y1="322.0" x2="612.2" y2="328.2" stroke="#7070e0" stroke-width="0.6" opacity="0.5"/>
+<text x="613.7" y="329.4" text-anchor="start" class="elabel" fill="#7070e0">e30</text>
+<text x="613.7" y="339.4" text-anchor="start" class="preset" fill="#7070e0">Maniac</text>
+<circle cx="100" cy="362" r="3" fill="#e07040"/>
+<text x="106" y="365" class="legend">Lazy (11-17)</text>
+<circle cx="220" cy="362" r="3" fill="#c050c0"/>
+<text x="226" y="365" class="legend">Lazy2 (18-22)</text>
+<circle cx="360" cy="362" r="3" fill="#7070e0"/>
+<text x="366" y="365" class="legend">NearOpt (23-30)</text>
+</svg>

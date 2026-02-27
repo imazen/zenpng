@@ -16,7 +16,7 @@ fn main() {
         ("Thorough", zenpng::Compression::Thorough),
         ("High", zenpng::Compression::High),
         ("Aggressive", zenpng::Compression::Aggressive),
-        ("Best", zenpng::Compression::Best),
+        ("Intense", zenpng::Compression::Intense),
         ("Crush", zenpng::Compression::Crush),
     ];
 
