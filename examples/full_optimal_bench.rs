@@ -47,13 +47,11 @@ fn main() {
     let mut base_size = 0usize;
 
     for &(label, effort) in efforts {
-        let config = zenpng::EncodeConfig {
-            compression: zenpng::Compression::Effort(effort),
-            source_gamma: decoded.info.source_gamma,
-            srgb_intent: decoded.info.srgb_intent,
-            chromaticities: decoded.info.chromaticities,
-            ..Default::default()
-        };
+        let config = zenpng::EncodeConfig::default()
+            .with_compression(zenpng::Compression::Effort(effort))
+            .with_source_gamma(decoded.info.source_gamma)
+            .with_srgb_intent(decoded.info.srgb_intent)
+            .with_chromaticities(decoded.info.chromaticities);
 
         let start = Instant::now();
         let encoded = match &decoded.pixels {
@@ -93,13 +91,11 @@ fn main() {
 
     // ── Section 2: Raw zlib comparison ──
     // Get filtered data from a Maniac-pipeline encode (without zopfli feature, uses E30)
-    let maniac_config = zenpng::EncodeConfig {
-        compression: zenpng::Compression::Maniac,
-        source_gamma: decoded.info.source_gamma,
-        srgb_intent: decoded.info.srgb_intent,
-        chromaticities: decoded.info.chromaticities,
-        ..Default::default()
-    };
+    let maniac_config = zenpng::EncodeConfig::default()
+        .with_compression(zenpng::Compression::Maniac)
+        .with_source_gamma(decoded.info.source_gamma)
+        .with_srgb_intent(decoded.info.srgb_intent)
+        .with_chromaticities(decoded.info.chromaticities);
     let maniac_png = match &decoded.pixels {
         zencodec_types::PixelData::Rgb8(img) => zenpng::encode_rgb8(
             img.as_ref(),
@@ -188,11 +184,9 @@ fn main() {
             ("zenzop enhanced 60i", 60),
         ] {
             let start = Instant::now();
-            let options = zenzop::Options {
-                iteration_count: core::num::NonZeroU64::new(iters).unwrap(),
-                enhanced: true,
-                ..Default::default()
-            };
+            let mut options = zenzop::Options::default();
+            options.iteration_count = core::num::NonZeroU64::new(iters).unwrap();
+            options.enhanced = true;
             let mut encoder =
                 zenzop::ZlibEncoder::with_stop(options, Vec::new(), &Unstoppable).unwrap();
             std::io::Write::write_all(&mut encoder, &filtered_bytes).unwrap();

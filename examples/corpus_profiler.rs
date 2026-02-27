@@ -136,13 +136,11 @@ fn main() {
 
         // Compress at each effort level
         for &effort in efforts {
-            let config = zenpng::EncodeConfig {
-                compression: zenpng::Compression::Effort(effort),
-                source_gamma: decoded.info.source_gamma,
-                srgb_intent: decoded.info.srgb_intent,
-                chromaticities: decoded.info.chromaticities,
-                ..Default::default()
-            };
+            let config = zenpng::EncodeConfig::default()
+                .with_compression(zenpng::Compression::Effort(effort))
+                .with_source_gamma(decoded.info.source_gamma)
+                .with_srgb_intent(decoded.info.srgb_intent)
+                .with_chromaticities(decoded.info.chromaticities);
 
             let start = std::time::Instant::now();
             let result = match &decoded.pixels {

@@ -77,23 +77,17 @@ fn main() {
             .frames
             .iter()
             .zip(frame_data.iter())
-            .map(|(f, data)| zenpng::ApngFrameInput {
-                pixels: data,
-                delay_num: f.frame_info.delay_num,
-                delay_den: f.frame_info.delay_den,
+            .map(|(f, data)| {
+                zenpng::ApngFrameInput::new(data, f.frame_info.delay_num, f.frame_info.delay_den)
             })
             .collect();
 
         let mut zenpng_sizes = Vec::with_capacity(levels.len());
 
         for (level_name, comp) in levels.iter() {
-            let config = zenpng::ApngEncodeConfig {
-                encode: zenpng::EncodeConfig {
-                    compression: *comp,
-                    ..Default::default()
-                },
-                num_plays: decoded.num_plays,
-            };
+            let config = zenpng::ApngEncodeConfig::default()
+                .with_encode(zenpng::EncodeConfig::default().with_compression(*comp))
+                .with_num_plays(decoded.num_plays);
 
             let start = Instant::now();
             let encoded =

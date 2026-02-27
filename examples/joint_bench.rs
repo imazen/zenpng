@@ -167,10 +167,11 @@ fn main() {
         let mut total_joint = 0usize;
 
         for (name, img) in &images {
-            let std_config = QuantizeConfig::new(OutputFormat::Png).compute_quality_metric(true);
+            let std_config =
+                QuantizeConfig::new(OutputFormat::Png).with_compute_quality_metric(true);
             let joint_config = QuantizeConfig::new(OutputFormat::PngJoint)
-                ._joint_tolerance(tol)
-                .compute_quality_metric(true);
+                ._with_joint_tolerance(tol)
+                .with_compute_quality_metric(true);
 
             let std_res = match encode_with_config(img, &std_config) {
                 Some(r) => r,
@@ -225,18 +226,18 @@ fn main() {
 
         for (name, img) in &images {
             let base_std = if dither_str == 0.0 {
-                QuantizeConfig::new(OutputFormat::Png)._no_dither()
+                QuantizeConfig::new(OutputFormat::Png)._with_no_dither()
             } else {
-                QuantizeConfig::new(OutputFormat::Png)._dither_strength(dither_str)
+                QuantizeConfig::new(OutputFormat::Png)._with_dither_strength(dither_str)
             };
             let base_joint = if dither_str == 0.0 {
                 QuantizeConfig::new(OutputFormat::PngJoint)
-                    ._no_dither()
-                    ._joint_tolerance(0.01)
+                    ._with_no_dither()
+                    ._with_joint_tolerance(0.01)
             } else {
                 QuantizeConfig::new(OutputFormat::PngJoint)
-                    ._dither_strength(dither_str)
-                    ._joint_tolerance(0.01)
+                    ._with_dither_strength(dither_str)
+                    ._with_joint_tolerance(0.01)
             };
 
             let std_res = match encode_with_config(img, &base_std) {
@@ -286,14 +287,14 @@ fn main() {
     let mut bt_joint = 0usize;
 
     for (name, img) in &images {
-        let fast_std = QuantizeConfig::new(OutputFormat::Png).quality(Quality::Fast);
+        let fast_std = QuantizeConfig::new(OutputFormat::Png).with_quality(Quality::Fast);
         let fast_joint = QuantizeConfig::new(OutputFormat::PngJoint)
-            .quality(Quality::Fast)
-            ._joint_tolerance(0.01);
-        let best_std = QuantizeConfig::new(OutputFormat::Png).quality(Quality::Best);
+            .with_quality(Quality::Fast)
+            ._with_joint_tolerance(0.01);
+        let best_std = QuantizeConfig::new(OutputFormat::Png).with_quality(Quality::Best);
         let best_joint = QuantizeConfig::new(OutputFormat::PngJoint)
-            .quality(Quality::Best)
-            ._joint_tolerance(0.01);
+            .with_quality(Quality::Best)
+            ._with_joint_tolerance(0.01);
 
         let fs = match encode_with_config(img, &fast_std) {
             Some(r) => r,
@@ -358,13 +359,13 @@ fn main() {
     let mut ms_total_minsize = 0usize;
 
     for (name, img) in &images {
-        let png_config = QuantizeConfig::new(OutputFormat::Png).compute_quality_metric(true);
+        let png_config = QuantizeConfig::new(OutputFormat::Png).with_compute_quality_metric(true);
         let joint_config = QuantizeConfig::new(OutputFormat::PngJoint)
-            ._joint_tolerance(0.01)
-            .compute_quality_metric(true);
+            ._with_joint_tolerance(0.01)
+            .with_compute_quality_metric(true);
         let minsize_config = QuantizeConfig::new(OutputFormat::PngMinSize)
-            ._joint_tolerance(0.01)
-            .compute_quality_metric(true);
+            ._with_joint_tolerance(0.01)
+            .with_compute_quality_metric(true);
 
         let png_res = match encode_with_config(img, &png_config) {
             Some(r) => r,
@@ -419,10 +420,10 @@ fn main() {
         let mut total_joint = 0usize;
 
         for (name, img) in &images {
-            let std_config = QuantizeConfig::new(OutputFormat::Png).target_ssim2(target);
+            let std_config = QuantizeConfig::new(OutputFormat::Png).with_target_ssim2(target);
             let joint_config = QuantizeConfig::new(OutputFormat::PngJoint)
-                .target_ssim2(target)
-                ._joint_tolerance(0.01);
+                .with_target_ssim2(target)
+                ._with_joint_tolerance(0.01);
 
             let std_res = match encode_with_config(img, &std_config) {
                 Some(r) => r,
@@ -468,17 +469,23 @@ fn main() {
     type DitherMode = (&'static str, fn(QuantizeConfig) -> QuantizeConfig);
     let dither_modes: &[DitherMode] = &[
         ("BlueNoise", |c| c), // PngMinSize default
-        ("Linear", |c| c._linear_dither()),
-        ("Linear+d0.2", |c| c._linear_dither()._dither_strength(0.2)),
-        ("Linear+d0.3", |c| c._linear_dither()._dither_strength(0.3)),
-        ("Adaptive", |c| c._adaptive_dither()._dither_strength(0.1)),
+        ("Linear", |c| c._with_linear_dither()),
+        ("Linear+d0.2", |c| {
+            c._with_linear_dither()._with_dither_strength(0.2)
+        }),
+        ("Linear+d0.3", |c| {
+            c._with_linear_dither()._with_dither_strength(0.3)
+        }),
+        ("Adaptive", |c| {
+            c._with_adaptive_dither()._with_dither_strength(0.1)
+        }),
         ("Adaptive+d0.3", |c| {
-            c._adaptive_dither()._dither_strength(0.3)
+            c._with_adaptive_dither()._with_dither_strength(0.3)
         }),
         ("SierraLite", |c| {
-            c._sierra_lite_dither()._dither_strength(0.1)
+            c._with_sierra_lite_dither()._with_dither_strength(0.1)
         }),
-        ("None", |c| c._no_dither()),
+        ("None", |c| c._with_no_dither()),
     ];
 
     // Track totals per mode
@@ -491,8 +498,8 @@ fn main() {
         for (i, (mode_name, apply_fn)) in dither_modes.iter().enumerate() {
             let config = apply_fn(
                 QuantizeConfig::new(OutputFormat::PngMinSize)
-                    ._joint_tolerance(0.01)
-                    .compute_quality_metric(true),
+                    ._with_joint_tolerance(0.01)
+                    .with_compute_quality_metric(true),
             );
 
             let res = match encode_with_config(img, &config) {

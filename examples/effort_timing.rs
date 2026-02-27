@@ -236,13 +236,11 @@ fn main() {
     eprintln!("{}", "-".repeat(46));
 
     for effort in 0..=15u32 {
-        let config = zenpng::EncodeConfig {
-            compression: zenpng::Compression::Effort(effort),
-            source_gamma: decoded.info.source_gamma,
-            srgb_intent: decoded.info.srgb_intent,
-            chromaticities: decoded.info.chromaticities,
-            ..Default::default()
-        };
+        let config = zenpng::EncodeConfig::default()
+            .with_compression(zenpng::Compression::Effort(effort))
+            .with_source_gamma(decoded.info.source_gamma)
+            .with_srgb_intent(decoded.info.srgb_intent)
+            .with_chromaticities(decoded.info.chromaticities);
 
         let iters = if effort <= 4 {
             5

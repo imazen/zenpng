@@ -98,13 +98,11 @@ fn main() {
 
         let mut zenpng_sizes = [(0usize, 0.0f64); 8];
         for (idx, (level_name, comp)) in levels.iter().enumerate() {
-            let config = zenpng::EncodeConfig {
-                compression: *comp,
-                source_gamma: decoded.info.source_gamma,
-                srgb_intent: decoded.info.srgb_intent,
-                chromaticities: decoded.info.chromaticities,
-                ..Default::default()
-            };
+            let config = zenpng::EncodeConfig::default()
+                .with_compression(*comp)
+                .with_source_gamma(decoded.info.source_gamma)
+                .with_srgb_intent(decoded.info.srgb_intent)
+                .with_chromaticities(decoded.info.chromaticities);
 
             let start = Instant::now();
             let encoded = match &decoded.pixels {

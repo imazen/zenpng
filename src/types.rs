@@ -26,7 +26,7 @@
 /// | `Maniac` | 30 | Maximum standard pipeline |
 /// | `Brag` | 31 | Full pipeline + 15 FullOptimal iterations (beats ECT-9) |
 /// | `Minutes` | 200 | Full pipeline + 184 FullOptimal iterations |
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Compression {
     /// No compression (uncompressed DEFLATE blocks). Maximum speed, maximum size.
@@ -81,6 +81,7 @@ pub enum Compression {
 
 impl Compression {
     /// Get the effort level for this compression setting.
+    #[must_use]
     pub fn effort(self) -> u32 {
         match self {
             Compression::None => 0,
@@ -106,7 +107,7 @@ impl Compression {
 /// Currently only automatic multi-strategy selection is supported. The encoder
 /// tries 8 strategies (5 single-filter + 3 adaptive heuristics) and keeps the
 /// smallest result.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Filter {
     /// Automatic multi-strategy filter selection (recommended).

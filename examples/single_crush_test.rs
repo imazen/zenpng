@@ -21,13 +21,11 @@ fn main() {
         Some(30_000),
         Some(60_000),
     ] {
-        let config = zenpng::EncodeConfig {
-            compression: zenpng::Compression::Crush,
-            source_gamma: decoded.info.source_gamma,
-            srgb_intent: decoded.info.srgb_intent,
-            chromaticities: decoded.info.chromaticities,
-            ..Default::default()
-        };
+        let config = zenpng::EncodeConfig::default()
+            .with_compression(zenpng::Compression::Crush)
+            .with_source_gamma(decoded.info.source_gamma)
+            .with_srgb_intent(decoded.info.srgb_intent)
+            .with_chromaticities(decoded.info.chromaticities);
 
         let deadline: Box<dyn enough::Stop> = match deadline_ms {
             Some(ms) => Box::new(almost_enough::time::WithTimeout::new(

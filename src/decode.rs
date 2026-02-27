@@ -10,15 +10,23 @@ use crate::error::PngError;
 ///
 /// All values are scaled by 100000, matching the PNG spec's `ScaledFloat`.
 /// For example, the sRGB red primary (0.64, 0.33) is stored as (64000, 33000).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PngChromaticities {
+    /// White point x (scaled by 100000).
     pub white_x: u32,
+    /// White point y (scaled by 100000).
     pub white_y: u32,
+    /// Red primary x (scaled by 100000).
     pub red_x: u32,
+    /// Red primary y (scaled by 100000).
     pub red_y: u32,
+    /// Green primary x (scaled by 100000).
     pub green_x: u32,
+    /// Green primary y (scaled by 100000).
     pub green_y: u32,
+    /// Blue primary x (scaled by 100000).
     pub blue_x: u32,
+    /// Blue primary y (scaled by 100000).
     pub blue_y: u32,
 }
 
@@ -60,7 +68,7 @@ pub struct PngInfo {
 }
 
 /// Non-fatal issues detected during PNG decoding.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum PngWarning {
     /// Both sRGB and cICP chunks present (conflicting color space signals).
@@ -72,7 +80,10 @@ pub enum PngWarning {
     /// Both cICP and cHRM chunks present (cICP supersedes primaries).
     CicpChrmConflict,
     /// sRGB chunk present but gAMA value is not the expected 45455.
-    SrgbGamaMismatch { actual_gamma: u32 },
+    SrgbGamaMismatch {
+        /// The actual gamma value found in the gAMA chunk.
+        actual_gamma: u32,
+    },
     /// sRGB chunk present but cHRM values don't match standard sRGB primaries.
     SrgbChrmMismatch,
     /// The zlib decompression checksum (Adler-32) mismatched but was tolerated.
@@ -81,6 +92,7 @@ pub enum PngWarning {
 
 /// PNG decode output.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct PngDecodeOutput {
     /// Decoded pixel data.
     pub pixels: PixelData,
@@ -261,7 +273,8 @@ pub fn decode(
 // ── APNG decode ──────────────────────────────────────────────────────
 
 /// Per-frame APNG timing metadata.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ApngFrameInfo {
     /// Numerator of the frame delay fraction.
     pub delay_num: u16,
@@ -272,6 +285,7 @@ pub struct ApngFrameInfo {
 
 /// A single composed APNG frame (canvas-sized pixels).
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct ApngFrame {
     /// Fully composited pixel data at the canvas dimensions.
     pub pixels: PixelData,
@@ -281,6 +295,7 @@ pub struct ApngFrame {
 
 /// APNG decode output containing fully composed frames.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct ApngDecodeOutput {
     /// All composed frames, each at the canvas dimensions.
     pub frames: Vec<ApngFrame>,
