@@ -58,12 +58,15 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
 
 /// PNG encoder configuration implementing [`EncoderConfig`](zencodec_types::EncoderConfig).
 ///
-/// PNG is lossless — quality is not applicable.
 /// Use [`with_effort`](PngEncoderConfig::with_effort) to control compression level.
+/// When the `quantize` feature is enabled, setting quality < 100 enables
+/// auto-indexed encoding via [`encode_rgba8_auto`](crate::encode_rgba8_auto),
+/// which quantizes RGBA8 images to ≤256 colors when quality is acceptable.
 #[derive(Clone, Debug)]
 pub struct PngEncoderConfig {
     config: EncodeConfig,
     effort: Option<i32>,
+    quality: Option<f32>,
 }
 
 impl PngEncoderConfig {
@@ -73,6 +76,7 @@ impl PngEncoderConfig {
         Self {
             config: EncodeConfig::default(),
             effort: None,
+            quality: None,
         }
     }
 
@@ -197,13 +201,30 @@ impl Default for PngEncoderConfig {
 fn effort_to_compression(effort: i32) -> crate::Compression {
     use crate::Compression;
     match effort {
-        ..=1 => Compression::Fast,
-        2..=3 => Compression::Balanced,
+        ..=0 => Compression::Fastest,
+        1 => Compression::Turbo,
+        2 => Compression::Fast,
+        3 => Compression::Balanced,
         4..=5 => Compression::Thorough,
-        6..=7 => Compression::High,
-        8 => Compression::Aggressive,
-        _ => Compression::Intense,
+        6 => Compression::High,
+        7 => Compression::Aggressive,
+        8 => Compression::Intense,
+        _ => Compression::Crush,
     }
+}
+
+/// Convert generic quality (0–100) to MPE threshold.
+///
+/// Exponential curve: `mpe = 0.001 * 10^((100 - quality) / 50)`
+/// - q99 → MPE 0.0010
+/// - q95 → MPE 0.0013
+/// - q90 → MPE 0.0016
+/// - q75 → MPE 0.0032
+/// - q50 → MPE 0.010
+/// - q0  → MPE 0.100
+fn quality_to_mpe(quality: f32) -> f32 {
+    let quality = quality.clamp(0.0, 100.0);
+    0.001 * 10.0_f32.powf((100.0 - quality) / 50.0)
 }
 
 impl zencodec_types::EncoderConfig for PngEncoderConfig {
@@ -228,8 +249,20 @@ impl zencodec_types::EncoderConfig for PngEncoderConfig {
         self.effort
     }
 
+    fn with_generic_quality(mut self, quality: f32) -> Self {
+        self.quality = Some(quality);
+        self
+    }
+
+    fn generic_quality(&self) -> Option<f32> {
+        self.quality
+    }
+
     fn is_lossless(&self) -> Option<bool> {
-        Some(true)
+        match self.quality {
+            Some(q) if q < 100.0 => Some(false),
+            _ => Some(true),
+        }
     }
 
     fn job(&self) -> PngEncodeJob<'_> {
@@ -399,6 +432,34 @@ impl EncodeRgb8 for PngEncoder<'_> {
 impl EncodeRgba8 for PngEncoder<'_> {
     type Error = PngError;
     fn encode_rgba8(self, pixels: PixelSlice<'_, Rgba<u8>>) -> Result<EncodeOutput, PngError> {
+        // Auto-indexed path when quality < 100 and quantize feature is enabled
+        #[cfg(feature = "quantize")]
+        if let Some(q) = self.config.quality {
+            if q < 100.0 {
+                let pixels = pixels.erase();
+                let bytes = collect_contiguous_bytes(&pixels);
+                let w = pixels.width();
+                let h = pixels.rows();
+                let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&bytes);
+                let img = imgref::Img::new(rgba, w as usize, h as usize);
+                let mpe = quality_to_mpe(q);
+                let cancel: &dyn Stop = self.stop.unwrap_or(&enough::Unstoppable);
+                let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
+                let deadline =
+                    almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
+                let result = crate::encode_rgba8_auto(
+                    img,
+                    &self.config.config,
+                    &crate::default_quantize_config(),
+                    crate::QualityGate::MaxMpe(mpe),
+                    self.metadata,
+                    cancel,
+                    &deadline,
+                )?;
+                return Ok(EncodeOutput::new(result.data, ImageFormat::Png));
+            }
+        }
+
         let pixels = pixels.erase();
         let bytes = collect_contiguous_bytes(&pixels);
         self.do_encode(
@@ -521,6 +582,33 @@ impl EncodeRgbaF32 for PngEncoder<'_> {
                 ]
             })
             .collect();
+
+        // Auto-indexed path when quality < 100 and quantize feature is enabled
+        #[cfg(feature = "quantize")]
+        if let Some(q) = self.config.quality {
+            if q < 100.0 {
+                let w = pixels.width();
+                let h = pixels.rows();
+                let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&srgb);
+                let img = imgref::Img::new(rgba, w as usize, h as usize);
+                let mpe = quality_to_mpe(q);
+                let cancel: &dyn Stop = self.stop.unwrap_or(&enough::Unstoppable);
+                let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
+                let deadline =
+                    almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
+                let result = crate::encode_rgba8_auto(
+                    img,
+                    &self.config.config,
+                    &crate::default_quantize_config(),
+                    crate::QualityGate::MaxMpe(mpe),
+                    self.metadata,
+                    cancel,
+                    &deadline,
+                )?;
+                return Ok(EncodeOutput::new(result.data, ImageFormat::Png));
+            }
+        }
+
         self.do_encode(
             &srgb,
             pixels.width(),
@@ -2227,9 +2315,28 @@ mod tests {
 
     #[test]
     fn effort_getter_setter() {
+        // Default (no effort set) → lossless
+        let enc = PngEncoderConfig::new();
+        assert_eq!(enc.generic_effort(), None);
+        assert_eq!(enc.is_lossless(), Some(true));
+
+        // Each generic effort level maps to a distinct preset
+        let enc = PngEncoderConfig::new().with_generic_effort(0);
+        assert_eq!(enc.generic_effort(), Some(0));
+        // effort 0 → Fastest (e1)
+
+        let enc = PngEncoderConfig::new().with_generic_effort(1);
+        assert_eq!(enc.generic_effort(), Some(1));
+        // effort 1 → Turbo (e2)
+
         let enc = PngEncoderConfig::new().with_generic_effort(5);
         assert_eq!(enc.generic_effort(), Some(5));
         assert_eq!(enc.is_lossless(), Some(true));
+        // effort 4-5 → Thorough (e17)
+
+        let enc = PngEncoderConfig::new().with_generic_effort(9);
+        assert_eq!(enc.generic_effort(), Some(9));
+        // effort 9+ → Crush (e27)
     }
 
     #[test]
@@ -3320,5 +3427,120 @@ mod tests {
             }
             other => panic!("expected PngError::Stopped, got: {other}"),
         }
+    }
+
+    #[test]
+    fn quality_getter_setter() {
+        // Default → no quality set, lossless
+        let enc = PngEncoderConfig::new();
+        assert_eq!(enc.generic_quality(), None);
+        assert_eq!(enc.is_lossless(), Some(true));
+
+        // quality 100.0 → still lossless
+        let enc = PngEncoderConfig::new().with_generic_quality(100.0);
+        assert_eq!(enc.generic_quality(), Some(100.0));
+        assert_eq!(enc.is_lossless(), Some(true));
+
+        // quality < 100.0 → lossy
+        let enc = PngEncoderConfig::new().with_generic_quality(90.0);
+        assert_eq!(enc.generic_quality(), Some(90.0));
+        assert_eq!(enc.is_lossless(), Some(false));
+
+        // quality 0.0 → lossy
+        let enc = PngEncoderConfig::new().with_generic_quality(0.0);
+        assert_eq!(enc.generic_quality(), Some(0.0));
+        assert_eq!(enc.is_lossless(), Some(false));
+
+        // effort + quality compose independently
+        let enc = PngEncoderConfig::new()
+            .with_generic_effort(5)
+            .with_generic_quality(75.0);
+        assert_eq!(enc.generic_effort(), Some(5));
+        assert_eq!(enc.generic_quality(), Some(75.0));
+        assert_eq!(enc.is_lossless(), Some(false));
+    }
+
+    #[test]
+    fn quality_to_mpe_curve() {
+        // Verify endpoints: q99 ≈ 0.001, q0 = 0.1
+        let mpe_99 = quality_to_mpe(99.0);
+        assert!((mpe_99 - 0.00105).abs() < 0.0005, "q99 mpe={mpe_99}");
+
+        let mpe_0 = quality_to_mpe(0.0);
+        assert!((mpe_0 - 0.1).abs() < 0.01, "q0 mpe={mpe_0}");
+
+        // Mid-range: q50 = 0.01 (10^1 * 0.001)
+        let mpe_50 = quality_to_mpe(50.0);
+        assert!((mpe_50 - 0.01).abs() < 0.002, "q50 mpe={mpe_50}");
+
+        // Monotonicity: lower quality → higher MPE (more tolerant)
+        assert!(quality_to_mpe(90.0) > quality_to_mpe(99.0));
+        assert!(quality_to_mpe(75.0) > quality_to_mpe(90.0));
+        assert!(quality_to_mpe(50.0) > quality_to_mpe(75.0));
+        assert!(quality_to_mpe(0.0) > quality_to_mpe(50.0));
+
+        // Clamping: values outside 0-100 are clamped
+        assert_eq!(quality_to_mpe(-10.0), quality_to_mpe(0.0));
+        assert_eq!(quality_to_mpe(200.0), quality_to_mpe(100.0));
+    }
+
+    #[cfg(feature = "quantize")]
+    #[test]
+    fn quality_auto_indexed_rgba8() {
+        // Create a simple image with few unique colors — should always quantize
+        let pixels: Vec<Rgba<u8>> = vec![
+            Rgba {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            Rgba {
+                r: 0,
+                g: 255,
+                b: 0,
+                a: 255,
+            },
+            Rgba {
+                r: 0,
+                g: 0,
+                b: 255,
+                a: 255,
+            },
+            Rgba {
+                r: 255,
+                g: 255,
+                b: 0,
+                a: 255,
+            },
+        ];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+
+        // Lossless encode (no quality set)
+        let enc_lossless = PngEncoderConfig::new();
+        let out_lossless = enc_lossless.encode_rgba8(img.as_ref()).unwrap();
+
+        // Lossy encode (quality 90 → auto-indexed)
+        let enc_lossy = PngEncoderConfig::new().with_generic_quality(90.0);
+        let out_lossy = enc_lossy.encode_rgba8(img.as_ref()).unwrap();
+
+        // Both should produce valid PNG
+        assert_eq!(&out_lossless.bytes()[..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        assert_eq!(&out_lossy.bytes()[..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+
+        // With only 4 colors, auto-indexed should produce a PLTE chunk
+        // (indexed PNG is smaller than truecolor for few-color images)
+        let has_plte = out_lossy
+            .bytes()
+            .windows(4)
+            .any(|w| w == b"PLTE");
+        assert!(has_plte, "expected indexed PNG with PLTE chunk for 4-color image");
+
+        // Both should decode correctly
+        let dec = PngDecoderConfig::new();
+        let d_lossless = dec.decode(out_lossless.bytes()).unwrap();
+        let d_lossy = dec.decode(out_lossy.bytes()).unwrap();
+        assert_eq!(d_lossless.width(), 2);
+        assert_eq!(d_lossy.width(), 2);
     }
 }
