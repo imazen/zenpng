@@ -49,7 +49,7 @@ fn main() {
         name: String,
         source_size: usize,
         raw_pixels: usize,
-        // zenpng levels: Fastest(L1), Fast(L4), Balanced(L6), High(L9), Best(L12), Crush(zopfli)
+        // zenpng levels: Fastest(L1), Fast(L4), Balanced(L6), High(L9), Intense(L12), Crush(zopfli)
         zenpng_sizes: [(usize, f64); 8], // (size, seconds)
         // External tools (on source PNG): oxipng -o2, oxipng -o4, oxipng -omax,
         //   optipng -o2, optipng -o5, zopflipng, pngcrush, ect -3, ect -9
@@ -90,7 +90,7 @@ fn main() {
             ("Fast", zenpng::Compression::Fast),
             ("Balanced", zenpng::Compression::Balanced),
             ("High", zenpng::Compression::High),
-            ("Best", zenpng::Compression::Best),
+            ("Intense", zenpng::Compression::Intense),
             ("Crush", zenpng::Compression::Crush),
             ("E31", zenpng::Compression::Effort(31)),
             ("Maniac", zenpng::Compression::Maniac),
@@ -222,7 +222,7 @@ fn main() {
         "zenpng-Fast",
         "zenpng-Balanced",
         "zenpng-High",
-        "zenpng-Best",
+        "zenpng-Intense",
         "zenpng-Crush",
         "zenpng-E31",
         "zenpng-Maniac",
