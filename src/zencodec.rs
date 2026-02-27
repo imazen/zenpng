@@ -1918,7 +1918,7 @@ fn pixel_descriptor_for_data(pixels: &PixelData) -> PixelDescriptor {
         PixelData::GrayAlpha16(_) => PixelDescriptor::new(
             zencodec_types::ChannelType::U16,
             zencodec_types::ChannelLayout::GrayAlpha,
-            zencodec_types::AlphaMode::Straight,
+            Some(zencodec_types::AlphaMode::Straight),
             zencodec_types::TransferFunction::Srgb,
         ),
         _ => PixelDescriptor::RGBA8_SRGB, // fallback
