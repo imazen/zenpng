@@ -53,9 +53,10 @@ log-spaced in encode time (each step roughly doubles wall time).
 | `Intense` | 24 | Full brute-force + near-optimal |
 | `Crush` | 27 | Full brute-force + beam search + zenzop (requires `zopfli` feature) |
 | `Maniac` | 30 | Maximum standard pipeline + zenzop (requires `zopfli` feature) |
+| `Brag` | 31 | Full pipeline + 15 FullOptimal iterations — beats ECT-9 |
 | `Minutes` | 200 | Full pipeline + 184 FullOptimal iterations |
 
-`Crush` and `Maniac` fall back to `Intense` if the `zopfli` feature isn't enabled.
+`Crush`, `Maniac`, and `Brag` fall back to `Intense` if the `zopfli` feature isn't enabled.
 `Minutes` runs the full Maniac pipeline plus FullOptimal recompression at
 maximum iterations — expect minutes per megapixel.
 

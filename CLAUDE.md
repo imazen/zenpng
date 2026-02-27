@@ -128,6 +128,7 @@ Effort 0-30: standard pipeline. Effort 31+: full pipeline + FullOptimal.
 | Intense | 24 | 9: HEURISTIC | screen@7 + refine + BF(5,1) + BFF[10] | NearOptimal |
 | Crush | 27 | 9: HEURISTIC | screen@7 + refine + BF + BFF + AF + beam | NearOptimal |
 | Maniac | 30 | 9: HEURISTIC | screen@7 + refine + full BF/BFF/AF/beam | NearOptimal |
+| Brag | 31 | 9: HEURISTIC | full Maniac + FullOptimal 15i | FullOptimal |
 | Minutes | 200 | 9: HEURISTIC | full Maniac + FullOptimal 184i | FullOptimal |
 
 ### Effort 31+ tiers
