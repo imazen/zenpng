@@ -862,6 +862,7 @@ mod tests {
 
     // ── fcTL parsing tests ──────────────────────────────────────────
 
+    #[allow(clippy::too_many_arguments)]
     fn make_fctl_data(
         seq: u32,
         w: u32,
@@ -1166,9 +1167,9 @@ mod tests {
                 (Ok(ours), Ok(refs)) => {
                     let frame_count = ours.frames.len().min(refs.len());
                     let mut frame_match = true;
-                    for i in 0..frame_count {
+                    for (i, ref_frame) in refs.iter().enumerate().take(frame_count) {
                         let our_bytes = pixel_data_to_rgba8_bytes(&ours.frames[i].pixels);
-                        if our_bytes != refs[i] {
+                        if our_bytes != *ref_frame {
                             frame_match = false;
                             break;
                         }
@@ -1230,11 +1231,7 @@ mod tests {
 
         let mut frames = Vec::new();
 
-        loop {
-            let buffer_size = match reader.output_buffer_size() {
-                Some(size) => size,
-                None => break,
-            };
+        while let Some(buffer_size) = reader.output_buffer_size() {
             let mut buf = vec![0u8; buffer_size];
             let output_info = match reader.next_frame(&mut buf) {
                 Ok(info) => info,

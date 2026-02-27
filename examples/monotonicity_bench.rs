@@ -9,7 +9,6 @@
 ///   cargo run --release --features unchecked --example monotonicity_bench -- --quick
 ///
 /// The `--quick` flag tests only efforts 0,1,3,5,7,8,9,10,12,15,20,24,30 (preset boundaries).
-
 fn main() {
     // NearOptimal strategy in zenflate uses deep recursion; main thread stack
     // is too small for large images at effort 23+. Spawn a worker thread with
@@ -85,8 +84,8 @@ fn run() -> i32 {
             raw_size as f64 / 1024.0,
         );
         println!(
-            "{:>6}  {:>10}  {:>7}  {:>10}  {}",
-            "Effort", "Size", "Ratio", "Delta", "Status"
+            "{:>6}  {:>10}  {:>7}  {:>10}  Status",
+            "Effort", "Size", "Ratio", "Delta"
         );
         println!("{}", "-".repeat(52));
 

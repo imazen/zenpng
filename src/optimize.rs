@@ -119,11 +119,11 @@ pub(crate) fn analyze_rgba8(bytes: &[u8], width: usize, height: usize) -> ImageA
 
         if !palette_overflow {
             let color = [r, g, b, a];
-            if !color_map.contains_key(&color) {
+            if let std::collections::hash_map::Entry::Vacant(e) = color_map.entry(color) {
                 if palette.len() >= 256 {
                     palette_overflow = true;
                 } else {
-                    color_map.insert(color, palette.len() as u8);
+                    e.insert(palette.len() as u8);
                     palette.push(color);
                 }
             }
@@ -214,11 +214,11 @@ pub(crate) fn analyze_rgb8(bytes: &[u8], width: usize, height: usize) -> ImageAn
 
         if !palette_overflow {
             let color = [r, g, b, 255];
-            if !color_map.contains_key(&color) {
+            if let std::collections::hash_map::Entry::Vacant(e) = color_map.entry(color) {
                 if palette.len() >= 256 {
                     palette_overflow = true;
                 } else {
-                    color_map.insert(color, palette.len() as u8);
+                    e.insert(palette.len() as u8);
                     palette.push(color);
                 }
             }
@@ -1080,16 +1080,14 @@ mod tests {
         bytes[1] = 1;
         bytes[2] = 1;
         bytes[3] = 0;
-        match optimize_rgba8(&bytes, 20, 20) {
-            OptimalEncoding::Truecolor {
-                color_type, trns, ..
-            } => {
-                // Should be grayscale (0) with tRNS, or grayscale+alpha (4)
-                if color_type == 0 {
-                    assert!(trns.is_some(), "gray with tRNS expected");
-                }
+        if let OptimalEncoding::Truecolor {
+            color_type, trns, ..
+        } = optimize_rgba8(&bytes, 20, 20)
+        {
+            // Should be grayscale (0) with tRNS, or grayscale+alpha (4)
+            if color_type == 0 {
+                assert!(trns.is_some(), "gray with tRNS expected");
             }
-            _ => {} // other encodings might be smaller
         }
     }
 
@@ -1108,18 +1106,16 @@ mod tests {
         bytes[1] = 7;
         bytes[2] = 11;
         bytes[3] = 0;
-        match optimize_rgba8(&bytes, 420, 1) {
-            OptimalEncoding::Truecolor {
-                color_type, trns, ..
-            } => {
-                if color_type == 2 {
-                    // RGB with tRNS
-                    assert!(trns.is_some(), "RGB with tRNS expected");
-                    let t = trns.unwrap();
-                    assert_eq!(t.len(), 6); // 3 big-endian u16 values
-                }
+        if let OptimalEncoding::Truecolor {
+            color_type, trns, ..
+        } = optimize_rgba8(&bytes, 420, 1)
+        {
+            if color_type == 2 {
+                // RGB with tRNS
+                assert!(trns.is_some(), "RGB with tRNS expected");
+                let t = trns.unwrap();
+                assert_eq!(t.len(), 6); // 3 big-endian u16 values
             }
-            _ => {} // other encodings might be chosen
         }
     }
 }
