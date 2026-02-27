@@ -15,8 +15,8 @@ use zencodec_types::{
 
 #[allow(unused_imports)]
 use zencodec_types::{
-    Decode, EncodeGray16, EncodeGray8, EncodeGrayF32, EncodeRgb16, EncodeRgb8, EncodeRgbF32,
-    EncodeRgba16, EncodeRgba8, EncodeRgbaF32, FrameDecode, FrameEncodeRgb8, FrameEncodeRgba8,
+    Decode, EncodeGray8, EncodeGray16, EncodeGrayF32, EncodeRgb8, EncodeRgb16, EncodeRgbF32,
+    EncodeRgba8, EncodeRgba16, EncodeRgbaF32, FrameDecode, FrameEncodeRgb8, FrameEncodeRgba8,
 };
 
 use crate::decode::PngDecodeConfig;

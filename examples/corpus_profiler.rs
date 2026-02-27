@@ -59,7 +59,11 @@ fn main() {
     let mut csv = std::fs::File::create(&csv_path).unwrap();
 
     // Header
-    write!(csv, "filename,filesize,width,height,color_type,bpp,raw_bytes").unwrap();
+    write!(
+        csv,
+        "filename,filesize,width,height,color_type,bpp,raw_bytes"
+    )
+    .unwrap();
     for e in efforts {
         write!(csv, ",e{e}_size,e{e}_ms").unwrap();
     }
@@ -92,17 +96,14 @@ fn main() {
         }
 
         // Decode
-        let decoded = match zenpng::decode(
-            &source_data,
-            &zenpng::PngDecodeConfig::none(),
-            &Unstoppable,
-        ) {
-            Ok(d) => d,
-            Err(_) => {
-                skip += 1;
-                continue;
-            }
-        };
+        let decoded =
+            match zenpng::decode(&source_data, &zenpng::PngDecodeConfig::none(), &Unstoppable) {
+                Ok(d) => d,
+                Err(_) => {
+                    skip += 1;
+                    continue;
+                }
+            };
 
         let w = decoded.info.width;
         let h = decoded.info.height;
@@ -145,27 +146,15 @@ fn main() {
 
             let start = std::time::Instant::now();
             let result = match &decoded.pixels {
-                zencodec_types::PixelData::Rgb8(img) => zenpng::encode_rgb8(
-                    img.as_ref(),
-                    None,
-                    &config,
-                    &Unstoppable,
-                    &Unstoppable,
-                ),
-                zencodec_types::PixelData::Rgba8(img) => zenpng::encode_rgba8(
-                    img.as_ref(),
-                    None,
-                    &config,
-                    &Unstoppable,
-                    &Unstoppable,
-                ),
-                zencodec_types::PixelData::Gray8(img) => zenpng::encode_gray8(
-                    img.as_ref(),
-                    None,
-                    &config,
-                    &Unstoppable,
-                    &Unstoppable,
-                ),
+                zencodec_types::PixelData::Rgb8(img) => {
+                    zenpng::encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+                }
+                zencodec_types::PixelData::Rgba8(img) => {
+                    zenpng::encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+                }
+                zencodec_types::PixelData::Gray8(img) => {
+                    zenpng::encode_gray8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+                }
                 _ => {
                     write!(csv, ",0,0").unwrap();
                     continue;
