@@ -132,7 +132,7 @@ fn main() {
     );
     println!("{}", "-".repeat(67));
 
-    let mut nearopt_size = 0usize;
+    let nearopt_size;
 
     // zenflate NearOptimal (effort 30)
     {
@@ -141,7 +141,7 @@ fn main() {
         let bound = zenflate::Compressor::zlib_compress_bound(filtered_bytes.len());
         let mut output = vec![0u8; bound];
         let len = compressor
-            .zlib_compress(&filtered_bytes, &mut output, &Unstoppable)
+            .zlib_compress(&filtered_bytes, &mut output, Unstoppable)
             .unwrap();
         let elapsed = start.elapsed();
         nearopt_size = len;
@@ -165,7 +165,7 @@ fn main() {
         let bound = zenflate::Compressor::zlib_compress_bound(filtered_bytes.len());
         let mut output = vec![0u8; bound];
         let len = compressor
-            .zlib_compress(&filtered_bytes, &mut output, &Unstoppable)
+            .zlib_compress(&filtered_bytes, &mut output, Unstoppable)
             .unwrap();
         let elapsed = start.elapsed();
         let diff = len as f64 - nearopt_size as f64;
@@ -230,7 +230,7 @@ fn decompress_zlib(data: &[u8]) -> Vec<u8> {
     let mut decompressor = zenflate::Decompressor::new();
     let mut output = vec![0u8; data.len() * 10];
     loop {
-        match decompressor.zlib_decompress(data, &mut output, &Unstoppable) {
+        match decompressor.zlib_decompress(data, &mut output, Unstoppable) {
             Ok(outcome) => {
                 output.truncate(outcome.output_written);
                 return output;

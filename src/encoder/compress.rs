@@ -73,12 +73,11 @@ impl EffortParams {
         //
         // bpp=1 (indexed/gray8): 30%+ improvement for graphic content, cheap rows
         // bpp=2 (gray+alpha/gray16): similar pattern, still relatively narrow
-        if params.brute_configs.is_empty() {
-            if bpp == 1 && effort >= 16 && effort < 24 {
-                params.brute_configs = &[(5, 1)];
-            } else if bpp == 2 && effort >= 20 && effort < 24 {
-                params.brute_configs = &[(5, 1)];
-            }
+        if params.brute_configs.is_empty()
+            && ((bpp == 1 && (16..24).contains(&effort))
+                || (bpp == 2 && (20..24).contains(&effort)))
+        {
+            params.brute_configs = &[(5, 1)];
         }
 
         params

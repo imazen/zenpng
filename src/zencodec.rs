@@ -493,8 +493,7 @@ impl EncodeRgba8 for PngEncoder<'_> {
                 let mpe = quality_to_mpe(q);
                 let cancel: &dyn Stop = self.stop.unwrap_or(&enough::Unstoppable);
                 let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
-                let deadline =
-                    almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
+                let deadline = almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
                 let result = crate::encode_rgba8_auto(
                     img,
                     &self.config.config,
@@ -642,8 +641,7 @@ impl EncodeRgbaF32 for PngEncoder<'_> {
                 let mpe = quality_to_mpe(q);
                 let cancel: &dyn Stop = self.stop.unwrap_or(&enough::Unstoppable);
                 let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
-                let deadline =
-                    almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
+                let deadline = almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
                 let result = crate::encode_rgba8_auto(
                     img,
                     &self.config.config,
@@ -3595,16 +3593,22 @@ mod tests {
         let out_lossy = enc_lossy.encode_rgba8(img.as_ref()).unwrap();
 
         // Both should produce valid PNG
-        assert_eq!(&out_lossless.bytes()[..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-        assert_eq!(&out_lossy.bytes()[..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        assert_eq!(
+            &out_lossless.bytes()[..8],
+            &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        );
+        assert_eq!(
+            &out_lossy.bytes()[..8],
+            &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        );
 
         // With only 4 colors, auto-indexed should produce a PLTE chunk
         // (indexed PNG is smaller than truecolor for few-color images)
-        let has_plte = out_lossy
-            .bytes()
-            .windows(4)
-            .any(|w| w == b"PLTE");
-        assert!(has_plte, "expected indexed PNG with PLTE chunk for 4-color image");
+        let has_plte = out_lossy.bytes().windows(4).any(|w| w == b"PLTE");
+        assert!(
+            has_plte,
+            "expected indexed PNG with PLTE chunk for 4-color image"
+        );
 
         // Both should decode correctly
         let dec = PngDecoderConfig::new();

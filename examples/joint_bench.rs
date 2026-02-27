@@ -41,7 +41,7 @@ struct EncResult {
     size: usize,
     mpe: Option<f32>,
     ssim2: Option<f32>,
-    elapsed_ms: u64,
+    _elapsed_ms: u64,
 }
 
 fn encode_with_config(img: &ImgVec<Rgba<u8>>, quant_config: &QuantizeConfig) -> Option<EncResult> {
@@ -79,7 +79,7 @@ fn encode_with_config(img: &ImgVec<Rgba<u8>>, quant_config: &QuantizeConfig) -> 
         size: data.len(),
         mpe: Some(mpe_result.score),
         ssim2: Some(mpe_result.ssimulacra2_estimate),
-        elapsed_ms,
+        _elapsed_ms: elapsed_ms,
     })
 }
 
@@ -88,7 +88,7 @@ fn collect_images(dir: &Path, max: usize) -> Vec<PathBuf> {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "png") {
+            if path.extension().is_some_and(|e| e == "png") {
                 images.push(path);
                 if images.len() >= max {
                     break;
@@ -134,9 +134,8 @@ fn main() {
     };
 
     for dir in &dirs {
-        let limit = if dir.to_string_lossy().contains("kadid") {
-            10
-        } else if dir.to_string_lossy().contains("CID22") {
+        let dir_name = dir.to_string_lossy();
+        let limit = if dir_name.contains("kadid") || dir_name.contains("CID22") {
             10
         } else {
             20
@@ -466,7 +465,8 @@ fn main() {
     );
     println!("{}", "-".repeat(75));
 
-    let dither_modes: &[(&str, fn(QuantizeConfig) -> QuantizeConfig)] = &[
+    type DitherMode = (&'static str, fn(QuantizeConfig) -> QuantizeConfig);
+    let dither_modes: &[DitherMode] = &[
         ("BlueNoise", |c| c), // PngMinSize default
         ("Linear", |c| c._linear_dither()),
         ("Linear+d0.2", |c| c._linear_dither()._dither_strength(0.2)),

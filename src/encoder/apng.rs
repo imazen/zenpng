@@ -897,6 +897,7 @@ fn optimize_apng_indexed(
 
 /// Compute the best trial-compressed size for the next indexed frame.
 #[cfg(feature = "quantize")]
+#[allow(clippy::too_many_arguments)]
 fn lookahead_next_frame_size_indexed(
     canvas: &[u8],
     next_target: &[u8],
@@ -1544,7 +1545,7 @@ mod tests {
         let mut curr = prev.clone();
 
         // Change pixel (1,1)
-        let off1 = ((1 * w + 1) * 4) as usize;
+        let off1 = ((w + 1) * 4) as usize;
         curr[off1] = 255;
 
         // Change pixel (2,2)

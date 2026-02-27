@@ -3,7 +3,6 @@
 /// Tries many filter/compression combos and reports sizes.
 /// Usage: cargo run --release --features zopfli --example single_image_lab [-- /path/to/image.png]
 use enough::Unstoppable;
-use std::io::Write as _;
 use std::path::Path;
 
 fn main() {
@@ -92,7 +91,7 @@ fn main() {
     // === Part 2b: Zopfli iteration count sweep with timing ===
     println!();
     println!("=== Zopfli iteration sweep (BruteForce ctx=10, eval=L1) ===");
-    let filtered_best = filter_brute_force(&pixel_bytes, row_bytes, h, bpp, 10, 1);
+    let _filtered_best = filter_brute_force(&pixel_bytes, row_bytes, h, bpp, 10, 1);
     #[cfg(feature = "zopfli")]
     for iters in [5, 10, 15, 20, 25, 30, 50] {
         let start = std::time::Instant::now();

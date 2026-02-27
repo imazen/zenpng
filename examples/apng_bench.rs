@@ -86,7 +86,7 @@ fn main() {
 
         let mut zenpng_sizes = Vec::with_capacity(levels.len());
 
-        for (_idx, (level_name, comp)) in levels.iter().enumerate() {
+        for (level_name, comp) in levels.iter() {
             let config = zenpng::ApngEncodeConfig {
                 encode: zenpng::EncodeConfig {
                     compression: *comp,

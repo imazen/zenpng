@@ -164,9 +164,8 @@ pub(crate) fn decode_png(
 
     // Fast path: RGBA8 or RGB8 without tRNS — raw unfiltered data IS the output.
     // Skip post_process_row (passthrough copy), skip build_pixel_data (cast + clone).
-    let is_passthrough = !has_trns
-        && ((ihdr.color_type == 6 && ihdr.bit_depth == 8)   // RGBA8
-            || (ihdr.color_type == 2 && ihdr.bit_depth == 8)); // RGB8
+    let is_passthrough =
+        !has_trns && ihdr.bit_depth == 8 && (ihdr.color_type == 6 || ihdr.color_type == 2); // RGBA8 or RGB8
 
     if is_passthrough {
         let raw_row_bytes = ihdr.raw_row_bytes();
@@ -347,7 +346,7 @@ fn vec_u8_to_rgb8(bytes: Vec<u8>) -> Vec<rgb::Rgb<u8>> {
 /// This strips block headers and copies pixel data directly from the zlib stream
 /// into the output buffer, then unfilters in-place.
 /// Result from the stored-block fast path.
-
+#[allow(clippy::too_many_arguments)]
 fn try_decode_stored(
     file_data: &[u8],
     first_idat_pos: usize,

@@ -140,7 +140,7 @@ fn main() {
 fn filter_brute_force(pixel_bytes: &[u8], row_bytes: usize, height: usize, bpp: usize) -> Vec<u8> {
     let filtered_row_size = row_bytes + 1;
     let max_context_bytes = 32 * 1024;
-    let context_rows = (max_context_bytes / filtered_row_size).max(1).min(10);
+    let context_rows = (max_context_bytes / filtered_row_size).clamp(1, 10);
     let max_context = context_rows * filtered_row_size;
 
     let eval_level = zenflate::CompressionLevel::new(1);

@@ -40,13 +40,13 @@ fn main() {
         use enough::Unstoppable;
         let mut d = zenflate::Decompressor::new();
         let mut out = vec![0u8; dec_size];
-        d.zlib_decompress(&zlib_data, &mut out, &Unstoppable)
+        d.zlib_decompress(&zlib_data, &mut out, Unstoppable)
             .unwrap();
 
         let t = Instant::now();
         for _ in 0..iters {
             let mut d = zenflate::Decompressor::new();
-            d.zlib_decompress(&zlib_data, &mut out, &Unstoppable)
+            d.zlib_decompress(&zlib_data, &mut out, Unstoppable)
                 .unwrap();
             std::hint::black_box(&out);
         }

@@ -147,6 +147,7 @@ fn load_corpus() -> Vec<DecodedApng> {
     list
 }
 
+#[allow(dead_code)]
 struct PerFileResult {
     name: String,
     size: usize,
@@ -156,7 +157,7 @@ struct PerFileResult {
 }
 
 fn bench_corpus(
-    label: &str,
+    _label: &str,
     corpus: &[DecodedApng],
     qconfig: &zenquant::QuantizeConfig,
 ) -> Vec<PerFileResult> {

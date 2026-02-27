@@ -112,12 +112,12 @@ fn try_build_exact_palette(
     for frame in frame_pixels {
         let rgba: &[[u8; 4]] = bytemuck::cast_slice(&frame[..pixels_per_frame * 4]);
         for &color in rgba {
-            if !color_to_index.contains_key(&color) {
+            if let std::collections::hash_map::Entry::Vacant(e) = color_to_index.entry(color) {
                 if palette_rgba.len() >= 256 {
                     return None; // >256 unique colors
                 }
                 let idx = palette_rgba.len() as u8;
-                color_to_index.insert(color, idx);
+                e.insert(idx);
                 palette_rgba.push(color);
             }
         }
