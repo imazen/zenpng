@@ -148,7 +148,7 @@ jobs:
   # MSRV check
   # ==========================================================================
   msrv:
-    name: MSRV (1.85)
+    name: MSRV
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -162,19 +162,16 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zenzop.git zenzop
           git clone --depth 1 https://github.com/imazen/zencodec-types.git zencodec-types
 
-      - name: Install Rust 1.85
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.85"
+      - uses: taiki-e/install-action@cargo-hack
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: zenpng -> target
 
-      - name: Check MSRV
+      - name: Check MSRV (from Cargo.toml rust-version)
         working-directory: zenpng
-        run: cargo check
+        run: cargo hack check --rust-version
 
   # ==========================================================================
   # Code coverage
