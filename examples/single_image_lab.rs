@@ -91,6 +91,9 @@ fn main() {
     // === Part 2b: Zopfli iteration count sweep with timing ===
     println!();
     println!("=== Zopfli iteration sweep (BruteForce ctx=10, eval=L1) ===");
+    #[cfg(feature = "zopfli")]
+    let filtered_best = filter_brute_force(&pixel_bytes, row_bytes, h, bpp, 10, 1);
+    #[cfg(not(feature = "zopfli"))]
     let _filtered_best = filter_brute_force(&pixel_bytes, row_bytes, h, bpp, 10, 1);
     #[cfg(feature = "zopfli")]
     for iters in [5, 10, 15, 20, 25, 30, 50] {

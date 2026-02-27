@@ -77,12 +77,10 @@ fn main() {
         }
 
         // Re-encode with same color metadata
-        let config = EncodeConfig {
-            source_gamma: info.source_gamma,
-            srgb_intent: info.srgb_intent,
-            chromaticities: info.chromaticities,
-            ..Default::default()
-        };
+        let config = EncodeConfig::default()
+            .with_source_gamma(info.source_gamma)
+            .with_srgb_intent(info.srgb_intent)
+            .with_chromaticities(info.chromaticities);
 
         let meta = build_metadata(info);
         let encoded = match reencode(&orig.pixels, meta.as_ref(), &config) {

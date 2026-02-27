@@ -15,6 +15,7 @@ use crate::types::{Compression, Filter};
 
 /// PNG encode configuration.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct EncodeConfig {
     /// PNG compression level.
     pub compression: Compression,
@@ -59,6 +60,41 @@ impl EncodeConfig {
     #[must_use]
     pub fn with_filter(mut self, filter: Filter) -> Self {
         self.filter = filter;
+        self
+    }
+
+    /// Enable multi-threaded screening and refinement.
+    #[must_use]
+    pub fn with_parallel(mut self, parallel: bool) -> Self {
+        self.parallel = parallel;
+        self
+    }
+
+    /// Set source gamma for gAMA chunk (scaled by 100000, e.g. 45455 = 1/2.2).
+    #[must_use]
+    pub fn with_source_gamma(mut self, gamma: Option<u32>) -> Self {
+        self.source_gamma = gamma;
+        self
+    }
+
+    /// Set sRGB rendering intent for sRGB chunk (0-3).
+    #[must_use]
+    pub fn with_srgb_intent(mut self, intent: Option<u8>) -> Self {
+        self.srgb_intent = intent;
+        self
+    }
+
+    /// Set chromaticities for cHRM chunk.
+    #[must_use]
+    pub fn with_chromaticities(mut self, chrm: Option<PngChromaticities>) -> Self {
+        self.chromaticities = chrm;
+        self
+    }
+
+    /// Set near-lossless bit rounding (0-4).
+    #[must_use]
+    pub fn with_near_lossless_bits(mut self, bits: u8) -> Self {
+        self.near_lossless_bits = bits;
         self
     }
 
@@ -569,6 +605,8 @@ fn native_to_be_16(native: &[u8]) -> Vec<u8> {
 ///
 /// Each frame must be canvas-sized RGBA8 pixel data (width * height * 4 bytes).
 /// The encoder computes delta regions internally.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct ApngFrameInput<'a> {
     /// Canvas-sized RGBA8 pixel data.
     pub pixels: &'a [u8],
@@ -579,13 +617,42 @@ pub struct ApngFrameInput<'a> {
     pub delay_den: u16,
 }
 
+impl<'a> ApngFrameInput<'a> {
+    /// Create a new APNG frame input.
+    #[must_use]
+    pub fn new(pixels: &'a [u8], delay_num: u16, delay_den: u16) -> Self {
+        Self {
+            pixels,
+            delay_num,
+            delay_den,
+        }
+    }
+}
+
 /// APNG encode configuration.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct ApngEncodeConfig {
     /// PNG compression/filter settings.
     pub encode: EncodeConfig,
     /// Animation loop count. 0 = infinite loop.
     pub num_plays: u32,
+}
+
+impl ApngEncodeConfig {
+    /// Set the encode configuration.
+    #[must_use]
+    pub fn with_encode(mut self, encode: EncodeConfig) -> Self {
+        self.encode = encode;
+        self
+    }
+
+    /// Set the loop count (0 = infinite).
+    #[must_use]
+    pub fn with_num_plays(mut self, num_plays: u32) -> Self {
+        self.num_plays = num_plays;
+        self
+    }
 }
 
 /// Encode canvas-sized RGBA8 frames into a truecolor APNG file.

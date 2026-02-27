@@ -170,11 +170,7 @@ fn bench_corpus(
             .frame_data
             .iter()
             .zip(item.delays.iter())
-            .map(|(data, (num, den))| ApngFrameInput {
-                pixels: data,
-                delay_num: *num,
-                delay_den: *den,
-            })
+            .map(|(data, (num, den))| ApngFrameInput::new(data, *num, *den))
             .collect();
 
         let start = Instant::now();
@@ -224,7 +220,7 @@ fn main() {
     );
 
     let qc_default = default_quantize_config();
-    let qc_no_dither = default_quantize_config()._no_dither();
+    let qc_no_dither = default_quantize_config()._with_no_dither();
 
     eprintln!("\nBenchmarking floyd-steinberg...");
     let fs_results = bench_corpus("floyd-steinberg", &corpus, &qc_default);

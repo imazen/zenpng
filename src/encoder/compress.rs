@@ -1953,11 +1953,9 @@ fn compress_with_zopfli_n(
     stop: &dyn Stop,
 ) -> Result<Vec<u8>, PngError> {
     use std::io::Write;
-    let options = zenzop::Options {
-        iteration_count: core::num::NonZeroU64::new(iterations.max(1)).unwrap(),
-        enhanced: true,
-        ..Default::default()
-    };
+    let mut options = zenzop::Options::default();
+    options.iteration_count = core::num::NonZeroU64::new(iterations.max(1)).unwrap();
+    options.enhanced = true;
     let mut encoder = zenzop::ZlibEncoder::with_stop(options, Vec::new(), stop)
         .map_err(|e| zenzop_err(e, stop))?;
     encoder.write_all(data).map_err(|e| zenzop_err(e, stop))?;
@@ -2293,7 +2291,7 @@ mod zopfli_tests {
             let decompressed =
                 miniz_oxide::inflate::decompress_to_vec_zlib(better).expect("invalid zlib");
             assert!(
-                patterns.iter().any(|p| *p == decompressed),
+                patterns.contains(&decompressed),
                 "decompressed data doesn't match any candidate",
             );
         }

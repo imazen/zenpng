@@ -30,7 +30,8 @@ pub enum QualityGate {
 }
 
 impl QualityGate {
-    /// Whether this gate requires zenquant's compute_quality_metric.
+    /// Whether this gate requires zenquant's `with_compute_quality_metric`.
+    #[must_use]
     pub fn needs_metric(&self) -> bool {
         matches!(self, QualityGate::MaxMpe(_) | QualityGate::MinSsim2(_))
     }
@@ -39,7 +40,7 @@ impl QualityGate {
     ///
     /// For `MaxDeltaE`, the caller must compute and pass the ΔE separately.
     /// For `MaxMpe`/`MinSsim2`, reads metrics from the result (requires
-    /// `compute_quality_metric(true)` on the config).
+    /// `with_compute_quality_metric(true)` on the config).
     fn check_quantize_result(&self, result: &QuantizeResult, delta_e: f64) -> bool {
         match *self {
             QualityGate::MaxDeltaE(max) => delta_e <= max,
@@ -53,7 +54,7 @@ impl QualityGate {
     /// Apply this gate's metric requirements to a QuantizeConfig.
     fn apply_to_config(&self, config: &QuantizeConfig) -> QuantizeConfig {
         if self.needs_metric() {
-            config.clone().compute_quality_metric(true)
+            config.clone().with_compute_quality_metric(true)
         } else {
             config.clone()
         }
@@ -185,12 +186,14 @@ pub fn encode_indexed_rgba8(
 }
 
 /// Create a default [`QuantizeConfig`] tuned for PNG output.
+#[must_use]
 pub fn default_quantize_config() -> QuantizeConfig {
     QuantizeConfig::new(OutputFormat::Png)
 }
 
 /// Result of [`encode_rgba8_auto`], indicating which encoding path was chosen.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct AutoEncodeResult {
     /// The encoded PNG data.
     pub data: Vec<u8>,

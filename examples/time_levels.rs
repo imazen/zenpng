@@ -33,13 +33,11 @@ fn main() {
     };
 
     for (name, comp) in &levels {
-        let config = zenpng::EncodeConfig {
-            compression: *comp,
-            source_gamma: decoded.info.source_gamma,
-            srgb_intent: decoded.info.srgb_intent,
-            chromaticities: decoded.info.chromaticities,
-            ..Default::default()
-        };
+        let config = zenpng::EncodeConfig::default()
+            .with_compression(*comp)
+            .with_source_gamma(decoded.info.source_gamma)
+            .with_srgb_intent(decoded.info.srgb_intent)
+            .with_chromaticities(decoded.info.chromaticities);
 
         let start = std::time::Instant::now();
         let encoded = match &decoded.pixels {

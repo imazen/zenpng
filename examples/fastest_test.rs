@@ -100,10 +100,7 @@ fn main() {
     ];
 
     for (name, comp) in &levels {
-        let config = zenpng::EncodeConfig {
-            compression: *comp,
-            ..Default::default()
-        };
+        let config = zenpng::EncodeConfig::default().with_compression(*comp);
         let mut size = 0;
         let ms = bench_ms(1, 5, || {
             let result = match &decoded.pixels {
@@ -129,17 +126,13 @@ fn main() {
     // Re-encode at None for stored-block decode test
     let none_png = match &decoded.pixels {
         zencodec_types::PixelData::Rgba8(img) => {
-            let config = zenpng::EncodeConfig {
-                compression: zenpng::Compression::None,
-                ..Default::default()
-            };
+            let config =
+                zenpng::EncodeConfig::default().with_compression(zenpng::Compression::None);
             zenpng::encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap()
         }
         zencodec_types::PixelData::Rgb8(img) => {
-            let config = zenpng::EncodeConfig {
-                compression: zenpng::Compression::None,
-                ..Default::default()
-            };
+            let config =
+                zenpng::EncodeConfig::default().with_compression(zenpng::Compression::None);
             zenpng::encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap()
         }
         _ => panic!("unsupported"),
@@ -183,17 +176,13 @@ fn main() {
     // Re-encode at Fast for a reasonably compressed test file
     let test_png = match &decoded.pixels {
         zencodec_types::PixelData::Rgba8(img) => {
-            let config = zenpng::EncodeConfig {
-                compression: zenpng::Compression::Fast,
-                ..Default::default()
-            };
+            let config =
+                zenpng::EncodeConfig::default().with_compression(zenpng::Compression::Fast);
             zenpng::encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap()
         }
         zencodec_types::PixelData::Rgb8(img) => {
-            let config = zenpng::EncodeConfig {
-                compression: zenpng::Compression::Fast,
-                ..Default::default()
-            };
+            let config =
+                zenpng::EncodeConfig::default().with_compression(zenpng::Compression::Fast);
             zenpng::encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap()
         }
         _ => panic!("unsupported"),

@@ -69,14 +69,12 @@ fn run_single(path: &Path) {
     }
 
     for (name, comp) in &levels {
-        let config = zenpng::EncodeConfig {
-            compression: *comp,
-            parallel,
-            source_gamma: decoded.info.source_gamma,
-            srgb_intent: decoded.info.srgb_intent,
-            chromaticities: decoded.info.chromaticities,
-            ..Default::default()
-        };
+        let config = zenpng::EncodeConfig::default()
+            .with_compression(*comp)
+            .with_parallel(parallel)
+            .with_source_gamma(decoded.info.source_gamma)
+            .with_srgb_intent(decoded.info.srgb_intent)
+            .with_chromaticities(decoded.info.chromaticities);
 
         let total_start = Instant::now();
         let result = match &decoded.pixels {
@@ -197,13 +195,11 @@ fn run_corpus(dir: &Path) {
                     Err(_) => continue,
                 };
 
-            let config = zenpng::EncodeConfig {
-                compression: *comp,
-                source_gamma: decoded.info.source_gamma,
-                srgb_intent: decoded.info.srgb_intent,
-                chromaticities: decoded.info.chromaticities,
-                ..Default::default()
-            };
+            let config = zenpng::EncodeConfig::default()
+                .with_compression(*comp)
+                .with_source_gamma(decoded.info.source_gamma)
+                .with_srgb_intent(decoded.info.srgb_intent)
+                .with_chromaticities(decoded.info.chromaticities);
 
             let start = Instant::now();
             let result = match &decoded.pixels {
