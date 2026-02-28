@@ -48,9 +48,18 @@ impl<'a> PngWriteMetadata<'a> {
     }
 }
 
-/// Write all metadata chunks in correct PNG order.
+/// Write all metadata chunks in correct PNG order with PNGv3 precedence.
 ///
-/// Chunk order: sRGB → gAMA → cHRM → iCCP → cICP → mDCV → cLLi → eXIf → iTXt(XMP)
+/// PNGv3 precedence for color chunks (highest priority first):
+///   cICP > iCCP > sRGB > gAMA/cHRM
+///
+/// When a higher-priority chunk is present, lower-priority chunks are
+/// suppressed in the output to avoid conflicting color signals. Exception:
+/// iCCP is kept alongside cICP as a fallback since cICP decoder support
+/// is still limited.
+///
+/// HDR metadata (mDCV, cLLi) always written — they complement cICP.
+/// eXIf and XMP always written — they are not color chunks.
 ///
 /// Per PNG spec: sRGB/gAMA/cHRM must come before PLTE and IDAT.
 /// iCCP must come before PLTE. cICP/mDCV/cLLi must come before IDAT.
@@ -58,23 +67,41 @@ pub(crate) fn write_all_metadata(
     out: &mut Vec<u8>,
     meta: &PngWriteMetadata<'_>,
 ) -> Result<(), PngError> {
+    let has_cicp = meta.cicp.is_some();
+    let has_iccp = meta.generic.and_then(|g| g.icc_profile).is_some();
+    let has_srgb = meta.srgb_intent.is_some();
+
+    // PNGv3 precedence: cICP > iCCP > sRGB > gAMA/cHRM
+    //
+    // When cICP present: write cICP + iCCP (fallback), suppress sRGB/gAMA/cHRM
+    // When iCCP present (no cICP): write iCCP, suppress sRGB/gAMA/cHRM
+    // When sRGB present (no cICP/iCCP): write sRGB, suppress gAMA/cHRM
+    // Otherwise: write gAMA and/or cHRM if present
+    let write_srgb = has_srgb && !has_cicp && !has_iccp;
+    let write_gama_chrm = !has_cicp && !has_iccp && !has_srgb;
+
     // sRGB rendering intent
-    if let Some(intent) = meta.srgb_intent {
-        write_srgb_chunk(out, intent);
+    if write_srgb {
+        if let Some(intent) = meta.srgb_intent {
+            write_srgb_chunk(out, intent);
+        }
     }
 
-    // gAMA (source gamma)
-    if let Some(gamma) = meta.source_gamma {
-        write_gama_chunk(out, gamma);
+    // gAMA (source gamma) — only when no higher-priority chunk present
+    if write_gama_chrm {
+        if let Some(gamma) = meta.source_gamma {
+            write_gama_chunk(out, gamma);
+        }
     }
 
-    // cHRM (chromaticities)
-    if let Some(chrm) = &meta.chromaticities {
-        write_chrm_chunk(out, chrm);
+    // cHRM (chromaticities) — only when no higher-priority chunk present
+    if write_gama_chrm {
+        if let Some(chrm) = &meta.chromaticities {
+            write_chrm_chunk(out, chrm);
+        }
     }
 
-    // iCCP (ICC profile) — mutually exclusive with sRGB per spec,
-    // but we write both if provided (decoders handle this fine)
+    // iCCP (ICC profile) — written when present, even alongside cICP (as fallback)
     if let Some(generic) = meta.generic {
         if let Some(icc) = generic.icc_profile {
             write_iccp_chunk(out, icc)?;
@@ -86,24 +113,24 @@ pub(crate) fn write_all_metadata(
         write_cicp_chunk(out, cicp);
     }
 
-    // mDCV (mastering display color volume)
+    // mDCV (mastering display color volume) — always written, complements cICP
     if let Some(mdcv) = &meta.mastering_display {
         write_mdcv_chunk(out, mdcv);
     }
 
-    // cLLi (content light level info)
+    // cLLi (content light level info) — always written, complements cICP
     if let Some(clli) = &meta.content_light_level {
         write_clli_chunk(out, clli);
     }
 
-    // eXIf
+    // eXIf — always written
     if let Some(generic) = meta.generic {
         if let Some(exif) = generic.exif {
             write_exif_chunk(out, exif);
         }
     }
 
-    // iTXt for XMP
+    // iTXt for XMP — always written
     if let Some(generic) = meta.generic {
         if let Some(xmp) = generic.xmp {
             let xmp_str = core::str::from_utf8(xmp).unwrap_or_default();
@@ -127,7 +154,7 @@ fn write_gama_chunk(out: &mut Vec<u8>, gamma: u32) {
 }
 
 fn write_chrm_chunk(out: &mut Vec<u8>, chrm: &PngChromaticities) {
-    // cHRM: 8 u32 values in order: white_x, white_y, red_x, red_y, green_x, green_y, blue_x, blue_y
+    // cHRM: 8 i32 values in order: white_x, white_y, red_x, red_y, green_x, green_y, blue_x, blue_y
     let mut data = [0u8; 32];
     data[0..4].copy_from_slice(&chrm.white_x.to_be_bytes());
     data[4..8].copy_from_slice(&chrm.white_y.to_be_bytes());
@@ -225,6 +252,10 @@ fn write_itxt_chunk(out: &mut Vec<u8>, keyword: &str, text: &str) {
 
 pub(crate) fn metadata_size_estimate(meta: &PngWriteMetadata<'_>) -> usize {
     let mut size = 0;
+    let has_cicp = meta.cicp.is_some();
+    let has_iccp = meta.generic.and_then(|g| g.icc_profile).is_some();
+    let has_srgb = meta.srgb_intent.is_some();
+
     if let Some(generic) = meta.generic {
         if let Some(icc) = generic.icc_profile {
             size += 12 + 13 + icc.len() / 2;
@@ -236,19 +267,20 @@ pub(crate) fn metadata_size_estimate(meta: &PngWriteMetadata<'_>) -> usize {
             size += 12 + 25 + xmp.len();
         }
     }
-    // Color chunks: sRGB(1) + gAMA(4) + cHRM(32) + cICP(4) + mDCV(24) + cLLi(8)
-    // Each chunk has 12 bytes overhead (len + type + crc)
-    if meta.srgb_intent.is_some() {
-        size += 13;
+    // PNGv3 precedence: cICP > iCCP > sRGB > gAMA/cHRM
+    if has_srgb && !has_cicp && !has_iccp {
+        size += 13; // sRGB(1) + 12 overhead
     }
-    if meta.source_gamma.is_some() {
-        size += 16;
+    if !has_cicp && !has_iccp && !has_srgb {
+        if meta.source_gamma.is_some() {
+            size += 16; // gAMA(4) + 12
+        }
+        if meta.chromaticities.is_some() {
+            size += 44; // cHRM(32) + 12
+        }
     }
-    if meta.chromaticities.is_some() {
-        size += 44;
-    }
-    if meta.cicp.is_some() {
-        size += 16;
+    if has_cicp {
+        size += 16; // cICP(4) + 12
     }
     if meta.mastering_display.is_some() {
         size += 36;

@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 use enough::Stop;
 use imgref::ImgVec;
-use zencodec_types::{Cicp, ContentLightLevel, MasteringDisplay, PixelData};
+use zencodec_types::{Cicp, ContentLightLevel, MasteringDisplay, PixelBuffer};
 
 use crate::chunk::ancillary::PngAncillary;
 use crate::chunk::ihdr::Ihdr;
@@ -203,10 +203,10 @@ pub(crate) fn decode_png(
                 ancillary.cicp.as_ref(),
                 ancillary.icc_profile.as_deref(),
             ));
-            let pixels = if ihdr.color_type == 6 {
-                PixelData::Rgba8(ImgVec::new(vec_u8_to_rgba8(all_pixels), w, h))
+            let pixels: PixelBuffer = if ihdr.color_type == 6 {
+                PixelBuffer::from_imgvec(ImgVec::new(vec_u8_to_rgba8(all_pixels), w, h)).into()
             } else {
-                PixelData::Rgb8(ImgVec::new(vec_u8_to_rgb8(all_pixels), w, h))
+                PixelBuffer::from_imgvec(ImgVec::new(vec_u8_to_rgb8(all_pixels), w, h)).into()
             };
             return Ok(PngDecodeOutput {
                 pixels,
@@ -265,14 +265,14 @@ pub(crate) fn decode_png(
         ));
 
         // Reinterpret bytes as typed pixels without copying
-        let pixels = if ihdr.color_type == 6 {
+        let pixels: PixelBuffer = if ihdr.color_type == 6 {
             // RGBA8 — reinterpret Vec<u8> as Vec<Rgba<u8>> (same layout, no copy)
             let rgba = vec_u8_to_rgba8(all_pixels);
-            PixelData::Rgba8(ImgVec::new(rgba, w, h))
+            PixelBuffer::from_imgvec(ImgVec::new(rgba, w, h)).into()
         } else {
             // RGB8
             let rgb = vec_u8_to_rgb8(all_pixels);
-            PixelData::Rgb8(ImgVec::new(rgb, w, h))
+            PixelBuffer::from_imgvec(ImgVec::new(rgb, w, h)).into()
         };
 
         return Ok(PngDecodeOutput {
@@ -608,7 +608,7 @@ mod tests {
     use enough::Unstoppable;
     use imgref::ImgVec;
     use rgb::{Gray, Rgb, Rgba};
-    use zencodec_types::{GrayAlpha, PixelData};
+    use zencodec_types::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer};
 
     #[test]
     fn chunk_parser_validates_signature() {
@@ -1010,31 +1010,31 @@ mod tests {
         raw_pixels.truncate(output_info.buffer_size());
 
         // Convert to native endian for 16-bit
-        let pixels = match (ct, bd) {
+        let pixels: PixelBuffer = match (ct, bd) {
             (png::ColorType::Rgba, png::BitDepth::Sixteen) => {
                 let native = be_to_native_16_ref(&raw_pixels);
                 let rgba: &[Rgba<u16>] = bytemuck::cast_slice(&native);
-                PixelData::Rgba16(ImgVec::new(rgba.to_vec(), w, h))
+                PixelBuffer::from_imgvec(ImgVec::new(rgba.to_vec(), w, h)).into()
             }
             (png::ColorType::Rgba, _) => {
                 let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&raw_pixels);
-                PixelData::Rgba8(ImgVec::new(rgba.to_vec(), w, h))
+                PixelBuffer::from_imgvec(ImgVec::new(rgba.to_vec(), w, h)).into()
             }
             (png::ColorType::Rgb, png::BitDepth::Sixteen) => {
                 let native = be_to_native_16_ref(&raw_pixels);
                 let rgb: &[Rgb<u16>] = bytemuck::cast_slice(&native);
-                PixelData::Rgb16(ImgVec::new(rgb.to_vec(), w, h))
+                PixelBuffer::from_imgvec(ImgVec::new(rgb.to_vec(), w, h)).into()
             }
             (png::ColorType::Rgb, _) => {
                 let rgb: &[Rgb<u8>] = bytemuck::cast_slice(&raw_pixels);
-                PixelData::Rgb8(ImgVec::new(rgb.to_vec(), w, h))
+                PixelBuffer::from_imgvec(ImgVec::new(rgb.to_vec(), w, h)).into()
             }
             (png::ColorType::GrayscaleAlpha, png::BitDepth::Sixteen) => {
                 let native = be_to_native_16_ref(&raw_pixels);
                 let ga: &[[u16; 2]] = bytemuck::cast_slice(&native);
-                let pixels: Vec<GrayAlpha<u16>> =
-                    ga.iter().map(|&[v, a]| GrayAlpha::new(v, a)).collect();
-                PixelData::GrayAlpha16(ImgVec::new(pixels, w, h))
+                let pixels: Vec<GrayAlpha16> =
+                    ga.iter().map(|&[v, a]| GrayAlpha16::new(v, a)).collect();
+                PixelBuffer::from_imgvec(ImgVec::new(pixels, w, h)).into()
             }
             (png::ColorType::GrayscaleAlpha, _) => {
                 // GA8 → RGBA8 (matches our decoder behavior)
@@ -1047,16 +1047,16 @@ mod tests {
                         a: ga[1],
                     })
                     .collect();
-                PixelData::Rgba8(ImgVec::new(rgba, w, h))
+                PixelBuffer::from_imgvec(ImgVec::new(rgba, w, h)).into()
             }
             (png::ColorType::Grayscale, png::BitDepth::Sixteen) => {
                 let native = be_to_native_16_ref(&raw_pixels);
                 let gray: &[Gray<u16>] = bytemuck::cast_slice(&native);
-                PixelData::Gray16(ImgVec::new(gray.to_vec(), w, h))
+                PixelBuffer::from_imgvec(ImgVec::new(gray.to_vec(), w, h)).into()
             }
             (png::ColorType::Grayscale, _) => {
                 let gray: Vec<Gray<u8>> = raw_pixels.iter().map(|&g| Gray(g)).collect();
-                PixelData::Gray8(ImgVec::new(gray, w, h))
+                PixelBuffer::from_imgvec(ImgVec::new(gray, w, h)).into()
             }
             (png::ColorType::Indexed, _) => {
                 return Err("indexed not expanded".into());
@@ -1099,36 +1099,20 @@ mod tests {
         out
     }
 
-    fn pixel_data_to_bytes(pixels: &PixelData) -> Vec<u8> {
-        use rgb::ComponentBytes;
-        match pixels {
-            PixelData::Rgb8(img) => img.buf().as_bytes().to_vec(),
-            PixelData::Rgba8(img) => img.buf().as_bytes().to_vec(),
-            PixelData::Gray8(img) => img.buf().as_bytes().to_vec(),
-            PixelData::Rgb16(img) => bytemuck::cast_slice::<Rgb<u16>, u8>(img.buf()).to_vec(),
-            PixelData::Rgba16(img) => bytemuck::cast_slice::<Rgba<u16>, u8>(img.buf()).to_vec(),
-            PixelData::Gray16(img) => bytemuck::cast_slice::<Gray<u16>, u8>(img.buf()).to_vec(),
-            PixelData::GrayAlpha16(img) => {
-                let mut bytes = Vec::with_capacity(img.buf().len() * 4);
-                for ga in img.buf() {
-                    bytes.extend_from_slice(&ga.v.to_ne_bytes());
-                    bytes.extend_from_slice(&ga.a.to_ne_bytes());
-                }
-                bytes
-            }
-            _ => Vec::new(),
-        }
+    fn pixel_data_to_bytes(pixels: &PixelBuffer) -> Vec<u8> {
+        pixels.copy_to_contiguous_bytes()
     }
 
-    fn format_pixel_data(pixels: &PixelData) -> &'static str {
-        match pixels {
-            PixelData::Rgb8(_) => "Rgb8",
-            PixelData::Rgba8(_) => "Rgba8",
-            PixelData::Gray8(_) => "Gray8",
-            PixelData::Rgb16(_) => "Rgb16",
-            PixelData::Rgba16(_) => "Rgba16",
-            PixelData::Gray16(_) => "Gray16",
-            PixelData::GrayAlpha16(_) => "GrayAlpha16",
+    fn format_pixel_data(pixels: &PixelBuffer) -> &'static str {
+        let desc = pixels.descriptor();
+        match (desc.layout, desc.channel_type) {
+            (ChannelLayout::Rgb, ChannelType::U8) => "Rgb8",
+            (ChannelLayout::Rgba, ChannelType::U8) => "Rgba8",
+            (ChannelLayout::Gray, ChannelType::U8) => "Gray8",
+            (ChannelLayout::Rgb, ChannelType::U16) => "Rgb16",
+            (ChannelLayout::Rgba, ChannelType::U16) => "Rgba16",
+            (ChannelLayout::Gray, ChannelType::U16) => "Gray16",
+            (ChannelLayout::GrayAlpha, ChannelType::U16) => "GrayAlpha16",
             _ => "Other",
         }
     }

@@ -8,7 +8,7 @@ use crate::error::PngError;
 
 use imgref::ImgVec;
 use rgb::{Gray, Rgb, Rgba};
-use zencodec_types::{GrayAlpha, PixelData};
+use zencodec_types::{GrayAlpha16, Pixel, PixelBuffer};
 
 // ── Post-processing ─────────────────────────────────────────────────
 
@@ -407,82 +407,91 @@ impl OutputFormat {
     }
 }
 
-/// Build PixelData from the fully assembled pixel bytes.
+/// Build PixelBuffer from the fully assembled pixel bytes.
 pub(crate) fn build_pixel_data(
     ihdr: &Ihdr,
     ancillary: &PngAncillary,
     pixels: Vec<u8>,
     w: usize,
     h: usize,
-) -> Result<PixelData, PngError> {
+) -> Result<PixelBuffer, PngError> {
+    let w32 = w as u32;
+    let h32 = h as u32;
     match (ihdr.color_type, ihdr.bit_depth, ancillary.trns.is_some()) {
         // Grayscale
         (0, 16, false) => {
             let gray: &[Gray<u16>] = bytemuck::cast_slice(&pixels);
-            Ok(PixelData::Gray16(ImgVec::new(gray.to_vec(), w, h)))
+            Ok(PixelBuffer::from_imgvec(ImgVec::new(gray.to_vec(), w, h)).into())
         }
         (0, 16, true) => {
             // Gray16 + tRNS → GrayAlpha16 (already processed to native u16 pairs)
-            let ga: &[[u16; 2]] = bytemuck::cast_slice(&pixels);
-            let ga_pixels: Vec<GrayAlpha<u16>> =
-                ga.iter().map(|&[v, a]| GrayAlpha::new(v, a)).collect();
-            Ok(PixelData::GrayAlpha16(ImgVec::new(ga_pixels, w, h)))
+            // GrayAlpha16 now impls Pod; construct via raw bytes
+            let ga_bytes: Vec<u8> = pixels;
+            PixelBuffer::from_vec(ga_bytes, w as u32, h as u32, GrayAlpha16::DESCRIPTOR)
+                .map_err(|e| PngError::Decode(alloc::format!("{e}")))
         }
         (0, _, false) if ihdr.bit_depth <= 8 => {
             let gray: Vec<Gray<u8>> = pixels.iter().map(|&g| Gray(g)).collect();
-            Ok(PixelData::Gray8(ImgVec::new(gray, w, h)))
+            Ok(PixelBuffer::from_imgvec(ImgVec::new(gray, w, h)).into())
         }
         (0, _, true) if ihdr.bit_depth <= 8 => {
             // Gray + tRNS → RGBA8
-            let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&pixels);
-            Ok(PixelData::Rgba8(ImgVec::new(rgba.to_vec(), w, h)))
+            let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);
+            Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
+                .map_err(|e| PngError::Decode(alloc::format!("{e}")))?)
         }
         // RGB
         (2, 16, false) => {
             let rgb: &[Rgb<u16>] = bytemuck::cast_slice(&pixels);
-            Ok(PixelData::Rgb16(ImgVec::new(rgb.to_vec(), w, h)))
+            Ok(PixelBuffer::from_imgvec(ImgVec::new(rgb.to_vec(), w, h)).into())
         }
         (2, 16, true) => {
             let rgba: &[Rgba<u16>] = bytemuck::cast_slice(&pixels);
-            Ok(PixelData::Rgba16(ImgVec::new(rgba.to_vec(), w, h)))
+            Ok(PixelBuffer::from_imgvec(ImgVec::new(rgba.to_vec(), w, h)).into())
         }
         (2, 8, false) => {
-            let rgb: &[Rgb<u8>] = bytemuck::cast_slice(&pixels);
-            Ok(PixelData::Rgb8(ImgVec::new(rgb.to_vec(), w, h)))
+            let rgb: Vec<Rgb<u8>> = bytemuck::cast_vec(pixels);
+            Ok(PixelBuffer::from_pixels_erased(rgb, w32, h32)
+                .map_err(|e| PngError::Decode(alloc::format!("{e}")))?)
         }
         (2, 8, true) => {
-            let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&pixels);
-            Ok(PixelData::Rgba8(ImgVec::new(rgba.to_vec(), w, h)))
+            let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);
+            Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
+                .map_err(|e| PngError::Decode(alloc::format!("{e}")))?)
         }
         // Indexed
         (3, _, true) => {
-            let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&pixels);
-            Ok(PixelData::Rgba8(ImgVec::new(rgba.to_vec(), w, h)))
+            let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);
+            Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
+                .map_err(|e| PngError::Decode(alloc::format!("{e}")))?)
         }
         (3, _, false) => {
-            let rgb: &[Rgb<u8>] = bytemuck::cast_slice(&pixels);
-            Ok(PixelData::Rgb8(ImgVec::new(rgb.to_vec(), w, h)))
+            let rgb: Vec<Rgb<u8>> = bytemuck::cast_vec(pixels);
+            Ok(PixelBuffer::from_pixels_erased(rgb, w32, h32)
+                .map_err(|e| PngError::Decode(alloc::format!("{e}")))?)
         }
         // GrayAlpha
         (4, 16, _) => {
-            let ga: &[[u16; 2]] = bytemuck::cast_slice(&pixels);
-            let ga_pixels: Vec<GrayAlpha<u16>> =
-                ga.iter().map(|&[v, a]| GrayAlpha::new(v, a)).collect();
-            Ok(PixelData::GrayAlpha16(ImgVec::new(ga_pixels, w, h)))
+            // GrayAlpha16 now impls Pod; construct via raw bytes
+            // pixels are already native-endian u16 pairs (v, a) = same layout as GrayAlpha16
+            PixelBuffer::from_vec(pixels, w as u32, h as u32, GrayAlpha16::DESCRIPTOR)
+                .map_err(|e| PngError::Decode(alloc::format!("{e}")))
         }
         (4, 8, _) => {
             // GA8 already expanded to RGBA8
-            let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&pixels);
-            Ok(PixelData::Rgba8(ImgVec::new(rgba.to_vec(), w, h)))
+            let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);
+            Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
+                .map_err(|e| PngError::Decode(alloc::format!("{e}")))?)
         }
         // RGBA
         (6, 16, _) => {
             let rgba: &[Rgba<u16>] = bytemuck::cast_slice(&pixels);
-            Ok(PixelData::Rgba16(ImgVec::new(rgba.to_vec(), w, h)))
+            Ok(PixelBuffer::from_imgvec(ImgVec::new(rgba.to_vec(), w, h)).into())
         }
         (6, 8, _) => {
-            let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&pixels);
-            Ok(PixelData::Rgba8(ImgVec::new(rgba.to_vec(), w, h)))
+            let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);
+            Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
+                .map_err(|e| PngError::Decode(alloc::format!("{e}")))?)
         }
         _ => Err(PngError::Decode(alloc::format!(
             "unsupported color_type={} bit_depth={}",

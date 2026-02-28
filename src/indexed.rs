@@ -1320,8 +1320,9 @@ mod tests {
             &enough::Unstoppable,
         )
         .unwrap();
-        let decoded_rgba = decoded.pixels.into_rgba8();
-        let decoded_buf: Vec<Rgba<u8>> = decoded_rgba.into_buf();
+        let decoded_rgba = decoded.pixels.to_rgba8();
+        let decoded_img = decoded_rgba.as_imgref();
+        let decoded_buf = decoded_img.buf();
         assert_eq!(decoded_buf.len(), pixels.len());
         for (i, (orig, dec)) in pixels.iter().zip(decoded_buf.iter()).enumerate() {
             assert_eq!(
