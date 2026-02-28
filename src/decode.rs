@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 use enough::Stop;
-use zencodec_types::{Cicp, ContentLightLevel, MasteringDisplay, PixelData};
+use zencodec_types::{Cicp, ContentLightLevel, MasteringDisplay, PixelBuffer};
 
 use crate::error::PngError;
 
@@ -10,24 +10,27 @@ use crate::error::PngError;
 ///
 /// All values are scaled by 100000, matching the PNG spec's `ScaledFloat`.
 /// For example, the sRGB red primary (0.64, 0.33) is stored as (64000, 33000).
+///
+/// Values are signed (`i32`) to support wide-gamut color spaces with
+/// imaginary primaries (e.g., ACES AP1), as allowed by libpng 1.6.44+.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PngChromaticities {
     /// White point x (scaled by 100000).
-    pub white_x: u32,
+    pub white_x: i32,
     /// White point y (scaled by 100000).
-    pub white_y: u32,
+    pub white_y: i32,
     /// Red primary x (scaled by 100000).
-    pub red_x: u32,
+    pub red_x: i32,
     /// Red primary y (scaled by 100000).
-    pub red_y: u32,
+    pub red_y: i32,
     /// Green primary x (scaled by 100000).
-    pub green_x: u32,
+    pub green_x: i32,
     /// Green primary y (scaled by 100000).
-    pub green_y: u32,
+    pub green_y: i32,
     /// Blue primary x (scaled by 100000).
-    pub blue_x: u32,
+    pub blue_x: i32,
     /// Blue primary y (scaled by 100000).
-    pub blue_y: u32,
+    pub blue_y: i32,
 }
 
 /// PNG image metadata from probing.
@@ -95,7 +98,7 @@ pub enum PngWarning {
 #[non_exhaustive]
 pub struct PngDecodeOutput {
     /// Decoded pixel data.
-    pub pixels: PixelData,
+    pub pixels: PixelBuffer,
     /// Image metadata.
     pub info: PngInfo,
     /// Non-fatal warnings detected during decoding.
@@ -288,7 +291,7 @@ pub struct ApngFrameInfo {
 #[non_exhaustive]
 pub struct ApngFrame {
     /// Fully composited pixel data at the canvas dimensions.
-    pub pixels: PixelData,
+    pub pixels: PixelBuffer,
     /// Frame timing metadata.
     pub frame_info: ApngFrameInfo,
 }
@@ -353,7 +356,7 @@ pub fn decode_apng(
 // ── sRGB standard chromaticities ─────────────────────────────────────
 
 /// Standard sRGB chromaticities (cHRM values × 100000).
-const SRGB_CHRM: [u32; 8] = [
+const SRGB_CHRM: [i32; 8] = [
     31270, 32900, // white point
     64000, 33000, // red
     30000, 60000, // green
@@ -364,7 +367,7 @@ const SRGB_CHRM: [u32; 8] = [
 pub(crate) fn detect_color_warnings(
     srgb_intent: Option<u8>,
     gamma: Option<u32>,
-    chrm: Option<&[u32; 8]>,
+    chrm: Option<&[i32; 8]>,
     cicp: Option<&[u8; 4]>,
     icc_profile: Option<&[u8]>,
 ) -> Vec<PngWarning> {
@@ -548,7 +551,7 @@ mod tests {
 
     #[test]
     fn detect_srgb_chrm_mismatch() {
-        let bad_chrm = [31270, 32900, 64000, 33000, 30000, 60000, 15000, 7000];
+        let bad_chrm: [i32; 8] = [31270, 32900, 64000, 33000, 30000, 60000, 15000, 7000];
         let w = detect_color_warnings(Some(0), None, Some(&bad_chrm), None, None);
         assert!(w.contains(&PngWarning::SrgbChrmMismatch));
     }

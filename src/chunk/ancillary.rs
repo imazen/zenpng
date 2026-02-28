@@ -111,8 +111,9 @@ pub(crate) struct PngAncillary {
     pub gamma: Option<u32>,
     /// sRGB rendering intent (0-3).
     pub srgb_intent: Option<u8>,
-    /// cHRM chromaticities (8 u32 values: wx, wy, rx, ry, gx, gy, bx, by).
-    pub chrm: Option<[u32; 8]>,
+    /// cHRM chromaticities (8 i32 values: wx, wy, rx, ry, gx, gy, bx, by).
+    /// Signed to support wide-gamut spaces with imaginary primaries.
+    pub chrm: Option<[i32; 8]>,
     /// cICP: colour primaries, transfer function, matrix coeffs, full range flag.
     pub cicp: Option<[u8; 4]>,
     /// cLLi: max content light level, max frame average light level (u32 each).
@@ -172,9 +173,9 @@ impl PngAncillary {
             }
             b"cHRM" => {
                 if chunk.data.len() == 32 {
-                    let mut vals = [0u32; 8];
+                    let mut vals = [0i32; 8];
                     for (i, v) in vals.iter_mut().enumerate() {
-                        *v = u32::from_be_bytes(chunk.data[i * 4..(i + 1) * 4].try_into().unwrap());
+                        *v = i32::from_be_bytes(chunk.data[i * 4..(i + 1) * 4].try_into().unwrap());
                     }
                     self.chrm = Some(vals);
                 }

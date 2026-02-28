@@ -1219,301 +1219,45 @@ impl FrameDecode for PngFrameDecoder {
 // GrayAlpha16. These helpers convert to any requested target format.
 
 use rgb::{Gray, Rgb, Rgba};
-use zencodec_types::PixelData;
+use zencodec_types::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer};
 
-/// Convert native PNG pixel data to Rgb8. Downscales 16-bit by >>8.
-fn to_rgb8(pixels: PixelData) -> imgref::ImgVec<Rgb<u8>> {
-    match pixels {
-        PixelData::Rgb8(img) => img,
-        PixelData::Rgba8(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Rgb<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| Rgb {
-                    r: p.r,
-                    g: p.g,
-                    b: p.b,
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        PixelData::Gray8(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Rgb<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| {
-                    let v = p.value();
-                    Rgb { r: v, g: v, b: v }
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        PixelData::Rgb16(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Rgb<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| Rgb {
-                    r: (p.r >> 8) as u8,
-                    g: (p.g >> 8) as u8,
-                    b: (p.b >> 8) as u8,
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        PixelData::Rgba16(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Rgb<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| Rgb {
-                    r: (p.r >> 8) as u8,
-                    g: (p.g >> 8) as u8,
-                    b: (p.b >> 8) as u8,
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        PixelData::Gray16(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Rgb<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| {
-                    let v = (p.value() >> 8) as u8;
-                    Rgb { r: v, g: v, b: v }
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        PixelData::GrayAlpha16(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Rgb<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| {
-                    let v = (p.v >> 8) as u8;
-                    Rgb { r: v, g: v, b: v }
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        other => unreachable!("PNG decoder produced unexpected format: {other:?}"),
-    }
+/// Convert native PNG pixel data to Rgb8. Delegates to `PixelBuffer::to_rgb8()`.
+fn to_rgb8(pixels: PixelBuffer) -> imgref::ImgVec<Rgb<u8>> {
+    let converted = pixels.to_rgb8();
+    let w = converted.width() as usize;
+    let h = converted.height() as usize;
+    let img = converted.as_imgref();
+    let buf: Vec<Rgb<u8>> = img.pixels().collect();
+    imgref::ImgVec::new(buf, w, h)
 }
 
-/// Convert native PNG pixel data to Rgba8. Downscales 16-bit by >>8.
-fn to_rgba8(pixels: PixelData) -> imgref::ImgVec<Rgba<u8>> {
-    match pixels {
-        PixelData::Rgba8(img) => img,
-        PixelData::Rgb8(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Rgba<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| Rgba {
-                    r: p.r,
-                    g: p.g,
-                    b: p.b,
-                    a: 255,
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        PixelData::Gray8(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Rgba<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| {
-                    let v = p.value();
-                    Rgba {
-                        r: v,
-                        g: v,
-                        b: v,
-                        a: 255,
-                    }
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        PixelData::Rgba16(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Rgba<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| Rgba {
-                    r: (p.r >> 8) as u8,
-                    g: (p.g >> 8) as u8,
-                    b: (p.b >> 8) as u8,
-                    a: (p.a >> 8) as u8,
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        PixelData::Rgb16(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Rgba<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| Rgba {
-                    r: (p.r >> 8) as u8,
-                    g: (p.g >> 8) as u8,
-                    b: (p.b >> 8) as u8,
-                    a: 255,
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        PixelData::Gray16(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Rgba<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| {
-                    let v = (p.value() >> 8) as u8;
-                    Rgba {
-                        r: v,
-                        g: v,
-                        b: v,
-                        a: 255,
-                    }
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        PixelData::GrayAlpha16(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Rgba<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| {
-                    let v = (p.v >> 8) as u8;
-                    Rgba {
-                        r: v,
-                        g: v,
-                        b: v,
-                        a: (p.a >> 8) as u8,
-                    }
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        other => unreachable!("PNG decoder produced unexpected format: {other:?}"),
-    }
+/// Convert native PNG pixel data to Rgba8. Delegates to `PixelBuffer::to_rgba8()`.
+fn to_rgba8(pixels: PixelBuffer) -> imgref::ImgVec<Rgba<u8>> {
+    let converted = pixels.to_rgba8();
+    let w = converted.width() as usize;
+    let h = converted.height() as usize;
+    let img = converted.as_imgref();
+    let buf: Vec<Rgba<u8>> = img.pixels().collect();
+    imgref::ImgVec::new(buf, w, h)
 }
 
-/// Convert native PNG pixel data to Gray8. Downscales 16-bit by >>8.
-fn to_gray8(pixels: PixelData) -> imgref::ImgVec<Gray<u8>> {
-    match pixels {
-        PixelData::Gray8(img) => img,
-        PixelData::Rgb8(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Gray<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| {
-                    let luma = ((p.r as u16 * 77 + p.g as u16 * 150 + p.b as u16 * 29) >> 8) as u8;
-                    Gray::new(luma)
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        PixelData::Rgba8(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Gray<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| {
-                    let luma = ((p.r as u16 * 77 + p.g as u16 * 150 + p.b as u16 * 29) >> 8) as u8;
-                    Gray::new(luma)
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        PixelData::Gray16(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Gray<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| Gray::new((p.value() >> 8) as u8))
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        PixelData::GrayAlpha16(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Gray<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| Gray::new((p.v >> 8) as u8))
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        PixelData::Rgb16(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Gray<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| {
-                    let luma = ((p.r as u32 * 77 + p.g as u32 * 150 + p.b as u32 * 29) >> 16) as u8;
-                    Gray::new(luma)
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        PixelData::Rgba16(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Gray<u8>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| {
-                    let luma = ((p.r as u32 * 77 + p.g as u32 * 150 + p.b as u32 * 29) >> 16) as u8;
-                    Gray::new(luma)
-                })
-                .collect();
-            imgref::ImgVec::new(buf, w, h)
-        }
-        other => unreachable!("PNG decoder produced unexpected format: {other:?}"),
-    }
+/// Convert native PNG pixel data to Gray8. Delegates to `PixelBuffer::to_gray8()`.
+fn to_gray8(pixels: PixelBuffer) -> imgref::ImgVec<Gray<u8>> {
+    let converted = pixels.to_gray8();
+    let w = converted.width() as usize;
+    let h = converted.height() as usize;
+    let img = converted.as_imgref();
+    let buf: Vec<Gray<u8>> = img.pixels().collect();
+    imgref::ImgVec::new(buf, w, h)
 }
 
-/// Convert native PNG pixel data to Bgra8. Downscales 16-bit by >>8.
-fn to_bgra8(pixels: PixelData) -> imgref::ImgVec<rgb::alt::BGRA<u8>> {
-    // Convert to Rgba8 first (handles all formats including 16-bit),
-    // then swizzle to BGRA.
-    let rgba = to_rgba8(pixels);
-    let w = rgba.width();
-    let h = rgba.height();
-    let buf: Vec<rgb::alt::BGRA<u8>> = rgba
-        .into_buf()
-        .into_iter()
-        .map(|p| rgb::alt::BGRA {
-            b: p.b,
-            g: p.g,
-            r: p.r,
-            a: p.a,
-        })
-        .collect();
+/// Convert native PNG pixel data to Bgra8. Delegates to `PixelBuffer::to_bgra8()`.
+fn to_bgra8(pixels: PixelBuffer) -> imgref::ImgVec<rgb::alt::BGRA<u8>> {
+    let converted = pixels.to_bgra8();
+    let w = converted.width() as usize;
+    let h = converted.height() as usize;
+    let img = converted.as_imgref();
+    let buf: Vec<rgb::alt::BGRA<u8>> = img.pixels().collect();
     imgref::ImgVec::new(buf, w, h)
 }
 
@@ -1585,7 +1329,7 @@ where
 }
 
 /// Decode into linear RGB f32.
-fn decode_into_rgb_f32(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
+fn decode_into_rgb_f32(pixels: PixelBuffer, dst: &mut PixelSliceMut<'_>) {
     use linear_srgb::default::srgb_u8_to_linear;
 
     let src = to_rgb8(pixels);
@@ -1608,7 +1352,7 @@ fn decode_into_rgb_f32(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
 }
 
 /// Decode into linear RGBA f32.
-fn decode_into_rgba_f32(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
+fn decode_into_rgba_f32(pixels: PixelBuffer, dst: &mut PixelSliceMut<'_>) {
     use linear_srgb::default::srgb_u8_to_linear;
 
     let src = to_rgba8(pixels);
@@ -1632,7 +1376,7 @@ fn decode_into_rgba_f32(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
 }
 
 /// Decode into linear Gray f32.
-fn decode_into_gray_f32(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
+fn decode_into_gray_f32(pixels: PixelBuffer, dst: &mut PixelSliceMut<'_>) {
     use linear_srgb::default::srgb_u8_to_linear;
 
     let src = to_gray8(pixels);
@@ -1664,16 +1408,21 @@ fn native_to_be_16(native: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Convert any PixelData to Rgb<u16>. Upscales 8-bit by v*257.
-fn to_rgb16(pixels: PixelData) -> imgref::ImgVec<Rgb<u16>> {
-    match pixels {
-        PixelData::Rgb16(img) => img,
-        PixelData::Rgba16(img) => {
-            let w = img.width();
-            let h = img.height();
+/// Convert any PixelBuffer to Rgb<u16>. Upscales 8-bit by v*257.
+fn to_rgb16(pixels: PixelBuffer) -> imgref::ImgVec<Rgb<u16>> {
+    let desc = pixels.descriptor();
+    let w = pixels.width() as usize;
+    let h = pixels.height() as usize;
+    match (desc.channel_type, desc.layout) {
+        (ChannelType::U16, ChannelLayout::Rgb) => {
+            let img = pixels.try_as_imgref::<Rgb<u16>>().unwrap();
+            let buf: Vec<Rgb<u16>> = img.pixels().collect();
+            imgref::ImgVec::new(buf, w, h)
+        }
+        (ChannelType::U16, ChannelLayout::Rgba) => {
+            let img = pixels.try_as_imgref::<Rgba<u16>>().unwrap();
             let buf: Vec<Rgb<u16>> = img
-                .into_buf()
-                .into_iter()
+                .pixels()
                 .map(|p| Rgb {
                     r: p.r,
                     g: p.g,
@@ -1682,12 +1431,10 @@ fn to_rgb16(pixels: PixelData) -> imgref::ImgVec<Rgb<u16>> {
                 .collect();
             imgref::ImgVec::new(buf, w, h)
         }
-        PixelData::Gray16(img) => {
-            let w = img.width();
-            let h = img.height();
+        (ChannelType::U16, ChannelLayout::Gray) => {
+            let img = pixels.try_as_imgref::<Gray<u16>>().unwrap();
             let buf: Vec<Rgb<u16>> = img
-                .into_buf()
-                .into_iter()
+                .pixels()
                 .map(|p| {
                     let v = p.value();
                     Rgb { r: v, g: v, b: v }
@@ -1695,25 +1442,20 @@ fn to_rgb16(pixels: PixelData) -> imgref::ImgVec<Rgb<u16>> {
                 .collect();
             imgref::ImgVec::new(buf, w, h)
         }
-        PixelData::GrayAlpha16(img) => {
-            let w = img.width();
-            let h = img.height();
+        (ChannelType::U16, ChannelLayout::GrayAlpha) => {
+            let img = pixels.try_as_imgref::<GrayAlpha16>().unwrap();
             let buf: Vec<Rgb<u16>> = img
-                .into_buf()
-                .into_iter()
-                .map(|p| Rgb {
-                    r: p.v,
-                    g: p.v,
-                    b: p.v,
+                .pixels()
+                .map(|p| {
+                    let v = p.v;
+                    Rgb { r: v, g: v, b: v }
                 })
                 .collect();
             imgref::ImgVec::new(buf, w, h)
         }
-        other => {
-            // Upscale 8-bit
-            let rgb8 = to_rgb8(other);
-            let w = rgb8.width();
-            let h = rgb8.height();
+        _ => {
+            // Upscale 8-bit via to_rgb8
+            let rgb8 = to_rgb8(pixels);
             let buf: Vec<Rgb<u16>> = rgb8
                 .into_buf()
                 .into_iter()
@@ -1728,16 +1470,21 @@ fn to_rgb16(pixels: PixelData) -> imgref::ImgVec<Rgb<u16>> {
     }
 }
 
-/// Convert any PixelData to Rgba<u16>. Upscales 8-bit by v*257.
-fn to_rgba16(pixels: PixelData) -> imgref::ImgVec<Rgba<u16>> {
-    match pixels {
-        PixelData::Rgba16(img) => img,
-        PixelData::Rgb16(img) => {
-            let w = img.width();
-            let h = img.height();
+/// Convert any PixelBuffer to Rgba<u16>. Upscales 8-bit by v*257.
+fn to_rgba16(pixels: PixelBuffer) -> imgref::ImgVec<Rgba<u16>> {
+    let desc = pixels.descriptor();
+    let w = pixels.width() as usize;
+    let h = pixels.height() as usize;
+    match (desc.channel_type, desc.layout) {
+        (ChannelType::U16, ChannelLayout::Rgba) => {
+            let img = pixels.try_as_imgref::<Rgba<u16>>().unwrap();
+            let buf: Vec<Rgba<u16>> = img.pixels().collect();
+            imgref::ImgVec::new(buf, w, h)
+        }
+        (ChannelType::U16, ChannelLayout::Rgb) => {
+            let img = pixels.try_as_imgref::<Rgb<u16>>().unwrap();
             let buf: Vec<Rgba<u16>> = img
-                .into_buf()
-                .into_iter()
+                .pixels()
                 .map(|p| Rgba {
                     r: p.r,
                     g: p.g,
@@ -1747,12 +1494,10 @@ fn to_rgba16(pixels: PixelData) -> imgref::ImgVec<Rgba<u16>> {
                 .collect();
             imgref::ImgVec::new(buf, w, h)
         }
-        PixelData::Gray16(img) => {
-            let w = img.width();
-            let h = img.height();
+        (ChannelType::U16, ChannelLayout::Gray) => {
+            let img = pixels.try_as_imgref::<Gray<u16>>().unwrap();
             let buf: Vec<Rgba<u16>> = img
-                .into_buf()
-                .into_iter()
+                .pixels()
                 .map(|p| {
                     let v = p.value();
                     Rgba {
@@ -1765,12 +1510,10 @@ fn to_rgba16(pixels: PixelData) -> imgref::ImgVec<Rgba<u16>> {
                 .collect();
             imgref::ImgVec::new(buf, w, h)
         }
-        PixelData::GrayAlpha16(img) => {
-            let w = img.width();
-            let h = img.height();
+        (ChannelType::U16, ChannelLayout::GrayAlpha) => {
+            let img = pixels.try_as_imgref::<GrayAlpha16>().unwrap();
             let buf: Vec<Rgba<u16>> = img
-                .into_buf()
-                .into_iter()
+                .pixels()
                 .map(|p| Rgba {
                     r: p.v,
                     g: p.v,
@@ -1780,11 +1523,9 @@ fn to_rgba16(pixels: PixelData) -> imgref::ImgVec<Rgba<u16>> {
                 .collect();
             imgref::ImgVec::new(buf, w, h)
         }
-        other => {
-            // Upscale 8-bit
-            let rgba8 = to_rgba8(other);
-            let w = rgba8.width();
-            let h = rgba8.height();
+        _ => {
+            // Upscale 8-bit via to_rgba8
+            let rgba8 = to_rgba8(pixels);
             let buf: Vec<Rgba<u16>> = rgba8
                 .into_buf()
                 .into_iter()
@@ -1800,22 +1541,26 @@ fn to_rgba16(pixels: PixelData) -> imgref::ImgVec<Rgba<u16>> {
     }
 }
 
-/// Convert any PixelData to Gray<u16>. Upscales 8-bit by v*257.
-fn to_gray16(pixels: PixelData) -> imgref::ImgVec<Gray<u16>> {
-    match pixels {
-        PixelData::Gray16(img) => img,
-        PixelData::GrayAlpha16(img) => {
-            let w = img.width();
-            let h = img.height();
-            let buf: Vec<Gray<u16>> = img.into_buf().into_iter().map(|p| Gray(p.v)).collect();
+/// Convert any PixelBuffer to Gray<u16>. Upscales 8-bit by v*257.
+fn to_gray16(pixels: PixelBuffer) -> imgref::ImgVec<Gray<u16>> {
+    let desc = pixels.descriptor();
+    let w = pixels.width() as usize;
+    let h = pixels.height() as usize;
+    match (desc.channel_type, desc.layout) {
+        (ChannelType::U16, ChannelLayout::Gray) => {
+            let img = pixels.try_as_imgref::<Gray<u16>>().unwrap();
+            let buf: Vec<Gray<u16>> = img.pixels().collect();
             imgref::ImgVec::new(buf, w, h)
         }
-        PixelData::Rgb16(img) => {
-            let w = img.width();
-            let h = img.height();
+        (ChannelType::U16, ChannelLayout::GrayAlpha) => {
+            let img = pixels.try_as_imgref::<GrayAlpha16>().unwrap();
+            let buf: Vec<Gray<u16>> = img.pixels().map(|p| Gray(p.v)).collect();
+            imgref::ImgVec::new(buf, w, h)
+        }
+        (ChannelType::U16, ChannelLayout::Rgb) => {
+            let img = pixels.try_as_imgref::<Rgb<u16>>().unwrap();
             let buf: Vec<Gray<u16>> = img
-                .into_buf()
-                .into_iter()
+                .pixels()
                 .map(|p| {
                     let luma = ((p.r as u32 * 77 + p.g as u32 * 150 + p.b as u32 * 29) >> 8) as u16;
                     Gray(luma)
@@ -1823,12 +1568,10 @@ fn to_gray16(pixels: PixelData) -> imgref::ImgVec<Gray<u16>> {
                 .collect();
             imgref::ImgVec::new(buf, w, h)
         }
-        PixelData::Rgba16(img) => {
-            let w = img.width();
-            let h = img.height();
+        (ChannelType::U16, ChannelLayout::Rgba) => {
+            let img = pixels.try_as_imgref::<Rgba<u16>>().unwrap();
             let buf: Vec<Gray<u16>> = img
-                .into_buf()
-                .into_iter()
+                .pixels()
                 .map(|p| {
                     let luma = ((p.r as u32 * 77 + p.g as u32 * 150 + p.b as u32 * 29) >> 8) as u16;
                     Gray(luma)
@@ -1836,11 +1579,9 @@ fn to_gray16(pixels: PixelData) -> imgref::ImgVec<Gray<u16>> {
                 .collect();
             imgref::ImgVec::new(buf, w, h)
         }
-        other => {
-            // Upscale 8-bit
-            let gray8 = to_gray8(other);
-            let w = gray8.width();
-            let h = gray8.height();
+        _ => {
+            // Upscale 8-bit via to_gray8
+            let gray8 = to_gray8(pixels);
             let buf: Vec<Gray<u16>> = gray8
                 .into_buf()
                 .into_iter()
@@ -1852,7 +1593,7 @@ fn to_gray16(pixels: PixelData) -> imgref::ImgVec<Gray<u16>> {
 }
 
 /// Decode into Rgb<u16> target buffer.
-fn decode_into_rgb16(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
+fn decode_into_rgb16(pixels: PixelBuffer, dst: &mut PixelSliceMut<'_>) {
     let src = to_rgb16(pixels);
     for y in 0..src.height().min(dst.rows() as usize) {
         let src_row = &src.buf()[y * src.stride()..][..src.width()];
@@ -1870,7 +1611,7 @@ fn decode_into_rgb16(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
 }
 
 /// Decode into Rgba<u16> target buffer.
-fn decode_into_rgba16(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
+fn decode_into_rgba16(pixels: PixelBuffer, dst: &mut PixelSliceMut<'_>) {
     let src = to_rgba16(pixels);
     for y in 0..src.height().min(dst.rows() as usize) {
         let src_row = &src.buf()[y * src.stride()..][..src.width()];
@@ -1889,7 +1630,7 @@ fn decode_into_rgba16(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
 }
 
 /// Decode into Gray<u16> target buffer.
-fn decode_into_gray16(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
+fn decode_into_gray16(pixels: PixelBuffer, dst: &mut PixelSliceMut<'_>) {
     let src = to_gray16(pixels);
     for y in 0..src.height().min(dst.rows() as usize) {
         let src_row = &src.buf()[y * src.stride()..][..src.width()];
@@ -1906,47 +1647,14 @@ fn decode_into_gray16(pixels: PixelData, dst: &mut PixelSliceMut<'_>) {
 
 // ── decode_rows helpers ──────────────────────────────────────────────
 
-/// Get the PixelDescriptor for decoded PixelData.
-fn pixel_descriptor_for_data(pixels: &PixelData) -> PixelDescriptor {
-    match pixels {
-        PixelData::Rgb8(_) => PixelDescriptor::RGB8_SRGB,
-        PixelData::Rgba8(_) => PixelDescriptor::RGBA8_SRGB,
-        PixelData::Gray8(_) => PixelDescriptor::GRAY8_SRGB,
-        PixelData::Rgb16(_) => PixelDescriptor::RGB16_SRGB,
-        PixelData::Rgba16(_) => PixelDescriptor::RGBA16_SRGB,
-        PixelData::Gray16(_) => PixelDescriptor::GRAY16_SRGB,
-        PixelData::GrayAlpha16(_) => PixelDescriptor::new(
-            zencodec_types::ChannelType::U16,
-            zencodec_types::ChannelLayout::GrayAlpha,
-            Some(zencodec_types::AlphaMode::Straight),
-            zencodec_types::TransferFunction::Srgb,
-        ),
-        _ => PixelDescriptor::RGBA8_SRGB, // fallback
-    }
+/// Get the PixelDescriptor for decoded PixelBuffer.
+fn pixel_descriptor_for_data(pixels: &PixelBuffer) -> PixelDescriptor {
+    pixels.descriptor()
 }
 
-/// Get raw pixel bytes from PixelData (borrows the underlying buffer).
-/// For GrayAlpha16, returns an empty slice (caller must handle separately).
-fn pixel_data_bytes(pixels: &PixelData) -> Vec<u8> {
-    use rgb::ComponentBytes;
-    match pixels {
-        PixelData::Rgb8(img) => img.buf().as_bytes().to_vec(),
-        PixelData::Rgba8(img) => img.buf().as_bytes().to_vec(),
-        PixelData::Gray8(img) => img.buf().as_bytes().to_vec(),
-        PixelData::Rgb16(img) => bytemuck::cast_slice::<Rgb<u16>, u8>(img.buf()).to_vec(),
-        PixelData::Rgba16(img) => bytemuck::cast_slice::<Rgba<u16>, u8>(img.buf()).to_vec(),
-        PixelData::Gray16(img) => bytemuck::cast_slice::<Gray<u16>, u8>(img.buf()).to_vec(),
-        PixelData::GrayAlpha16(img) => {
-            // GrayAlpha<u16> is not Pod, manually serialize
-            let mut bytes = Vec::with_capacity(img.buf().len() * 4);
-            for ga in img.buf() {
-                bytes.extend_from_slice(&ga.v.to_ne_bytes());
-                bytes.extend_from_slice(&ga.a.to_ne_bytes());
-            }
-            bytes
-        }
-        _ => Vec::new(),
-    }
+/// Get raw pixel bytes from PixelBuffer (copies to contiguous bytes).
+fn pixel_data_bytes(pixels: &PixelBuffer) -> Vec<u8> {
+    pixels.copy_to_contiguous_bytes()
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -2520,17 +2228,15 @@ mod tests {
         assert_eq!(decoded.info.height, 2);
         assert_eq!(decoded.info.bit_depth, 16);
 
-        match &decoded.pixels {
-            PixelData::Rgb16(img) => {
-                let buf = img.buf();
-                for (i, (orig, dec)) in pixels.iter().zip(buf.iter()).enumerate() {
-                    assert_eq!(
-                        orig, dec,
-                        "pixel {i} mismatch: expected {orig:?}, got {dec:?}"
-                    );
-                }
-            }
-            other => panic!("expected Rgb16, got {other:?}"),
+        let img = decoded
+            .pixels
+            .try_as_imgref::<Rgb<u16>>()
+            .expect("expected Rgb16");
+        for (i, (orig, dec)) in pixels.iter().zip(img.pixels()).enumerate() {
+            assert_eq!(
+                *orig, dec,
+                "pixel {i} mismatch: expected {orig:?}, got {dec:?}"
+            );
         }
     }
 
@@ -2578,17 +2284,15 @@ mod tests {
                 .unwrap();
         assert_eq!(decoded.info.bit_depth, 16);
 
-        match &decoded.pixels {
-            PixelData::Rgba16(img) => {
-                let buf = img.buf();
-                for (i, (orig, dec)) in pixels.iter().zip(buf.iter()).enumerate() {
-                    assert_eq!(
-                        orig, dec,
-                        "pixel {i} mismatch: expected {orig:?}, got {dec:?}"
-                    );
-                }
-            }
-            other => panic!("expected Rgba16, got {other:?}"),
+        let img = decoded
+            .pixels
+            .try_as_imgref::<Rgba<u16>>()
+            .expect("expected Rgba16");
+        for (i, (orig, dec)) in pixels.iter().zip(img.pixels()).enumerate() {
+            assert_eq!(
+                *orig, dec,
+                "pixel {i} mismatch: expected {orig:?}, got {dec:?}"
+            );
         }
     }
 
@@ -2611,17 +2315,15 @@ mod tests {
                 .unwrap();
         assert_eq!(decoded.info.bit_depth, 16);
 
-        match &decoded.pixels {
-            PixelData::Gray16(img) => {
-                let buf = img.buf();
-                for (i, (orig, dec)) in pixels.iter().zip(buf.iter()).enumerate() {
-                    assert_eq!(
-                        orig, dec,
-                        "pixel {i} mismatch: expected {orig:?}, got {dec:?}"
-                    );
-                }
-            }
-            other => panic!("expected Gray16, got {other:?}"),
+        let img = decoded
+            .pixels
+            .try_as_imgref::<Gray<u16>>()
+            .expect("expected Gray16");
+        for (i, (orig, dec)) in pixels.iter().zip(img.pixels()).enumerate() {
+            assert_eq!(
+                *orig, dec,
+                "pixel {i} mismatch: expected {orig:?}, got {dec:?}"
+            );
         }
     }
 
@@ -2699,14 +2401,12 @@ mod tests {
         assert_eq!(decoded.info.width, 2);
         assert_eq!(decoded.info.height, 2);
 
-        match &decoded.pixels {
-            PixelData::Rgb8(img) => {
-                let buf = img.buf();
-                for (orig, dec) in pixels.iter().zip(buf.iter()) {
-                    assert_eq!(orig, dec);
-                }
-            }
-            other => panic!("expected Rgb8, got {other:?}"),
+        let img = decoded
+            .pixels
+            .try_as_imgref::<Rgb<u8>>()
+            .expect("expected Rgb8");
+        for (orig, dec) in pixels.iter().zip(img.pixels()) {
+            assert_eq!(*orig, dec);
         }
     }
 
@@ -2752,14 +2452,12 @@ mod tests {
         let decoded =
             crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
                 .unwrap();
-        match &decoded.pixels {
-            PixelData::Rgba8(img) => {
-                let buf = img.buf();
-                for (orig, dec) in pixels.iter().zip(buf.iter()) {
-                    assert_eq!(orig, dec);
-                }
-            }
-            other => panic!("expected Rgba8, got {other:?}"),
+        let img = decoded
+            .pixels
+            .try_as_imgref::<Rgba<u8>>()
+            .expect("expected Rgba8");
+        for (orig, dec) in pixels.iter().zip(img.pixels()) {
+            assert_eq!(*orig, dec);
         }
     }
 
@@ -2780,14 +2478,12 @@ mod tests {
         let decoded =
             crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
                 .unwrap();
-        match &decoded.pixels {
-            PixelData::Gray8(img) => {
-                let buf = img.buf();
-                for (orig, dec) in pixels.iter().zip(buf.iter()) {
-                    assert_eq!(orig, dec);
-                }
-            }
-            other => panic!("expected Gray8, got {other:?}"),
+        let img = decoded
+            .pixels
+            .try_as_imgref::<Gray<u8>>()
+            .expect("expected Gray8");
+        for (orig, dec) in pixels.iter().zip(img.pixels()) {
+            assert_eq!(*orig, dec);
         }
     }
 
@@ -2820,7 +2516,8 @@ mod tests {
                 .unwrap();
         // Verify pixel-exact roundtrip (decoded may be Gray or RGBA)
         let decoded_rgba = decoded.pixels.to_rgba8();
-        for (i, (orig, dec)) in pixels.iter().zip(decoded_rgba.buf().iter()).enumerate() {
+        let decoded_img = decoded_rgba.as_imgref();
+        for (i, (orig, dec)) in pixels.iter().zip(decoded_img.pixels()).enumerate() {
             assert_eq!(
                 (orig.r, orig.g, orig.b, orig.a),
                 (dec.r, dec.g, dec.b, dec.a),
@@ -2857,7 +2554,8 @@ mod tests {
             crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
                 .unwrap();
         let decoded_rgba = decoded.pixels.to_rgba8();
-        for (i, (orig, dec)) in pixels.iter().zip(decoded_rgba.buf().iter()).enumerate() {
+        let decoded_img = decoded_rgba.as_imgref();
+        for (i, (orig, dec)) in pixels.iter().zip(decoded_img.pixels()).enumerate() {
             assert_eq!(
                 (orig.r, orig.g, orig.b, orig.a),
                 (dec.r, dec.g, dec.b, dec.a),
@@ -2904,7 +2602,8 @@ mod tests {
             crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
                 .unwrap();
         let decoded_rgba = decoded.pixels.to_rgba8();
-        for (i, (orig, dec)) in pixels.iter().zip(decoded_rgba.buf().iter()).enumerate() {
+        let decoded_img = decoded_rgba.as_imgref();
+        for (i, (orig, dec)) in pixels.iter().zip(decoded_img.pixels()).enumerate() {
             if orig.a == 0 && dec.a == 0 {
                 continue; // both transparent, RGB may differ
             }
@@ -2955,7 +2654,8 @@ mod tests {
             crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
                 .unwrap();
         let decoded_rgba = decoded.pixels.to_rgba8();
-        for (i, (orig, dec)) in pixels.iter().zip(decoded_rgba.buf().iter()).enumerate() {
+        let decoded_img = decoded_rgba.as_imgref();
+        for (i, (orig, dec)) in pixels.iter().zip(decoded_img.pixels()).enumerate() {
             if orig.a == 0 && dec.a == 0 {
                 continue;
             }
@@ -2995,7 +2695,8 @@ mod tests {
     }
 
     #[test]
-    fn gama_srgb_chrm_roundtrip() {
+    fn srgb_suppresses_gama_chrm() {
+        // PNGv3 precedence: sRGB suppresses gAMA and cHRM in output
         use crate::decode::PngChromaticities;
 
         let pixels = vec![
@@ -3008,7 +2709,6 @@ mod tests {
         ];
         let img = imgref::ImgVec::new(pixels, 2, 2);
 
-        // sRGB standard chromaticities
         let chrm = PngChromaticities {
             white_x: 31270,
             white_y: 32900,
@@ -3039,8 +2739,58 @@ mod tests {
             crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
                 .unwrap();
 
-        assert_eq!(decoded.info.source_gamma, Some(45455));
+        // sRGB is written, gAMA and cHRM are suppressed
         assert_eq!(decoded.info.srgb_intent, Some(0));
+        assert_eq!(decoded.info.source_gamma, None);
+        assert!(decoded.info.chromaticities.is_none());
+    }
+
+    #[test]
+    fn gama_chrm_roundtrip_without_srgb() {
+        // gAMA + cHRM round-trip when no higher-priority chunk is present
+        use crate::decode::PngChromaticities;
+
+        let pixels = vec![
+            Rgb::<u8> {
+                r: 128,
+                g: 64,
+                b: 32
+            };
+            4
+        ];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+
+        let chrm = PngChromaticities {
+            white_x: 31270,
+            white_y: 32900,
+            red_x: 64000,
+            red_y: 33000,
+            green_x: 30000,
+            green_y: 60000,
+            blue_x: 15000,
+            blue_y: 6000,
+        };
+
+        let config = crate::encode::EncodeConfig {
+            source_gamma: Some(45455),
+            chromaticities: Some(chrm),
+            ..Default::default()
+        };
+
+        let encoded = crate::encode::encode_rgb8(
+            img.as_ref(),
+            None,
+            &config,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        let decoded =
+            crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
+                .unwrap();
+
+        assert_eq!(decoded.info.source_gamma, Some(45455));
+        assert!(decoded.info.srgb_intent.is_none());
         let dc = decoded.info.chromaticities.expect("cHRM missing");
         assert_eq!(dc.white_x, 31270);
         assert_eq!(dc.white_y, 32900);
@@ -3050,6 +2800,270 @@ mod tests {
         assert_eq!(dc.green_y, 60000);
         assert_eq!(dc.blue_x, 15000);
         assert_eq!(dc.blue_y, 6000);
+    }
+
+    #[test]
+    fn cicp_suppresses_srgb_gama_chrm() {
+        // PNGv3 precedence: cICP suppresses sRGB, gAMA, cHRM
+        use crate::decode::PngChromaticities;
+        use zencodec_types::{Cicp, MetadataView};
+
+        let pixels = vec![
+            Rgb::<u8> {
+                r: 128,
+                g: 64,
+                b: 32
+            };
+            4
+        ];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+
+        let cicp = Cicp::new(9, 16, 0, true);
+        let meta = MetadataView::none().with_cicp(cicp);
+
+        let chrm = PngChromaticities {
+            white_x: 31270,
+            white_y: 32900,
+            red_x: 64000,
+            red_y: 33000,
+            green_x: 30000,
+            green_y: 60000,
+            blue_x: 15000,
+            blue_y: 6000,
+        };
+
+        let config = crate::encode::EncodeConfig {
+            source_gamma: Some(45455),
+            srgb_intent: Some(0),
+            chromaticities: Some(chrm),
+            ..Default::default()
+        };
+
+        let encoded = crate::encode::encode_rgb8(
+            img.as_ref(),
+            Some(&meta),
+            &config,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        let decoded =
+            crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
+                .unwrap();
+
+        // cICP present, everything else suppressed
+        assert!(decoded.info.cicp.is_some());
+        assert_eq!(decoded.info.srgb_intent, None);
+        assert_eq!(decoded.info.source_gamma, None);
+        assert!(decoded.info.chromaticities.is_none());
+    }
+
+    #[test]
+    fn iccp_suppresses_srgb_gama_chrm() {
+        // PNGv3 precedence: iCCP suppresses sRGB, gAMA, cHRM
+        use crate::decode::PngChromaticities;
+        use zencodec_types::MetadataView;
+
+        let pixels = vec![
+            Rgb::<u8> {
+                r: 128,
+                g: 64,
+                b: 32
+            };
+            4
+        ];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+
+        // Minimal valid ICC profile (just needs to be non-empty for the test)
+        // Use a real sRGB profile header so iCCP decompression works
+        // Minimal byte sequence — just needs to survive zlib round-trip
+        let srgb_icc: &[u8] = &[0u8; 128];
+        let meta = MetadataView::none().with_icc(srgb_icc);
+
+        let chrm = PngChromaticities {
+            white_x: 31270,
+            white_y: 32900,
+            red_x: 64000,
+            red_y: 33000,
+            green_x: 30000,
+            green_y: 60000,
+            blue_x: 15000,
+            blue_y: 6000,
+        };
+
+        let config = crate::encode::EncodeConfig {
+            source_gamma: Some(45455),
+            srgb_intent: Some(0),
+            chromaticities: Some(chrm),
+            ..Default::default()
+        };
+
+        let encoded = crate::encode::encode_rgb8(
+            img.as_ref(),
+            Some(&meta),
+            &config,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        let decoded =
+            crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
+                .unwrap();
+
+        // iCCP present, sRGB/gAMA/cHRM suppressed
+        assert!(decoded.info.icc_profile.is_some());
+        assert_eq!(decoded.info.srgb_intent, None);
+        assert_eq!(decoded.info.source_gamma, None);
+        assert!(decoded.info.chromaticities.is_none());
+    }
+
+    #[test]
+    fn cicp_with_iccp_fallback() {
+        // PNGv3: cICP + iCCP both written (iCCP as fallback for limited cICP support)
+        use zencodec_types::{Cicp, MetadataView};
+
+        let pixels = vec![
+            Rgb::<u8> {
+                r: 128,
+                g: 64,
+                b: 32
+            };
+            4
+        ];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+
+        let cicp = Cicp::new(1, 13, 0, true);
+        // Minimal byte sequence — just needs to survive zlib round-trip
+        let srgb_icc: &[u8] = &[0u8; 128];
+        let meta = MetadataView::none().with_cicp(cicp).with_icc(srgb_icc);
+
+        let config = crate::encode::EncodeConfig::default();
+
+        let encoded = crate::encode::encode_rgb8(
+            img.as_ref(),
+            Some(&meta),
+            &config,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        let decoded =
+            crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
+                .unwrap();
+
+        // Both cICP and iCCP present
+        assert!(decoded.info.cicp.is_some());
+        assert!(decoded.info.icc_profile.is_some());
+        // sRGB/gAMA/cHRM suppressed
+        assert_eq!(decoded.info.srgb_intent, None);
+        assert_eq!(decoded.info.source_gamma, None);
+        assert!(decoded.info.chromaticities.is_none());
+    }
+
+    #[test]
+    fn hdr_metadata_always_written_with_cicp() {
+        // mDCV and cLLi always written alongside cICP
+        use zencodec_types::{Cicp, ContentLightLevel, MasteringDisplay, MetadataView};
+
+        let pixels = vec![
+            Rgb::<u8> {
+                r: 128,
+                g: 64,
+                b: 32
+            };
+            4
+        ];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+
+        let cicp = Cicp::new(9, 16, 0, true);
+        let clli = ContentLightLevel::new(1000, 400);
+        let mdcv = MasteringDisplay::new(
+            [[35400, 14600], [8500, 39850], [6550, 2300]],
+            [15635, 16450],
+            10000000,
+            50,
+        );
+        let meta = MetadataView::none()
+            .with_cicp(cicp)
+            .with_content_light_level(clli)
+            .with_mastering_display(mdcv);
+
+        let config = crate::encode::EncodeConfig {
+            source_gamma: Some(45455),
+            srgb_intent: Some(0),
+            ..Default::default()
+        };
+
+        let encoded = crate::encode::encode_rgb8(
+            img.as_ref(),
+            Some(&meta),
+            &config,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        let decoded =
+            crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
+                .unwrap();
+
+        // cICP + HDR metadata present
+        assert!(decoded.info.cicp.is_some());
+        assert!(decoded.info.content_light_level.is_some());
+        assert!(decoded.info.mastering_display.is_some());
+        // sRGB/gAMA suppressed by cICP
+        assert_eq!(decoded.info.srgb_intent, None);
+        assert_eq!(decoded.info.source_gamma, None);
+    }
+
+    #[test]
+    fn chrm_negative_values_roundtrip() {
+        // Wide-gamut spaces can have negative chromaticity values
+        use crate::decode::PngChromaticities;
+
+        let pixels = vec![
+            Rgb::<u8> {
+                r: 128,
+                g: 64,
+                b: 32
+            };
+            4
+        ];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+
+        // ACES AP1 has a negative blue_x primary
+        let chrm = PngChromaticities {
+            white_x: 32168,
+            white_y: 33767,
+            red_x: 71300,
+            red_y: 29300,
+            green_x: 16500,
+            green_y: 83000,
+            blue_x: -12800, // negative — imaginary primary
+            blue_y: 4400,
+        };
+
+        let config = crate::encode::EncodeConfig {
+            source_gamma: Some(100000), // linear
+            chromaticities: Some(chrm),
+            ..Default::default()
+        };
+
+        let encoded = crate::encode::encode_rgb8(
+            img.as_ref(),
+            None,
+            &config,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        let decoded =
+            crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
+                .unwrap();
+
+        let dc = decoded.info.chromaticities.expect("cHRM missing");
+        assert_eq!(dc.blue_x, -12800);
+        assert_eq!(dc.blue_y, 4400);
+        assert_eq!(dc.white_x, 32168);
     }
 
     #[test]
@@ -3144,8 +3158,6 @@ mod tests {
     /// the color metadata, decode again, and verify exact roundtrip.
     #[test]
     fn real_file_gama_chrm_roundtrip() {
-        use zencodec_types::PixelData;
-
         let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png";
         let data = std::fs::read(path).expect("frymire.png not found");
 
@@ -3174,11 +3186,12 @@ mod tests {
             chromaticities: Some(chrm),
             ..Default::default()
         };
-        let PixelData::Rgb8(ref pixels) = orig.pixels else {
-            panic!("frymire.png should decode as RGB8");
-        };
+        let pixels = orig
+            .pixels
+            .try_as_imgref::<Rgb<u8>>()
+            .expect("frymire.png should decode as RGB8");
         let encoded = crate::encode::encode_rgb8(
-            pixels.as_ref(),
+            pixels,
             None,
             &config,
             &enough::Unstoppable,
@@ -3196,10 +3209,9 @@ mod tests {
     }
 
     /// Decode a real PNG with sRGB+gAMA+cHRM, re-encode, verify roundtrip.
+    /// PNGv3 precedence: sRGB suppresses gAMA/cHRM in output.
     #[test]
     fn real_file_srgb_roundtrip() {
-        use zencodec_types::PixelData;
-
         let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/red-night.png";
         let data = std::fs::read(path).expect("red-night.png not found");
 
@@ -3209,29 +3221,25 @@ mod tests {
             .info
             .srgb_intent
             .expect("red-night.png should have sRGB");
-        let gamma = orig
-            .info
-            .source_gamma
-            .expect("red-night.png should have gAMA");
-        let chrm = orig
-            .info
-            .chromaticities
-            .expect("red-night.png should have cHRM");
+        // Original file has gAMA+cHRM alongside sRGB (pre-PNGv3 practice)
+        assert!(orig.info.source_gamma.is_some());
+        assert!(orig.info.chromaticities.is_some());
 
         assert_eq!(intent, 0); // Perceptual
 
         // Re-encode with all color metadata
         let config = crate::encode::EncodeConfig {
-            source_gamma: Some(gamma),
+            source_gamma: orig.info.source_gamma,
             srgb_intent: Some(intent),
-            chromaticities: Some(chrm),
+            chromaticities: orig.info.chromaticities,
             ..Default::default()
         };
-        let PixelData::Rgba8(ref pixels) = orig.pixels else {
-            panic!("red-night.png should decode as RGBA8");
-        };
+        let pixels = orig
+            .pixels
+            .try_as_imgref::<Rgba<u8>>()
+            .expect("red-night.png should decode as RGBA8");
         let encoded = crate::encode::encode_rgba8(
-            pixels.as_ref(),
+            pixels,
             None,
             &config,
             &enough::Unstoppable,
@@ -3241,17 +3249,16 @@ mod tests {
 
         let rt = crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
             .unwrap();
+        // PNGv3: sRGB present → gAMA/cHRM suppressed in output
         assert_eq!(rt.info.srgb_intent, Some(0));
-        assert_eq!(rt.info.source_gamma, Some(gamma));
-        assert_eq!(rt.info.chromaticities, Some(chrm));
+        assert_eq!(rt.info.source_gamma, None);
+        assert!(rt.info.chromaticities.is_none());
     }
 
     /// Decode a real PNG with iCCP (Adobe RGB), re-encode preserving the
     /// ICC profile, verify the profile roundtrips.
     #[test]
     fn real_file_icc_roundtrip() {
-        use zencodec_types::PixelData;
-
         let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/shirt_transparent.png";
         let data = std::fs::read(path).expect("shirt_transparent.png not found");
 
@@ -3267,11 +3274,12 @@ mod tests {
         // Re-encode with ICC profile
         let meta = zencodec_types::MetadataView::none().with_icc(icc);
         let config = crate::encode::EncodeConfig::default();
-        let PixelData::Rgba8(ref pixels) = orig.pixels else {
-            panic!("shirt_transparent.png should decode as RGBA8");
-        };
+        let pixels = orig
+            .pixels
+            .try_as_imgref::<Rgba<u8>>()
+            .expect("shirt_transparent.png should decode as RGBA8");
         let encoded = crate::encode::encode_rgba8(
-            pixels.as_ref(),
+            pixels,
             Some(&meta),
             &config,
             &enough::Unstoppable,
@@ -3302,10 +3310,10 @@ mod tests {
         let decoded =
             crate::decode::decode(&data, &PngDecodeConfig::none(), &enough::Unstoppable).unwrap();
         let info = &decoded.info;
-        let rgb_pixels = match &decoded.pixels {
-            zencodec_types::PixelData::Rgb8(img) => img,
-            other => panic!("expected Rgb8, got {:?}", other.descriptor()),
-        };
+        let rgb_pixels = decoded
+            .pixels
+            .try_as_imgref::<Rgb<u8>>()
+            .unwrap_or_else(|| panic!("expected Rgb8, got {:?}", decoded.pixels.descriptor()));
 
         for (name, comp) in [
             ("Fastest", crate::Compression::Fastest),
@@ -3323,7 +3331,7 @@ mod tests {
                 ..Default::default()
             };
             let encoded = crate::encode::encode_rgb8(
-                rgb_pixels.as_ref(),
+                rgb_pixels,
                 None,
                 &config,
                 &enough::Unstoppable,
@@ -3366,13 +3374,12 @@ mod tests {
         let decoded =
             crate::decode::decode(&encoded, &PngDecodeConfig::none(), &enough::Unstoppable)
                 .unwrap();
-        match &decoded.pixels {
-            zencodec_types::PixelData::Rgb8(dec_img) => {
-                assert_eq!(dec_img.width(), width);
-                assert_eq!(dec_img.height(), height);
-            }
-            other => panic!("expected Rgb8, got {:?}", other.descriptor()),
-        }
+        let dec_img = decoded
+            .pixels
+            .try_as_imgref::<Rgb<u8>>()
+            .unwrap_or_else(|| panic!("expected Rgb8, got {:?}", decoded.pixels.descriptor()));
+        assert_eq!(dec_img.width(), width);
+        assert_eq!(dec_img.height(), height);
     }
 
     #[test]

@@ -1711,15 +1711,15 @@ mod tests {
 
         // Verify frame 0 pixels (RGBA8)
         let f0_pixels = decoded.frames[0].pixels.to_rgba8();
-        let f0_buf = f0_pixels.buf();
-        assert_eq!(f0_buf[0].r, 255);
-        assert_eq!(f0_buf[0].g, 0);
+        let f0_img = f0_pixels.as_imgref();
+        assert_eq!(f0_img.buf()[0].r, 255);
+        assert_eq!(f0_img.buf()[0].g, 0);
 
         // Verify frame 1 pixels
         let f1_pixels = decoded.frames[1].pixels.to_rgba8();
-        let f1_buf = f1_pixels.buf();
-        assert_eq!(f1_buf[0].r, 0);
-        assert_eq!(f1_buf[0].g, 255);
+        let f1_img = f1_pixels.as_imgref();
+        assert_eq!(f1_img.buf()[0].r, 0);
+        assert_eq!(f1_img.buf()[0].g, 255);
     }
 
     #[test]
@@ -1783,10 +1783,10 @@ mod tests {
 
         // Frame 2: pixel (3,3) should be white, (5,5) should be red
         let f2_pixels = decoded.frames[2].pixels.to_rgba8();
-        let f2_buf = f2_pixels.buf();
-        let px33 = &f2_buf[3 * w as usize + 3];
+        let f2_img = f2_pixels.as_imgref();
+        let px33 = &f2_img.buf()[3 * w as usize + 3];
         assert_eq!((px33.r, px33.g, px33.b, px33.a), (255, 255, 255, 255));
-        let px55 = &f2_buf[5 * w as usize + 5];
+        let px55 = &f2_img.buf()[5 * w as usize + 5];
         assert_eq!((px55.r, px55.g, px55.b, px55.a), (255, 0, 0, 255));
     }
 
@@ -2055,7 +2055,8 @@ mod tests {
 
         assert_eq!(decoded.frames.len(), 3);
         for (i, (orig_input, dec_frame)) in frames.iter().zip(decoded.frames.iter()).enumerate() {
-            let dec_buf: Vec<rgb::Rgba<u8>> = dec_frame.pixels.to_rgba8().into_buf();
+            let dec_buf: Vec<rgb::Rgba<u8>> =
+                dec_frame.pixels.to_rgba8().as_imgref().buf().to_vec();
             for (j, px) in dec_buf.iter().enumerate() {
                 let off = j * 4;
                 let orig = rgb::Rgba {
@@ -2137,7 +2138,7 @@ mod tests {
 
         assert_eq!(decoded.frames.len(), 5);
         for (i, (orig, dec)) in frames.iter().zip(decoded.frames.iter()).enumerate() {
-            let dec_buf: Vec<rgb::Rgba<u8>> = dec.pixels.to_rgba8().into_buf();
+            let dec_buf: Vec<rgb::Rgba<u8>> = dec.pixels.to_rgba8().as_imgref().buf().to_vec();
             for (j, px) in dec_buf.iter().enumerate() {
                 let off = j * 4;
                 let orig_px = rgb::Rgba {
@@ -2219,7 +2220,7 @@ mod tests {
 
         assert_eq!(decoded.frames.len(), 3);
         for (i, (orig, dec)) in frames.iter().zip(decoded.frames.iter()).enumerate() {
-            let dec_buf: Vec<rgb::Rgba<u8>> = dec.pixels.to_rgba8().into_buf();
+            let dec_buf: Vec<rgb::Rgba<u8>> = dec.pixels.to_rgba8().as_imgref().buf().to_vec();
             for (j, px) in dec_buf.iter().enumerate() {
                 let off = j * 4;
                 let orig_px = rgb::Rgba {
@@ -2310,8 +2311,8 @@ mod tests {
         let all_source = [&f0, &f1, &f2];
         for (i, (frame, &src)) in decoded.frames.iter().zip(all_source.iter()).enumerate() {
             let decoded_rgba = frame.pixels.to_rgba8();
-            let buf = decoded_rgba.buf();
-            for (j, px) in buf.iter().enumerate() {
+            let img = decoded_rgba.as_imgref();
+            for (j, px) in img.buf().iter().enumerate() {
                 let off = j * 4;
                 let orig = rgb::Rgba {
                     r: src[off],
@@ -2421,8 +2422,7 @@ mod tests {
                 .iter()
                 .map(|f| {
                     let rgba = f.pixels.to_rgba8();
-                    let buf: Vec<rgb::Rgba<u8>> = rgba.into_buf();
-                    bytemuck::cast_slice::<rgb::Rgba<u8>, u8>(&buf).to_vec()
+                    rgba.copy_to_contiguous_bytes()
                 })
                 .collect();
 
@@ -2477,8 +2477,10 @@ mod tests {
                 .zip(redecoded.frames.iter())
                 .enumerate()
             {
-                let orig_buf: Vec<rgb::Rgba<u8>> = orig.pixels.to_rgba8().into_buf();
-                let redo_buf: Vec<rgb::Rgba<u8>> = redo.pixels.to_rgba8().into_buf();
+                let orig_buf: Vec<rgb::Rgba<u8>> =
+                    orig.pixels.to_rgba8().as_imgref().buf().to_vec();
+                let redo_buf: Vec<rgb::Rgba<u8>> =
+                    redo.pixels.to_rgba8().as_imgref().buf().to_vec();
                 for (j, (o, r)) in orig_buf.iter().zip(redo_buf.iter()).enumerate() {
                     if o.a == 0 && r.a == 0 {
                         continue; // both transparent — RGB may differ due to zeroing

@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use enough::Stop;
-use zencodec_types::PixelData;
+use zencodec_types::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer};
 
 use crate::chunk::PNG_SIGNATURE;
 use crate::chunk::ancillary::{FrameControl, PngAncillary};
@@ -19,7 +19,7 @@ use super::row::{FdatSource, IdatSource, unfilter_row};
 
 /// A single decoded APNG subframe (raw pixels, not composited to canvas).
 pub(crate) struct RawFrame {
-    pub pixels: PixelData,
+    pub pixels: PixelBuffer,
     pub fctl: FrameControl,
 }
 
@@ -257,7 +257,7 @@ impl<'a> ApngDecoder<'a> {
         &self,
         fctl: &FrameControl,
         cancel: &dyn Stop,
-    ) -> Result<PixelData, PngError> {
+    ) -> Result<PixelBuffer, PngError> {
         // For frame 0, the IDAT data covers the full canvas (IHDR dimensions).
         // The fcTL for frame 0 must have the same dimensions as IHDR.
         let frame_ihdr = Ihdr {
@@ -371,7 +371,7 @@ impl<'a> ApngDecoder<'a> {
         &mut self,
         fctl: &FrameControl,
         cancel: &dyn Stop,
-    ) -> Result<PixelData, PngError> {
+    ) -> Result<PixelBuffer, PngError> {
         let frame_ihdr = Ihdr {
             width: fctl.width,
             height: fctl.height,
@@ -471,7 +471,7 @@ pub(crate) struct ComposedApng {
 
 /// Decode an APNG with full compositing, producing canvas-sized RGBA frames.
 ///
-/// Builds `PixelData` directly from the canvas to avoid double-copying.
+/// Builds `PixelBuffer` directly from the canvas to avoid double-copying.
 pub(crate) fn decode_apng_composed(
     data: &[u8],
     config: &PngDecodeConfig,
@@ -512,7 +512,7 @@ pub(crate) fn decode_apng_composed(
         let subframe_rgba = promote_to_rgba(&frame.pixels, is_16bit);
         composite_frame(&frame.fctl, &subframe_rgba, &mut canvas, canvas_w, is_16bit);
 
-        // Build PixelData directly from canvas (single copy, no intermediate Vec)
+        // Build PixelBuffer directly from canvas (single copy, no intermediate Vec)
         let pixels = canvas_to_pixel_data(&canvas, canvas_w, canvas_h, is_16bit);
         frames.push(crate::decode::ApngFrame {
             pixels,
@@ -538,14 +538,14 @@ pub(crate) fn decode_apng_composed(
     })
 }
 
-/// Build PixelData directly from canvas bytes (single allocation).
-fn canvas_to_pixel_data(canvas: &[u8], w: usize, h: usize, is_16bit: bool) -> PixelData {
+/// Build PixelBuffer directly from canvas bytes (single allocation).
+fn canvas_to_pixel_data(canvas: &[u8], w: usize, h: usize, is_16bit: bool) -> PixelBuffer {
     if is_16bit {
         let rgba: &[rgb::Rgba<u16>] = bytemuck::cast_slice(canvas);
-        PixelData::Rgba16(imgref::ImgVec::new(rgba.to_vec(), w, h))
+        PixelBuffer::from_imgvec(imgref::ImgVec::new(rgba.to_vec(), w, h)).into()
     } else {
         let rgba: &[rgb::Rgba<u8>] = bytemuck::cast_slice(canvas);
-        PixelData::Rgba8(imgref::ImgVec::new(rgba.to_vec(), w, h))
+        PixelBuffer::from_imgvec(imgref::ImgVec::new(rgba.to_vec(), w, h)).into()
     }
 }
 
@@ -620,131 +620,166 @@ fn apply_dispose_op(
     }
 }
 
-/// Promote PixelData to RGBA8 or RGBA16 bytes.
-fn promote_to_rgba(pixels: &PixelData, is_16bit: bool) -> Vec<u8> {
+/// Promote PixelBuffer to RGBA8 or RGBA16 bytes for canvas compositing.
+fn promote_to_rgba(pixels: &PixelBuffer, is_16bit: bool) -> Vec<u8> {
+    let desc = pixels.descriptor();
+    let layout = desc.layout;
+    let channel_type = desc.channel_type;
+
     if is_16bit {
         // Promote to RGBA16 (8 bytes per pixel, native endian)
-        match pixels {
-            PixelData::Rgba16(img) => {
-                let mut out = Vec::with_capacity(img.buf().len() * 8);
-                for p in img.buf() {
-                    out.extend_from_slice(&p.r.to_ne_bytes());
-                    out.extend_from_slice(&p.g.to_ne_bytes());
-                    out.extend_from_slice(&p.b.to_ne_bytes());
-                    out.extend_from_slice(&p.a.to_ne_bytes());
-                }
-                out
-            }
-            PixelData::Rgb16(img) => {
-                let mut out = Vec::with_capacity(img.buf().len() * 8);
-                for p in img.buf() {
-                    out.extend_from_slice(&p.r.to_ne_bytes());
-                    out.extend_from_slice(&p.g.to_ne_bytes());
-                    out.extend_from_slice(&p.b.to_ne_bytes());
-                    out.extend_from_slice(&65535u16.to_ne_bytes());
-                }
-                out
-            }
-            PixelData::Gray16(img) => {
-                let mut out = Vec::with_capacity(img.buf().len() * 8);
-                for p in img.buf() {
-                    let v = p.value();
-                    out.extend_from_slice(&v.to_ne_bytes());
-                    out.extend_from_slice(&v.to_ne_bytes());
-                    out.extend_from_slice(&v.to_ne_bytes());
-                    out.extend_from_slice(&65535u16.to_ne_bytes());
-                }
-                out
-            }
-            PixelData::GrayAlpha16(img) => {
-                let mut out = Vec::with_capacity(img.buf().len() * 8);
-                for p in img.buf() {
-                    out.extend_from_slice(&p.v.to_ne_bytes());
-                    out.extend_from_slice(&p.v.to_ne_bytes());
-                    out.extend_from_slice(&p.v.to_ne_bytes());
-                    out.extend_from_slice(&p.a.to_ne_bytes());
-                }
-                out
-            }
-            // 8-bit sources upscaled to 16-bit
-            other => {
-                let rgba8 = promote_to_rgba(other, false);
-                let mut out = Vec::with_capacity(rgba8.len() * 2);
-                for chunk in rgba8.chunks_exact(4) {
-                    for &b in chunk {
-                        let v16 = b as u16 * 257;
-                        out.extend_from_slice(&v16.to_ne_bytes());
+        if channel_type == ChannelType::U16 {
+            match layout {
+                ChannelLayout::Rgba => {
+                    if let Some(img) = pixels.try_as_imgref::<rgb::Rgba<u16>>() {
+                        let mut out = Vec::with_capacity(img.buf().len() * 8);
+                        for p in *img.buf() {
+                            out.extend_from_slice(&p.r.to_ne_bytes());
+                            out.extend_from_slice(&p.g.to_ne_bytes());
+                            out.extend_from_slice(&p.b.to_ne_bytes());
+                            out.extend_from_slice(&p.a.to_ne_bytes());
+                        }
+                        return out;
                     }
                 }
-                out
+                ChannelLayout::Rgb => {
+                    if let Some(img) = pixels.try_as_imgref::<rgb::Rgb<u16>>() {
+                        let mut out = Vec::with_capacity(img.buf().len() * 8);
+                        for p in *img.buf() {
+                            out.extend_from_slice(&p.r.to_ne_bytes());
+                            out.extend_from_slice(&p.g.to_ne_bytes());
+                            out.extend_from_slice(&p.b.to_ne_bytes());
+                            out.extend_from_slice(&65535u16.to_ne_bytes());
+                        }
+                        return out;
+                    }
+                }
+                ChannelLayout::Gray => {
+                    if let Some(img) = pixels.try_as_imgref::<rgb::Gray<u16>>() {
+                        let mut out = Vec::with_capacity(img.buf().len() * 8);
+                        for p in *img.buf() {
+                            let v = p.value();
+                            out.extend_from_slice(&v.to_ne_bytes());
+                            out.extend_from_slice(&v.to_ne_bytes());
+                            out.extend_from_slice(&v.to_ne_bytes());
+                            out.extend_from_slice(&65535u16.to_ne_bytes());
+                        }
+                        return out;
+                    }
+                }
+                ChannelLayout::GrayAlpha => {
+                    if let Some(img) = pixels.try_as_imgref::<GrayAlpha16>() {
+                        let mut out = Vec::with_capacity(img.buf().len() * 8);
+                        for p in *img.buf() {
+                            out.extend_from_slice(&p.v.to_ne_bytes());
+                            out.extend_from_slice(&p.v.to_ne_bytes());
+                            out.extend_from_slice(&p.v.to_ne_bytes());
+                            out.extend_from_slice(&p.a.to_ne_bytes());
+                        }
+                        return out;
+                    }
+                }
+                _ => {}
             }
         }
+        // 8-bit sources upscaled to 16-bit
+        let rgba8 = promote_to_rgba(pixels, false);
+        let mut out = Vec::with_capacity(rgba8.len() * 2);
+        for chunk in rgba8.chunks_exact(4) {
+            for &b in chunk {
+                let v16 = b as u16 * 257;
+                out.extend_from_slice(&v16.to_ne_bytes());
+            }
+        }
+        out
     } else {
         // Promote to RGBA8 (4 bytes per pixel)
-        match pixels {
-            PixelData::Rgba8(img) => {
-                use rgb::ComponentBytes;
-                img.buf().as_bytes().to_vec()
-            }
-            PixelData::Rgb8(img) => {
-                let mut out = Vec::with_capacity(img.buf().len() * 4);
-                for p in img.buf() {
-                    out.extend_from_slice(&[p.r, p.g, p.b, 255]);
+        if channel_type == ChannelType::U8 {
+            match layout {
+                ChannelLayout::Rgba => {
+                    if let Some(img) = pixels.try_as_imgref::<rgb::Rgba<u8>>() {
+                        use rgb::ComponentBytes;
+                        return img.buf().as_bytes().to_vec();
+                    }
                 }
-                out
-            }
-            PixelData::Gray8(img) => {
-                let mut out = Vec::with_capacity(img.buf().len() * 4);
-                for p in img.buf() {
-                    let v = p.value();
-                    out.extend_from_slice(&[v, v, v, 255]);
+                ChannelLayout::Rgb => {
+                    if let Some(img) = pixels.try_as_imgref::<rgb::Rgb<u8>>() {
+                        let mut out = Vec::with_capacity(img.buf().len() * 4);
+                        for p in *img.buf() {
+                            out.extend_from_slice(&[p.r, p.g, p.b, 255]);
+                        }
+                        return out;
+                    }
                 }
-                out
-            }
-            // 16-bit sources downscaled to 8-bit
-            PixelData::Rgba16(img) => {
-                let mut out = Vec::with_capacity(img.buf().len() * 4);
-                for p in img.buf() {
-                    out.extend_from_slice(&[
-                        (p.r >> 8) as u8,
-                        (p.g >> 8) as u8,
-                        (p.b >> 8) as u8,
-                        (p.a >> 8) as u8,
-                    ]);
+                ChannelLayout::Gray => {
+                    if let Some(img) = pixels.try_as_imgref::<rgb::Gray<u8>>() {
+                        let mut out = Vec::with_capacity(img.buf().len() * 4);
+                        for p in *img.buf() {
+                            let v = p.value();
+                            out.extend_from_slice(&[v, v, v, 255]);
+                        }
+                        return out;
+                    }
                 }
-                out
+                _ => {}
             }
-            PixelData::Rgb16(img) => {
-                let mut out = Vec::with_capacity(img.buf().len() * 4);
-                for p in img.buf() {
-                    out.extend_from_slice(&[
-                        (p.r >> 8) as u8,
-                        (p.g >> 8) as u8,
-                        (p.b >> 8) as u8,
-                        255,
-                    ]);
-                }
-                out
-            }
-            PixelData::Gray16(img) => {
-                let mut out = Vec::with_capacity(img.buf().len() * 4);
-                for p in img.buf() {
-                    let v = (p.value() >> 8) as u8;
-                    out.extend_from_slice(&[v, v, v, 255]);
-                }
-                out
-            }
-            PixelData::GrayAlpha16(img) => {
-                let mut out = Vec::with_capacity(img.buf().len() * 4);
-                for p in img.buf() {
-                    let v = (p.v >> 8) as u8;
-                    let a = (p.a >> 8) as u8;
-                    out.extend_from_slice(&[v, v, v, a]);
-                }
-                out
-            }
-            _ => Vec::new(),
         }
+        // 16-bit sources downscaled to 8-bit
+        if channel_type == ChannelType::U16 {
+            match layout {
+                ChannelLayout::Rgba => {
+                    if let Some(img) = pixels.try_as_imgref::<rgb::Rgba<u16>>() {
+                        let mut out = Vec::with_capacity(img.buf().len() * 4);
+                        for p in *img.buf() {
+                            out.extend_from_slice(&[
+                                (p.r >> 8) as u8,
+                                (p.g >> 8) as u8,
+                                (p.b >> 8) as u8,
+                                (p.a >> 8) as u8,
+                            ]);
+                        }
+                        return out;
+                    }
+                }
+                ChannelLayout::Rgb => {
+                    if let Some(img) = pixels.try_as_imgref::<rgb::Rgb<u16>>() {
+                        let mut out = Vec::with_capacity(img.buf().len() * 4);
+                        for p in *img.buf() {
+                            out.extend_from_slice(&[
+                                (p.r >> 8) as u8,
+                                (p.g >> 8) as u8,
+                                (p.b >> 8) as u8,
+                                255,
+                            ]);
+                        }
+                        return out;
+                    }
+                }
+                ChannelLayout::Gray => {
+                    if let Some(img) = pixels.try_as_imgref::<rgb::Gray<u16>>() {
+                        let mut out = Vec::with_capacity(img.buf().len() * 4);
+                        for p in *img.buf() {
+                            let v = (p.value() >> 8) as u8;
+                            out.extend_from_slice(&[v, v, v, 255]);
+                        }
+                        return out;
+                    }
+                }
+                ChannelLayout::GrayAlpha => {
+                    if let Some(img) = pixels.try_as_imgref::<GrayAlpha16>() {
+                        let mut out = Vec::with_capacity(img.buf().len() * 4);
+                        for p in *img.buf() {
+                            let v = (p.v >> 8) as u8;
+                            let a = (p.a >> 8) as u8;
+                            out.extend_from_slice(&[v, v, v, a]);
+                        }
+                        return out;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Vec::new()
     }
 }
 
@@ -1279,31 +1314,31 @@ mod tests {
         Ok(frames)
     }
 
-    /// Extract RGBA8 bytes from PixelData for comparison.
-    fn pixel_data_to_rgba8_bytes(pixels: &PixelData) -> Vec<u8> {
+    /// Extract RGBA8 bytes from PixelBuffer for comparison.
+    fn pixel_data_to_rgba8_bytes(pixels: &PixelBuffer) -> Vec<u8> {
         use rgb::ComponentBytes;
-        match pixels {
-            PixelData::Rgba8(img) => img.buf().as_bytes().to_vec(),
-            PixelData::Rgb8(img) => {
-                let mut out = Vec::with_capacity(img.buf().len() * 4);
-                for p in img.buf() {
-                    out.extend_from_slice(&[p.r, p.g, p.b, 255]);
-                }
-                out
-            }
-            PixelData::Rgba16(img) => {
-                let mut out = Vec::with_capacity(img.buf().len() * 4);
-                for p in img.buf() {
-                    out.extend_from_slice(&[
-                        (p.r >> 8) as u8,
-                        (p.g >> 8) as u8,
-                        (p.b >> 8) as u8,
-                        (p.a >> 8) as u8,
-                    ]);
-                }
-                out
-            }
-            _ => Vec::new(),
+        if let Some(img) = pixels.try_as_imgref::<rgb::Rgba<u8>>() {
+            return img.buf().as_bytes().to_vec();
         }
+        if let Some(img) = pixels.try_as_imgref::<rgb::Rgb<u8>>() {
+            let mut out = Vec::with_capacity(img.buf().len() * 4);
+            for p in *img.buf() {
+                out.extend_from_slice(&[p.r, p.g, p.b, 255]);
+            }
+            return out;
+        }
+        if let Some(img) = pixels.try_as_imgref::<rgb::Rgba<u16>>() {
+            let mut out = Vec::with_capacity(img.buf().len() * 4);
+            for p in *img.buf() {
+                out.extend_from_slice(&[
+                    (p.r >> 8) as u8,
+                    (p.g >> 8) as u8,
+                    (p.b >> 8) as u8,
+                    (p.a >> 8) as u8,
+                ]);
+            }
+            return out;
+        }
+        Vec::new()
     }
 }

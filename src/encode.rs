@@ -29,10 +29,17 @@ pub struct EncodeConfig {
     /// so memory usage scales with thread count. Default: false.
     pub parallel: bool,
     /// Source gamma for gAMA chunk (scaled by 100000, e.g. 45455 = 1/2.2).
+    ///
+    /// Suppressed in output when sRGB, iCCP, or cICP is present (PNGv3 precedence).
     pub source_gamma: Option<u32>,
     /// sRGB rendering intent for sRGB chunk (0-3).
+    ///
+    /// Suppressed in output when iCCP or cICP is present (PNGv3 precedence).
+    /// When written, suppresses gAMA and cHRM.
     pub srgb_intent: Option<u8>,
     /// Chromaticities for cHRM chunk.
+    ///
+    /// Suppressed in output when sRGB, iCCP, or cICP is present (PNGv3 precedence).
     pub chromaticities: Option<PngChromaticities>,
     /// Near-lossless: number of least-significant bits to round (0-4).
     ///
