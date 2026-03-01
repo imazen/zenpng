@@ -1562,7 +1562,7 @@ fn to_gray16(pixels: PixelBuffer) -> imgref::ImgVec<Gray<u16>> {
             let buf: Vec<Gray<u16>> = img
                 .pixels()
                 .map(|p| {
-                    let luma = ((p.r as u32 * 77 + p.g as u32 * 150 + p.b as u32 * 29) >> 8) as u16;
+                    let luma = ((p.r as u32 * 77 + p.g as u32 * 150 + p.b as u32 * 29 + 128) >> 8) as u16;
                     Gray(luma)
                 })
                 .collect();
@@ -1573,7 +1573,7 @@ fn to_gray16(pixels: PixelBuffer) -> imgref::ImgVec<Gray<u16>> {
             let buf: Vec<Gray<u16>> = img
                 .pixels()
                 .map(|p| {
-                    let luma = ((p.r as u32 * 77 + p.g as u32 * 150 + p.b as u32 * 29) >> 8) as u16;
+                    let luma = ((p.r as u32 * 77 + p.g as u32 * 150 + p.b as u32 * 29 + 128) >> 8) as u16;
                     Gray(luma)
                 })
                 .collect();

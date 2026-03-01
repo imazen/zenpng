@@ -732,10 +732,10 @@ fn promote_to_rgba(pixels: &PixelBuffer, is_16bit: bool) -> Vec<u8> {
                         let mut out = Vec::with_capacity(img.buf().len() * 4);
                         for p in *img.buf() {
                             out.extend_from_slice(&[
-                                (p.r >> 8) as u8,
-                                (p.g >> 8) as u8,
-                                (p.b >> 8) as u8,
-                                (p.a >> 8) as u8,
+                                ((p.r as u32 * 255 + 32768) >> 16) as u8,
+                                ((p.g as u32 * 255 + 32768) >> 16) as u8,
+                                ((p.b as u32 * 255 + 32768) >> 16) as u8,
+                                ((p.a as u32 * 255 + 32768) >> 16) as u8,
                             ]);
                         }
                         return out;
@@ -746,9 +746,9 @@ fn promote_to_rgba(pixels: &PixelBuffer, is_16bit: bool) -> Vec<u8> {
                         let mut out = Vec::with_capacity(img.buf().len() * 4);
                         for p in *img.buf() {
                             out.extend_from_slice(&[
-                                (p.r >> 8) as u8,
-                                (p.g >> 8) as u8,
-                                (p.b >> 8) as u8,
+                                ((p.r as u32 * 255 + 32768) >> 16) as u8,
+                                ((p.g as u32 * 255 + 32768) >> 16) as u8,
+                                ((p.b as u32 * 255 + 32768) >> 16) as u8,
                                 255,
                             ]);
                         }
@@ -759,7 +759,7 @@ fn promote_to_rgba(pixels: &PixelBuffer, is_16bit: bool) -> Vec<u8> {
                     if let Some(img) = pixels.try_as_imgref::<rgb::Gray<u16>>() {
                         let mut out = Vec::with_capacity(img.buf().len() * 4);
                         for p in *img.buf() {
-                            let v = (p.value() >> 8) as u8;
+                            let v = ((p.value() as u32 * 255 + 32768) >> 16) as u8;
                             out.extend_from_slice(&[v, v, v, 255]);
                         }
                         return out;
@@ -769,8 +769,8 @@ fn promote_to_rgba(pixels: &PixelBuffer, is_16bit: bool) -> Vec<u8> {
                     if let Some(img) = pixels.try_as_imgref::<GrayAlpha16>() {
                         let mut out = Vec::with_capacity(img.buf().len() * 4);
                         for p in *img.buf() {
-                            let v = (p.v >> 8) as u8;
-                            let a = (p.a >> 8) as u8;
+                            let v = ((p.v as u32 * 255 + 32768) >> 16) as u8;
+                            let a = ((p.a as u32 * 255 + 32768) >> 16) as u8;
                             out.extend_from_slice(&[v, v, v, a]);
                         }
                         return out;
