@@ -280,6 +280,8 @@ pub(crate) fn reduce_16_to_8(be_bytes: &[u8]) -> Vec<u8> {
 }
 
 /// Convert RGBA8 pixel data to RGB8 by stripping the alpha channel.
+///
+/// Used in both opaque-only and tRNS paths, so alpha is intentionally discarded.
 pub(crate) fn rgba8_to_rgb8(rgba: &[u8]) -> Vec<u8> {
     let npixels = rgba.len() / 4;
     let mut rgb = Vec::with_capacity(npixels * 3);
@@ -304,7 +306,9 @@ pub(crate) fn rgba8_to_gray_alpha8(rgba: &[u8]) -> Vec<u8> {
     ga
 }
 
-/// Convert RGBA8 pixel data to Grayscale8 (dropping alpha, assumes all opaque).
+/// Convert RGBA8 pixel data to Grayscale8 (dropping alpha).
+///
+/// Used in both opaque-only and tRNS paths, so alpha is intentionally discarded.
 pub(crate) fn rgba8_to_gray8(rgba: &[u8]) -> Vec<u8> {
     let npixels = rgba.len() / 4;
     let mut gray = Vec::with_capacity(npixels);
@@ -361,7 +365,10 @@ pub(crate) fn gray8_to_subbyte(gray8: &[u8], bit_depth: u8) -> Vec<u8> {
         4 => 17,
         _ => return gray8.to_vec(),
     };
-    gray8.iter().map(|&v| v / divisor).collect()
+    gray8
+        .iter()
+        .map(|&v| (v + divisor / 2) / divisor)
+        .collect()
 }
 
 /// Split an RGBA palette into separate RGB and alpha arrays for PNG.
