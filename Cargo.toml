@@ -19,7 +19,7 @@ zencodec-types = { path = "../zencodec-types" }
 zenquant = { path = "../zenquant", optional = true }
 zenflate = { path = "../zenflate" }
 archmage = { version = "0.8.6", default-features = false, features = ["macros", "safe_unaligned_simd", "std"] }
-safe_unaligned_simd = { version = "0.2.4", default-features = false }
+safe_unaligned_simd = { version = "0.2.5", default-features = false }
 linear-srgb = "0.5.5"
 zenzop = { path = "../zenzop", optional = true, default-features = false, features = ["zlib", "std"] }
 almost-enough = { version = "0.4", features = ["std"] }
