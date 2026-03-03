@@ -623,8 +623,8 @@ fn apply_dispose_op(
 /// Promote PixelBuffer to RGBA8 or RGBA16 bytes for canvas compositing.
 fn promote_to_rgba(pixels: &PixelBuffer, is_16bit: bool) -> Vec<u8> {
     let desc = pixels.descriptor();
-    let layout = desc.layout;
-    let channel_type = desc.channel_type;
+    let layout = desc.layout();
+    let channel_type = desc.channel_type();
 
     if is_16bit {
         // Promote to RGBA16 (8 bytes per pixel, native endian)

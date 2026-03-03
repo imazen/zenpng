@@ -770,7 +770,7 @@ impl PngFrameEncoder {
     /// Extract RGBA8 bytes from a PixelSlice, converting as needed.
     fn pixels_to_rgba8(pixels: &PixelSlice<'_>) -> Result<Vec<u8>, PngError> {
         let desc = pixels.descriptor();
-        match (desc.channel_type, desc.layout) {
+        match (desc.channel_type(), desc.layout()) {
             (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Rgba) => {
                 Ok(collect_contiguous_bytes(pixels))
             }
@@ -1219,7 +1219,7 @@ impl FrameDecode for PngFrameDecoder {
 // GrayAlpha16. These helpers convert to any requested target format.
 
 use rgb::{Gray, Rgb, Rgba};
-use zencodec_types::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer};
+use zencodec_types::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer, PixelBufferConvertExt as _};
 
 /// Convert native PNG pixel data to Rgb8. Delegates to `PixelBuffer::to_rgb8()`.
 fn to_rgb8(pixels: PixelBuffer) -> imgref::ImgVec<Rgb<u8>> {
@@ -1413,7 +1413,7 @@ fn to_rgb16(pixels: PixelBuffer) -> imgref::ImgVec<Rgb<u16>> {
     let desc = pixels.descriptor();
     let w = pixels.width() as usize;
     let h = pixels.height() as usize;
-    match (desc.channel_type, desc.layout) {
+    match (desc.channel_type(), desc.layout()) {
         (ChannelType::U16, ChannelLayout::Rgb) => {
             let img = pixels.try_as_imgref::<Rgb<u16>>().unwrap();
             let buf: Vec<Rgb<u16>> = img.pixels().collect();
@@ -1475,7 +1475,7 @@ fn to_rgba16(pixels: PixelBuffer) -> imgref::ImgVec<Rgba<u16>> {
     let desc = pixels.descriptor();
     let w = pixels.width() as usize;
     let h = pixels.height() as usize;
-    match (desc.channel_type, desc.layout) {
+    match (desc.channel_type(), desc.layout()) {
         (ChannelType::U16, ChannelLayout::Rgba) => {
             let img = pixels.try_as_imgref::<Rgba<u16>>().unwrap();
             let buf: Vec<Rgba<u16>> = img.pixels().collect();
@@ -1546,7 +1546,7 @@ fn to_gray16(pixels: PixelBuffer) -> imgref::ImgVec<Gray<u16>> {
     let desc = pixels.descriptor();
     let w = pixels.width() as usize;
     let h = pixels.height() as usize;
-    match (desc.channel_type, desc.layout) {
+    match (desc.channel_type(), desc.layout()) {
         (ChannelType::U16, ChannelLayout::Gray) => {
             let img = pixels.try_as_imgref::<Gray<u16>>().unwrap();
             let buf: Vec<Gray<u16>> = img.pixels().collect();
