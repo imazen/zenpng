@@ -16,6 +16,7 @@ imgref = "1.12"
 bytemuck = { version = "1.25", default-features = false, features = ["extern_crate_alloc"] }
 enough = "0.4"
 zencodec-types = { path = "../zencodec-types" }
+zenpixels = { path = "../zenpixels", default-features = false, features = ["buffer"] }
 zenquant = { path = "../zenquant", optional = true }
 zenflate = { path = "../zenflate" }
 archmage = { version = "0.8.6", default-features = false, features = ["macros", "safe_unaligned_simd", "std"] }
