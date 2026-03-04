@@ -2,7 +2,8 @@
 
 use alloc::vec::Vec;
 use enough::Stop;
-use zencodec_types::{Cicp, ContentLightLevel, MasteringDisplay, PixelBuffer};
+use zencodec_types::{Cicp, ContentLightLevel, MasteringDisplay};
+use zenpixels::PixelBuffer;
 
 use crate::error::PngError;
 

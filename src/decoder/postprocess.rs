@@ -8,7 +8,7 @@ use crate::error::PngError;
 
 use imgref::ImgVec;
 use rgb::{Gray, Rgb, Rgba};
-use zencodec_types::{GrayAlpha16, Pixel, PixelBuffer};
+use zenpixels::{GrayAlpha16, Pixel, PixelBuffer};
 
 // ── Post-processing ─────────────────────────────────────────────────
 

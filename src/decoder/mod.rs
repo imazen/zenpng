@@ -10,7 +10,8 @@ use alloc::vec::Vec;
 
 use enough::Stop;
 use imgref::ImgVec;
-use zencodec_types::{Cicp, ContentLightLevel, MasteringDisplay, PixelBuffer};
+use zencodec_types::{Cicp, ContentLightLevel, MasteringDisplay};
+use zenpixels::PixelBuffer;
 
 use crate::chunk::ancillary::PngAncillary;
 use crate::chunk::ihdr::Ihdr;
@@ -608,7 +609,7 @@ mod tests {
     use enough::Unstoppable;
     use imgref::ImgVec;
     use rgb::{Gray, Rgb, Rgba};
-    use zencodec_types::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer};
+    use zenpixels::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer};
 
     #[test]
     fn chunk_parser_validates_signature() {

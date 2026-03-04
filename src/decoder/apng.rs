@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use enough::Stop;
-use zencodec_types::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer};
+use zenpixels::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer};
 
 use crate::chunk::PNG_SIGNATURE;
 use crate::chunk::ancillary::{FrameControl, PngAncillary};
