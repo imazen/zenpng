@@ -1953,17 +1953,17 @@ mod tests {
 
         let quant_config = zenquant::QuantizeConfig::new(zenquant::OutputFormat::Png);
         let apng_config = crate::encode::ApngEncodeConfig::default();
-        let encoded = crate::indexed::encode_apng_indexed(
-            &frames,
-            w,
-            h,
-            &apng_config,
-            &quant_config,
-            None,
-            &enough::Unstoppable,
-            &enough::Unstoppable,
-        )
-        .unwrap();
+        let apng_params = crate::indexed::ApngEncodeParams {
+            frames: &frames,
+            canvas_width: w,
+            canvas_height: h,
+            config: &apng_config,
+            quant_config: &quant_config,
+            metadata: None,
+            cancel: &enough::Unstoppable,
+            deadline: &enough::Unstoppable,
+        };
+        let encoded = crate::indexed::encode_apng_indexed(&apng_params).unwrap();
 
         // Verify it decodes (will be indexed, decoded as palette)
         let decoded = crate::decode::decode_apng(

@@ -9,7 +9,8 @@ use std::time::Instant;
 use rgb::Rgba;
 
 use zenpng::{
-    ApngEncodeConfig, ApngFrameInput, QualityGate, default_quantize_config, encode_apng_auto,
+    ApngEncodeConfig, ApngEncodeParams, ApngFrameInput, QualityGate, default_quantize_config,
+    encode_apng_auto,
 };
 
 fn sample_files(dir: &Path, n: usize) -> Vec<std::path::PathBuf> {
@@ -174,17 +175,17 @@ fn bench_corpus(
             .collect();
 
         let start = Instant::now();
-        let result = match encode_apng_auto(
-            &frames,
-            item.w,
-            item.h,
-            &config,
-            qconfig,
-            gate,
-            None,
-            &enough::Unstoppable,
-            &enough::Unstoppable,
-        ) {
+        let apng_params = ApngEncodeParams {
+            frames: &frames,
+            canvas_width: item.w,
+            canvas_height: item.h,
+            config: &config,
+            quant_config: qconfig,
+            metadata: None,
+            cancel: &enough::Unstoppable,
+            deadline: &enough::Unstoppable,
+        };
+        let result = match encode_apng_auto(&apng_params, gate) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("  {}: error: {}", item.name, e);

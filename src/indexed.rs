@@ -341,22 +341,42 @@ pub fn encode_rgba8_auto(
 
 // ── APNG indexed encoding ───────────────────────────────────────────
 
+/// Bundled parameters for APNG indexed/auto encoding, reducing argument counts.
+#[derive(Clone)]
+pub struct ApngEncodeParams<'a> {
+    /// Canvas-sized RGBA8 frames to encode.
+    pub frames: &'a [crate::encode::ApngFrameInput<'a>],
+    /// Canvas width in pixels.
+    pub canvas_width: u32,
+    /// Canvas height in pixels.
+    pub canvas_height: u32,
+    /// APNG encoding configuration (compression, num_plays, etc.).
+    pub config: &'a crate::encode::ApngEncodeConfig,
+    /// Quantization configuration for zenquant.
+    pub quant_config: &'a QuantizeConfig,
+    /// Optional PNG metadata (gAMA, sRGB, cHRM, iCCP, etc.).
+    pub metadata: Option<&'a MetadataView<'a>>,
+    /// Cancellation token.
+    pub cancel: &'a dyn Stop,
+    /// Deadline/timeout token.
+    pub deadline: &'a dyn Stop,
+}
+
 /// Encode canvas-sized RGBA8 frames into an indexed APNG file using a global palette.
 ///
 /// Builds a shared palette across all frames via zenquant, then remaps each
 /// frame with proper dithering and temporal consistency (identical pixels
 /// between consecutive frames receive the same index, eliminating flicker).
-#[allow(clippy::too_many_arguments)]
-pub fn encode_apng_indexed(
-    frames: &[crate::encode::ApngFrameInput<'_>],
-    canvas_width: u32,
-    canvas_height: u32,
-    config: &crate::encode::ApngEncodeConfig,
-    quant_config: &QuantizeConfig,
-    metadata: Option<&MetadataView<'_>>,
-    cancel: &dyn Stop,
-    deadline: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+pub fn encode_apng_indexed(params: &ApngEncodeParams<'_>) -> Result<Vec<u8>, PngError> {
+    let frames = params.frames;
+    let canvas_width = params.canvas_width;
+    let canvas_height = params.canvas_height;
+    let config = params.config;
+    let quant_config = params.quant_config;
+    let metadata = params.metadata;
+    let cancel = params.cancel;
+    let deadline = params.deadline;
+
     if frames.is_empty() {
         return Err(PngError::InvalidInput(
             "APNG requires at least one frame".into(),
@@ -450,18 +470,19 @@ pub fn encode_apng_indexed(
 /// frame fails the gate, falls back to truecolor RGBA8 APNG for all frames.
 ///
 /// Returns the worst-case metrics across all frames.
-#[allow(clippy::too_many_arguments)]
 pub fn encode_apng_auto(
-    frames: &[crate::encode::ApngFrameInput<'_>],
-    canvas_width: u32,
-    canvas_height: u32,
-    config: &crate::encode::ApngEncodeConfig,
-    quant_config: &QuantizeConfig,
+    params: &ApngEncodeParams<'_>,
     gate: QualityGate,
-    metadata: Option<&MetadataView<'_>>,
-    cancel: &dyn Stop,
-    deadline: &dyn Stop,
 ) -> Result<AutoEncodeResult, PngError> {
+    let frames = params.frames;
+    let canvas_width = params.canvas_width;
+    let canvas_height = params.canvas_height;
+    let config = params.config;
+    let quant_config = params.quant_config;
+    let metadata = params.metadata;
+    let cancel = params.cancel;
+    let deadline = params.deadline;
+
     if frames.is_empty() {
         return Err(PngError::InvalidInput(
             "APNG requires at least one frame".into(),
