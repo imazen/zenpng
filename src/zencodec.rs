@@ -10,8 +10,9 @@ use alloc::vec::Vec;
 
 use zencodec_types::{
     DecodeFrame, DecodeOutput, EncodeOutput, ImageFormat, ImageInfo, MetadataView, OutputInfo,
-    PixelDescriptor, PixelSlice, PixelSliceMut, ResourceLimits, Stop,
+    ResourceLimits, Stop,
 };
+use zenpixels::{PixelDescriptor, PixelSlice, PixelSliceMut};
 
 #[allow(unused_imports)]
 use zencodec_types::{
@@ -771,17 +772,17 @@ impl PngFrameEncoder {
     fn pixels_to_rgba8(pixels: &PixelSlice<'_>) -> Result<Vec<u8>, PngError> {
         let desc = pixels.descriptor();
         match (desc.channel_type(), desc.layout()) {
-            (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Rgba) => {
+            (zenpixels::ChannelType::U8, zenpixels::ChannelLayout::Rgba) => {
                 Ok(collect_contiguous_bytes(pixels))
             }
-            (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Bgra) => {
+            (zenpixels::ChannelType::U8, zenpixels::ChannelLayout::Bgra) => {
                 let src = collect_contiguous_bytes(pixels);
                 Ok(src
                     .chunks_exact(4)
                     .flat_map(|c| [c[2], c[1], c[0], c[3]])
                     .collect())
             }
-            (zencodec_types::ChannelType::U8, zencodec_types::ChannelLayout::Rgb) => {
+            (zenpixels::ChannelType::U8, zenpixels::ChannelLayout::Rgb) => {
                 let src = collect_contiguous_bytes(pixels);
                 Ok(src
                     .chunks_exact(3)
@@ -915,8 +916,8 @@ impl PngDecoderConfig {
 impl PngDecoderConfig {
     /// Convenience: decode in one call (native format).
     pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, PngError> {
-        use zencodec_types::{DecodeJob, DecoderConfig};
-        self.job().decoder()?.decode(data, &[])
+        use zencodec_types::{Decode, DecodeJob, DecoderConfig};
+        self.job().decoder(data, &[])?.decode()
     }
 
     /// Convenience: probe image header.
@@ -1038,9 +1039,27 @@ pub struct PngDecodeJob<'a> {
     limits: Option<ResourceLimits>,
 }
 
+/// Streaming decoder stub for PNG (streaming not supported).
+pub struct PngStreamingDecoder;
+
+impl zencodec_types::StreamingDecode for PngStreamingDecoder {
+    type Error = PngError;
+
+    fn next_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, Self::Error> {
+        Err(PngError::InvalidInput(
+            "PNG does not support streaming decode".into(),
+        ))
+    }
+
+    fn info(&self) -> &ImageInfo {
+        panic!("StreamingDecode not supported for PNG");
+    }
+}
+
 impl<'a> zencodec_types::DecodeJob<'a> for PngDecodeJob<'a> {
     type Error = PngError;
     type Dec = PngDecoder<'a>;
+    type StreamDec = PngStreamingDecoder;
     type FrameDec = PngFrameDecoder;
 
     fn with_stop(mut self, stop: &'a dyn Stop) -> Self {
@@ -1071,15 +1090,35 @@ impl<'a> zencodec_types::DecodeJob<'a> for PngDecodeJob<'a> {
         Ok(OutputInfo::full_decode(info.width, info.height, native_format).with_alpha(has_alpha))
     }
 
-    fn decoder(self) -> Result<PngDecoder<'a>, PngError> {
+    fn decoder(
+        self,
+        data: &'a [u8],
+        preferred: &[PixelDescriptor],
+    ) -> Result<PngDecoder<'a>, PngError> {
         Ok(PngDecoder {
             config: self.config,
             stop: self.stop,
             limits: self.limits,
+            data,
+            preferred: preferred.to_vec(),
         })
     }
 
-    fn frame_decoder(self, data: &'a [u8]) -> Result<PngFrameDecoder, PngError> {
+    fn streaming_decoder(
+        self,
+        _data: &'a [u8],
+        _preferred: &[PixelDescriptor],
+    ) -> Result<PngStreamingDecoder, PngError> {
+        Err(PngError::InvalidInput(
+            "PNG does not support streaming decode".into(),
+        ))
+    }
+
+    fn frame_decoder(
+        self,
+        data: &'a [u8],
+        _preferred: &[PixelDescriptor],
+    ) -> Result<PngFrameDecoder, PngError> {
         PngFrameDecoder::new(data, self.config, self.stop)
     }
 }
@@ -1091,6 +1130,8 @@ pub struct PngDecoder<'a> {
     config: &'a PngDecoderConfig,
     stop: Option<&'a dyn Stop>,
     limits: Option<ResourceLimits>,
+    data: &'a [u8],
+    preferred: Vec<PixelDescriptor>,
 }
 
 impl PngDecoder<'_> {
@@ -1108,11 +1149,11 @@ impl PngDecoder<'_> {
 impl Decode for PngDecoder<'_> {
     type Error = PngError;
 
-    fn decode(self, data: &[u8], _preferred: &[PixelDescriptor]) -> Result<DecodeOutput, PngError> {
+    fn decode(self) -> Result<DecodeOutput, PngError> {
         let cancel: &dyn Stop = self.stop.unwrap_or(&enough::Unstoppable);
         cancel.check()?;
         let png_config = self.effective_config();
-        let result = crate::decode::decode(data, &png_config, cancel)?;
+        let result = crate::decode::decode(self.data, &png_config, cancel)?;
         let info = convert_info(&result.info);
         Ok(DecodeOutput::new(result.pixels, info))
     }
@@ -1174,7 +1215,6 @@ impl FrameDecode for PngFrameDecoder {
 
     fn next_frame(
         &mut self,
-        _preferred: &[PixelDescriptor],
     ) -> Result<Option<DecodeFrame>, PngError> {
         // Restore decoder from saved state (O(1), no re-scanning)
         let mut decoder = crate::decoder::apng::ApngDecoder::from_state(
@@ -1219,7 +1259,8 @@ impl FrameDecode for PngFrameDecoder {
 // GrayAlpha16. These helpers convert to any requested target format.
 
 use rgb::{Gray, Rgb, Rgba};
-use zencodec_types::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer, PixelBufferConvertExt as _};
+use zencodec_types::PixelBufferConvertExt as _;
+use zenpixels::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer};
 
 /// Convert native PNG pixel data to Rgb8. Delegates to `PixelBuffer::to_rgb8()`.
 fn to_rgb8(pixels: PixelBuffer) -> imgref::ImgVec<Rgb<u8>> {
@@ -2159,9 +2200,9 @@ mod tests {
         let config = PngDecoderConfig::new();
         let decoded = config
             .job()
-            .decoder()
+            .decoder(encoded.bytes(), &[])
             .unwrap()
-            .decode(encoded.bytes(), &[])
+            .decode()
             .unwrap();
         assert_eq!(decoded.width(), 2);
         assert_eq!(decoded.height(), 2);
