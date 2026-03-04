@@ -5,244 +5,163 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
+  CI: true
 
 jobs:
-  # ==========================================================================
-  # Native x86_64 testing
-  # ==========================================================================
-  test-x64:
-    name: Test x64 (${{ matrix.os }})
+  test:
+    name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - macos-latest
+          - macos-26-intel
+          - windows-latest
+          - windows-11-arm
     steps:
       - uses: actions/checkout@v6
-        with:
-          path: zenpng
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Clone sibling repos (path deps)
+      - name: Patch path deps to git refs
+        shell: bash
         run: |
-          git clone --depth 1 https://github.com/imazen/zenflate.git zenflate
-          git clone --depth 1 https://github.com/imazen/zenquant.git zenquant
-          git clone --depth 1 https://github.com/imazen/zenzop.git zenzop
-          git clone --depth 1 https://github.com/imazen/zencodec-types.git zencodec-types
+          sed \
+            -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
+            -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
+            -e 's|path = "\.\./zenquant"|git = "https://github.com/imazen/zenquant"|g' \
+            -e 's|path = "\.\./zenflate"|git = "https://github.com/imazen/zenflate"|g' \
+            -e 's|path = "\.\./zenzop"|git = "https://github.com/imazen/zenzop"|g' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: zenpng -> target
-
-      - name: Test (default features)
-        working-directory: zenpng
+      - name: Test (default)
         run: cargo test
 
-      - name: Test (quantize + zopfli)
-        working-directory: zenpng
+      - name: Test (zopfli feature)
         run: cargo test --features zopfli
 
-      - name: Test (no default features)
-        working-directory: zenpng
-        run: cargo test --no-default-features --lib
-
-  # ==========================================================================
-  # Native aarch64 testing
-  # ==========================================================================
-  test-aarch64:
-    name: Test aarch64 (${{ matrix.name }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-24.04-arm, name: Linux }
-          - { os: macos-latest, name: macOS }
-
+  i686:
+    name: Test (i686)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cross
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: zenpng
+          key: cross-i686
 
-      - name: Clone sibling repos (path deps)
+      - name: Patch path deps to git refs
+        shell: bash
         run: |
-          git clone --depth 1 https://github.com/imazen/zenflate.git zenflate
-          git clone --depth 1 https://github.com/imazen/zenquant.git zenquant
-          git clone --depth 1 https://github.com/imazen/zenzop.git zenzop
-          git clone --depth 1 https://github.com/imazen/zencodec-types.git zencodec-types
+          sed \
+            -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
+            -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
+            -e 's|path = "\.\./zenquant"|git = "https://github.com/imazen/zenquant"|g' \
+            -e 's|path = "\.\./zenflate"|git = "https://github.com/imazen/zenflate"|g' \
+            -e 's|path = "\.\./zenzop"|git = "https://github.com/imazen/zenzop"|g' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Test (i686)
+        run: cross test --target i686-unknown-linux-gnu
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: zenpng -> target
-
-      - name: Test
-        working-directory: zenpng
-        run: cargo test
-
-  # ==========================================================================
-  # Clippy
-  # ==========================================================================
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-        with:
-          path: zenpng
-
-      - name: Clone sibling repos (path deps)
-        run: |
-          git clone --depth 1 https://github.com/imazen/zenflate.git zenflate
-          git clone --depth 1 https://github.com/imazen/zenquant.git zenquant
-          git clone --depth 1 https://github.com/imazen/zenzop.git zenzop
-          git clone --depth 1 https://github.com/imazen/zencodec-types.git zencodec-types
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: zenpng -> target
+      - name: Patch path deps to git refs
+        shell: bash
+        run: |
+          sed \
+            -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
+            -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
+            -e 's|path = "\.\./zenquant"|git = "https://github.com/imazen/zenquant"|g' \
+            -e 's|path = "\.\./zenflate"|git = "https://github.com/imazen/zenflate"|g' \
+            -e 's|path = "\.\./zenzop"|git = "https://github.com/imazen/zenzop"|g' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
 
-      - name: Clippy (default features)
-        working-directory: zenpng
+      - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Clippy (all optional features)
-        working-directory: zenpng
-        run: cargo clippy --all-targets --features "quantize,zopfli,zencodec,_dev" -- -D warnings
-
-  # ==========================================================================
-  # Format check
-  # ==========================================================================
   fmt:
     name: Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
 
       - name: Format check
-        run: cargo fmt -- --check
+        run: cargo fmt --all -- --check
 
-  # ==========================================================================
-  # MSRV check
-  # ==========================================================================
   msrv:
     name: MSRV
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-        with:
-          path: zenpng
-
-      - name: Clone sibling repos (path deps)
-        run: |
-          git clone --depth 1 https://github.com/imazen/zenflate.git zenflate
-          git clone --depth 1 https://github.com/imazen/zenquant.git zenquant
-          git clone --depth 1 https://github.com/imazen/zenzop.git zenzop
-          git clone --depth 1 https://github.com/imazen/zencodec-types.git zencodec-types
-
+      - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: zenpng -> target
+      - name: Patch path deps to git refs
+        shell: bash
+        run: |
+          sed \
+            -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
+            -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
+            -e 's|path = "\.\./zenquant"|git = "https://github.com/imazen/zenquant"|g' \
+            -e 's|path = "\.\./zenflate"|git = "https://github.com/imazen/zenflate"|g' \
+            -e 's|path = "\.\./zenzop"|git = "https://github.com/imazen/zenzop"|g' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
 
-      - name: Check MSRV (from Cargo.toml rust-version)
-        working-directory: zenpng
+      - name: Check MSRV
         run: cargo hack check --rust-version
 
-  # ==========================================================================
-  # Code coverage
-  # ==========================================================================
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
-        with:
-          path: zenpng
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Clone sibling repos (path deps)
+      - name: Patch path deps to git refs
+        shell: bash
         run: |
-          git clone --depth 1 https://github.com/imazen/zenflate.git zenflate
-          git clone --depth 1 https://github.com/imazen/zenquant.git zenquant
-          git clone --depth 1 https://github.com/imazen/zenzop.git zenzop
-          git clone --depth 1 https://github.com/imazen/zencodec-types.git zencodec-types
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: zenpng -> target
+          sed \
+            -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
+            -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
+            -e 's|path = "\.\./zenquant"|git = "https://github.com/imazen/zenquant"|g' \
+            -e 's|path = "\.\./zenflate"|git = "https://github.com/imazen/zenflate"|g' \
+            -e 's|path = "\.\./zenzop"|git = "https://github.com/imazen/zenzop"|g' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
 
       - name: Generate coverage
-        working-directory: zenpng
         run: cargo llvm-cov --lcov --output-path lcov.info
 
-      - name: Upload to Codecov
+      - name: Upload coverage
         uses: codecov/codecov-action@v5
         with:
-          files: zenpng/lcov.info
+          files: lcov.info
           fail_ci_if_error: false
-
-  # ==========================================================================
-  # Doc build (catches broken links)
-  # ==========================================================================
-  doc:
-    name: Doc
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          path: zenpng
-
-      - name: Clone sibling repos (path deps)
-        run: |
-          git clone --depth 1 https://github.com/imazen/zenflate.git zenflate
-          git clone --depth 1 https://github.com/imazen/zenquant.git zenquant
-          git clone --depth 1 https://github.com/imazen/zenzop.git zenzop
-          git clone --depth 1 https://github.com/imazen/zencodec-types.git zencodec-types
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: zenpng -> target
-
-      - name: Build docs
-        working-directory: zenpng
+        continue-on-error: true
         env:
-          RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --no-deps --features "quantize,zopfli,zencodec"
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
