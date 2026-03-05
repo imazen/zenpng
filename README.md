@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/imazen/zenpng/actions/workflows/ci.yml/badge.svg)](https://github.com/imazen/zenpng/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![MSRV: 1.85](https://img.shields.io/badge/MSRV-1.85-blue.svg)](https://blog.rust-lang.org/)
+[![MSRV: 1.89](https://img.shields.io/badge/MSRV-1.89-blue.svg)](https://blog.rust-lang.org/)
 
 PNG encoder and decoder in safe Rust. SIMD-accelerated unfiltering, a progressive
 4-phase compression engine with 31 effort levels (and 170 more beyond that), APNG
@@ -222,7 +222,7 @@ for the compression-vs-time tradeoff across all 31 standard effort levels.
 
 ## MSRV
 
-The minimum supported Rust version is **1.85**.
+The minimum supported Rust version is **1.89**.
 
 ## AI-Generated Code Notice
 
