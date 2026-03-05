@@ -1106,7 +1106,7 @@ mod tests {
 
     fn format_pixel_data(pixels: &PixelBuffer) -> &'static str {
         let desc = pixels.descriptor();
-        match (desc.layout, desc.channel_type) {
+        match (desc.layout(), desc.channel_type()) {
             (ChannelLayout::Rgb, ChannelType::U8) => "Rgb8",
             (ChannelLayout::Rgba, ChannelType::U8) => "Rgba8",
             (ChannelLayout::Gray, ChannelType::U8) => "Gray8",
@@ -1143,14 +1143,17 @@ mod tests {
     /// Mass-test our decoder against the png crate on all PNG corpuses.
     #[test]
     fn corpus_comparison_vs_png_crate() {
-        let corpus_dirs: Vec<(&str, &str)> = vec![
-            ("codec-corpus", "/home/lilith/work/codec-corpus"),
-            ("discover", "/mnt/v/discover/images"),
-            ("kodak", "/mnt/v/discover/kodak/images"),
-            (
-                "image-png",
-                "/home/lilith/work/jpeg-encoder/external/image-png",
-            ),
+        let codec_corpus = std::env::var("CODEC_CORPUS_DIR")
+            .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string());
+        let discover =
+            std::env::var("DISCOVER_DIR").unwrap_or_else(|_| "/mnt/v/discover".to_string());
+        let jpeg_encoder = std::env::var("JPEG_ENCODER_DIR")
+            .unwrap_or_else(|_| "/home/lilith/work/jpeg-encoder".to_string());
+        let corpus_dirs: Vec<(&str, String)> = vec![
+            ("codec-corpus", codec_corpus),
+            ("discover", format!("{discover}/images")),
+            ("kodak", format!("{discover}/kodak/images")),
+            ("image-png", format!("{jpeg_encoder}/external/image-png")),
         ];
 
         let mut total_tested = 0u32;
@@ -1193,13 +1196,12 @@ mod tests {
                 let filename_str = filename.display().to_string();
 
                 // Skip intentionally corrupt files
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if (stem.starts_with('x') && filename_str.contains("pngsuite"))
-                        || stem == "badadler"
-                    {
-                        corpus_skipped += 1;
-                        continue;
-                    }
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                    && ((stem.starts_with('x') && filename_str.contains("pngsuite"))
+                        || stem == "badadler")
+                {
+                    corpus_skipped += 1;
+                    continue;
                 }
 
                 let data = match std::fs::read(path) {
@@ -1289,27 +1291,31 @@ mod tests {
     fn corpus_builder_comparison() {
         use std::io::Write;
 
-        let corpus_dirs: Vec<(&str, &str)> = vec![
-            ("png-8", "/mnt/v/output/corpus-builder/png-8"),
-            ("png-24-32", "/mnt/v/output/corpus-builder/png-24-32"),
-            ("apng", "/mnt/v/output/corpus-builder/apng"),
-            ("repro", "/mnt/v/output/corpus-builder/repro-images"),
+        let cb_base = std::env::var("CORPUS_BUILDER_OUTPUT_DIR")
+            .unwrap_or_else(|_| "/mnt/v/output/corpus-builder".to_string());
+        let corpus_dirs: Vec<(&str, String)> = vec![
+            ("png-8", format!("{cb_base}/png-8")),
+            ("png-24-32", format!("{cb_base}/png-24-32")),
+            ("apng", format!("{cb_base}/apng")),
+            ("repro", format!("{cb_base}/repro-images")),
         ];
 
-        let results_dir = std::path::Path::new("/mnt/v/output/zenpng");
-        std::fs::create_dir_all(results_dir).unwrap();
+        let results_base = std::env::var("ZENPNG_OUTPUT_DIR")
+            .unwrap_or_else(|_| "/mnt/v/output/zenpng".to_string());
+        let results_dir = std::path::PathBuf::from(&results_base);
+        std::fs::create_dir_all(&results_dir).unwrap();
         let results_path = results_dir.join("corpus_results.jsonl");
 
         // Load already-tested paths for resumption
         let mut done: std::collections::HashSet<String> = std::collections::HashSet::new();
-        if results_path.exists() {
-            if let Ok(contents) = std::fs::read_to_string(&results_path) {
-                for line in contents.lines() {
-                    if let Some(path_start) = line.find("\"path\":\"") {
-                        let rest = &line[path_start + 8..];
-                        if let Some(end) = rest.find('"') {
-                            done.insert(rest[..end].to_string());
-                        }
+        if results_path.exists()
+            && let Ok(contents) = std::fs::read_to_string(&results_path)
+        {
+            for line in contents.lines() {
+                if let Some(path_start) = line.find("\"path\":\"") {
+                    let rest = &line[path_start + 8..];
+                    if let Some(end) = rest.find('"') {
+                        done.insert(rest[..end].to_string());
                     }
                 }
             }
@@ -1519,10 +1525,12 @@ mod tests {
     fn streaming_vs_batch_decompressor() {
         use zencodec_types::Unstoppable;
 
+        let cb = std::env::var("CORPUS_BUILDER_OUTPUT_DIR")
+            .unwrap_or_else(|_| "/mnt/v/output/corpus-builder".to_string());
         let test_files = [
-            "/mnt/v/output/corpus-builder/png-8/g8_dff1977698eea27b.png",
-            "/mnt/v/output/corpus-builder/png-8/g8_f977635ec6266135.png",
-            "/mnt/v/output/corpus-builder/png-8/google_hudsonvalleyseed_com_56490ab04e5742ee.png",
+            format!("{cb}/png-8/g8_dff1977698eea27b.png"),
+            format!("{cb}/png-8/g8_f977635ec6266135.png"),
+            format!("{cb}/png-8/google_hudsonvalleyseed_com_56490ab04e5742ee.png"),
         ];
 
         for path in &test_files {
@@ -1726,8 +1734,12 @@ mod tests {
     #[test]
     #[ignore]
     fn debug_pixel_mismatch() {
-        let path = "/mnt/v/output/corpus-builder/repro-images/image-rs_image-png/346/177061203-3c6b1002-fb61-4f86-97f6-f0470cb03d84.png";
-        let data = match std::fs::read(path) {
+        let cb = std::env::var("CORPUS_BUILDER_OUTPUT_DIR")
+            .unwrap_or_else(|_| "/mnt/v/output/corpus-builder".to_string());
+        let path = format!(
+            "{cb}/repro-images/image-rs_image-png/346/177061203-3c6b1002-fb61-4f86-97f6-f0470cb03d84.png"
+        );
+        let data = match std::fs::read(&path) {
             Ok(d) => d,
             Err(e) => {
                 eprintln!("Skipping: {}", e);
@@ -1786,9 +1798,10 @@ mod tests {
     #[test]
     #[ignore]
     fn debug_streaming_divergence() {
-        let path =
-            "/mnt/v/output/corpus-builder/png-8/wm_upload_wikimedia_org_13efdd48e85b970e.png";
-        let data = match std::fs::read(path) {
+        let cb = std::env::var("CORPUS_BUILDER_OUTPUT_DIR")
+            .unwrap_or_else(|_| "/mnt/v/output/corpus-builder".to_string());
+        let path = format!("{cb}/png-8/wm_upload_wikimedia_org_13efdd48e85b970e.png");
+        let data = match std::fs::read(&path) {
             Ok(d) => d,
             Err(e) => {
                 eprintln!("Skipping: {}", e);
@@ -1918,16 +1931,24 @@ mod tests {
     #[test]
     #[ignore]
     fn debug_remaining_we_fail() {
+        let cb = std::env::var("CORPUS_BUILDER_OUTPUT_DIR")
+            .unwrap_or_else(|_| "/mnt/v/output/corpus-builder".to_string());
         let files = [
-            "/mnt/v/output/corpus-builder/png-8/wm_upload_wikimedia_org_13efdd48e85b970e.png",
-            "/mnt/v/output/corpus-builder/png-24-32/wm_upload_wikimedia_org_45634e241d7821a3.png",
-            "/mnt/v/output/corpus-builder/png-24-32/wm_upload_wikimedia_org_72ec2889934b6b15.png",
-            "/mnt/v/output/corpus-builder/png-24-32/wm_upload_wikimedia_org_a119af42024ad225.png",
-            "/mnt/v/output/corpus-builder/png-24-32/wm_upload_wikimedia_org_a23d1e831e128dff.png",
-            "/mnt/v/output/corpus-builder/png-24-32/wm_upload_wikimedia_org_c8a458b0cef3d942.png",
-            "/mnt/v/output/corpus-builder/repro-images/libvips_libvips/1567/76076711-703ab580-5fb0-11ea-8562-27cd30e8e653.png",
-            "/mnt/v/output/corpus-builder/repro-images/libvips_libvips/3123/199550258-f3b4ad36-10f2-47d8-af1f-9972b62b99be.png",
-            "/mnt/v/output/corpus-builder/repro-images/libvips_libvips/3144/200133882-34bc8d61-4dbd-42de-a88a-0eaa1dae99ac.png",
+            format!("{cb}/png-8/wm_upload_wikimedia_org_13efdd48e85b970e.png"),
+            format!("{cb}/png-24-32/wm_upload_wikimedia_org_45634e241d7821a3.png"),
+            format!("{cb}/png-24-32/wm_upload_wikimedia_org_72ec2889934b6b15.png"),
+            format!("{cb}/png-24-32/wm_upload_wikimedia_org_a119af42024ad225.png"),
+            format!("{cb}/png-24-32/wm_upload_wikimedia_org_a23d1e831e128dff.png"),
+            format!("{cb}/png-24-32/wm_upload_wikimedia_org_c8a458b0cef3d942.png"),
+            format!(
+                "{cb}/repro-images/libvips_libvips/1567/76076711-703ab580-5fb0-11ea-8562-27cd30e8e653.png"
+            ),
+            format!(
+                "{cb}/repro-images/libvips_libvips/3123/199550258-f3b4ad36-10f2-47d8-af1f-9972b62b99be.png"
+            ),
+            format!(
+                "{cb}/repro-images/libvips_libvips/3144/200133882-34bc8d61-4dbd-42de-a88a-0eaa1dae99ac.png"
+            ),
         ];
         let mut failures = Vec::new();
         for path in &files {
@@ -2225,5 +2246,132 @@ mod tests {
             "valid PNG should have no warnings, got: {:?}",
             output.warnings,
         );
+    }
+
+    // ── Scalar dispatch tests (archmage for_each_token_permutation) ──
+
+    #[cfg(feature = "_dev")]
+    #[test]
+    fn decode_scalar_regression_pngs() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        // Load regression test PNGs
+        let regression_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("regression");
+        if !regression_dir.exists() {
+            eprintln!("Skipping: {} not found", regression_dir.display());
+            return;
+        }
+
+        // Collect all PNG files
+        let mut png_files: Vec<std::path::PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(&regression_dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) == Some("png") {
+                png_files.push(path);
+            }
+        }
+        assert!(!png_files.is_empty(), "no test PNGs found in {}", regression_dir.display());
+
+        // Read all files once
+        let test_data: Vec<(String, Vec<u8>)> = png_files
+            .iter()
+            .map(|p| {
+                let name = p.file_name().unwrap().to_str().unwrap().to_string();
+                let data = std::fs::read(p).unwrap();
+                (name, data)
+            })
+            .collect();
+
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            for (name, data) in &test_data {
+                let is_apng = name.starts_with("apng_");
+                if is_apng {
+                    // Decode as APNG
+                    match crate::decode::decode_apng(
+                        data,
+                        &crate::decode::PngDecodeConfig::none(),
+                        &Unstoppable,
+                    ) {
+                        Ok(result) => {
+                            assert!(
+                                !result.frames.is_empty(),
+                                "{name}: APNG decoded 0 frames (perm {perm:?})"
+                            );
+                        }
+                        Err(e) => {
+                            panic!("{name}: APNG decode failed (perm {perm:?}): {e}");
+                        }
+                    }
+                } else {
+                    // Decode as static PNG
+                    match decode_png(
+                        data,
+                        &crate::decode::PngDecodeConfig::none(),
+                        &Unstoppable,
+                    ) {
+                        Ok(output) => {
+                            assert!(
+                                output.info.width > 0 && output.info.height > 0,
+                                "{name}: decoded 0×0 (perm {perm:?})"
+                            );
+                        }
+                        Err(e) => {
+                            // badadler.png is expected to fail with strict decode
+                            if !name.contains("badadler") {
+                                panic!("{name}: decode failed (perm {perm:?}): {e}");
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        eprintln!("decode scalar regression: {report}");
+    }
+
+    #[cfg(feature = "_dev")]
+    #[test]
+    fn encode_decode_roundtrip_all_tiers() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        // Create a small test image with patterns that exercise all filter types
+        let mut pixels = Vec::new();
+        for y in 0..8u8 {
+            for x in 0..8u8 {
+                pixels.push(Rgba {
+                    r: x.wrapping_mul(31),
+                    g: y.wrapping_mul(37),
+                    b: x.wrapping_add(y).wrapping_mul(17),
+                    a: 255,
+                });
+            }
+        }
+        let img = ImgVec::new(pixels, 8, 8);
+
+        // Encode once (at default effort)
+        let encoded = crate::encode::encode_rgba8(
+            img.as_ref(),
+            None,
+            &crate::encode::EncodeConfig::default(),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            // Decode with each SIMD tier permutation
+            let result = decode_png(
+                &encoded,
+                &crate::decode::PngDecodeConfig::none(),
+                &Unstoppable,
+            );
+            let output = result.unwrap_or_else(|e| {
+                panic!("decode failed (perm {perm:?}): {e}");
+            });
+            assert_eq!(output.info.width, 8);
+            assert_eq!(output.info.height, 8);
+        });
+        eprintln!("encode-decode roundtrip tiers: {report}");
     }
 }

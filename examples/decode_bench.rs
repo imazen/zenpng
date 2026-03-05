@@ -121,7 +121,11 @@ fn bench_unfilter(
 
 fn main() {
     let image_path = std::env::args().nth(1).unwrap_or_else(|| {
-        "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire-srgb.png".to_string()
+        format!(
+            "{}/imageflow/test_inputs/frymire-srgb.png",
+            std::env::var("CODEC_CORPUS_DIR")
+                .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string())
+        )
     });
 
     // Decode real image to get raw pixel data

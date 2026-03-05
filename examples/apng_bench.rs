@@ -5,13 +5,21 @@ use enough::Unstoppable;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+use zencodec_types::PixelBufferConvertExt;
 
 fn main() {
-    let dir = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "/mnt/v/output/gauntlet/apng/_all".to_string());
+    let dir = std::env::args().nth(1).unwrap_or_else(|| {
+        format!(
+            "{}/apng/_all",
+            std::env::var("GAUNTLET_OUTPUT_DIR")
+                .unwrap_or_else(|_| "/mnt/v/output/gauntlet".to_string())
+        )
+    });
 
-    let out_dir = PathBuf::from("/mnt/v/output/zenpng/apng_bench");
+    let out_dir = PathBuf::from(
+        std::env::var("ZENPNG_OUTPUT_DIR").unwrap_or_else(|_| "/mnt/v/output/zenpng".to_string()),
+    )
+    .join("apng_bench");
     std::fs::create_dir_all(&out_dir).unwrap();
 
     let mut paths: Vec<PathBuf> = Vec::new();
@@ -68,8 +76,8 @@ fn main() {
             .iter()
             .map(|f| {
                 let rgba = f.pixels.to_rgba8();
-                let buf: Vec<rgb::Rgba<u8>> = rgba.into_buf();
-                bytemuck::cast_slice::<rgb::Rgba<u8>, u8>(&buf).to_vec()
+                let imgref = rgba.as_imgref();
+                bytemuck::cast_slice::<rgb::Rgba<u8>, u8>(imgref.buf()).to_vec()
             })
             .collect();
 

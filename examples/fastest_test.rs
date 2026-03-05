@@ -6,6 +6,8 @@
 use std::time::Instant;
 
 use enough::Unstoppable;
+use zencodec_types::PixelBufferConvertExt;
+use zenpixels::descriptor::{ChannelLayout, ChannelType};
 
 fn bench_ms<F: FnMut()>(warmup: u32, iters: u32, mut f: F) -> f64 {
     for _ in 0..warmup {
@@ -20,27 +22,25 @@ fn bench_ms<F: FnMut()>(warmup: u32, iters: u32, mut f: F) -> f64 {
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
-        "/home/lilith/work/codec-corpus/qoi-benchmark/screenshot_web/reddit.com.png".to_string()
+        format!(
+            "{}/qoi-benchmark/screenshot_web/reddit.com.png",
+            std::env::var("CODEC_CORPUS_DIR")
+                .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string())
+        )
     });
     let source = std::fs::read(&path).expect("read");
     let decoded = zenpng::decode(&source, &zenpng::PngDecodeConfig::none(), &Unstoppable).unwrap();
 
     let (w, h) = (decoded.info.width, decoded.info.height);
-    let bpp_label = match &decoded.pixels {
-        zencodec_types::PixelData::Rgb8(_) => "RGB8",
-        zencodec_types::PixelData::Rgba8(_) => "RGBA8",
-        _ => panic!("unsupported pixel format"),
+    let desc = decoded.pixels.descriptor();
+    let bpp_label = match (desc.layout(), desc.channel_type()) {
+        (ChannelLayout::Rgb, ChannelType::U8) => "RGB8",
+        (ChannelLayout::Rgba, ChannelType::U8) => "RGBA8",
+        _ => panic!("unsupported pixel format: {:?}", desc),
     };
-    let pixel_bytes: &[u8] = match &decoded.pixels {
-        zencodec_types::PixelData::Rgba8(img) => bytemuck::cast_slice(img.buf()),
-        zencodec_types::PixelData::Rgb8(img) => bytemuck::cast_slice(img.buf()),
-        _ => panic!("unsupported"),
-    };
-    let bpp = match &decoded.pixels {
-        zencodec_types::PixelData::Rgba8(_) => 4,
-        zencodec_types::PixelData::Rgb8(_) => 3,
-        _ => panic!("unsupported"),
-    };
+    let pixel_bytes_owned = decoded.pixels.copy_to_contiguous_bytes();
+    let pixel_bytes: &[u8] = &pixel_bytes_owned;
+    let bpp = desc.bytes_per_pixel();
     let raw = w as usize * h as usize * bpp;
     println!(
         "Image: {} ({}x{}, {}, {:.2} MiB raw)\n",
@@ -103,14 +103,16 @@ fn main() {
         let config = zenpng::EncodeConfig::default().with_compression(*comp);
         let mut size = 0;
         let ms = bench_ms(1, 5, || {
-            let result = match &decoded.pixels {
-                zencodec_types::PixelData::Rgba8(img) => {
-                    zenpng::encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+            let result = match (desc.layout(), desc.channel_type()) {
+                (ChannelLayout::Rgba, ChannelType::U8) => {
+                    let buf = decoded.pixels.to_rgba8();
+                    zenpng::encode_rgba8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
                 }
-                zencodec_types::PixelData::Rgb8(img) => {
-                    zenpng::encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+                (ChannelLayout::Rgb, ChannelType::U8) => {
+                    let buf = decoded.pixels.to_rgb8();
+                    zenpng::encode_rgb8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
                 }
-                _ => panic!("unsupported"),
+                _ => panic!("unsupported format: {:?}", desc),
             };
             size = result.unwrap().len();
         });
@@ -124,18 +126,31 @@ fn main() {
     // ── Decode benchmarks ─────────────────────────────────────────────
 
     // Re-encode at None for stored-block decode test
-    let none_png = match &decoded.pixels {
-        zencodec_types::PixelData::Rgba8(img) => {
-            let config =
-                zenpng::EncodeConfig::default().with_compression(zenpng::Compression::None);
-            zenpng::encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap()
+    let none_config = zenpng::EncodeConfig::default().with_compression(zenpng::Compression::None);
+    let none_png = match (desc.layout(), desc.channel_type()) {
+        (ChannelLayout::Rgba, ChannelType::U8) => {
+            let buf = decoded.pixels.to_rgba8();
+            zenpng::encode_rgba8(
+                buf.as_imgref(),
+                None,
+                &none_config,
+                &Unstoppable,
+                &Unstoppable,
+            )
+            .unwrap()
         }
-        zencodec_types::PixelData::Rgb8(img) => {
-            let config =
-                zenpng::EncodeConfig::default().with_compression(zenpng::Compression::None);
-            zenpng::encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap()
+        (ChannelLayout::Rgb, ChannelType::U8) => {
+            let buf = decoded.pixels.to_rgb8();
+            zenpng::encode_rgb8(
+                buf.as_imgref(),
+                None,
+                &none_config,
+                &Unstoppable,
+                &Unstoppable,
+            )
+            .unwrap()
         }
-        _ => panic!("unsupported"),
+        _ => panic!("unsupported format: {:?}", desc),
     };
 
     println!(
@@ -174,18 +189,31 @@ fn main() {
     }
 
     // Re-encode at Fast for a reasonably compressed test file
-    let test_png = match &decoded.pixels {
-        zencodec_types::PixelData::Rgba8(img) => {
-            let config =
-                zenpng::EncodeConfig::default().with_compression(zenpng::Compression::Fast);
-            zenpng::encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap()
+    let fast_config = zenpng::EncodeConfig::default().with_compression(zenpng::Compression::Fast);
+    let test_png = match (desc.layout(), desc.channel_type()) {
+        (ChannelLayout::Rgba, ChannelType::U8) => {
+            let buf = decoded.pixels.to_rgba8();
+            zenpng::encode_rgba8(
+                buf.as_imgref(),
+                None,
+                &fast_config,
+                &Unstoppable,
+                &Unstoppable,
+            )
+            .unwrap()
         }
-        zencodec_types::PixelData::Rgb8(img) => {
-            let config =
-                zenpng::EncodeConfig::default().with_compression(zenpng::Compression::Fast);
-            zenpng::encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap()
+        (ChannelLayout::Rgb, ChannelType::U8) => {
+            let buf = decoded.pixels.to_rgb8();
+            zenpng::encode_rgb8(
+                buf.as_imgref(),
+                None,
+                &fast_config,
+                &Unstoppable,
+                &Unstoppable,
+            )
+            .unwrap()
         }
-        _ => panic!("unsupported"),
+        _ => panic!("unsupported format: {:?}", desc),
     };
 
     println!(

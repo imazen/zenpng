@@ -483,29 +483,29 @@ impl EncodeRgba8 for PngEncoder<'_> {
     fn encode_rgba8(self, pixels: PixelSlice<'_, Rgba<u8>>) -> Result<EncodeOutput, PngError> {
         // Auto-indexed path when quality < 100 and quantize feature is enabled
         #[cfg(feature = "quantize")]
-        if let Some(q) = self.config.quality {
-            if q < 100.0 {
-                let pixels = pixels.erase();
-                let bytes = collect_contiguous_bytes(&pixels);
-                let w = pixels.width();
-                let h = pixels.rows();
-                let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&bytes);
-                let img = imgref::Img::new(rgba, w as usize, h as usize);
-                let mpe = quality_to_mpe(q);
-                let cancel: &dyn Stop = self.stop.unwrap_or(&enough::Unstoppable);
-                let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
-                let deadline = almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
-                let result = crate::encode_rgba8_auto(
-                    img,
-                    &self.config.config,
-                    &crate::default_quantize_config(),
-                    crate::QualityGate::MaxMpe(mpe),
-                    self.metadata,
-                    cancel,
-                    &deadline,
-                )?;
-                return Ok(EncodeOutput::new(result.data, ImageFormat::Png));
-            }
+        if let Some(q) = self.config.quality
+            && q < 100.0
+        {
+            let pixels = pixels.erase();
+            let bytes = collect_contiguous_bytes(&pixels);
+            let w = pixels.width();
+            let h = pixels.rows();
+            let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&bytes);
+            let img = imgref::Img::new(rgba, w as usize, h as usize);
+            let mpe = quality_to_mpe(q);
+            let cancel: &dyn Stop = self.stop.unwrap_or(&enough::Unstoppable);
+            let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
+            let deadline = almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
+            let result = crate::encode_rgba8_auto(
+                img,
+                &self.config.config,
+                &crate::default_quantize_config(),
+                crate::QualityGate::MaxMpe(mpe),
+                self.metadata,
+                cancel,
+                &deadline,
+            )?;
+            return Ok(EncodeOutput::new(result.data, ImageFormat::Png));
         }
 
         let pixels = pixels.erase();
@@ -633,27 +633,27 @@ impl EncodeRgbaF32 for PngEncoder<'_> {
 
         // Auto-indexed path when quality < 100 and quantize feature is enabled
         #[cfg(feature = "quantize")]
-        if let Some(q) = self.config.quality {
-            if q < 100.0 {
-                let w = pixels.width();
-                let h = pixels.rows();
-                let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&srgb);
-                let img = imgref::Img::new(rgba, w as usize, h as usize);
-                let mpe = quality_to_mpe(q);
-                let cancel: &dyn Stop = self.stop.unwrap_or(&enough::Unstoppable);
-                let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
-                let deadline = almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
-                let result = crate::encode_rgba8_auto(
-                    img,
-                    &self.config.config,
-                    &crate::default_quantize_config(),
-                    crate::QualityGate::MaxMpe(mpe),
-                    self.metadata,
-                    cancel,
-                    &deadline,
-                )?;
-                return Ok(EncodeOutput::new(result.data, ImageFormat::Png));
-            }
+        if let Some(q) = self.config.quality
+            && q < 100.0
+        {
+            let w = pixels.width();
+            let h = pixels.rows();
+            let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&srgb);
+            let img = imgref::Img::new(rgba, w as usize, h as usize);
+            let mpe = quality_to_mpe(q);
+            let cancel: &dyn Stop = self.stop.unwrap_or(&enough::Unstoppable);
+            let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
+            let deadline = almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
+            let result = crate::encode_rgba8_auto(
+                img,
+                &self.config.config,
+                &crate::default_quantize_config(),
+                crate::QualityGate::MaxMpe(mpe),
+                self.metadata,
+                cancel,
+                &deadline,
+            )?;
+            return Ok(EncodeOutput::new(result.data, ImageFormat::Png));
         }
 
         self.do_encode(
@@ -940,7 +940,7 @@ impl PngDecoderConfig {
         let mut dst: PixelSliceMut<'_> = PixelSliceMut::from(dst).erase();
         let output = self.decode(data)?;
         let info = output.info().clone();
-        let pixels = output.into_pixels();
+        let pixels = output.into_buffer();
         let src = to_rgb8(pixels);
         copy_rows_u8(&src, &mut dst);
         Ok(info)
@@ -955,7 +955,7 @@ impl PngDecoderConfig {
         let mut dst: PixelSliceMut<'_> = PixelSliceMut::from(dst).erase();
         let output = self.decode(data)?;
         let info = output.info().clone();
-        let pixels = output.into_pixels();
+        let pixels = output.into_buffer();
         decode_into_rgb16(pixels, &mut dst);
         Ok(info)
     }
@@ -969,7 +969,7 @@ impl PngDecoderConfig {
         let mut dst: PixelSliceMut<'_> = PixelSliceMut::from(dst).erase();
         let output = self.decode(data)?;
         let info = output.info().clone();
-        let pixels = output.into_pixels();
+        let pixels = output.into_buffer();
         decode_into_rgb_f32(pixels, &mut dst);
         Ok(info)
     }
@@ -983,7 +983,7 @@ impl PngDecoderConfig {
         let mut dst: PixelSliceMut<'_> = PixelSliceMut::from(dst).erase();
         let output = self.decode(data)?;
         let info = output.info().clone();
-        let pixels = output.into_pixels();
+        let pixels = output.into_buffer();
         decode_into_rgba_f32(pixels, &mut dst);
         Ok(info)
     }
@@ -997,7 +997,7 @@ impl PngDecoderConfig {
         let mut dst: PixelSliceMut<'_> = PixelSliceMut::from(dst).erase();
         let output = self.decode(data)?;
         let info = output.info().clone();
-        let pixels = output.into_pixels();
+        let pixels = output.into_buffer();
         decode_into_gray_f32(pixels, &mut dst);
         Ok(info)
     }
@@ -1213,9 +1213,7 @@ impl FrameDecode for PngFrameDecoder {
         Some(self.decoder_state.num_plays)
     }
 
-    fn next_frame(
-        &mut self,
-    ) -> Result<Option<DecodeFrame>, PngError> {
+    fn next_frame(&mut self) -> Result<Option<DecodeFrame>, PngError> {
         // Restore decoder from saved state (O(1), no re-scanning)
         let mut decoder = crate::decoder::apng::ApngDecoder::from_state(
             &self.file_data,
@@ -1603,7 +1601,8 @@ fn to_gray16(pixels: PixelBuffer) -> imgref::ImgVec<Gray<u16>> {
             let buf: Vec<Gray<u16>> = img
                 .pixels()
                 .map(|p| {
-                    let luma = ((p.r as u32 * 77 + p.g as u32 * 150 + p.b as u32 * 29 + 128) >> 8) as u16;
+                    let luma =
+                        ((p.r as u32 * 77 + p.g as u32 * 150 + p.b as u32 * 29 + 128) >> 8) as u16;
                     Gray(luma)
                 })
                 .collect();
@@ -1614,7 +1613,8 @@ fn to_gray16(pixels: PixelBuffer) -> imgref::ImgVec<Gray<u16>> {
             let buf: Vec<Gray<u16>> = img
                 .pixels()
                 .map(|p| {
-                    let luma = ((p.r as u32 * 77 + p.g as u32 * 150 + p.b as u32 * 29 + 128) >> 8) as u16;
+                    let luma =
+                        ((p.r as u32 * 77 + p.g as u32 * 150 + p.b as u32 * 29 + 128) >> 8) as u16;
                     Gray(luma)
                 })
                 .collect();
@@ -1721,10 +1721,10 @@ mod tests {
         ];
         let img = Img::new(pixels, 8, 8);
         let output = enc.encode_rgb8(img.as_ref()).unwrap();
-        assert!(!output.bytes().is_empty());
+        assert!(!output.data().is_empty());
         assert_eq!(output.format(), ImageFormat::Png);
         assert_eq!(
-            &output.bytes()[0..8],
+            &output.data()[0..8],
             &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
         );
     }
@@ -1743,7 +1743,7 @@ mod tests {
         ];
         let img = Img::new(pixels, 8, 8);
         let output = enc.encode_rgba8(img.as_ref()).unwrap();
-        assert!(!output.bytes().is_empty());
+        assert!(!output.data().is_empty());
     }
 
     #[test]
@@ -1752,7 +1752,7 @@ mod tests {
         let pixels = vec![Gray::new(128u8); 64];
         let img = Img::new(pixels, 8, 8);
         let output = enc.encode_gray8(img.as_ref()).unwrap();
-        assert!(!output.bytes().is_empty());
+        assert!(!output.data().is_empty());
     }
 
     #[test]
@@ -1770,7 +1770,7 @@ mod tests {
         let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
 
         let dec = PngDecoderConfig::new();
-        let output = dec.decode(encoded.bytes()).unwrap();
+        let output = dec.decode(encoded.data()).unwrap();
         assert_eq!(output.info().width, 8);
         assert_eq!(output.info().height, 8);
         assert_eq!(output.info().format, ImageFormat::Png);
@@ -1784,7 +1784,7 @@ mod tests {
         let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
 
         let dec = PngDecoderConfig::new();
-        let info = dec.probe_header(encoded.bytes()).unwrap();
+        let info = dec.probe_header(encoded.data()).unwrap();
         assert_eq!(info.width, 10);
         assert_eq!(info.height, 10);
         assert_eq!(info.format, ImageFormat::Png);
@@ -1807,7 +1807,7 @@ mod tests {
         let dec = PngDecoderConfig::new();
         let mut buf = vec![Rgb { r: 0u8, g: 0, b: 0 }; 64];
         let mut dst = imgref::ImgVec::new(buf.clone(), 8, 8);
-        let info = dec.decode_into_rgb8(encoded.bytes(), dst.as_mut()).unwrap();
+        let info = dec.decode_into_rgb8(encoded.data(), dst.as_mut()).unwrap();
         assert_eq!(info.width, 8);
         assert_eq!(info.height, 8);
         buf = dst.into_buf();
@@ -1847,8 +1847,8 @@ mod tests {
         let output = enc.encode_bgra8(img.as_ref()).unwrap();
 
         let dec = PngDecoderConfig::new();
-        let decoded = dec.decode(output.bytes()).unwrap();
-        let rgba = to_rgba8(decoded.into_pixels());
+        let decoded = dec.decode(output.data()).unwrap();
+        let rgba = to_rgba8(decoded.into_buffer());
         let buf = rgba.buf();
         assert_eq!(
             buf[0],
@@ -1913,7 +1913,7 @@ mod tests {
                 4
             ];
             let mut dst = imgref::ImgVec::new(buf.clone(), 2, 2);
-            dec.decode_into_rgb_f32(output.bytes(), dst.as_mut())
+            dec.decode_into_rgb_f32(output.data(), dst.as_mut())
                 .unwrap();
             buf = dst.into_buf();
 
@@ -1993,7 +1993,7 @@ mod tests {
             2,
             2,
         );
-        dec.decode_into_rgba_f32(output.bytes(), dst.as_mut())
+        dec.decode_into_rgba_f32(output.data(), dst.as_mut())
             .unwrap();
 
         for (orig, decoded) in pixels.iter().zip(dst.buf().iter()) {
@@ -2025,7 +2025,7 @@ mod tests {
 
         let dec = PngDecoderConfig::new();
         let mut dst = imgref::ImgVec::new(vec![Gray(0.0f32); 4], 2, 2);
-        dec.decode_into_gray_f32(output.bytes(), dst.as_mut())
+        dec.decode_into_gray_f32(output.data(), dst.as_mut())
             .unwrap();
 
         for (orig, decoded) in pixels.iter().zip(dst.buf().iter()) {
@@ -2075,7 +2075,7 @@ mod tests {
             2,
             2,
         );
-        dec.decode_into_rgb_f32(output.bytes(), dst.as_mut())
+        dec.decode_into_rgb_f32(output.data(), dst.as_mut())
             .unwrap();
 
         let buf = dst.buf();
@@ -2153,11 +2153,11 @@ mod tests {
         let output = enc.encode_rgb8(img.as_ref()).unwrap();
 
         let dec = PngDecoderConfig::new();
-        let info = dec.job().output_info(output.bytes()).unwrap();
+        let info = dec.job().output_info(output.data()).unwrap();
         assert_eq!(info.width, 3);
         assert_eq!(info.height, 2);
 
-        let decoded = dec.decode(output.bytes()).unwrap();
+        let decoded = dec.decode(output.data()).unwrap();
         assert_eq!(decoded.width(), info.width);
         assert_eq!(decoded.height(), info.height);
     }
@@ -2180,7 +2180,7 @@ mod tests {
         let slice = PixelSlice::from(img.as_ref());
         let output = config.job().encoder().unwrap().encode_rgb8(slice).unwrap();
         assert_eq!(output.format(), ImageFormat::Png);
-        assert!(!output.bytes().is_empty());
+        assert!(!output.data().is_empty());
     }
 
     #[test]
@@ -2200,7 +2200,7 @@ mod tests {
         let config = PngDecoderConfig::new();
         let decoded = config
             .job()
-            .decoder(encoded.bytes(), &[])
+            .decoder(encoded.data(), &[])
             .unwrap()
             .decode()
             .unwrap();
@@ -2729,7 +2729,7 @@ mod tests {
         // Decode back into U16
         let dec = PngDecoderConfig::new();
         let mut dst = imgref::ImgVec::new(vec![Rgb::<u16> { r: 0, g: 0, b: 0 }; 4], 2, 2);
-        dec.decode_into_rgb16(output.bytes(), dst.as_mut()).unwrap();
+        dec.decode_into_rgb16(output.data(), dst.as_mut()).unwrap();
         for (orig, dec) in pixels.iter().zip(dst.buf().iter()) {
             assert_eq!(orig, dec);
         }
@@ -3199,8 +3199,10 @@ mod tests {
     /// the color metadata, decode again, and verify exact roundtrip.
     #[test]
     fn real_file_gama_chrm_roundtrip() {
-        let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png";
-        let data = std::fs::read(path).expect("frymire.png not found");
+        let corpus = std::env::var("CODEC_CORPUS_DIR")
+            .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string());
+        let path = format!("{corpus}/imageflow/test_inputs/frymire.png");
+        let data = std::fs::read(&path).expect("frymire.png not found");
 
         // Decode original
         let orig =
@@ -3253,8 +3255,10 @@ mod tests {
     /// PNGv3 precedence: sRGB suppresses gAMA/cHRM in output.
     #[test]
     fn real_file_srgb_roundtrip() {
-        let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/red-night.png";
-        let data = std::fs::read(path).expect("red-night.png not found");
+        let corpus = std::env::var("CODEC_CORPUS_DIR")
+            .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string());
+        let path = format!("{corpus}/imageflow/test_inputs/red-night.png");
+        let data = std::fs::read(&path).expect("red-night.png not found");
 
         let orig =
             crate::decode::decode(&data, &PngDecodeConfig::none(), &enough::Unstoppable).unwrap();
@@ -3300,8 +3304,10 @@ mod tests {
     /// ICC profile, verify the profile roundtrips.
     #[test]
     fn real_file_icc_roundtrip() {
-        let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/shirt_transparent.png";
-        let data = std::fs::read(path).expect("shirt_transparent.png not found");
+        let corpus = std::env::var("CODEC_CORPUS_DIR")
+            .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string());
+        let path = format!("{corpus}/imageflow/test_inputs/shirt_transparent.png");
+        let data = std::fs::read(&path).expect("shirt_transparent.png not found");
 
         let orig =
             crate::decode::decode(&data, &PngDecodeConfig::none(), &enough::Unstoppable).unwrap();
@@ -3343,8 +3349,12 @@ mod tests {
         // This 1024x1024 RGB image triggered a zenflate compression bug
         // at L4 with adaptive MinSum filtering (corrupt deflate stream).
         // The decompression verification in compress_filtered now catches this.
-        let path = "/home/lilith/work/codec-corpus/clic2025-1024/0d154749c7771f58e89ad343653ec4e20d6f037da829f47f5598e5d0a4ab61f0.png";
-        let data = match std::fs::read(path) {
+        let corpus = std::env::var("CODEC_CORPUS_DIR")
+            .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string());
+        let path = format!(
+            "{corpus}/clic2025-1024/0d154749c7771f58e89ad343653ec4e20d6f037da829f47f5598e5d0a4ab61f0.png"
+        );
+        let data = match std::fs::read(&path) {
             Ok(d) => d,
             Err(_) => return, // skip if corpus not available
         };
@@ -3642,17 +3652,17 @@ mod tests {
 
         // Both should produce valid PNG
         assert_eq!(
-            &out_lossless.bytes()[..8],
+            &out_lossless.data()[..8],
             &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
         );
         assert_eq!(
-            &out_lossy.bytes()[..8],
+            &out_lossy.data()[..8],
             &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
         );
 
         // With only 4 colors, auto-indexed should produce a PLTE chunk
         // (indexed PNG is smaller than truecolor for few-color images)
-        let has_plte = out_lossy.bytes().windows(4).any(|w| w == b"PLTE");
+        let has_plte = out_lossy.data().windows(4).any(|w| w == b"PLTE");
         assert!(
             has_plte,
             "expected indexed PNG with PLTE chunk for 4-color image"
@@ -3660,9 +3670,196 @@ mod tests {
 
         // Both should decode correctly
         let dec = PngDecoderConfig::new();
-        let d_lossless = dec.decode(out_lossless.bytes()).unwrap();
-        let d_lossy = dec.decode(out_lossy.bytes()).unwrap();
+        let d_lossless = dec.decode(out_lossless.data()).unwrap();
+        let d_lossy = dec.decode(out_lossy.data()).unwrap();
         assert_eq!(d_lossless.width(), 2);
         assert_eq!(d_lossy.width(), 2);
+    }
+
+    // ── Builder methods ──
+
+    #[test]
+    fn with_compression_sets_config() {
+        let enc = PngEncoderConfig::new().with_compression(crate::Compression::Turbo);
+        let pixels = vec![Rgb { r: 0, g: 0, b: 0 }; 4];
+        let img = Img::new(pixels, 2, 2);
+        let out = enc.encode_rgb8(img.as_ref()).unwrap();
+        assert!(!out.data().is_empty());
+    }
+
+    #[test]
+    fn with_filter_sets_config() {
+        let enc = PngEncoderConfig::new().with_filter(crate::Filter::Auto);
+        let pixels = vec![Rgb { r: 0, g: 0, b: 0 }; 4];
+        let img = Img::new(pixels, 2, 2);
+        let out = enc.encode_rgb8(img.as_ref()).unwrap();
+        assert!(!out.data().is_empty());
+    }
+
+    #[test]
+    fn default_encoder_config() {
+        let enc: PngEncoderConfig = Default::default();
+        assert!(enc.generic_effort().is_none());
+        assert!(enc.generic_quality().is_none());
+    }
+
+    // ── 16-bit encode convenience methods ──
+
+    #[test]
+    fn encode_rgb16_roundtrip() {
+        let enc = PngEncoderConfig::new();
+        let pixels = vec![Rgb { r: 1000u16, g: 2000, b: 3000 }; 4];
+        let img = Img::new(pixels, 2, 2);
+        let out = enc.encode_rgb16(img.as_ref()).unwrap();
+        assert!(!out.data().is_empty());
+        assert_eq!(&out.data()[..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    }
+
+    #[test]
+    fn encode_rgba16_roundtrip() {
+        let enc = PngEncoderConfig::new();
+        let pixels = vec![Rgba { r: 1000u16, g: 2000, b: 3000, a: 65535 }; 4];
+        let img = Img::new(pixels, 2, 2);
+        let out = enc.encode_rgba16(img.as_ref()).unwrap();
+        assert!(!out.data().is_empty());
+    }
+
+    #[test]
+    fn encode_gray16_roundtrip() {
+        let enc = PngEncoderConfig::new();
+        let pixels = vec![Gray::new(30000u16); 4];
+        let img = Img::new(pixels, 2, 2);
+        let out = enc.encode_gray16(img.as_ref()).unwrap();
+        assert!(!out.data().is_empty());
+    }
+
+    // ── effort_to_compression coverage ──
+
+    #[test]
+    fn effort_to_compression_all_levels() {
+        use crate::Compression;
+        // Cover all branches including the uncovered ones (2-8, 12+)
+        assert!(matches!(effort_to_compression(-1), Compression::None));
+        assert!(matches!(effort_to_compression(0), Compression::None));
+        assert!(matches!(effort_to_compression(1), Compression::Fastest));
+        assert!(matches!(effort_to_compression(2), Compression::Turbo));
+        assert!(matches!(effort_to_compression(3), Compression::Fast));
+        assert!(matches!(effort_to_compression(4), Compression::Balanced));
+        assert!(matches!(effort_to_compression(5), Compression::Thorough));
+        assert!(matches!(effort_to_compression(6), Compression::High));
+        assert!(matches!(effort_to_compression(7), Compression::Aggressive));
+        assert!(matches!(effort_to_compression(8), Compression::Intense));
+        assert!(matches!(effort_to_compression(9), Compression::Crush));
+        assert!(matches!(effort_to_compression(10), Compression::Maniac));
+        assert!(matches!(effort_to_compression(11), Compression::Brag));
+        assert!(matches!(effort_to_compression(12), Compression::Minutes));
+        assert!(matches!(effort_to_compression(100), Compression::Minutes));
+    }
+
+    // ── quality_to_mpe coverage ──
+
+    #[test]
+    fn quality_to_mpe_endpoints() {
+        // q=100 → mpe=0.0
+        assert_eq!(quality_to_mpe(100.0), 0.0);
+        // q=0 → mpe=0.1
+        assert_eq!(quality_to_mpe(0.0), 0.1);
+        // q > 100 → clamped to 100 → 0.0
+        assert_eq!(quality_to_mpe(150.0), 0.0);
+        // q < 0 → clamped to 0 → 0.1
+        assert_eq!(quality_to_mpe(-10.0), 0.1);
+    }
+
+    #[test]
+    fn quality_to_mpe_interpolation() {
+        // q=95 should be 0.008
+        assert!((quality_to_mpe(95.0) - 0.008).abs() < 0.0001);
+        // q=50 should be 0.028
+        assert!((quality_to_mpe(50.0) - 0.028).abs() < 0.0001);
+        // Interpolated value between 95 and 99
+        let mid = quality_to_mpe(97.0);
+        assert!(mid > 0.001 && mid < 0.008);
+    }
+
+    // ── EncodeJob trait methods ──
+
+    #[test]
+    fn encode_job_with_stop() {
+        let enc = PngEncoderConfig::new();
+        let stop = enough::Unstoppable;
+        let job = enc.job().with_stop(&stop);
+        let encoder = job.encoder().unwrap();
+        let pixels = vec![Rgb { r: 0u8, g: 0, b: 0 }; 4];
+        let img = Img::new(pixels, 2, 2);
+        let out = encoder.do_encode(
+            bytemuck::cast_slice(img.buf()),
+            2,
+            2,
+            crate::encode::ColorType::Rgb,
+        );
+        assert!(out.is_ok());
+    }
+
+    #[test]
+    fn encode_job_with_limits() {
+        let enc = PngEncoderConfig::new();
+        let limits = ResourceLimits::default();
+        let job = enc.job().with_limits(limits);
+        let encoder = job.encoder().unwrap();
+        let pixels = vec![Rgb { r: 0u8, g: 0, b: 0 }; 4];
+        let img = Img::new(pixels, 2, 2);
+        let out = encoder.do_encode(
+            bytemuck::cast_slice(img.buf()),
+            2,
+            2,
+            crate::encode::ColorType::Rgb,
+        );
+        assert!(out.is_ok());
+    }
+
+    #[test]
+    fn encode_job_with_metadata() {
+        let enc = PngEncoderConfig::new();
+        let meta = MetadataView::default();
+        let job = enc.job().with_metadata(&meta);
+        let encoder = job.encoder().unwrap();
+        let pixels = vec![Rgb { r: 0u8, g: 0, b: 0 }; 4];
+        let img = Img::new(pixels, 2, 2);
+        let out = encoder.do_encode(
+            bytemuck::cast_slice(img.buf()),
+            2,
+            2,
+            crate::encode::ColorType::Rgb,
+        );
+        assert!(out.is_ok());
+    }
+
+    #[test]
+    fn encode_job_frame_encoder() {
+        let enc = PngEncoderConfig::new();
+        let job = enc
+            .job()
+            .with_canvas_size(8, 8)
+            .with_loop_count(Some(0));
+        let frame_enc = job.frame_encoder();
+        assert!(frame_enc.is_ok());
+    }
+
+    // ── EncoderConfig trait ──
+
+    #[test]
+    fn encoder_supported_descriptors() {
+        let descs = <PngEncoderConfig as EncoderConfig>::supported_descriptors();
+        assert!(!descs.is_empty());
+        assert!(descs.contains(&PixelDescriptor::RGB8_SRGB));
+        assert!(descs.contains(&PixelDescriptor::RGBA8_SRGB));
+    }
+
+    #[test]
+    fn encoder_is_lossless() {
+        let enc = PngEncoderConfig::new();
+        assert_eq!(enc.is_lossless(), Some(true));
+        let enc_lossy = enc.with_generic_quality(90.0);
+        assert_eq!(enc_lossy.is_lossless(), Some(false));
     }
 }

@@ -37,3 +37,40 @@ impl From<zencodec_types::UnsupportedOperation> for PngError {
         PngError::InvalidInput(alloc::format!("unsupported operation: {op}"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_display_decode() {
+        let e = PngError::Decode("bad chunk".into());
+        assert!(e.to_string().contains("bad chunk"));
+    }
+
+    #[test]
+    fn error_display_invalid_input() {
+        let e = PngError::InvalidInput("wrong size".into());
+        assert!(e.to_string().contains("wrong size"));
+    }
+
+    #[test]
+    fn error_display_limit_exceeded() {
+        let e = PngError::LimitExceeded("too big".into());
+        assert!(e.to_string().contains("too big"));
+    }
+
+    #[test]
+    fn error_from_stop_reason() {
+        let reason = enough::StopReason::Cancelled;
+        let e: PngError = reason.into();
+        matches!(e, PngError::Stopped(_));
+    }
+
+    #[test]
+    fn error_from_unsupported_operation() {
+        let op = zencodec_types::UnsupportedOperation::RowLevelEncode;
+        let e: PngError = op.into();
+        assert!(e.to_string().contains("unsupported operation"));
+    }
+}

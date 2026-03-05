@@ -9,9 +9,13 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 fn main() {
-    let dir = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "/home/lilith/work/codec-corpus/clic2025-1024".to_string());
+    let dir = std::env::args().nth(1).unwrap_or_else(|| {
+        format!(
+            "{}/clic2025-1024",
+            std::env::var("CODEC_CORPUS_DIR")
+                .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string())
+        )
+    });
 
     let mut paths: Vec<PathBuf> = Vec::new();
     collect_pngs(Path::new(&dir), &mut paths);
@@ -60,20 +64,13 @@ fn main() {
         let (w, h) = (decoded.info.width as usize, decoded.info.height as usize);
 
         // Get raw pixel bytes
-        let (pixel_bytes, bpp): (Vec<u8>, usize) = match &decoded.pixels {
-            zencodec_types::PixelData::Rgb8(img) => {
-                let buf = img.buf();
-                (bytemuck::cast_slice::<_, u8>(buf).to_vec(), 3)
-            }
-            zencodec_types::PixelData::Rgba8(img) => {
-                let buf = img.buf();
-                (bytemuck::cast_slice::<_, u8>(buf).to_vec(), 4)
-            }
-            _ => {
-                eprintln!("  SKIP: unsupported pixel format");
-                continue;
-            }
-        };
+        let desc = decoded.pixels.descriptor();
+        let bpp = desc.bytes_per_pixel();
+        if bpp != 3 && bpp != 4 {
+            eprintln!("  SKIP: unsupported pixel format");
+            continue;
+        }
+        let pixel_bytes = decoded.pixels.copy_to_contiguous_bytes();
         let row_bytes = w * bpp;
 
         // Filter with brute-force (L1 eval, 10 context rows) — same as Best level
@@ -175,11 +172,10 @@ fn filter_brute_force(pixel_bytes: &[u8], row_bytes: usize, height: usize, bpp: 
 
             if let Ok(len) =
                 eval_compressor.zlib_compress(&eval_buf, &mut compress_buf, zenflate::Unstoppable)
+                && len < best_size
             {
-                if len < best_size {
-                    best_size = len;
-                    best_f = f;
-                }
+                best_size = len;
+                best_f = f;
             }
         }
 

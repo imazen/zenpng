@@ -13,13 +13,20 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
+use zencodec_types::PixelBufferConvertExt;
+use zenpixels::descriptor::{ChannelLayout, ChannelType};
 
 fn main() {
-    let dir = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "/home/lilith/work/codec-corpus/clic2025-1024".to_string());
+    let dir = std::env::args().nth(1).unwrap_or_else(|| {
+        let base = std::env::var("CODEC_CORPUS_DIR")
+            .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string());
+        format!("{base}/clic2025-1024")
+    });
 
-    let out_dir = PathBuf::from("/mnt/v/output/zenpng/crusher_bench");
+    let out_dir = PathBuf::from(
+        std::env::var("ZENPNG_OUTPUT_DIR").unwrap_or_else(|_| "/mnt/v/output/zenpng".to_string()),
+    )
+    .join("crusher_bench");
     std::fs::create_dir_all(&out_dir).unwrap();
 
     // Collect PNG files
@@ -77,12 +84,8 @@ fn main() {
             };
 
         let (w, h) = (decoded.info.width, decoded.info.height);
-        let raw_pixels = match &decoded.pixels {
-            zencodec_types::PixelData::Rgb8(img) => img.buf().len() * 3,
-            zencodec_types::PixelData::Rgba8(img) => img.buf().len() * 4,
-            zencodec_types::PixelData::Gray8(img) => img.buf().len(),
-            _ => (w * h * 3) as usize,
-        };
+        let desc = decoded.pixels.descriptor();
+        let raw_pixels = w as usize * h as usize * desc.bytes_per_pixel();
 
         // Re-encode with zenpng at each level
         let levels = [
@@ -105,28 +108,37 @@ fn main() {
                 .with_chromaticities(decoded.info.chromaticities);
 
             let start = Instant::now();
-            let encoded = match &decoded.pixels {
-                zencodec_types::PixelData::Rgb8(img) => zenpng::encode_rgb8(
-                    img.as_ref(),
-                    None,
-                    &config,
-                    &enough::Unstoppable,
-                    &enough::Unstoppable,
-                ),
-                zencodec_types::PixelData::Rgba8(img) => zenpng::encode_rgba8(
-                    img.as_ref(),
-                    None,
-                    &config,
-                    &enough::Unstoppable,
-                    &enough::Unstoppable,
-                ),
-                zencodec_types::PixelData::Gray8(img) => zenpng::encode_gray8(
-                    img.as_ref(),
-                    None,
-                    &config,
-                    &enough::Unstoppable,
-                    &enough::Unstoppable,
-                ),
+            let encoded = match (desc.layout(), desc.channel_type()) {
+                (ChannelLayout::Rgb, ChannelType::U8) => {
+                    let buf = decoded.pixels.to_rgb8();
+                    zenpng::encode_rgb8(
+                        buf.as_imgref(),
+                        None,
+                        &config,
+                        &enough::Unstoppable,
+                        &enough::Unstoppable,
+                    )
+                }
+                (ChannelLayout::Rgba, ChannelType::U8) => {
+                    let buf = decoded.pixels.to_rgba8();
+                    zenpng::encode_rgba8(
+                        buf.as_imgref(),
+                        None,
+                        &config,
+                        &enough::Unstoppable,
+                        &enough::Unstoppable,
+                    )
+                }
+                (ChannelLayout::Gray, ChannelType::U8) => {
+                    let buf = decoded.pixels.to_gray8();
+                    zenpng::encode_gray8(
+                        buf.as_imgref(),
+                        None,
+                        &config,
+                        &enough::Unstoppable,
+                        &enough::Unstoppable,
+                    )
+                }
                 _ => {
                     eprintln!("  SKIP: unsupported pixel format for {level_name}");
                     continue;
@@ -173,17 +185,17 @@ fn main() {
         }
 
         // --- zopflipng ---
-        if let Some(ref tool) = zopflipng {
-            if let Some((size, secs)) = run_tool_zopfli(tool, &src_path, &out_dir) {
-                external_sizes.push(("zopflipng".to_string(), size, secs));
-            }
+        if let Some(ref tool) = zopflipng
+            && let Some((size, secs)) = run_tool_zopfli(tool, &src_path, &out_dir)
+        {
+            external_sizes.push(("zopflipng".to_string(), size, secs));
         }
 
         // --- pngcrush ---
-        if let Some(ref tool) = pngcrush {
-            if let Some((size, secs)) = run_tool_pngcrush(tool, &src_path, &out_dir) {
-                external_sizes.push(("pngcrush".to_string(), size, secs));
-            }
+        if let Some(ref tool) = pngcrush
+            && let Some((size, secs)) = run_tool_pngcrush(tool, &src_path, &out_dir)
+        {
+            external_sizes.push(("pngcrush".to_string(), size, secs));
         }
 
         // --- ECT ---

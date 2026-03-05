@@ -1074,7 +1074,10 @@ mod tests {
     /// Decode all APNG files from the corpus, verify frame count matches acTL, no panics.
     #[test]
     fn apng_corpus_decode_no_panics() {
-        let apng_dir = std::path::Path::new("/mnt/v/output/corpus-builder/apng");
+        let apng_base = std::env::var("CORPUS_BUILDER_OUTPUT_DIR")
+            .unwrap_or_else(|_| "/mnt/v/output/corpus-builder".to_string());
+        let apng_dir_buf = std::path::PathBuf::from(&apng_base).join("apng");
+        let apng_dir = apng_dir_buf.as_path();
         if !apng_dir.exists() {
             eprintln!(
                 "Skipping APNG corpus test: {} not found",
@@ -1157,7 +1160,10 @@ mod tests {
     /// Compare frame-by-frame decode against the `image-png` crate's APNG as reference.
     #[test]
     fn apng_corpus_frame_comparison() {
-        let apng_dir = std::path::Path::new("/mnt/v/output/corpus-builder/apng");
+        let apng_base = std::env::var("CORPUS_BUILDER_OUTPUT_DIR")
+            .unwrap_or_else(|_| "/mnt/v/output/corpus-builder".to_string());
+        let apng_dir_buf = std::path::PathBuf::from(&apng_base).join("apng");
+        let apng_dir = apng_dir_buf.as_path();
         if !apng_dir.exists() {
             eprintln!(
                 "Skipping APNG comparison test: {} not found",

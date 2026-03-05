@@ -7,10 +7,16 @@
 /// Usage: cargo run --release --features zopfli --example full_optimal_bench [-- /path/to/image.png]
 use enough::Unstoppable;
 use std::time::Instant;
+use zencodec_types::PixelBufferConvertExt;
+use zenpixels::descriptor::{ChannelLayout, ChannelType};
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
-        "/home/lilith/work/codec-corpus/clic2025-1024/0d154749c7771f58e89ad343653ec4e20d6f037da829f47f5598e5d0a4ab61f0.png".to_string()
+        format!(
+            "{}/clic2025-1024/0d154749c7771f58e89ad343653ec4e20d6f037da829f47f5598e5d0a4ab61f0.png",
+            std::env::var("CODEC_CORPUS_DIR")
+                .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string())
+        )
     });
 
     let source = std::fs::read(&path).unwrap();
@@ -44,6 +50,7 @@ fn main() {
         ("E76 (FullOpt 60i)", 76),
     ];
 
+    let desc = decoded.pixels.descriptor();
     let mut base_size = 0usize;
 
     for &(label, effort) in efforts {
@@ -54,14 +61,16 @@ fn main() {
             .with_chromaticities(decoded.info.chromaticities);
 
         let start = Instant::now();
-        let encoded = match &decoded.pixels {
-            zencodec_types::PixelData::Rgb8(img) => {
-                zenpng::encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+        let encoded = match (desc.layout(), desc.channel_type()) {
+            (ChannelLayout::Rgb, ChannelType::U8) => {
+                let buf = decoded.pixels.to_rgb8();
+                zenpng::encode_rgb8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
             }
-            zencodec_types::PixelData::Rgba8(img) => {
-                zenpng::encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+            (ChannelLayout::Rgba, ChannelType::U8) => {
+                let buf = decoded.pixels.to_rgba8();
+                zenpng::encode_rgba8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
             }
-            _ => panic!("unsupported pixel format"),
+            _ => panic!("unsupported pixel format: {:?}", desc),
         };
         let elapsed = start.elapsed();
 
@@ -96,22 +105,28 @@ fn main() {
         .with_source_gamma(decoded.info.source_gamma)
         .with_srgb_intent(decoded.info.srgb_intent)
         .with_chromaticities(decoded.info.chromaticities);
-    let maniac_png = match &decoded.pixels {
-        zencodec_types::PixelData::Rgb8(img) => zenpng::encode_rgb8(
-            img.as_ref(),
-            None,
-            &maniac_config,
-            &Unstoppable,
-            &Unstoppable,
-        ),
-        zencodec_types::PixelData::Rgba8(img) => zenpng::encode_rgba8(
-            img.as_ref(),
-            None,
-            &maniac_config,
-            &Unstoppable,
-            &Unstoppable,
-        ),
-        _ => panic!("unsupported pixel format"),
+    let maniac_png = match (desc.layout(), desc.channel_type()) {
+        (ChannelLayout::Rgb, ChannelType::U8) => {
+            let buf = decoded.pixels.to_rgb8();
+            zenpng::encode_rgb8(
+                buf.as_imgref(),
+                None,
+                &maniac_config,
+                &Unstoppable,
+                &Unstoppable,
+            )
+        }
+        (ChannelLayout::Rgba, ChannelType::U8) => {
+            let buf = decoded.pixels.to_rgba8();
+            zenpng::encode_rgba8(
+                buf.as_imgref(),
+                None,
+                &maniac_config,
+                &Unstoppable,
+                &Unstoppable,
+            )
+        }
+        _ => panic!("unsupported pixel format: {:?}", desc),
     }
     .unwrap();
 

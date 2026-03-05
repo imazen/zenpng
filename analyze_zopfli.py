@@ -5,7 +5,7 @@ import csv
 import os
 from collections import defaultdict
 
-CSV_DIR = "/mnt/v/output/zenpng/strategy_zopfli"
+CSV_DIR = os.environ.get("ZENPNG_OUTPUT_DIR", "/mnt/v/output/zenpng") + "/strategy_zopfli"
 FILES = ["02809272.csv", "0369d229.csv", "07b9f93f.csv", "097cb426.csv", "0c49a5cc.csv"]
 
 

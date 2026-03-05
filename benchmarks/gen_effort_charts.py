@@ -1,6 +1,9 @@
-import csv, math
+import csv, math, os
 
-with open('/mnt/v/output/zenpng/effort_curve/effort_curve.csv') as f:
+_zenpng_out = os.environ.get('ZENPNG_OUTPUT_DIR', '/mnt/v/output/zenpng')
+_project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+with open(os.path.join(_zenpng_out, 'effort_curve', 'effort_curve.csv')) as f:
     rows = list(csv.DictReader(f))
 
 efforts = list(range(1, 31))
@@ -219,11 +222,11 @@ slow_svg = gen_chart(
     log_x=True,
 )
 
-with open('/home/lilith/work/zenpng/effort_curve_fast.svg', 'w') as f:
+with open(os.path.join(_project_dir, 'effort_curve_fast.svg'), 'w') as f:
     f.write(fast_svg)
 print("Wrote effort_curve_fast.svg")
 
-with open('/home/lilith/work/zenpng/effort_curve_detail.svg', 'w') as f:
+with open(os.path.join(_project_dir, 'effort_curve_detail.svg'), 'w') as f:
     f.write(slow_svg)
 print("Wrote effort_curve_detail.svg")
 

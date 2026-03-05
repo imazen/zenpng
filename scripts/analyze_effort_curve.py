@@ -10,7 +10,8 @@ from pathlib import Path
 from collections import defaultdict
 
 def main():
-    csv_path = Path('/mnt/v/output/zenpng/effort_curve/effort_curve.csv')
+    import os
+    csv_path = Path(os.environ.get('ZENPNG_OUTPUT_DIR', '/mnt/v/output/zenpng')) / 'effort_curve' / 'effort_curve.csv'
     if not csv_path.exists():
         print(f"Not found: {csv_path}")
         return

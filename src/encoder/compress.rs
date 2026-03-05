@@ -1400,40 +1400,40 @@ pub(crate) fn compress_filtered(
         }
     }
 
-    if let (Some(s), Some(t)) = (&mut stats, phase3_start) {
-        if brute_evals > 0 {
-            let configs_desc = brute_configs
-                .iter()
-                .map(|(ctx, ev)| alloc::format!("ctx{ctx}/E{ev}"))
-                .chain(
-                    block_brute_configs
-                        .iter()
-                        .map(|(ctx, ev)| alloc::format!("blk-ctx{ctx}/E{ev}")),
-                )
-                .chain(
-                    fork_brute_levels
-                        .iter()
-                        .map(|l| alloc::format!("fork-E{l}")),
-                )
-                .chain(
-                    beam_brute_configs
-                        .iter()
-                        .map(|(ev, k)| alloc::format!("beam-E{ev}/K{k}")),
-                )
-                .chain(
-                    adaptive_fork_configs
-                        .iter()
-                        .map(|(ev, n)| alloc::format!("afork-E{ev}/N{n}")),
-                )
-                .collect::<Vec<_>>()
-                .join(",");
-            s.phases.push(PhaseStat {
-                name: alloc::format!("BruteForce ({configs_desc})"),
-                duration_ns: t.elapsed().as_nanos() as u64,
-                best_size: best_compressed.as_ref().map_or(0, |b| b.len()),
-                evaluations: brute_evals,
-            });
-        }
+    if let (Some(s), Some(t)) = (&mut stats, phase3_start)
+        && brute_evals > 0
+    {
+        let configs_desc = brute_configs
+            .iter()
+            .map(|(ctx, ev)| alloc::format!("ctx{ctx}/E{ev}"))
+            .chain(
+                block_brute_configs
+                    .iter()
+                    .map(|(ctx, ev)| alloc::format!("blk-ctx{ctx}/E{ev}")),
+            )
+            .chain(
+                fork_brute_levels
+                    .iter()
+                    .map(|l| alloc::format!("fork-E{l}")),
+            )
+            .chain(
+                beam_brute_configs
+                    .iter()
+                    .map(|(ev, k)| alloc::format!("beam-E{ev}/K{k}")),
+            )
+            .chain(
+                adaptive_fork_configs
+                    .iter()
+                    .map(|(ev, n)| alloc::format!("afork-E{ev}/N{n}")),
+            )
+            .collect::<Vec<_>>()
+            .join(",");
+        s.phases.push(PhaseStat {
+            name: alloc::format!("BruteForce ({configs_desc})"),
+            duration_ns: t.elapsed().as_nanos() as u64,
+            best_size: best_compressed.as_ref().map_or(0, |b| b.len()),
+            evaluations: brute_evals,
+        });
     }
 
     // ---- Phase 4: Recompression ----
@@ -1509,17 +1509,17 @@ pub(crate) fn compress_filtered(
                 }
 
                 // Zenflate FullOptimal recompression: effort 31+ (iterative forward DP)
-                if let Some(fo_effort) = params.full_optimal_effort {
-                    if !opts.deadline.should_stop() {
-                        let fo_best = zenflate_full_optimal_recompress(
-                            &recompress_candidates,
-                            fo_effort,
-                            opts.cancel,
-                            &mut best_compressed,
-                        )?;
-                        if let Some(b) = fo_best {
-                            best_compressed = Some(b);
-                        }
+                if let Some(fo_effort) = params.full_optimal_effort
+                    && !opts.deadline.should_stop()
+                {
+                    let fo_best = zenflate_full_optimal_recompress(
+                        &recompress_candidates,
+                        fo_effort,
+                        opts.cancel,
+                        &mut best_compressed,
+                    )?;
+                    if let Some(b) = fo_best {
+                        best_compressed = Some(b);
                     }
                 }
 
@@ -1981,6 +1981,336 @@ fn num_cpus() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- EffortParams::from_effort property tests ----
+
+    #[test]
+    fn effort_0_is_store() {
+        let p = EffortParams::from_effort(0);
+        assert_eq!(p.zenflate_effort, 0);
+        assert!(p.screen_is_final);
+        assert_eq!(p.strategies.len(), 1);
+        assert!(!p.use_recompress);
+        assert!(p.refine_efforts.is_empty());
+    }
+
+    #[test]
+    fn effort_1_single_paeth() {
+        let p = EffortParams::from_effort(1);
+        assert_eq!(p.zenflate_effort, 1);
+        assert!(p.screen_is_final);
+        assert_eq!(p.strategies.len(), 1);
+    }
+
+    #[test]
+    fn effort_2_minimal_strategies() {
+        let p = EffortParams::from_effort(2);
+        assert_eq!(p.strategies.len(), MINIMAL_STRATEGIES.len());
+        assert!(p.screen_is_final);
+    }
+
+    #[test]
+    fn effort_3_7_screen_only() {
+        for effort in 3..=7 {
+            let p = EffortParams::from_effort(effort);
+            assert!(p.screen_is_final, "effort {effort} should be screen-only");
+            assert!(p.refine_efforts.is_empty());
+            assert!(!p.use_recompress);
+        }
+    }
+
+    #[test]
+    fn effort_8_15_have_refinement() {
+        for effort in 8..=15 {
+            let p = EffortParams::from_effort(effort);
+            assert!(
+                !p.screen_is_final,
+                "effort {effort} should not be screen-only"
+            );
+            assert!(
+                !p.refine_efforts.is_empty(),
+                "effort {effort} should have refine"
+            );
+            assert!(p.brute_configs.is_empty() || effort >= 10);
+        }
+    }
+
+    #[test]
+    fn effort_17_has_brute_force() {
+        let p = EffortParams::from_effort(17);
+        assert!(!p.brute_configs.is_empty());
+    }
+
+    #[test]
+    fn effort_24_has_fork() {
+        let p = EffortParams::from_effort(24);
+        assert!(!p.fork_brute_efforts.is_empty());
+    }
+
+    #[test]
+    fn effort_29_has_beam() {
+        let p = EffortParams::from_effort(29);
+        assert!(!p.beam_brute_configs.is_empty());
+    }
+
+    #[test]
+    fn effort_30_maniac() {
+        let p = EffortParams::from_effort(30);
+        assert!(p.use_recompress);
+        assert!(!p.brute_configs.is_empty());
+        assert!(!p.fork_brute_efforts.is_empty());
+        assert!(!p.beam_brute_configs.is_empty());
+        assert!(p.full_optimal_effort.is_none());
+    }
+
+    #[test]
+    fn effort_31_full_optimal() {
+        let p = EffortParams::from_effort(31);
+        assert!(p.full_optimal_effort.is_some());
+        assert!(p.use_recompress);
+    }
+
+    #[test]
+    fn effort_50_medium_tier() {
+        let p = EffortParams::from_effort(50);
+        assert!(p.full_optimal_effort.is_some());
+        assert!(p.use_recompress);
+    }
+
+    #[test]
+    fn effort_100_full_tier() {
+        let p = EffortParams::from_effort(100);
+        assert!(p.full_optimal_effort.is_some());
+        assert!(p.use_recompress);
+        assert!(!p.brute_configs.is_empty());
+    }
+
+    #[test]
+    fn effort_monotonicity_zenflate_effort() {
+        let mut prev = 0;
+        for effort in 0..=30 {
+            let p = EffortParams::from_effort(effort);
+            assert!(
+                p.zenflate_effort >= prev,
+                "zenflate effort should be monotonic: e{effort} = {} < {prev}",
+                p.zenflate_effort
+            );
+            prev = p.zenflate_effort;
+        }
+    }
+
+    // ---- from_effort_and_bpp content-aware adjustment ----
+
+    #[test]
+    fn bpp1_gets_brute_at_lower_effort() {
+        // For bpp=1, brute-force should be injected at effort 16-23
+        let p = EffortParams::from_effort_and_bpp(20, 1);
+        assert!(!p.brute_configs.is_empty());
+    }
+
+    #[test]
+    fn bpp4_no_extra_brute() {
+        // For bpp=4, no extra brute-force injection
+        let p = EffortParams::from_effort_and_bpp(20, 4);
+        // Should match the raw from_effort result
+        let p_raw = EffortParams::from_effort(20);
+        assert_eq!(p.brute_configs.len(), p_raw.brute_configs.len());
+    }
+
+    // ---- try_compress ----
+
+    #[test]
+    fn try_compress_basic() {
+        let data: Vec<u8> = (0..=255).collect::<Vec<u8>>().repeat(4);
+        let mut compressors = [Compressor::new(CompressionLevel::new(1))];
+        let bound = Compressor::zlib_compress_bound(data.len());
+        let mut compress_buf = vec![0u8; bound];
+        let mut verify_buf = vec![0u8; data.len()];
+        let mut best = None;
+
+        let size = try_compress(
+            &data,
+            &mut compressors,
+            &mut compress_buf,
+            &mut verify_buf,
+            &mut best,
+            &Unstoppable,
+        )
+        .unwrap();
+
+        assert!(size < data.len());
+        assert!(best.is_some());
+
+        // Verify decompression
+        let compressed = best.unwrap();
+        let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&compressed).unwrap();
+        assert_eq!(decompressed, data);
+    }
+
+    // ---- zlib_store_unfiltered ----
+
+    #[test]
+    fn zlib_store_empty() {
+        let result = zlib_store_unfiltered(&[], 4, 0);
+        // Should be valid zlib with stored blocks
+        let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();
+        assert!(decompressed.is_empty());
+    }
+
+    #[test]
+    fn zlib_store_small() {
+        let row = [10u8, 20, 30];
+        let result = zlib_store_unfiltered(&row, 3, 1);
+        let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();
+        // Should be: filter byte (0) + row data
+        assert_eq!(decompressed.len(), 4); // 1 + 3
+        assert_eq!(decompressed[0], 0); // filter byte
+        assert_eq!(&decompressed[1..], &row);
+    }
+
+    #[test]
+    fn zlib_store_multi_row() {
+        let data = [1u8, 2, 3, 4, 5, 6];
+        let result = zlib_store_unfiltered(&data, 3, 2);
+        let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();
+        // 2 rows × (filter_byte + 3 bytes) = 8 bytes
+        assert_eq!(decompressed.len(), 8);
+        assert_eq!(decompressed[0], 0); // filter byte
+        assert_eq!(&decompressed[1..4], &[1, 2, 3]);
+        assert_eq!(decompressed[4], 0); // filter byte
+        assert_eq!(&decompressed[5..8], &[4, 5, 6]);
+    }
+
+    // ---- write_zlib_stored_inline ----
+
+    #[test]
+    fn write_stored_inline_matches_standalone() {
+        let data = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        let standalone = zlib_store_unfiltered(&data, 4, 3);
+
+        let mut inline = Vec::new();
+        write_zlib_stored_inline(&mut inline, &data, 4, 3);
+
+        assert_eq!(standalone, inline);
+    }
+
+    #[test]
+    fn write_stored_inline_zero_height() {
+        let mut out = Vec::new();
+        write_zlib_stored_inline(&mut out, &[], 4, 0);
+        let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&out).unwrap();
+        assert!(decompressed.is_empty());
+    }
+
+    // ---- write_stored_block_header ----
+
+    #[test]
+    fn stored_block_header_format() {
+        let mut out = Vec::new();
+        write_stored_block_header(&mut out, 100, false);
+        assert_eq!(out.len(), 5);
+        assert_eq!(out[0], 0); // not final
+        assert_eq!(out[1], 100); // len low
+        assert_eq!(out[2], 0); // len high
+
+        let mut out2 = Vec::new();
+        write_stored_block_header(&mut out2, 100, true);
+        assert_eq!(out2[0], 1); // final
+    }
+
+    // ---- compress_filtered integration ----
+
+    #[test]
+    fn compress_filtered_effort_0() {
+        let data = vec![128u8; 12 * 4]; // 4 rows of 12 bytes
+        let opts = super::super::CompressOptions {
+            cancel: &Unstoppable,
+            deadline: &Unstoppable,
+            parallel: false,
+            remaining_ns: None,
+        };
+        let result = compress_filtered(&data, 12, 4, 3, 0, opts, None).unwrap();
+        let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();
+        // 4 rows × (1 filter byte + 12 data bytes) = 52 bytes
+        assert_eq!(decompressed.len(), 52);
+    }
+
+    #[test]
+    fn compress_filtered_effort_1() {
+        let data = vec![128u8; 12 * 4];
+        let opts = super::super::CompressOptions {
+            cancel: &Unstoppable,
+            deadline: &Unstoppable,
+            parallel: false,
+            remaining_ns: None,
+        };
+        let result = compress_filtered(&data, 12, 4, 3, 1, opts, None).unwrap();
+        // Should produce valid zlib
+        let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();
+        assert_eq!(decompressed.len(), 52);
+    }
+
+    #[test]
+    fn compress_filtered_effort_10_with_stats() {
+        let data = vec![128u8; 12 * 4];
+        let opts = super::super::CompressOptions {
+            cancel: &Unstoppable,
+            deadline: &Unstoppable,
+            parallel: false,
+            remaining_ns: None,
+        };
+        let mut stats = PhaseStats::default();
+        let result = compress_filtered(&data, 12, 4, 3, 10, opts, Some(&mut stats)).unwrap();
+        let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();
+        assert_eq!(decompressed.len(), 52);
+        // Should have at least screen + refine phases
+        assert!(
+            stats.phases.len() >= 2,
+            "should have ≥2 phases, got {}",
+            stats.phases.len()
+        );
+        assert!(stats.raw_size > 0);
+    }
+
+    #[test]
+    fn compress_filtered_parallel() {
+        let data = vec![128u8; 12 * 4];
+        let opts = super::super::CompressOptions {
+            cancel: &Unstoppable,
+            deadline: &Unstoppable,
+            parallel: true,
+            remaining_ns: None,
+        };
+        let result = compress_filtered(&data, 12, 4, 3, 7, opts, None).unwrap();
+        let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();
+        assert_eq!(decompressed.len(), 52);
+    }
+
+    #[test]
+    fn compress_filtered_rgba_transparent() {
+        // RGBA with transparent pixels should trigger zeroing
+        let mut data = vec![0u8; 16 * 4]; // 4 rows of 4 RGBA pixels
+        // Set some pixels with alpha=0 but non-zero RGB
+        data[0] = 255; // R
+        data[1] = 128; // G
+        data[2] = 64; // B
+        data[3] = 0; // A=0 (transparent)
+
+        let opts = super::super::CompressOptions {
+            cancel: &Unstoppable,
+            deadline: &Unstoppable,
+            parallel: false,
+            remaining_ns: None,
+        };
+        let result = compress_filtered(&data, 16, 4, 4, 2, opts, None).unwrap();
+        let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();
+        assert_eq!(decompressed.len(), 4 * (1 + 16));
+    }
 }
 
 #[cfg(all(test, feature = "zopfli"))]

@@ -81,31 +81,25 @@ pub(crate) fn write_all_metadata(
     let write_gama_chrm = !has_cicp && !has_iccp && !has_srgb;
 
     // sRGB rendering intent
-    if write_srgb {
-        if let Some(intent) = meta.srgb_intent {
-            write_srgb_chunk(out, intent);
-        }
+    if write_srgb && let Some(intent) = meta.srgb_intent {
+        write_srgb_chunk(out, intent);
     }
 
     // gAMA (source gamma) — only when no higher-priority chunk present
-    if write_gama_chrm {
-        if let Some(gamma) = meta.source_gamma {
-            write_gama_chunk(out, gamma);
-        }
+    if write_gama_chrm && let Some(gamma) = meta.source_gamma {
+        write_gama_chunk(out, gamma);
     }
 
     // cHRM (chromaticities) — only when no higher-priority chunk present
-    if write_gama_chrm {
-        if let Some(chrm) = &meta.chromaticities {
-            write_chrm_chunk(out, chrm);
-        }
+    if write_gama_chrm && let Some(chrm) = &meta.chromaticities {
+        write_chrm_chunk(out, chrm);
     }
 
     // iCCP (ICC profile) — written when present, even alongside cICP (as fallback)
-    if let Some(generic) = meta.generic {
-        if let Some(icc) = generic.icc_profile {
-            write_iccp_chunk(out, icc)?;
-        }
+    if let Some(generic) = meta.generic
+        && let Some(icc) = generic.icc_profile
+    {
+        write_iccp_chunk(out, icc)?;
     }
 
     // cICP (coding-independent code points)
@@ -124,19 +118,19 @@ pub(crate) fn write_all_metadata(
     }
 
     // eXIf — always written
-    if let Some(generic) = meta.generic {
-        if let Some(exif) = generic.exif {
-            write_exif_chunk(out, exif);
-        }
+    if let Some(generic) = meta.generic
+        && let Some(exif) = generic.exif
+    {
+        write_exif_chunk(out, exif);
     }
 
     // iTXt for XMP — always written
-    if let Some(generic) = meta.generic {
-        if let Some(xmp) = generic.xmp {
-            let xmp_str = core::str::from_utf8(xmp).unwrap_or_default();
-            if !xmp_str.is_empty() {
-                write_itxt_chunk(out, "XML:com.adobe.xmp", xmp_str);
-            }
+    if let Some(generic) = meta.generic
+        && let Some(xmp) = generic.xmp
+    {
+        let xmp_str = core::str::from_utf8(xmp).unwrap_or_default();
+        if !xmp_str.is_empty() {
+            write_itxt_chunk(out, "XML:com.adobe.xmp", xmp_str);
         }
     }
 

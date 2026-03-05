@@ -86,7 +86,7 @@ def main():
         if arg == '--target' and i + 2 < len(sys.argv):
             target = int(sys.argv[i + 2])
 
-    profile_dir = Path('/mnt/v/output/zenpng/corpus_profile')
+    profile_dir = Path(os.environ.get('ZENPNG_OUTPUT_DIR', '/mnt/v/output/zenpng')) / 'corpus_profile'
 
     # Load all CSVs
     all_rows = []
@@ -256,7 +256,7 @@ def main():
     print(f"  Color types: {dict(sorted(ct_counts.items()))}")
 
     # Copy selected files to output directory
-    corpus_dir = Path('/mnt/v/output/zenpng/test_corpus')
+    corpus_dir = Path(os.environ.get('ZENPNG_OUTPUT_DIR', '/mnt/v/output/zenpng')) / 'test_corpus'
     corpus_dir.mkdir(parents=True, exist_ok=True)
 
     copied = 0
@@ -264,7 +264,8 @@ def main():
         # Try to find the source file
         src_dir_name = r['source_dir']
         fname = r['filename']
-        src_path = Path(f'/mnt/v/output/corpus-builder/{src_dir_name}/{fname}')
+        cb_base = os.environ.get('CORPUS_BUILDER_OUTPUT_DIR', '/mnt/v/output/corpus-builder')
+        src_path = Path(f'{cb_base}/{src_dir_name}/{fname}')
         if src_path.exists():
             dst = corpus_dir / f"{src_dir_name}__{fname}"
             if not dst.exists():

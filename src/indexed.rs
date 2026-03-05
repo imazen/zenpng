@@ -702,6 +702,7 @@ mod tests {
     use super::*;
     use alloc::vec;
     use imgref::ImgVec;
+    use zencodec_types::PixelBufferConvertExt;
 
     fn test_image_4x4() -> ImgVec<Rgba<u8>> {
         let pixels = vec![
@@ -1265,14 +1266,16 @@ mod tests {
         let img = ImgVec::new(pixels, 256, 256);
 
         // Load real photos
-        let paths = &[
-            "/home/lilith/work/codec-corpus/imageflow/test_inputs/dice.png",
-            "/home/lilith/work/codec-corpus/imageflow/test_inputs/red-night.png",
-            "/home/lilith/work/codec-corpus/imageflow/test_inputs/rings2.png",
+        let corpus = std::env::var("CODEC_CORPUS_DIR")
+            .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string());
+        let paths: Vec<String> = vec![
+            format!("{corpus}/imageflow/test_inputs/dice.png"),
+            format!("{corpus}/imageflow/test_inputs/red-night.png"),
+            format!("{corpus}/imageflow/test_inputs/rings2.png"),
         ];
         let mut real_images: Vec<(String, ImgVec<Rgba<u8>>)> = Vec::new();
-        for path in paths {
-            if std::path::Path::new(path).exists() {
+        for path in &paths {
+            if std::path::Path::new(path.as_str()).exists() {
                 let data = std::fs::read(path).unwrap();
                 let decoded = crate::decode::decode(
                     &data,

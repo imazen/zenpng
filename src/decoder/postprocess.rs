@@ -500,3 +500,470 @@ pub(crate) fn build_pixel_data(
         ))),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_ihdr(color_type: u8, bit_depth: u8) -> Ihdr {
+        Ihdr {
+            width: 4,
+            height: 1,
+            bit_depth,
+            color_type,
+            interlace: 0,
+        }
+    }
+
+    fn empty_anc() -> PngAncillary {
+        PngAncillary::default()
+    }
+
+    fn anc_with_trns(trns: Vec<u8>) -> PngAncillary {
+        PngAncillary {
+            trns: Some(trns),
+            ..Default::default()
+        }
+    }
+
+    // ── scale_to_8bit ──
+
+    #[test]
+    fn scale_to_8bit_identity() {
+        // bit_depth=8 hits the `_ => value` fallback
+        assert_eq!(scale_to_8bit(42, 8), 42);
+        assert_eq!(scale_to_8bit(0, 8), 0);
+        assert_eq!(scale_to_8bit(255, 8), 255);
+    }
+
+    #[test]
+    fn scale_to_8bit_1bit() {
+        assert_eq!(scale_to_8bit(0, 1), 0);
+        assert_eq!(scale_to_8bit(1, 1), 255);
+    }
+
+    #[test]
+    fn scale_to_8bit_2bit() {
+        assert_eq!(scale_to_8bit(0, 2), 0);
+        assert_eq!(scale_to_8bit(1, 2), 85);
+        assert_eq!(scale_to_8bit(2, 2), 170);
+        assert_eq!(scale_to_8bit(3, 2), 255);
+    }
+
+    #[test]
+    fn scale_to_8bit_4bit() {
+        assert_eq!(scale_to_8bit(0, 4), 0);
+        assert_eq!(scale_to_8bit(15, 4), 255);
+    }
+
+    // ── output_bytes_per_pixel ──
+
+    #[test]
+    fn output_bpp_gray_variants() {
+        let anc = empty_anc();
+        // Gray8 no tRNS → 1 byte
+        assert_eq!(output_bytes_per_pixel(&make_ihdr(0, 8), &anc), 1);
+        // Gray16 no tRNS → 2 bytes
+        assert_eq!(output_bytes_per_pixel(&make_ihdr(0, 16), &anc), 2);
+        // Gray + tRNS → 4 bytes (RGBA8 or GA16)
+        let anc_trns = anc_with_trns(vec![0, 0]);
+        assert_eq!(output_bytes_per_pixel(&make_ihdr(0, 8), &anc_trns), 4);
+        assert_eq!(output_bytes_per_pixel(&make_ihdr(0, 16), &anc_trns), 4);
+    }
+
+    #[test]
+    fn output_bpp_rgb_variants() {
+        let anc = empty_anc();
+        assert_eq!(output_bytes_per_pixel(&make_ihdr(2, 8), &anc), 3);
+        assert_eq!(output_bytes_per_pixel(&make_ihdr(2, 16), &anc), 6);
+        let anc_trns = anc_with_trns(vec![0; 6]);
+        assert_eq!(output_bytes_per_pixel(&make_ihdr(2, 8), &anc_trns), 4);
+        assert_eq!(output_bytes_per_pixel(&make_ihdr(2, 16), &anc_trns), 8);
+    }
+
+    #[test]
+    fn output_bpp_indexed() {
+        let anc = empty_anc();
+        assert_eq!(output_bytes_per_pixel(&make_ihdr(3, 8), &anc), 3);
+        let anc_trns = anc_with_trns(vec![255]);
+        assert_eq!(output_bytes_per_pixel(&make_ihdr(3, 8), &anc_trns), 4);
+    }
+
+    #[test]
+    fn output_bpp_gray_alpha() {
+        let anc = empty_anc();
+        assert_eq!(output_bytes_per_pixel(&make_ihdr(4, 8), &anc), 4);
+        assert_eq!(output_bytes_per_pixel(&make_ihdr(4, 16), &anc), 4);
+    }
+
+    #[test]
+    fn output_bpp_rgba() {
+        let anc = empty_anc();
+        assert_eq!(output_bytes_per_pixel(&make_ihdr(6, 8), &anc), 4);
+        assert_eq!(output_bytes_per_pixel(&make_ihdr(6, 16), &anc), 8);
+    }
+
+    // ── post_process_row: Gray8 + tRNS ──
+
+    #[test]
+    fn gray8_trns_expansion() {
+        let ihdr = make_ihdr(0, 8);
+        // tRNS gray value = 100 (big-endian u16: [0, 100])
+        let anc = anc_with_trns(vec![0, 100]);
+        // Raw row: 4 gray pixels, second one matches tRNS
+        let raw = vec![50, 100, 200, 100];
+        let mut out = Vec::new();
+        post_process_row(&raw, &ihdr, &anc, &mut out);
+        // Each pixel → RGBA8: [g, g, g, alpha]
+        assert_eq!(out.len(), 16);
+        // pixel 0: g=50, alpha=255
+        assert_eq!(&out[0..4], &[50, 50, 50, 255]);
+        // pixel 1: g=100 matches tRNS → alpha=0
+        assert_eq!(&out[4..8], &[100, 100, 100, 0]);
+        // pixel 2: g=200, alpha=255
+        assert_eq!(&out[8..12], &[200, 200, 200, 255]);
+        // pixel 3: g=100 matches tRNS → alpha=0
+        assert_eq!(&out[12..16], &[100, 100, 100, 0]);
+    }
+
+    #[test]
+    fn gray8_trns_short_data() {
+        // tRNS data shorter than 2 bytes → trns_val defaults to 0
+        let ihdr = make_ihdr(0, 8);
+        let anc = anc_with_trns(vec![]);
+        let raw = vec![0, 1, 0, 255];
+        let mut out = Vec::new();
+        post_process_row(&raw, &ihdr, &anc, &mut out);
+        // pixel 0: g=0 matches tRNS(0) → alpha=0
+        assert_eq!(&out[0..4], &[0, 0, 0, 0]);
+        // pixel 1: g=1, alpha=255
+        assert_eq!(&out[4..8], &[1, 1, 1, 255]);
+    }
+
+    // ── post_process_row: sub-byte Gray + tRNS (short data fallback) ──
+
+    #[test]
+    fn gray_subbyte_trns_short_data() {
+        // 1-bit gray, width=4, tRNS with short data → trns_val=0
+        let ihdr = Ihdr {
+            width: 8,
+            height: 1,
+            bit_depth: 1,
+            color_type: 0,
+            interlace: 0,
+        };
+        // Short tRNS → defaults to 0 → val 0 is transparent
+        let anc = anc_with_trns(vec![]);
+        // 8 pixels packed in 1 byte: 0b10101010 = pixels [1,0,1,0,1,0,1,0]
+        let raw = vec![0b10101010];
+        let mut out = Vec::new();
+        post_process_row(&raw, &ihdr, &anc, &mut out);
+        assert_eq!(out.len(), 32); // 8 pixels × 4 bytes
+        // pixel 0: val=1 → g=255, alpha=255
+        assert_eq!(&out[0..4], &[255, 255, 255, 255]);
+        // pixel 1: val=0 → g=0, alpha=0 (transparent)
+        assert_eq!(&out[4..8], &[0, 0, 0, 0]);
+    }
+
+    // ── post_process_row: Gray16 + tRNS (short data fallback) ──
+
+    #[test]
+    fn gray16_trns_short_data() {
+        let ihdr = make_ihdr(0, 16);
+        // Short tRNS → trns_val=0
+        let anc = anc_with_trns(vec![5]); // only 1 byte, needs 2
+        // 4 pixels: big-endian gray16
+        let raw: Vec<u8> = [0u16, 100, 200, 0]
+            .iter()
+            .flat_map(|v| v.to_be_bytes())
+            .collect();
+        let mut out = Vec::new();
+        post_process_row(&raw, &ihdr, &anc, &mut out);
+        // Each pixel → GrayAlpha16 (4 bytes: val_ne + alpha_ne)
+        assert_eq!(out.len(), 16);
+        // pixel 0: val=0 matches tRNS → alpha=0
+        let v0 = u16::from_ne_bytes([out[0], out[1]]);
+        let a0 = u16::from_ne_bytes([out[2], out[3]]);
+        assert_eq!(v0, 0);
+        assert_eq!(a0, 0);
+        // pixel 1: val=100, alpha=65535
+        let a1 = u16::from_ne_bytes([out[6], out[7]]);
+        assert_eq!(a1, 65535);
+    }
+
+    // ── post_process_row: RGB16 + tRNS (short data fallback) ──
+
+    #[test]
+    fn rgb16_trns_short_data() {
+        // Short tRNS (less than 6 bytes) → defaults to (0,0,0)
+        let anc = anc_with_trns(vec![0, 1]);
+        // 1 pixel RGB16 = [0, 0, 0] (matches default tRNS)
+        let raw: Vec<u8> = [0u16, 0, 0].iter().flat_map(|v| v.to_be_bytes()).collect();
+        let mut ihdr1 = make_ihdr(2, 16);
+        ihdr1.width = 1;
+        let mut out = Vec::new();
+        post_process_row(&raw, &ihdr1, &anc, &mut out);
+        // 1 pixel → RGBA16 = 8 bytes
+        assert_eq!(out.len(), 8);
+        // alpha should be 0 (transparent)
+        let a = u16::from_ne_bytes([out[6], out[7]]);
+        assert_eq!(a, 0);
+    }
+
+    // ── post_process_row: RGB8 + tRNS (short data fallback) ──
+
+    #[test]
+    fn rgb8_trns_short_data() {
+        let mut ihdr = make_ihdr(2, 8);
+        ihdr.width = 2;
+        // Short tRNS → defaults to (0,0,0)
+        let anc = anc_with_trns(vec![0, 1, 0]);
+        // 2 pixels: [0,0,0] and [1,2,3]
+        let raw = vec![0, 0, 0, 1, 2, 3];
+        let mut out = Vec::new();
+        post_process_row(&raw, &ihdr, &anc, &mut out);
+        assert_eq!(out.len(), 8); // 2 × RGBA8
+        // pixel 0: matches (0,0,0) → alpha=0
+        assert_eq!(&out[0..4], &[0, 0, 0, 0]);
+        // pixel 1: no match → alpha=255
+        assert_eq!(&out[4..8], &[1, 2, 3, 255]);
+    }
+
+    // ── OutputFormat ──
+
+    #[test]
+    fn output_format_gray_trns_16() {
+        let ihdr = make_ihdr(0, 16);
+        let anc = anc_with_trns(vec![0, 0]);
+        let fmt = OutputFormat::from_ihdr(&ihdr, &anc);
+        assert_eq!(fmt.channels, 2);
+        assert_eq!(fmt.bytes_per_channel, 2);
+    }
+
+    #[test]
+    fn output_format_gray_trns_8() {
+        let ihdr = make_ihdr(0, 8);
+        let anc = anc_with_trns(vec![0, 0]);
+        let fmt = OutputFormat::from_ihdr(&ihdr, &anc);
+        assert_eq!(fmt.channels, 4);
+        assert_eq!(fmt.bytes_per_channel, 1);
+    }
+
+    #[test]
+    fn output_format_all_types() {
+        let anc = empty_anc();
+        // Gray8
+        let f = OutputFormat::from_ihdr(&make_ihdr(0, 8), &anc);
+        assert_eq!((f.channels, f.bytes_per_channel), (1, 1));
+        // Gray16
+        let f = OutputFormat::from_ihdr(&make_ihdr(0, 16), &anc);
+        assert_eq!((f.channels, f.bytes_per_channel), (1, 2));
+        // RGB8
+        let f = OutputFormat::from_ihdr(&make_ihdr(2, 8), &anc);
+        assert_eq!((f.channels, f.bytes_per_channel), (3, 1));
+        // RGB16
+        let f = OutputFormat::from_ihdr(&make_ihdr(2, 16), &anc);
+        assert_eq!((f.channels, f.bytes_per_channel), (3, 2));
+        // RGB8 + tRNS
+        let at = anc_with_trns(vec![0; 6]);
+        let f = OutputFormat::from_ihdr(&make_ihdr(2, 8), &at);
+        assert_eq!((f.channels, f.bytes_per_channel), (4, 1));
+        // RGB16 + tRNS
+        let f = OutputFormat::from_ihdr(&make_ihdr(2, 16), &at);
+        assert_eq!((f.channels, f.bytes_per_channel), (4, 2));
+        // Indexed
+        let f = OutputFormat::from_ihdr(&make_ihdr(3, 8), &anc);
+        assert_eq!((f.channels, f.bytes_per_channel), (3, 1));
+        let f = OutputFormat::from_ihdr(&make_ihdr(3, 8), &at);
+        assert_eq!((f.channels, f.bytes_per_channel), (4, 1));
+        // GrayAlpha8
+        let f = OutputFormat::from_ihdr(&make_ihdr(4, 8), &anc);
+        assert_eq!((f.channels, f.bytes_per_channel), (4, 1));
+        // GrayAlpha16
+        let f = OutputFormat::from_ihdr(&make_ihdr(4, 16), &anc);
+        assert_eq!((f.channels, f.bytes_per_channel), (2, 2));
+        // RGBA8
+        let f = OutputFormat::from_ihdr(&make_ihdr(6, 8), &anc);
+        assert_eq!((f.channels, f.bytes_per_channel), (4, 1));
+        // RGBA16
+        let f = OutputFormat::from_ihdr(&make_ihdr(6, 16), &anc);
+        assert_eq!((f.channels, f.bytes_per_channel), (4, 2));
+    }
+
+    // ── build_pixel_data ──
+
+    #[test]
+    fn build_pixel_data_gray8() {
+        let ihdr = make_ihdr(0, 8);
+        let anc = empty_anc();
+        let pixels = vec![10, 20, 30, 40]; // 4 pixels
+        let result = build_pixel_data(&ihdr, &anc, pixels, 4, 1).unwrap();
+        assert_eq!(result.width(), 4);
+    }
+
+    #[test]
+    fn build_pixel_data_gray8_trns() {
+        let ihdr = make_ihdr(0, 8);
+        let anc = anc_with_trns(vec![0, 10]);
+        // 4 RGBA8 pixels
+        let pixels = vec![10, 10, 10, 0, 20, 20, 20, 255, 10, 10, 10, 0, 30, 30, 30, 255];
+        let result = build_pixel_data(&ihdr, &anc, pixels, 4, 1).unwrap();
+        assert_eq!(result.width(), 4);
+    }
+
+    #[test]
+    fn build_pixel_data_gray16() {
+        let ihdr = make_ihdr(0, 16);
+        let anc = empty_anc();
+        // 4 Gray16 pixels in native endian
+        let pixels: Vec<u8> = [100u16, 200, 300, 400]
+            .iter()
+            .flat_map(|v| v.to_ne_bytes())
+            .collect();
+        let result = build_pixel_data(&ihdr, &anc, pixels, 4, 1).unwrap();
+        assert_eq!(result.width(), 4);
+    }
+
+    #[test]
+    fn build_pixel_data_gray16_trns() {
+        let anc = anc_with_trns(vec![0, 0]);
+        // 2 GrayAlpha16 pixels (4 bytes each, native endian u16 pairs)
+        let mut ihdr2 = make_ihdr(0, 16);
+        ihdr2.width = 2;
+        let pixels: Vec<u8> = [100u16, 65535, 0, 0]
+            .iter()
+            .flat_map(|v| v.to_ne_bytes())
+            .collect();
+        let result = build_pixel_data(&ihdr2, &anc, pixels, 2, 1).unwrap();
+        assert_eq!(result.width(), 2);
+    }
+
+    #[test]
+    fn build_pixel_data_rgb8() {
+        let ihdr = make_ihdr(2, 8);
+        let anc = empty_anc();
+        let pixels = vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 128, 128, 128];
+        let result = build_pixel_data(&ihdr, &anc, pixels, 4, 1).unwrap();
+        assert_eq!(result.width(), 4);
+    }
+
+    #[test]
+    fn build_pixel_data_rgb8_trns() {
+        let ihdr = make_ihdr(2, 8);
+        let anc = anc_with_trns(vec![0; 6]);
+        let pixels = vec![0, 0, 0, 0, 255, 0, 0, 255, 0, 0, 255, 255, 128, 128, 128, 255];
+        let result = build_pixel_data(&ihdr, &anc, pixels, 4, 1).unwrap();
+        assert_eq!(result.width(), 4);
+    }
+
+    #[test]
+    fn build_pixel_data_rgb16() {
+        let anc = empty_anc();
+        let mut ihdr1 = make_ihdr(2, 16);
+        ihdr1.width = 1;
+        let pixels: Vec<u8> = [100u16, 200, 300]
+            .iter()
+            .flat_map(|v| v.to_ne_bytes())
+            .collect();
+        let result = build_pixel_data(&ihdr1, &anc, pixels, 1, 1).unwrap();
+        assert_eq!(result.width(), 1);
+    }
+
+    #[test]
+    fn build_pixel_data_rgb16_trns() {
+        let anc = anc_with_trns(vec![0; 6]);
+        let mut ihdr1 = make_ihdr(2, 16);
+        ihdr1.width = 1;
+        let pixels: Vec<u8> = [100u16, 200, 300, 65535]
+            .iter()
+            .flat_map(|v| v.to_ne_bytes())
+            .collect();
+        let result = build_pixel_data(&ihdr1, &anc, pixels, 1, 1).unwrap();
+        assert_eq!(result.width(), 1);
+    }
+
+    #[test]
+    fn build_pixel_data_indexed_with_trns() {
+        let ihdr = make_ihdr(3, 8);
+        let anc = anc_with_trns(vec![255, 0]);
+        let pixels = vec![255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 128, 128, 128, 128, 255];
+        let result = build_pixel_data(&ihdr, &anc, pixels, 4, 1).unwrap();
+        assert_eq!(result.width(), 4);
+    }
+
+    #[test]
+    fn build_pixel_data_indexed_no_trns() {
+        let ihdr = make_ihdr(3, 8);
+        let anc = empty_anc();
+        let pixels = vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 128, 128, 128];
+        let result = build_pixel_data(&ihdr, &anc, pixels, 4, 1).unwrap();
+        assert_eq!(result.width(), 4);
+    }
+
+    #[test]
+    fn build_pixel_data_gray_alpha_8() {
+        let ihdr = make_ihdr(4, 8);
+        let anc = empty_anc();
+        // GA8 expanded to RGBA8: 4 pixels × 4 bytes
+        let pixels = vec![
+            100, 100, 100, 255, 200, 200, 200, 128, 50, 50, 50, 0, 0, 0, 0, 255,
+        ];
+        let result = build_pixel_data(&ihdr, &anc, pixels, 4, 1).unwrap();
+        assert_eq!(result.width(), 4);
+    }
+
+    #[test]
+    fn build_pixel_data_gray_alpha_16() {
+        let mut ihdr = make_ihdr(4, 16);
+        ihdr.width = 2;
+        let anc = empty_anc();
+        let pixels: Vec<u8> = [100u16, 65535, 200, 0]
+            .iter()
+            .flat_map(|v| v.to_ne_bytes())
+            .collect();
+        let result = build_pixel_data(&ihdr, &anc, pixels, 2, 1).unwrap();
+        assert_eq!(result.width(), 2);
+    }
+
+    #[test]
+    fn build_pixel_data_rgba8() {
+        let ihdr = make_ihdr(6, 8);
+        let anc = empty_anc();
+        let pixels = vec![255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 0, 128, 128, 128, 255];
+        let result = build_pixel_data(&ihdr, &anc, pixels, 4, 1).unwrap();
+        assert_eq!(result.width(), 4);
+    }
+
+    #[test]
+    fn build_pixel_data_rgba16() {
+        let mut ihdr = make_ihdr(6, 16);
+        ihdr.width = 1;
+        let anc = empty_anc();
+        let pixels: Vec<u8> = [100u16, 200, 300, 65535]
+            .iter()
+            .flat_map(|v| v.to_ne_bytes())
+            .collect();
+        let result = build_pixel_data(&ihdr, &anc, pixels, 1, 1).unwrap();
+        assert_eq!(result.width(), 1);
+    }
+
+    // ── unpack functions ──
+
+    #[test]
+    fn unpack_sub_byte_gray_1bit() {
+        // 0b11001100 = pixels [1,1,0,0,1,1,0,0]
+        let raw = vec![0b11001100];
+        let mut out = Vec::new();
+        unpack_sub_byte_gray(&raw, 8, 1, &mut out);
+        assert_eq!(out, vec![255, 255, 0, 0, 255, 255, 0, 0]);
+    }
+
+    #[test]
+    fn unpack_sub_byte_indexed_4bit() {
+        // 0xA3 = high nibble 10, low nibble 3
+        let raw = vec![0xA3];
+        let mut out = Vec::new();
+        unpack_sub_byte_indexed(&raw, 2, 4, &mut out);
+        assert_eq!(out, vec![10, 3]);
+    }
+}

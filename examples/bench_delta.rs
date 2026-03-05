@@ -7,6 +7,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use rgb::Rgba;
+use zencodec_types::PixelBufferConvertExt;
 
 use zenpng::{
     ApngEncodeConfig, ApngEncodeParams, ApngFrameInput, QualityGate, default_quantize_config,
@@ -57,8 +58,12 @@ struct DecodedApng {
 }
 
 fn load_corpus() -> Vec<DecodedApng> {
-    let corpus_dir = Path::new("/mnt/v/output/corpus-builder/apng");
-    let files = sample_files(corpus_dir, 50);
+    let corpus_dir = std::path::PathBuf::from(
+        std::env::var("CORPUS_BUILDER_OUTPUT_DIR")
+            .unwrap_or_else(|_| "/mnt/v/output/corpus-builder".to_string()),
+    )
+    .join("apng");
+    let files = sample_files(&corpus_dir, 50);
     if files.is_empty() {
         eprintln!("No APNG corpus found");
         return Vec::new();
@@ -99,13 +104,14 @@ fn load_corpus() -> Vec<DecodedApng> {
             .iter()
             .map(|f| {
                 let rgba = f.pixels.to_rgba8();
-                let buf: Vec<Rgba<u8>> = rgba.into_buf();
-                for px in &buf {
+                let imgref = rgba.as_imgref();
+                let pixels = *imgref.buf();
+                for px in pixels {
                     if unique.len() <= 256 {
                         unique.insert([px.r, px.g, px.b, px.a]);
                     }
                 }
-                bytemuck::cast_slice::<Rgba<u8>, u8>(&buf).to_vec()
+                bytemuck::cast_slice::<Rgba<u8>, u8>(pixels).to_vec()
             })
             .collect();
 

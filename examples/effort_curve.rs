@@ -5,23 +5,32 @@
 ///
 /// Usage: cargo run --release --example effort_curve [-- /path/to/corpus [MAX_EFFORT]]
 ///
-/// Default corpus: /mnt/v/output/zenpng/test_corpus/
+/// Default corpus: $ZENPNG_OUTPUT_DIR/test_corpus/
 /// Default max effort: 31
 use enough::Unstoppable;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use zencodec_types::PixelBufferConvertExt;
+use zenpixels::descriptor::{ChannelLayout, ChannelType};
 
 fn main() {
-    let corpus_dir = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "/mnt/v/output/zenpng/test_corpus".to_string());
+    let corpus_dir = std::env::args().nth(1).unwrap_or_else(|| {
+        format!(
+            "{}/test_corpus",
+            std::env::var("ZENPNG_OUTPUT_DIR")
+                .unwrap_or_else(|_| "/mnt/v/output/zenpng".to_string())
+        )
+    });
 
     let max_effort: u32 = std::env::args()
         .nth(2)
         .and_then(|s| s.parse().ok())
         .unwrap_or(31);
 
-    let out_dir = PathBuf::from("/mnt/v/output/zenpng/effort_curve");
+    let out_dir = PathBuf::from(
+        std::env::var("ZENPNG_OUTPUT_DIR").unwrap_or_else(|_| "/mnt/v/output/zenpng".to_string()),
+    )
+    .join("effort_curve");
     std::fs::create_dir_all(&out_dir).unwrap();
 
     // Collect PNG files
@@ -93,10 +102,11 @@ fn main() {
             continue;
         }
 
-        let (color_type, bpp) = match &decoded.pixels {
-            zencodec_types::PixelData::Gray8(_) => ("gray8", 1),
-            zencodec_types::PixelData::Rgb8(_) => ("rgb8", 3),
-            zencodec_types::PixelData::Rgba8(_) => ("rgba8", 4),
+        let desc = decoded.pixels.descriptor();
+        let (color_type, bpp) = match (desc.layout(), desc.channel_type()) {
+            (ChannelLayout::Gray, ChannelType::U8) => ("gray8", 1),
+            (ChannelLayout::Rgb, ChannelType::U8) => ("rgb8", 3),
+            (ChannelLayout::Rgba, ChannelType::U8) => ("rgba8", 4),
             _ => {
                 skip += 1;
                 continue;
@@ -117,15 +127,18 @@ fn main() {
                 .with_chromaticities(decoded.info.chromaticities);
 
             let start = std::time::Instant::now();
-            let result = match &decoded.pixels {
-                zencodec_types::PixelData::Rgb8(img) => {
-                    zenpng::encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+            let result = match (desc.layout(), desc.channel_type()) {
+                (ChannelLayout::Rgb, ChannelType::U8) => {
+                    let buf = decoded.pixels.to_rgb8();
+                    zenpng::encode_rgb8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
                 }
-                zencodec_types::PixelData::Rgba8(img) => {
-                    zenpng::encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+                (ChannelLayout::Rgba, ChannelType::U8) => {
+                    let buf = decoded.pixels.to_rgba8();
+                    zenpng::encode_rgba8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
                 }
-                zencodec_types::PixelData::Gray8(img) => {
-                    zenpng::encode_gray8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+                (ChannelLayout::Gray, ChannelType::U8) => {
+                    let buf = decoded.pixels.to_gray8();
+                    zenpng::encode_gray8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
                 }
                 _ => {
                     write!(csv, ",0,0").unwrap();
