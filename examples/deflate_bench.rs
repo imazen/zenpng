@@ -13,9 +13,13 @@ use zenflate::{CompressionLevel, Compressor};
 const EFFORTS: &[(&str, u32)] = &[("zf22", 22), ("zf26", 26), ("zf30", 30)];
 
 fn main() {
-    let dir = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "/home/lilith/work/codec-corpus/clic2025-1024".to_string());
+    let dir = std::env::args().nth(1).unwrap_or_else(|| {
+        format!(
+            "{}/clic2025-1024",
+            std::env::var("CODEC_CORPUS_DIR")
+                .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string())
+        )
+    });
 
     let mut paths: Vec<PathBuf> = Vec::new();
     collect_pngs(Path::new(&dir), &mut paths);
@@ -102,12 +106,7 @@ fn prepare_filtered_idat(path: &Path) -> Option<Vec<u8>> {
     let w = info.width as usize;
     let h = info.height as usize;
 
-    let raw_pixels: Vec<u8> = match &decoded.pixels {
-        zencodec_types::PixelData::Rgb8(img) => bytemuck::cast_slice(img.buf()).to_vec(),
-        zencodec_types::PixelData::Rgba8(img) => bytemuck::cast_slice(img.buf()).to_vec(),
-        zencodec_types::PixelData::Gray8(img) => img.buf().iter().map(|g| g.value()).collect(),
-        _ => return None,
-    };
+    let raw_pixels = decoded.pixels.copy_to_contiguous_bytes();
 
     let bpp = raw_pixels.len() / (w * h);
     let row_bytes = w * bpp;

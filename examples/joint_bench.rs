@@ -10,6 +10,7 @@ use std::time::Instant;
 use imgref::ImgVec;
 use rgb::Rgba;
 
+use zencodec_types::PixelBufferConvertExt;
 use zenpng::{EncodeConfig, PngDecodeConfig, decode, encode_indexed_rgba8};
 
 use zenquant::{OutputFormat, Quality, QuantizeConfig};
@@ -19,8 +20,9 @@ fn load_png_as_rgba(path: &Path) -> Option<ImgVec<Rgba<u8>>> {
     let decoded = decode(&data, &PngDecodeConfig::none(), &enough::Unstoppable).ok()?;
     let w = decoded.info.width as usize;
     let h = decoded.info.height as usize;
-    let rgba_img = decoded.pixels.into_rgba8();
+    let rgba_img = decoded.pixels.to_rgba8();
     let pixels: Vec<Rgba<u8>> = rgba_img
+        .as_imgref()
         .buf()
         .iter()
         .map(|c| Rgba {
@@ -126,11 +128,15 @@ fn main() {
     let dirs: Vec<PathBuf> = if args.len() > 1 {
         vec![PathBuf::from(&args[1])]
     } else {
-        vec![
-            PathBuf::from("/home/lilith/work/codec-corpus/imageflow/test_inputs"),
-            PathBuf::from("/home/lilith/work/codec-corpus/kadid10k"),
-            PathBuf::from("/home/lilith/work/codec-corpus/CID22/CID22-512/validation"),
-        ]
+        {
+            let base = std::env::var("CODEC_CORPUS_DIR")
+                .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string());
+            vec![
+                PathBuf::from(format!("{base}/imageflow/test_inputs")),
+                PathBuf::from(format!("{base}/kadid10k")),
+                PathBuf::from(format!("{base}/CID22/CID22-512/validation")),
+            ]
+        }
     };
 
     for dir in &dirs {

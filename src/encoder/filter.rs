@@ -295,11 +295,11 @@ fn filter_image_brute(
             eval_buf.push(f);
             eval_buf.extend_from_slice(&candidate_data[f as usize]);
 
-            if let Ok(len) = eval_compressor.zlib_compress(&eval_buf, &mut compress_buf, cancel) {
-                if len < best_size {
-                    best_size = len;
-                    best_f = f;
-                }
+            if let Ok(len) = eval_compressor.zlib_compress(&eval_buf, &mut compress_buf, cancel)
+                && len < best_size
+            {
+                best_size = len;
+                best_f = f;
             }
         }
 
@@ -953,11 +953,11 @@ fn filter_image_blockwise(
                 }
             }
 
-            if let Ok(len) = eval_compressor.zlib_compress(&eval_buf, &mut compress_buf, cancel) {
-                if len < best_size {
-                    best_size = len;
-                    best_combo = combo;
-                }
+            if let Ok(len) = eval_compressor.zlib_compress(&eval_buf, &mut compress_buf, cancel)
+                && len < best_size
+            {
+                best_size = len;
+                best_combo = combo;
             }
         }
 
@@ -1263,4 +1263,680 @@ fn bigram_entropy_score(data: &[u8], counts: &mut [u32], nonzero: &mut Vec<u16>)
         counts[key as usize] = 0; // Reset as we go — no fill(0) needed
     }
     entropy
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a simple test image: `height` rows × `row_bytes` bytes.
+    /// Uses a gradient pattern so filters produce different outputs.
+    fn make_test_image(width: usize, height: usize, bpp: usize) -> (Vec<u8>, usize) {
+        let row_bytes = width * bpp;
+        let mut data = vec![0u8; row_bytes * height];
+        for y in 0..height {
+            for x in 0..row_bytes {
+                data[y * row_bytes + x] = ((x * 7 + y * 13) % 256) as u8;
+            }
+        }
+        (data, row_bytes)
+    }
+
+    // ---- apply_filter tests ----
+
+    #[test]
+    fn apply_filter_none() {
+        let row = [10, 20, 30, 40];
+        let prev = [0, 0, 0, 0];
+        let mut out = [0u8; 4];
+        apply_filter(0, &row, &prev, 3, &mut out);
+        assert_eq!(out, row);
+    }
+
+    #[test]
+    fn apply_filter_sub() {
+        let row = [10, 20, 30, 40, 50, 60];
+        let prev = [0u8; 6];
+        let mut out = [0u8; 6];
+        apply_filter(1, &row, &prev, 3, &mut out);
+        // First 3 bytes: same as input
+        assert_eq!(out[..3], [10, 20, 30]);
+        // Remaining: row[i] - row[i-3]
+        assert_eq!(out[3], 40u8.wrapping_sub(10));
+        assert_eq!(out[4], 50u8.wrapping_sub(20));
+        assert_eq!(out[5], 60u8.wrapping_sub(30));
+    }
+
+    #[test]
+    fn apply_filter_up() {
+        let row = [10, 20, 30];
+        let prev = [5, 10, 15];
+        let mut out = [0u8; 3];
+        apply_filter(2, &row, &prev, 3, &mut out);
+        assert_eq!(out, [5, 10, 15]);
+    }
+
+    #[test]
+    fn apply_filter_avg() {
+        let row = [10, 20, 30, 40];
+        let prev = [0, 0, 0, 0];
+        let mut out = [0u8; 4];
+        apply_filter(3, &row, &prev, 3, &mut out);
+        // First bpp bytes: row[i] - prev[i]/2
+        assert_eq!(out[0], 10);
+        assert_eq!(out[1], 20);
+        assert_eq!(out[2], 30);
+        // After bpp: row[i] - floor((row[i-bpp] + prev[i]) / 2)
+        assert_eq!(out[3], 40u8.wrapping_sub((10u16 >> 1) as u8));
+    }
+
+    #[test]
+    fn apply_filter_paeth() {
+        let row = [10, 20, 30, 40];
+        let prev = [0, 0, 0, 0];
+        let mut out = [0u8; 4];
+        apply_filter(4, &row, &prev, 3, &mut out);
+        // First bpp bytes: paeth(0, prev[i], 0)
+        assert_eq!(out[0], 10u8.wrapping_sub(paeth_predictor(0, 0, 0)));
+        assert_eq!(out[1], 20u8.wrapping_sub(paeth_predictor(0, 0, 0)));
+        // After bpp: paeth(row[i-bpp], prev[i], prev[i-bpp])
+        assert_eq!(out[3], 40u8.wrapping_sub(paeth_predictor(10, 0, 0)));
+    }
+
+    #[test]
+    fn apply_filter_unknown_is_none() {
+        let row = [10, 20, 30];
+        let prev = [0u8; 3];
+        let mut out = [0u8; 3];
+        apply_filter(255, &row, &prev, 3, &mut out);
+        assert_eq!(out, row);
+    }
+
+    // ---- Heuristic scoring tests ----
+
+    #[test]
+    fn sav_score_all_zeros() {
+        assert_eq!(sav_score(&[0, 0, 0]), 0);
+    }
+
+    #[test]
+    fn sav_score_mixed() {
+        // Values <= 128 contribute value; > 128 contribute (256 - value)
+        let score = sav_score(&[1, 255, 128, 129]);
+        // 1 + 1 + 128 + 127 = 257
+        assert_eq!(score, 257);
+    }
+
+    #[test]
+    fn entropy_score_empty() {
+        assert_eq!(entropy_score(&[]), 0.0);
+    }
+
+    #[test]
+    fn entropy_score_uniform() {
+        // All same byte → 0 entropy
+        assert_eq!(entropy_score(&[42, 42, 42, 42]), 0.0);
+    }
+
+    #[test]
+    fn entropy_score_two_symbols() {
+        // Equal frequency of two symbols → 1.0 bit
+        let e = entropy_score(&[0, 1, 0, 1]);
+        assert!((e - 1.0).abs() < 0.01, "expected ~1.0, got {e}");
+    }
+
+    #[test]
+    fn bigrams_score_short() {
+        let mut seen = vec![0u64; 1024];
+        let mut touched = Vec::new();
+        assert_eq!(bigrams_score(&[42], &mut seen, &mut touched), 0);
+    }
+
+    #[test]
+    fn bigrams_score_unique_pairs() {
+        let mut seen = vec![0u64; 1024];
+        let mut touched = Vec::new();
+        // [0,1,2,3] has 3 unique bigrams: (0,1), (1,2), (2,3)
+        let score = bigrams_score(&[0, 1, 2, 3], &mut seen, &mut touched);
+        assert_eq!(score, 3);
+        // Verify reset worked
+        assert!(seen.iter().all(|&w| w == 0));
+    }
+
+    #[test]
+    fn bigrams_score_repeated() {
+        let mut seen = vec![0u64; 1024];
+        let mut touched = Vec::new();
+        // [0,1,0,1] has 2 unique bigrams: (0,1), (1,0)
+        let score = bigrams_score(&[0, 1, 0, 1], &mut seen, &mut touched);
+        assert_eq!(score, 2);
+    }
+
+    #[test]
+    fn bigram_entropy_short() {
+        let mut counts = vec![0u32; 65536];
+        let mut nonzero = Vec::new();
+        assert_eq!(bigram_entropy_score(&[42], &mut counts, &mut nonzero), 0.0);
+    }
+
+    #[test]
+    fn bigram_entropy_resets_counts() {
+        let mut counts = vec![0u32; 65536];
+        let mut nonzero = Vec::new();
+        bigram_entropy_score(&[0, 1, 2, 3], &mut counts, &mut nonzero);
+        // All counts should be reset to 0
+        assert!(counts.iter().all(|&c| c == 0));
+    }
+
+    // ---- Strategy: Single ----
+
+    #[test]
+    fn filter_image_single_none() {
+        let (data, row_bytes) = make_test_image(4, 3, 3);
+        let mut out = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            3,
+            3,
+            Strategy::Single(0),
+            &Unstoppable,
+            &mut out,
+        );
+        // Each row: 1 filter byte (0) + row_bytes data
+        assert_eq!(out.len(), 3 * (1 + row_bytes));
+        for y in 0..3 {
+            let offset = y * (1 + row_bytes);
+            assert_eq!(out[offset], 0); // filter byte
+            // Filter 0 (None) → data is unchanged
+            assert_eq!(
+                &out[offset + 1..offset + 1 + row_bytes],
+                &data[y * row_bytes..(y + 1) * row_bytes]
+            );
+        }
+    }
+
+    #[test]
+    fn filter_image_single_paeth() {
+        let (data, row_bytes) = make_test_image(4, 3, 3);
+        let mut out = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            3,
+            3,
+            Strategy::Single(4),
+            &Unstoppable,
+            &mut out,
+        );
+        assert_eq!(out.len(), 3 * (1 + row_bytes));
+        for y in 0..3 {
+            assert_eq!(out[y * (1 + row_bytes)], 4);
+        }
+    }
+
+    // ---- Strategy: Adaptive ----
+
+    #[test]
+    fn filter_image_adaptive_minsum() {
+        let (data, row_bytes) = make_test_image(4, 3, 3);
+        let mut out = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            3,
+            3,
+            Strategy::Adaptive(AdaptiveHeuristic::MinSum),
+            &Unstoppable,
+            &mut out,
+        );
+        assert_eq!(out.len(), 3 * (1 + row_bytes));
+        // Each row's first byte should be a valid filter (0-4)
+        for y in 0..3 {
+            assert!(out[y * (1 + row_bytes)] <= 4);
+        }
+    }
+
+    #[test]
+    fn filter_image_adaptive_entropy() {
+        let (data, row_bytes) = make_test_image(4, 3, 3);
+        let mut out = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            3,
+            3,
+            Strategy::Adaptive(AdaptiveHeuristic::Entropy),
+            &Unstoppable,
+            &mut out,
+        );
+        assert_eq!(out.len(), 3 * (1 + row_bytes));
+    }
+
+    #[test]
+    fn filter_image_adaptive_bigrams() {
+        let (data, row_bytes) = make_test_image(8, 4, 3);
+        let mut out = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            4,
+            3,
+            Strategy::Adaptive(AdaptiveHeuristic::Bigrams),
+            &Unstoppable,
+            &mut out,
+        );
+        assert_eq!(out.len(), 4 * (1 + row_bytes));
+    }
+
+    #[test]
+    fn filter_image_adaptive_bigent() {
+        let (data, row_bytes) = make_test_image(8, 4, 3);
+        let mut out = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            4,
+            3,
+            Strategy::Adaptive(AdaptiveHeuristic::BigEnt),
+            &Unstoppable,
+            &mut out,
+        );
+        assert_eq!(out.len(), 4 * (1 + row_bytes));
+    }
+
+    // ---- Strategy: BruteForce ----
+
+    #[test]
+    fn filter_image_bruteforce() {
+        let (data, row_bytes) = make_test_image(4, 3, 3);
+        let mut out = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            3,
+            3,
+            Strategy::BruteForce {
+                context_rows: 2,
+                eval_level: 1,
+            },
+            &Unstoppable,
+            &mut out,
+        );
+        assert_eq!(out.len(), 3 * (1 + row_bytes));
+        for y in 0..3 {
+            assert!(out[y * (1 + row_bytes)] <= 4);
+        }
+    }
+
+    // ---- Strategy: BruteForceBlock ----
+
+    #[test]
+    fn filter_image_blockwise_basic() {
+        let (data, row_bytes) = make_test_image(4, 4, 3);
+        let mut out = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            4,
+            3,
+            Strategy::BruteForceBlock {
+                context_rows: 2,
+                eval_level: 1,
+            },
+            &Unstoppable,
+            &mut out,
+        );
+        assert_eq!(out.len(), 4 * (1 + row_bytes));
+        for y in 0..4 {
+            assert!(out[y * (1 + row_bytes)] <= 4);
+        }
+    }
+
+    #[test]
+    fn filter_image_blockwise_zero_height() {
+        let mut out = Vec::new();
+        filter_image(
+            &[],
+            12,
+            0,
+            3,
+            Strategy::BruteForceBlock {
+                context_rows: 2,
+                eval_level: 1,
+            },
+            &Unstoppable,
+            &mut out,
+        );
+        assert!(out.is_empty());
+    }
+
+    // ---- Strategy: BruteForceFork ----
+
+    #[test]
+    fn filter_image_brute_fork_basic() {
+        let (data, row_bytes) = make_test_image(4, 3, 3);
+        let mut out = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            3,
+            3,
+            Strategy::BruteForceFork { eval_level: 1 },
+            &Unstoppable,
+            &mut out,
+        );
+        assert_eq!(out.len(), 3 * (1 + row_bytes));
+        for y in 0..3 {
+            assert!(out[y * (1 + row_bytes)] <= 4);
+        }
+    }
+
+    // ---- Strategy: AdaptiveFork ----
+
+    #[test]
+    fn filter_image_adaptive_fork_basic() {
+        let (data, row_bytes) = make_test_image(4, 3, 3);
+        let mut out = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            3,
+            3,
+            Strategy::AdaptiveFork {
+                eval_level: 1,
+                narrow_to: 2,
+            },
+            &Unstoppable,
+            &mut out,
+        );
+        assert_eq!(out.len(), 3 * (1 + row_bytes));
+        for y in 0..3 {
+            assert!(out[y * (1 + row_bytes)] <= 4);
+        }
+    }
+
+    #[test]
+    fn filter_image_adaptive_fork_narrow_to_1() {
+        let (data, row_bytes) = make_test_image(4, 3, 3);
+        let mut out = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            3,
+            3,
+            Strategy::AdaptiveFork {
+                eval_level: 1,
+                narrow_to: 1,
+            },
+            &Unstoppable,
+            &mut out,
+        );
+        assert_eq!(out.len(), 3 * (1 + row_bytes));
+    }
+
+    #[test]
+    fn filter_image_adaptive_fork_many_rows() {
+        // Test adaptive score decay + periodic reactivation (every 16 rows)
+        let (data, row_bytes) = make_test_image(4, 32, 3);
+        let mut out = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            32,
+            3,
+            Strategy::AdaptiveFork {
+                eval_level: 1,
+                narrow_to: 2,
+            },
+            &Unstoppable,
+            &mut out,
+        );
+        assert_eq!(out.len(), 32 * (1 + row_bytes));
+    }
+
+    // ---- Strategy: BruteForceBeam ----
+
+    #[test]
+    fn filter_image_beam_basic() {
+        let (data, row_bytes) = make_test_image(4, 3, 3);
+        let mut out = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            3,
+            3,
+            Strategy::BruteForceBeam {
+                eval_level: 1,
+                beam_width: 2,
+            },
+            &Unstoppable,
+            &mut out,
+        );
+        assert_eq!(out.len(), 3 * (1 + row_bytes));
+        for y in 0..3 {
+            assert!(out[y * (1 + row_bytes)] <= 4);
+        }
+    }
+
+    #[test]
+    fn filter_image_beam_zero_height() {
+        let mut out = Vec::new();
+        filter_image(
+            &[],
+            12,
+            0,
+            3,
+            Strategy::BruteForceBeam {
+                eval_level: 1,
+                beam_width: 2,
+            },
+            &Unstoppable,
+            &mut out,
+        );
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn filter_image_beam_width_1() {
+        // beam_width=1 should behave like BruteForceFork
+        let (data, row_bytes) = make_test_image(4, 3, 3);
+        let mut out = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            3,
+            3,
+            Strategy::BruteForceBeam {
+                eval_level: 1,
+                beam_width: 1,
+            },
+            &Unstoppable,
+            &mut out,
+        );
+        assert_eq!(out.len(), 3 * (1 + row_bytes));
+    }
+
+    // ---- precompute_all_filters ----
+
+    #[test]
+    fn precompute_all_filters_basic() {
+        let (data, row_bytes) = make_test_image(4, 2, 3);
+        let pc = precompute_all_filters(&data, row_bytes, 2, 3);
+        assert_eq!(pc.len(), 5 * 2 * row_bytes);
+
+        // Filter 0 (None) should be identical to raw row
+        for y in 0..2 {
+            let row = &data[y * row_bytes..(y + 1) * row_bytes];
+            let filtered = precomputed_row(&pc, row_bytes, y, 0);
+            assert_eq!(filtered, row);
+        }
+    }
+
+    // ---- filter_image_from_precomputed ----
+
+    #[test]
+    fn from_precomputed_single() {
+        let (data, row_bytes) = make_test_image(4, 3, 3);
+        let pc = precompute_all_filters(&data, row_bytes, 3, 3);
+
+        // Compare direct filter_image vs from_precomputed for Single(4)
+        let mut direct = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            3,
+            3,
+            Strategy::Single(4),
+            &Unstoppable,
+            &mut direct,
+        );
+
+        let mut precomp = Vec::new();
+        let mut scratch = HeuristicScratch::new_universal();
+        filter_image_from_precomputed(
+            &pc,
+            row_bytes,
+            3,
+            Strategy::Single(4),
+            &mut scratch,
+            &mut precomp,
+        );
+
+        assert_eq!(direct, precomp);
+    }
+
+    #[test]
+    fn from_precomputed_adaptive() {
+        let (data, row_bytes) = make_test_image(4, 3, 3);
+        let pc = precompute_all_filters(&data, row_bytes, 3, 3);
+
+        let mut direct = Vec::new();
+        filter_image(
+            &data,
+            row_bytes,
+            3,
+            3,
+            Strategy::Adaptive(AdaptiveHeuristic::MinSum),
+            &Unstoppable,
+            &mut direct,
+        );
+
+        let mut precomp = Vec::new();
+        let mut scratch = HeuristicScratch::new_universal();
+        filter_image_from_precomputed(
+            &pc,
+            row_bytes,
+            3,
+            Strategy::Adaptive(AdaptiveHeuristic::MinSum),
+            &mut scratch,
+            &mut precomp,
+        );
+
+        assert_eq!(direct, precomp);
+    }
+
+    // ---- learn_block_size ----
+
+    #[test]
+    fn learn_block_size_small() {
+        // Small images (<=64 rows): budget 50K
+        // B=5: 3125 * ceil(10/5) = 6250 ≤ 50K → should get 5
+        assert!(learn_block_size(10) >= 2);
+        assert!(learn_block_size(10) <= 5);
+    }
+
+    #[test]
+    fn learn_block_size_large() {
+        // Large: budget 200K
+        // B=2: 25 * ceil(1000/2) = 12500 ≤ 200K → fits
+        let b = learn_block_size(1000);
+        assert!(b >= 2);
+        assert!(b <= 5);
+    }
+
+    // ---- HeuristicScratch ----
+
+    #[test]
+    fn scratch_new_bigrams() {
+        let s = HeuristicScratch::new(AdaptiveHeuristic::Bigrams);
+        assert_eq!(s.bigram_seen.len(), 1024);
+        assert!(s.bigram_counts.is_empty());
+    }
+
+    #[test]
+    fn scratch_new_bigent() {
+        let s = HeuristicScratch::new(AdaptiveHeuristic::BigEnt);
+        assert!(s.bigram_seen.is_empty());
+        assert_eq!(s.bigram_counts.len(), 65536);
+    }
+
+    #[test]
+    fn scratch_new_minsum() {
+        let s = HeuristicScratch::new(AdaptiveHeuristic::MinSum);
+        assert!(s.bigram_seen.is_empty());
+        assert!(s.bigram_counts.is_empty());
+    }
+
+    #[test]
+    fn scratch_universal() {
+        let s = HeuristicScratch::new_universal();
+        assert_eq!(s.bigram_seen.len(), 1024);
+        assert_eq!(s.bigram_counts.len(), 65536);
+    }
+
+    // ---- paeth_predictor ----
+
+    #[test]
+    fn paeth_predictor_basic() {
+        // When all inputs are the same, p = a+b-c = a, so pa=0 → returns a
+        assert_eq!(paeth_predictor(10, 10, 10), 10);
+    }
+
+    #[test]
+    fn paeth_predictor_zero() {
+        assert_eq!(paeth_predictor(0, 0, 0), 0);
+    }
+
+    #[test]
+    fn paeth_predictor_left_wins() {
+        // a=100, b=0, c=0: p=100, pa=0, pb=100, pc=100 → returns a=100
+        assert_eq!(paeth_predictor(100, 0, 0), 100);
+    }
+
+    #[test]
+    fn paeth_predictor_above_wins() {
+        // a=0, b=100, c=0: p=100, pa=100, pb=0, pc=100 → returns b=100
+        assert_eq!(paeth_predictor(0, 100, 0), 100);
+    }
+
+    // ---- Strategy constants ----
+
+    #[test]
+    fn strategy_constants_sizes() {
+        assert_eq!(HEURISTIC_STRATEGIES.len(), 9);
+        assert_eq!(FAST_STRATEGIES.len(), 5);
+        assert_eq!(MINIMAL_STRATEGIES.len(), 3);
+    }
+
+    // ---- bpp=4 (RGBA) coverage ----
+
+    #[test]
+    fn filter_image_bpp4() {
+        let (data, row_bytes) = make_test_image(4, 3, 4);
+        for strategy in [
+            Strategy::Single(0),
+            Strategy::Single(4),
+            Strategy::Adaptive(AdaptiveHeuristic::MinSum),
+            Strategy::BruteForce {
+                context_rows: 1,
+                eval_level: 1,
+            },
+            Strategy::BruteForceFork { eval_level: 1 },
+        ] {
+            let mut out = Vec::new();
+            filter_image(&data, row_bytes, 3, 4, strategy, &Unstoppable, &mut out);
+            assert_eq!(out.len(), 3 * (1 + row_bytes));
+        }
+    }
 }

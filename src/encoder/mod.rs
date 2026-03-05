@@ -470,3 +470,325 @@ pub(crate) fn truncate_trns(palette_alpha: Option<&[u8]>) -> Option<Vec<u8>> {
     let last_non_opaque = alpha.iter().rposition(|&a| a != 255)?;
     Some(alpha[..=last_non_opaque].to_vec())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use enough::Unstoppable;
+
+    fn default_opts() -> CompressOptions<'static> {
+        CompressOptions {
+            parallel: false,
+            cancel: &Unstoppable,
+            deadline: &Unstoppable,
+            remaining_ns: None,
+        }
+    }
+
+    // ── select_bit_depth ────────────────────────────────────────────
+
+    #[test]
+    fn select_bit_depth_boundaries() {
+        assert_eq!(select_bit_depth(1), 1);
+        assert_eq!(select_bit_depth(2), 1);
+        assert_eq!(select_bit_depth(3), 2);
+        assert_eq!(select_bit_depth(4), 2);
+        assert_eq!(select_bit_depth(5), 4);
+        assert_eq!(select_bit_depth(16), 4);
+        assert_eq!(select_bit_depth(17), 8);
+        assert_eq!(select_bit_depth(256), 8);
+    }
+
+    // ── packed_row_bytes ────────────────────────────────────────────
+
+    #[test]
+    fn packed_row_bytes_all_depths() {
+        assert_eq!(packed_row_bytes(8, 8), 8);
+        assert_eq!(packed_row_bytes(8, 4), 4);
+        assert_eq!(packed_row_bytes(8, 2), 2);
+        assert_eq!(packed_row_bytes(8, 1), 1);
+        // Non-aligned widths
+        assert_eq!(packed_row_bytes(3, 4), 2); // 3 pixels @ 4bpp = 2 bytes
+        assert_eq!(packed_row_bytes(5, 2), 2); // 5 pixels @ 2bpp = 2 bytes
+        assert_eq!(packed_row_bytes(9, 1), 2); // 9 pixels @ 1bpp = 2 bytes
+    }
+
+    // ── pack_all_rows ───────────────────────────────────────────────
+
+    #[test]
+    fn pack_8bit_is_identity() {
+        let indices = vec![0u8, 1, 2, 3, 4, 5];
+        let packed = pack_all_rows(&indices, 3, 2, 8);
+        assert_eq!(packed, indices);
+    }
+
+    #[test]
+    fn pack_4bit() {
+        // 4 pixels: 0, 15, 3, 12
+        let indices = vec![0, 15, 3, 12];
+        let packed = pack_all_rows(&indices, 4, 1, 4);
+        // MSB first: [0<<4|15, 3<<4|12] = [0x0F, 0x3C]
+        assert_eq!(packed, vec![0x0F, 0x3C]);
+    }
+
+    #[test]
+    fn pack_2bit() {
+        // 4 pixels: 0, 1, 2, 3
+        let indices = vec![0, 1, 2, 3];
+        let packed = pack_all_rows(&indices, 4, 1, 2);
+        // MSB first: 0<<6 | 1<<4 | 2<<2 | 3<<0 = 0b00011011 = 0x1B
+        assert_eq!(packed, vec![0x1B]);
+    }
+
+    #[test]
+    fn pack_1bit() {
+        // 8 pixels: alternating 0,1
+        let indices = vec![0, 1, 0, 1, 0, 1, 0, 1];
+        let packed = pack_all_rows(&indices, 8, 1, 1);
+        // MSB first: 01010101 = 0x55
+        assert_eq!(packed, vec![0x55]);
+    }
+
+    // ── truncate_trns ───────────────────────────────────────────────
+
+    #[test]
+    fn truncate_trns_none() {
+        assert!(truncate_trns(None).is_none());
+    }
+
+    #[test]
+    fn truncate_trns_all_opaque() {
+        assert!(truncate_trns(Some(&[255, 255, 255])).is_none());
+    }
+
+    #[test]
+    fn truncate_trns_truncates_trailing_opaque() {
+        let alpha = [0, 128, 255, 255, 255];
+        let result = truncate_trns(Some(&alpha)).unwrap();
+        assert_eq!(result, vec![0, 128]);
+    }
+
+    #[test]
+    fn truncate_trns_single_transparent() {
+        let alpha = [0, 255, 255];
+        let result = truncate_trns(Some(&alpha)).unwrap();
+        assert_eq!(result, vec![0]);
+    }
+
+    // ── write_indexed_png error paths ───────────────────────────────
+
+    #[test]
+    fn indexed_png_empty_palette_error() {
+        let result = write_indexed_png(
+            &[0; 4],
+            2,
+            2,
+            &[], // 0 colors
+            None,
+            &PngWriteMetadata::from_metadata(None),
+            1,
+            default_opts(),
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("1-256"));
+    }
+
+    #[test]
+    fn indexed_png_oversized_palette_error() {
+        let palette = vec![0u8; 257 * 3]; // 257 colors
+        let result = write_indexed_png(
+            &[0; 4],
+            2,
+            2,
+            &palette,
+            None,
+            &PngWriteMetadata::from_metadata(None),
+            1,
+            default_opts(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn indexed_png_buffer_too_small_error() {
+        let palette = vec![0u8; 3]; // 1 color
+        let result = write_indexed_png(
+            &[0; 2], // too small for 2x2
+            2,
+            2,
+            &palette,
+            None,
+            &PngWriteMetadata::from_metadata(None),
+            1,
+            default_opts(),
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too small"));
+    }
+
+    #[test]
+    fn indexed_png_valid_roundtrip() {
+        let palette = vec![255, 0, 0, 0, 255, 0]; // red, green
+        let indices = vec![0, 1, 1, 0];
+        let result = write_indexed_png(
+            &indices,
+            2,
+            2,
+            &palette,
+            None,
+            &PngWriteMetadata::from_metadata(None),
+            1,
+            default_opts(),
+        );
+        assert!(result.is_ok());
+        let png = result.unwrap();
+        assert!(png[..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    }
+
+    // ── write_truecolor_png error paths ─────────────────────────────
+
+    #[test]
+    fn truecolor_png_unsupported_color_type() {
+        let result = write_truecolor_png(
+            &[0; 12],
+            2,
+            2,
+            5, // invalid color type
+            8,
+            None,
+            &PngWriteMetadata::from_metadata(None),
+            1,
+            default_opts(),
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unsupported"));
+    }
+
+    #[test]
+    fn truecolor_png_buffer_too_small() {
+        let result = write_truecolor_png(
+            &[0; 4], // too small for 2x2 RGB
+            2,
+            2,
+            2, // RGB
+            8,
+            None,
+            &PngWriteMetadata::from_metadata(None),
+            1,
+            default_opts(),
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too small"));
+    }
+
+    #[test]
+    fn truecolor_png_effort_0_store_path() {
+        // Effort 0 takes a different fast path (no compression)
+        let pixels = vec![128u8; 2 * 2 * 3]; // 2x2 RGB
+        let result = write_truecolor_png(
+            &pixels,
+            2,
+            2,
+            2, // RGB
+            8,
+            None,
+            &PngWriteMetadata::from_metadata(None),
+            0,
+            default_opts(),
+        );
+        let png = result.unwrap();
+        // Verify valid PNG signature
+        assert!(png[..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        // Verify it decodes
+        let decoded = crate::decode(&png, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+        assert_eq!(decoded.info.width, 2);
+    }
+
+    #[test]
+    fn truecolor_png_16bit_path() {
+        let pixels = vec![0u8; 2 * 2 * 6]; // 2x2 RGB16
+        let result = write_truecolor_png(
+            &pixels,
+            2,
+            2,
+            2,  // RGB
+            16, // 16-bit
+            None,
+            &PngWriteMetadata::from_metadata(None),
+            1,
+            default_opts(),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn truecolor_png_grayscale_alpha() {
+        let pixels = vec![128u8; 2 * 2 * 2]; // 2x2 GrayscaleAlpha
+        let result = write_truecolor_png(
+            &pixels,
+            2,
+            2,
+            4, // GrayscaleAlpha
+            8,
+            None,
+            &PngWriteMetadata::from_metadata(None),
+            1,
+            default_opts(),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn truecolor_png_with_trns() {
+        let pixels = vec![0u8; 2 * 2 * 3]; // 2x2 RGB
+        let trns = [0u8, 0, 0, 0, 0, 0]; // transparent black
+        let result = write_truecolor_png(
+            &pixels,
+            2,
+            2,
+            2, // RGB
+            8,
+            Some(&trns),
+            &PngWriteMetadata::from_metadata(None),
+            1,
+            default_opts(),
+        );
+        assert!(result.is_ok());
+    }
+
+    // ── Sub-byte grayscale path ─────────────────────────────────────
+
+    #[test]
+    fn subbyte_grayscale_4bit_roundtrip() {
+        // Create pixel data with 4-bit values (0-15)
+        let pixels: Vec<u8> = (0..16).collect();
+        let result = write_truecolor_png(
+            &pixels,
+            4,
+            4,
+            0, // Grayscale
+            4, // 4-bit
+            None,
+            &PngWriteMetadata::from_metadata(None),
+            1,
+            default_opts(),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn subbyte_grayscale_buffer_too_small() {
+        let result = write_truecolor_png(
+            &[0; 2], // too small for 4x4
+            4,
+            4,
+            0, // Grayscale
+            4, // 4-bit
+            None,
+            &PngWriteMetadata::from_metadata(None),
+            1,
+            default_opts(),
+        );
+        assert!(result.is_err());
+    }
+}

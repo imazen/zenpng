@@ -7,7 +7,10 @@
 use std::path::{Path, PathBuf};
 
 use enough::Unstoppable;
-use zencodec_types::{MetadataView, PixelData};
+use zencodec_types::MetadataView;
+use zencodec_types::PixelBufferConvertExt;
+use zenpixels::PixelBuffer;
+use zenpixels::descriptor::{ChannelLayout, ChannelType};
 use zenpng::{EncodeConfig, PngInfo};
 
 fn main() {
@@ -156,23 +159,43 @@ fn build_metadata(info: &PngInfo) -> Option<MetadataView<'_>> {
 }
 
 fn reencode(
-    pixels: &PixelData,
+    pixels: &PixelBuffer,
     meta: Option<&MetadataView<'_>>,
     config: &EncodeConfig,
 ) -> Result<Vec<u8>, zenpng::PngError> {
     let u = &enough::Unstoppable;
-    match pixels {
-        PixelData::Rgb8(img) => zenpng::encode_rgb8(img.as_ref(), meta, config, u, u),
-        PixelData::Rgba8(img) => zenpng::encode_rgba8(img.as_ref(), meta, config, u, u),
-        PixelData::Gray8(img) => zenpng::encode_gray8(img.as_ref(), meta, config, u, u),
-        PixelData::Rgb16(img) => zenpng::encode_rgb16(img.as_ref(), meta, config, u, u),
-        PixelData::Rgba16(img) => zenpng::encode_rgba16(img.as_ref(), meta, config, u, u),
-        PixelData::Gray16(img) => zenpng::encode_gray16(img.as_ref(), meta, config, u, u),
-        PixelData::GrayAlpha8(_) | PixelData::GrayAlpha16(_) => Err(
-            zenpng::PngError::InvalidInput("GrayAlpha not supported".into()),
-        ),
-        other => Err(zenpng::PngError::InvalidInput(format!(
-            "unsupported pixel format for re-encode: {other:?}"
+    let desc = pixels.descriptor();
+    match (desc.layout(), desc.channel_type()) {
+        (ChannelLayout::Rgb, ChannelType::U8) => {
+            let buf = pixels.to_rgb8();
+            zenpng::encode_rgb8(buf.as_imgref(), meta, config, u, u)
+        }
+        (ChannelLayout::Rgba, ChannelType::U8) => {
+            let buf = pixels.to_rgba8();
+            zenpng::encode_rgba8(buf.as_imgref(), meta, config, u, u)
+        }
+        (ChannelLayout::Gray, ChannelType::U8) => {
+            let buf = pixels.to_gray8();
+            zenpng::encode_gray8(buf.as_imgref(), meta, config, u, u)
+        }
+        (ChannelLayout::Rgb, ChannelType::U16) => {
+            let imgref = pixels.try_as_imgref::<rgb::Rgb<u16>>().unwrap();
+            zenpng::encode_rgb16(imgref, meta, config, u, u)
+        }
+        (ChannelLayout::Rgba, ChannelType::U16) => {
+            let imgref = pixels.try_as_imgref::<rgb::Rgba<u16>>().unwrap();
+            zenpng::encode_rgba16(imgref, meta, config, u, u)
+        }
+        (ChannelLayout::Gray, ChannelType::U16) => {
+            let imgref = pixels.try_as_imgref::<rgb::Gray<u16>>().unwrap();
+            zenpng::encode_gray16(imgref, meta, config, u, u)
+        }
+        (ChannelLayout::GrayAlpha, _) => Err(zenpng::PngError::InvalidInput(
+            "GrayAlpha not supported".into(),
+        )),
+        _ => Err(zenpng::PngError::InvalidInput(format!(
+            "unsupported pixel format for re-encode: {:?}",
+            desc
         ))),
     }
 }
@@ -225,16 +248,18 @@ fn resolve_corpus_dirs() -> Vec<String> {
     if let Some(dir) = std::env::args().nth(1) {
         return vec![dir];
     }
+    let base = std::env::var("CODEC_CORPUS_DIR")
+        .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string());
     let dirs = [
-        "/home/lilith/work/codec-corpus/pngsuite",
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/training",
-        "/home/lilith/work/codec-corpus/clic2025-1024",
-        "/home/lilith/work/codec-corpus/imageflow/test_inputs",
-        "/home/lilith/work/codec-corpus/image-rs/test-images/png/16bpc",
+        format!("{base}/pngsuite"),
+        format!("{base}/CID22/CID22-512/training"),
+        format!("{base}/clic2025-1024"),
+        format!("{base}/imageflow/test_inputs"),
+        format!("{base}/image-rs/test-images/png/16bpc"),
     ];
     let found: Vec<String> = dirs
         .iter()
-        .filter(|d| Path::new(d).is_dir())
+        .filter(|d| Path::new(d.as_str()).is_dir())
         .map(|d| d.to_string())
         .collect();
     if found.is_empty() {

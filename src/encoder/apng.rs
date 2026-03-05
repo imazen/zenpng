@@ -1533,6 +1533,7 @@ pub(crate) fn encode_apng_indexed_from_indices(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zencodec_types::PixelBufferConvertExt;
 
     // ── Delta region tests ──────────────────────────────────────────
 
@@ -2377,7 +2378,10 @@ mod tests {
 
     #[test]
     fn corpus_apng_roundtrip() {
-        let corpus_dir = std::path::Path::new("/mnt/v/output/corpus-builder/apng");
+        let corpus_base = std::env::var("CORPUS_BUILDER_OUTPUT_DIR")
+            .unwrap_or_else(|_| "/mnt/v/output/corpus-builder".to_string());
+        let corpus_dir = std::path::PathBuf::from(&corpus_base).join("apng");
+        let corpus_dir = corpus_dir.as_path();
         let entries: Vec<_> = match std::fs::read_dir(corpus_dir) {
             Ok(rd) => rd
                 .filter_map(|e| e.ok())

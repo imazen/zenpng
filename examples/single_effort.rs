@@ -3,6 +3,8 @@
 /// Usage: cargo run --release --features _dev --example single_effort -- EFFORT [CORPUS]
 use enough::Unstoppable;
 use std::path::{Path, PathBuf};
+use zencodec_types::PixelBufferConvertExt;
+use zenpixels::descriptor::{ChannelLayout, ChannelType};
 
 fn main() {
     let effort: u32 = std::env::args()
@@ -11,9 +13,13 @@ fn main() {
         .parse()
         .expect("effort must be a number");
 
-    let corpus_dir = std::env::args()
-        .nth(2)
-        .unwrap_or_else(|| "/mnt/v/output/zenpng/test_corpus".to_string());
+    let corpus_dir = std::env::args().nth(2).unwrap_or_else(|| {
+        format!(
+            "{}/test_corpus",
+            std::env::var("ZENPNG_OUTPUT_DIR")
+                .unwrap_or_else(|_| "/mnt/v/output/zenpng".to_string())
+        )
+    });
 
     let mut paths: Vec<PathBuf> = Vec::new();
     collect_pngs(Path::new(&corpus_dir), &mut paths);
@@ -56,16 +62,20 @@ fn main() {
             .with_srgb_intent(decoded.info.srgb_intent)
             .with_chromaticities(decoded.info.chromaticities);
 
+        let desc = decoded.pixels.descriptor();
         let start = std::time::Instant::now();
-        let result = match &decoded.pixels {
-            zencodec_types::PixelData::Rgb8(img) => {
-                zenpng::encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+        let result = match (desc.layout(), desc.channel_type()) {
+            (ChannelLayout::Rgb, ChannelType::U8) => {
+                let buf = decoded.pixels.to_rgb8();
+                zenpng::encode_rgb8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
             }
-            zencodec_types::PixelData::Rgba8(img) => {
-                zenpng::encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+            (ChannelLayout::Rgba, ChannelType::U8) => {
+                let buf = decoded.pixels.to_rgba8();
+                zenpng::encode_rgba8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
             }
-            zencodec_types::PixelData::Gray8(img) => {
-                zenpng::encode_gray8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+            (ChannelLayout::Gray, ChannelType::U8) => {
+                let buf = decoded.pixels.to_gray8();
+                zenpng::encode_gray8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
             }
             _ => continue,
         };

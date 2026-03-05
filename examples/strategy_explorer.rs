@@ -6,7 +6,7 @@
 ///
 /// Usage:
 ///   cargo run --release --example strategy_explorer -- <image.png> > results.csv
-///   cargo run --release --example strategy_explorer -- <image.png> > /mnt/v/output/zenpng/explore.csv
+///   cargo run --release --example strategy_explorer -- <image.png> > $ZENPNG_OUTPUT_DIR/explore.csv
 use std::io::Write as _;
 use std::path::Path;
 use std::time::Instant;
@@ -15,7 +15,11 @@ use enough::Unstoppable;
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1025469.png".to_string()
+        format!(
+            "{}/CID22/CID22-512/validation/1025469.png",
+            std::env::var("CODEC_CORPUS_DIR")
+                .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string())
+        )
     });
 
     let source = std::fs::read(&path).unwrap();
@@ -23,15 +27,8 @@ fn main() {
         .expect("failed to decode");
     let (w, h) = (decoded.info.width as usize, decoded.info.height as usize);
 
-    let (pixel_bytes, bpp): (Vec<u8>, usize) = match &decoded.pixels {
-        zencodec_types::PixelData::Rgb8(img) => {
-            (bytemuck::cast_slice::<_, u8>(img.buf()).to_vec(), 3)
-        }
-        zencodec_types::PixelData::Rgba8(img) => {
-            (bytemuck::cast_slice::<_, u8>(img.buf()).to_vec(), 4)
-        }
-        _ => panic!("unsupported format"),
-    };
+    let bpp = decoded.pixels.descriptor().bytes_per_pixel();
+    let pixel_bytes = decoded.pixels.copy_to_contiguous_bytes();
     let row_bytes = w * bpp;
 
     let fname = Path::new(&path).file_name().unwrap().to_string_lossy();
@@ -454,11 +451,10 @@ fn filter_brute_force(
 
             if let Ok(len) =
                 eval_compressor.zlib_compress(&eval_buf, &mut compress_buf, zenflate::Unstoppable)
+                && len < best_size
             {
-                if len < best_size {
-                    best_size = len;
-                    best_f = f;
-                }
+                best_size = len;
+                best_f = f;
             }
         }
 
@@ -532,11 +528,10 @@ fn filter_brute_force_block(
 
             if let Ok(len) =
                 eval_compressor.zlib_compress(&eval_buf, &mut compress_buf, zenflate::Unstoppable)
+                && len < best_size
             {
-                if len < best_size {
-                    best_size = len;
-                    best_combo = combo;
-                }
+                best_size = len;
+                best_combo = combo;
             }
         }
 

@@ -8,7 +8,11 @@ use std::path::Path;
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
         // The lion face outlier
-        "/home/lilith/work/codec-corpus/clic2025-1024/0d154749c7771f58e89ad343653ec4e20d6f037da829f47f5598e5d0a4ab61f0.png".to_string()
+        format!(
+            "{}/clic2025-1024/0d154749c7771f58e89ad343653ec4e20d6f037da829f47f5598e5d0a4ab61f0.png",
+            std::env::var("CODEC_CORPUS_DIR")
+                .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string())
+        )
     });
 
     eprintln!(
@@ -20,15 +24,8 @@ fn main() {
     let decoded = zenpng::decode(&source, &zenpng::PngDecodeConfig::none(), &Unstoppable).unwrap();
     let (w, h) = (decoded.info.width as usize, decoded.info.height as usize);
 
-    let (pixel_bytes, bpp): (Vec<u8>, usize) = match &decoded.pixels {
-        zencodec_types::PixelData::Rgb8(img) => {
-            (bytemuck::cast_slice::<_, u8>(img.buf()).to_vec(), 3)
-        }
-        zencodec_types::PixelData::Rgba8(img) => {
-            (bytemuck::cast_slice::<_, u8>(img.buf()).to_vec(), 4)
-        }
-        _ => panic!("unsupported format"),
-    };
+    let bpp = decoded.pixels.descriptor().bytes_per_pixel();
+    let pixel_bytes = decoded.pixels.copy_to_contiguous_bytes();
     let row_bytes = w * bpp;
 
     println!(
@@ -279,11 +276,10 @@ fn filter_brute_force(
 
             if let Ok(len) =
                 eval_compressor.zlib_compress(&eval_buf, &mut compress_buf, zenflate::Unstoppable)
+                && len < best_size
             {
-                if len < best_size {
-                    best_size = len;
-                    best_f = f;
-                }
+                best_size = len;
+                best_f = f;
             }
         }
 

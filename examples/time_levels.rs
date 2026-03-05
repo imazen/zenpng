@@ -1,9 +1,15 @@
 use enough::Unstoppable;
+use zencodec_types::PixelBufferConvertExt;
+use zenpixels::descriptor::{ChannelLayout, ChannelType};
 
 /// Time each compression level on a single image.
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
-        "/home/lilith/work/codec-corpus/clic2025-1024/0d154749c7771f58e89ad343653ec4e20d6f037da829f47f5598e5d0a4ab61f0.png".to_string()
+        format!(
+            "{}/clic2025-1024/0d154749c7771f58e89ad343653ec4e20d6f037da829f47f5598e5d0a4ab61f0.png",
+            std::env::var("CODEC_CORPUS_DIR")
+                .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string())
+        )
     });
 
     let source = std::fs::read(&path).unwrap();
@@ -26,11 +32,8 @@ fn main() {
     );
     println!("{}", "-".repeat(42));
 
-    let raw_mib = match &decoded.pixels {
-        zencodec_types::PixelData::Rgb8(img) => img.buf().len() as f64 * 3.0 / 1_048_576.0,
-        zencodec_types::PixelData::Rgba8(img) => img.buf().len() as f64 * 4.0 / 1_048_576.0,
-        _ => 0.0,
-    };
+    let desc = decoded.pixels.descriptor();
+    let raw_mib = decoded.pixels.copy_to_contiguous_bytes().len() as f64 / 1_048_576.0;
 
     for (name, comp) in &levels {
         let config = zenpng::EncodeConfig::default()
@@ -40,14 +43,16 @@ fn main() {
             .with_chromaticities(decoded.info.chromaticities);
 
         let start = std::time::Instant::now();
-        let encoded = match &decoded.pixels {
-            zencodec_types::PixelData::Rgb8(img) => {
-                zenpng::encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+        let encoded = match (desc.layout(), desc.channel_type()) {
+            (ChannelLayout::Rgb, ChannelType::U8) => {
+                let buf = decoded.pixels.to_rgb8();
+                zenpng::encode_rgb8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
             }
-            zencodec_types::PixelData::Rgba8(img) => {
-                zenpng::encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+            (ChannelLayout::Rgba, ChannelType::U8) => {
+                let buf = decoded.pixels.to_rgba8();
+                zenpng::encode_rgba8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
             }
-            _ => panic!("unsupported"),
+            _ => panic!("unsupported format: {:?}", desc),
         };
         let elapsed = start.elapsed().as_secs_f64();
 

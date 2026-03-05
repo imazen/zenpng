@@ -131,3 +131,187 @@ impl Ihdr {
         self.color_type == 4 || self.color_type == 6
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_ihdr(w: u32, h: u32, bit_depth: u8, color_type: u8, interlace: u8) -> Vec<u8> {
+        let mut data = Vec::with_capacity(13);
+        data.extend_from_slice(&w.to_be_bytes());
+        data.extend_from_slice(&h.to_be_bytes());
+        data.push(bit_depth);
+        data.push(color_type);
+        data.push(0); // compression
+        data.push(0); // filter
+        data.push(interlace);
+        data
+    }
+
+    #[test]
+    fn parse_valid_rgb8() {
+        let ihdr = Ihdr::parse(&make_ihdr(100, 200, 8, 2, 0)).unwrap();
+        assert_eq!(ihdr.width, 100);
+        assert_eq!(ihdr.height, 200);
+        assert_eq!(ihdr.bit_depth, 8);
+        assert_eq!(ihdr.color_type, 2);
+        assert_eq!(ihdr.interlace, 0);
+    }
+
+    #[test]
+    fn parse_valid_rgba16() {
+        let ihdr = Ihdr::parse(&make_ihdr(50, 50, 16, 6, 0)).unwrap();
+        assert_eq!(ihdr.channels(), 4);
+        assert_eq!(ihdr.filter_bpp(), 8);
+    }
+
+    #[test]
+    fn parse_valid_indexed_4bit() {
+        let ihdr = Ihdr::parse(&make_ihdr(10, 10, 4, 3, 0)).unwrap();
+        assert_eq!(ihdr.channels(), 1);
+        assert!(ihdr.is_sub_byte());
+        assert!(ihdr.is_indexed());
+    }
+
+    #[test]
+    fn parse_valid_interlaced() {
+        let ihdr = Ihdr::parse(&make_ihdr(100, 100, 8, 2, 1)).unwrap();
+        assert_eq!(ihdr.interlace, 1);
+    }
+
+    #[test]
+    fn parse_wrong_length() {
+        assert!(Ihdr::parse(&[0; 12]).is_err());
+        assert!(Ihdr::parse(&[0; 14]).is_err());
+    }
+
+    #[test]
+    fn parse_zero_dimensions() {
+        assert!(Ihdr::parse(&make_ihdr(0, 100, 8, 2, 0)).is_err());
+        assert!(Ihdr::parse(&make_ihdr(100, 0, 8, 2, 0)).is_err());
+    }
+
+    #[test]
+    fn parse_bad_compression() {
+        let mut data = make_ihdr(1, 1, 8, 2, 0);
+        data[10] = 1; // invalid compression
+        assert!(Ihdr::parse(&data).is_err());
+    }
+
+    #[test]
+    fn parse_bad_filter() {
+        let mut data = make_ihdr(1, 1, 8, 2, 0);
+        data[11] = 1; // invalid filter
+        assert!(Ihdr::parse(&data).is_err());
+    }
+
+    #[test]
+    fn parse_bad_interlace() {
+        assert!(Ihdr::parse(&make_ihdr(1, 1, 8, 2, 2)).is_err());
+    }
+
+    #[test]
+    fn parse_invalid_color_bit_depth() {
+        // RGB with bit_depth=4 is invalid
+        assert!(Ihdr::parse(&make_ihdr(1, 1, 4, 2, 0)).is_err());
+        // Indexed with bit_depth=16 is invalid
+        assert!(Ihdr::parse(&make_ihdr(1, 1, 16, 3, 0)).is_err());
+        // Unknown color type
+        assert!(Ihdr::parse(&make_ihdr(1, 1, 8, 5, 0)).is_err());
+    }
+
+    #[test]
+    fn channels_all_types() {
+        assert_eq!(
+            Ihdr::parse(&make_ihdr(1, 1, 8, 0, 0)).unwrap().channels(),
+            1
+        );
+        assert_eq!(
+            Ihdr::parse(&make_ihdr(1, 1, 8, 2, 0)).unwrap().channels(),
+            3
+        );
+        assert_eq!(
+            Ihdr::parse(&make_ihdr(1, 1, 8, 3, 0)).unwrap().channels(),
+            1
+        );
+        assert_eq!(
+            Ihdr::parse(&make_ihdr(1, 1, 8, 4, 0)).unwrap().channels(),
+            2
+        );
+        assert_eq!(
+            Ihdr::parse(&make_ihdr(1, 1, 8, 6, 0)).unwrap().channels(),
+            4
+        );
+    }
+
+    #[test]
+    fn filter_bpp_values() {
+        // Gray 1-bit: 1 bit/pixel → bpp=1
+        assert_eq!(
+            Ihdr::parse(&make_ihdr(1, 1, 1, 0, 0)).unwrap().filter_bpp(),
+            1
+        );
+        // RGB 8-bit: 24 bits/pixel → bpp=3
+        assert_eq!(
+            Ihdr::parse(&make_ihdr(1, 1, 8, 2, 0)).unwrap().filter_bpp(),
+            3
+        );
+        // RGBA 16-bit: 64 bits/pixel → bpp=8
+        assert_eq!(
+            Ihdr::parse(&make_ihdr(1, 1, 16, 6, 0))
+                .unwrap()
+                .filter_bpp(),
+            8
+        );
+        // GrayAlpha 8-bit: 16 bits/pixel → bpp=2
+        assert_eq!(
+            Ihdr::parse(&make_ihdr(1, 1, 8, 4, 0)).unwrap().filter_bpp(),
+            2
+        );
+    }
+
+    #[test]
+    fn raw_row_bytes_and_stride() {
+        // RGB 8-bit, width=10: 30 bytes/row, stride=31
+        let ihdr = Ihdr::parse(&make_ihdr(10, 1, 8, 2, 0)).unwrap();
+        assert_eq!(ihdr.raw_row_bytes(), 30);
+        assert_eq!(ihdr.stride(), 31);
+
+        // Gray 1-bit, width=10: ceil(10/8) = 2 bytes/row
+        let ihdr = Ihdr::parse(&make_ihdr(10, 1, 1, 0, 0)).unwrap();
+        assert_eq!(ihdr.raw_row_bytes(), 2);
+    }
+
+    #[test]
+    fn is_sub_byte() {
+        assert!(
+            Ihdr::parse(&make_ihdr(1, 1, 1, 0, 0))
+                .unwrap()
+                .is_sub_byte()
+        );
+        assert!(
+            Ihdr::parse(&make_ihdr(1, 1, 2, 0, 0))
+                .unwrap()
+                .is_sub_byte()
+        );
+        assert!(
+            Ihdr::parse(&make_ihdr(1, 1, 4, 0, 0))
+                .unwrap()
+                .is_sub_byte()
+        );
+        assert!(
+            !Ihdr::parse(&make_ihdr(1, 1, 8, 0, 0))
+                .unwrap()
+                .is_sub_byte()
+        );
+    }
+
+    #[test]
+    fn has_alpha_types() {
+        assert!(!Ihdr::parse(&make_ihdr(1, 1, 8, 0, 0)).unwrap().has_alpha());
+        assert!(!Ihdr::parse(&make_ihdr(1, 1, 8, 2, 0)).unwrap().has_alpha());
+        assert!(!Ihdr::parse(&make_ihdr(1, 1, 8, 3, 0)).unwrap().has_alpha());
+        assert!(Ihdr::parse(&make_ihdr(1, 1, 8, 4, 0)).unwrap().has_alpha());
+        assert!(Ihdr::parse(&make_ihdr(1, 1, 8, 6, 0)).unwrap().has_alpha());
+    }
+}

@@ -13,25 +13,24 @@
 use std::time::Instant;
 
 use enough::Unstoppable;
+use zencodec_types::PixelBufferConvertExt;
+use zenpixels::descriptor::{ChannelLayout, ChannelType};
 
 fn main() {
-    let path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "/home/lilith/work/codec-corpus/gb82-sc/0001.png".to_string());
+    let path = std::env::args().nth(1).unwrap_or_else(|| {
+        format!(
+            "{}/gb82-sc/0001.png",
+            std::env::var("CODEC_CORPUS_DIR")
+                .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string())
+        )
+    });
 
     let source = std::fs::read(&path).expect("read");
     let decoded = zenpng::decode(&source, &zenpng::PngDecodeConfig::none(), &Unstoppable).unwrap();
 
     let (w, h) = (decoded.info.width as usize, decoded.info.height as usize);
-    let (pixel_bytes, bpp): (Vec<u8>, usize) = match &decoded.pixels {
-        zencodec_types::PixelData::Rgb8(img) => {
-            (bytemuck::cast_slice::<_, u8>(img.buf()).to_vec(), 3)
-        }
-        zencodec_types::PixelData::Rgba8(img) => {
-            (bytemuck::cast_slice::<_, u8>(img.buf()).to_vec(), 4)
-        }
-        _ => panic!("unsupported"),
-    };
+    let bpp = decoded.pixels.descriptor().bytes_per_pixel();
+    let pixel_bytes = decoded.pixels.copy_to_contiguous_bytes();
     let row_bytes = w * bpp;
     let raw_bytes = pixel_bytes.len();
     let megapixels = (w * h) as f64 / 1_000_000.0;
@@ -249,17 +248,20 @@ fn main() {
         } else {
             2
         };
+        let desc = decoded.pixels.descriptor();
         let mut size = 0;
         let t = Instant::now();
         for _ in 0..iters {
-            let result = match &decoded.pixels {
-                zencodec_types::PixelData::Rgb8(img) => {
-                    zenpng::encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+            let result = match (desc.layout(), desc.channel_type()) {
+                (ChannelLayout::Rgb, ChannelType::U8) => {
+                    let buf = decoded.pixels.to_rgb8();
+                    zenpng::encode_rgb8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
                 }
-                zencodec_types::PixelData::Rgba8(img) => {
-                    zenpng::encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)
+                (ChannelLayout::Rgba, ChannelType::U8) => {
+                    let buf = decoded.pixels.to_rgba8();
+                    zenpng::encode_rgba8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
                 }
-                _ => panic!("unsupported"),
+                _ => panic!("unsupported format: {:?}", desc),
             };
             size = result.unwrap().len();
         }

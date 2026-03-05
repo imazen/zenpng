@@ -709,3 +709,520 @@ pub fn encode_apng(
         deadline,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use enough::Unstoppable;
+    use imgref::Img;
+
+    // ── EncodeConfig builder tests ──────────────────────────────────
+
+    #[test]
+    fn encode_config_defaults() {
+        let c = EncodeConfig::default();
+        assert_eq!(c.compression, Compression::Balanced);
+        assert_eq!(c.filter, Filter::Auto);
+        assert!(!c.parallel);
+        assert!(c.source_gamma.is_none());
+        assert!(c.srgb_intent.is_none());
+        assert!(c.chromaticities.is_none());
+        assert_eq!(c.near_lossless_bits, 0);
+    }
+
+    #[test]
+    fn encode_config_with_filter() {
+        let c = EncodeConfig::default().with_filter(Filter::Auto);
+        assert_eq!(c.filter, Filter::Auto);
+    }
+
+    #[test]
+    fn encode_config_with_parallel() {
+        let c = EncodeConfig::default().with_parallel(true);
+        assert!(c.parallel);
+    }
+
+    #[test]
+    fn encode_config_with_source_gamma() {
+        let c = EncodeConfig::default().with_source_gamma(Some(45455));
+        assert_eq!(c.source_gamma, Some(45455));
+    }
+
+    #[test]
+    fn encode_config_with_srgb_intent() {
+        let c = EncodeConfig::default().with_srgb_intent(Some(1));
+        assert_eq!(c.srgb_intent, Some(1));
+    }
+
+    #[test]
+    fn encode_config_with_chromaticities() {
+        let chrm = PngChromaticities {
+            white_x: 31270,
+            white_y: 32900,
+            red_x: 64000,
+            red_y: 33000,
+            green_x: 30000,
+            green_y: 60000,
+            blue_x: 15000,
+            blue_y: 6000,
+        };
+        let c = EncodeConfig::default().with_chromaticities(Some(chrm));
+        assert_eq!(c.chromaticities.unwrap().red_x, 64000);
+    }
+
+    #[test]
+    fn encode_config_with_near_lossless_bits() {
+        let c = EncodeConfig::default().with_near_lossless_bits(2);
+        assert_eq!(c.near_lossless_bits, 2);
+    }
+
+    // ── Compression effort mapping ──────────────────────────────────
+
+    #[test]
+    fn compression_effort_mapping() {
+        assert_eq!(Compression::None.effort(), 0);
+        assert_eq!(Compression::Fastest.effort(), 1);
+        assert_eq!(Compression::Turbo.effort(), 2);
+        assert_eq!(Compression::Fast.effort(), 7);
+        assert_eq!(Compression::Balanced.effort(), 13);
+        assert_eq!(Compression::Thorough.effort(), 17);
+        assert_eq!(Compression::High.effort(), 19);
+        assert_eq!(Compression::Aggressive.effort(), 22);
+        assert_eq!(Compression::Intense.effort(), 24);
+        assert_eq!(Compression::Crush.effort(), 27);
+        assert_eq!(Compression::Maniac.effort(), 30);
+        assert_eq!(Compression::Brag.effort(), 31);
+        assert_eq!(Compression::Minutes.effort(), 200);
+        assert_eq!(Compression::Effort(15).effort(), 15);
+        assert_eq!(Compression::Effort(500).effort(), 200); // clamped
+    }
+
+    // ── Encode roundtrip at various effort levels ───────────────────
+
+    fn small_rgb_image() -> (Vec<Rgb<u8>>, usize, usize) {
+        let w = 8;
+        let h = 4;
+        let pixels: Vec<Rgb<u8>> = (0..w * h)
+            .map(|i| Rgb {
+                r: (i * 7) as u8,
+                g: (i * 13) as u8,
+                b: (i * 23) as u8,
+            })
+            .collect();
+        (pixels, w, h)
+    }
+
+    fn small_rgba_image() -> (Vec<Rgba<u8>>, usize, usize) {
+        let w = 8;
+        let h = 4;
+        let pixels: Vec<Rgba<u8>> = (0..w * h)
+            .map(|i| Rgba {
+                r: (i * 7) as u8,
+                g: (i * 13) as u8,
+                b: (i * 23) as u8,
+                a: if i % 4 == 0 { 0 } else { 255 },
+            })
+            .collect();
+        (pixels, w, h)
+    }
+
+    fn roundtrip_rgb(config: &EncodeConfig) {
+        let (pixels, w, h) = small_rgb_image();
+        let img = Img::new(pixels, w, h);
+        let encoded = encode_rgb8(img.as_ref(), None, config, &Unstoppable, &Unstoppable).unwrap();
+        assert!(encoded[..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+        assert_eq!(decoded.info.width, w as u32);
+        assert_eq!(decoded.info.height, h as u32);
+    }
+
+    #[test]
+    fn roundtrip_effort_0_store() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::None));
+    }
+
+    #[test]
+    fn roundtrip_effort_1_fastest() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Fastest));
+    }
+
+    #[test]
+    fn roundtrip_effort_2_turbo() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Turbo));
+    }
+
+    #[test]
+    fn roundtrip_effort_7_fast() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Fast));
+    }
+
+    #[test]
+    fn roundtrip_effort_13_balanced() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Balanced));
+    }
+
+    #[test]
+    fn roundtrip_effort_17_thorough() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Thorough));
+    }
+
+    #[test]
+    fn roundtrip_rgba_with_transparency() {
+        let (pixels, w, h) = small_rgba_image();
+        let img = Img::new(pixels, w, h);
+        let config = EncodeConfig::default().with_compression(Compression::Fast);
+        let encoded =
+            encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+        assert_eq!(decoded.info.width, w as u32);
+    }
+
+    #[test]
+    fn roundtrip_gray8() {
+        let pixels: Vec<Gray<u8>> = (0..32).map(|i| Gray(i * 8)).collect();
+        let img = Img::new(pixels, 8, 4);
+        let config = EncodeConfig::default().with_compression(Compression::Fast);
+        let encoded =
+            encode_gray8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+        assert_eq!(decoded.info.width, 8);
+        assert!(!decoded.info.has_alpha);
+    }
+
+    #[test]
+    fn roundtrip_rgb16() {
+        let pixels: Vec<Rgb<u16>> = (0..32)
+            .map(|i| Rgb {
+                r: i * 2048,
+                g: i * 1024,
+                b: i * 512,
+            })
+            .collect();
+        let img = Img::new(pixels, 8, 4);
+        let config = EncodeConfig::default().with_compression(Compression::Fastest);
+        let encoded =
+            encode_rgb16(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+        assert_eq!(decoded.info.width, 8);
+    }
+
+    #[test]
+    fn roundtrip_rgba16() {
+        let pixels: Vec<Rgba<u16>> = (0..32)
+            .map(|i| Rgba {
+                r: i * 2048,
+                g: i * 1024,
+                b: i * 512,
+                a: 65535,
+            })
+            .collect();
+        let img = Img::new(pixels, 8, 4);
+        let config = EncodeConfig::default().with_compression(Compression::Fastest);
+        let encoded =
+            encode_rgba16(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+        assert_eq!(decoded.info.width, 8);
+    }
+
+    #[test]
+    fn roundtrip_gray16() {
+        let pixels: Vec<Gray<u16>> = (0..32).map(|i| Gray(i * 2048)).collect();
+        let img = Img::new(pixels, 8, 4);
+        let config = EncodeConfig::default().with_compression(Compression::Fastest);
+        let encoded =
+            encode_gray16(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+        assert_eq!(decoded.info.width, 8);
+    }
+
+    #[test]
+    fn near_lossless_produces_valid_output() {
+        let (pixels, w, h) = small_rgb_image();
+        let img = Img::new(pixels, w, h);
+        let encoded = encode_rgb8(
+            img.as_ref(),
+            None,
+            &EncodeConfig::default()
+                .with_compression(Compression::Fastest)
+                .with_near_lossless_bits(3),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+        assert_eq!(decoded.info.width, w as u32);
+    }
+
+    // ── APNG encoding ───────────────────────────────────────────────
+
+    #[test]
+    fn apng_frame_input_new() {
+        let pixels = vec![0u8; 16 * 16 * 4];
+        let frame = ApngFrameInput::new(&pixels, 100, 1000);
+        assert_eq!(frame.delay_num, 100);
+        assert_eq!(frame.delay_den, 1000);
+    }
+
+    #[test]
+    fn apng_encode_config_builders() {
+        let config = ApngEncodeConfig::default()
+            .with_encode(EncodeConfig::default().with_compression(Compression::Fast))
+            .with_num_plays(3);
+        assert_eq!(config.num_plays, 3);
+        assert_eq!(config.encode.compression.effort(), 7);
+    }
+
+    #[test]
+    fn apng_empty_frames_error() {
+        let config = ApngEncodeConfig::default();
+        let result = encode_apng(&[], 16, 16, &config, None, &Unstoppable, &Unstoppable);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("at least one frame")
+        );
+    }
+
+    #[test]
+    fn apng_buffer_too_small_error() {
+        let config = ApngEncodeConfig::default();
+        let small_buf = vec![0u8; 10];
+        let frames = [ApngFrameInput::new(&small_buf, 100, 1000)];
+        let result = encode_apng(&frames, 16, 16, &config, None, &Unstoppable, &Unstoppable);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too small"));
+    }
+
+    #[test]
+    fn apng_single_frame_roundtrip() {
+        let w = 4u32;
+        let h = 4u32;
+        let pixels = vec![128u8; (w * h * 4) as usize];
+        let frames = [ApngFrameInput::new(&pixels, 100, 1000)];
+        let config = ApngEncodeConfig::default()
+            .with_encode(EncodeConfig::default().with_compression(Compression::Fastest));
+        let encoded =
+            encode_apng(&frames, w, h, &config, None, &Unstoppable, &Unstoppable).unwrap();
+        assert!(encoded[..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    }
+
+    // ── Color type and bit depth ────────────────────────────────────
+
+    #[test]
+    fn color_type_to_png_byte() {
+        assert_eq!(ColorType::Grayscale.to_png_byte(), 0);
+        assert_eq!(ColorType::Rgb.to_png_byte(), 2);
+        assert_eq!(ColorType::GrayscaleAlpha.to_png_byte(), 4);
+        assert_eq!(ColorType::Rgba.to_png_byte(), 6);
+    }
+
+    #[test]
+    fn bit_depth_to_png_byte() {
+        assert_eq!(BitDepth::Eight.to_png_byte(), 8);
+        assert_eq!(BitDepth::Sixteen.to_png_byte(), 16);
+    }
+
+    // ── Native to BE byte swap ──────────────────────────────────────
+
+    #[test]
+    fn native_to_be_16_involution() {
+        let original = vec![0x12u8, 0x34, 0x56, 0x78];
+        let be = native_to_be_16(&original);
+        let back = native_to_be_16(&be);
+        assert_eq!(original, back);
+    }
+
+    // ── Parallel encoding ───────────────────────────────────────────
+
+    #[test]
+    fn parallel_encoding_produces_valid_png() {
+        let (pixels, w, h) = small_rgb_image();
+        let img = Img::new(pixels, w, h);
+        let config = EncodeConfig::default()
+            .with_compression(Compression::Balanced)
+            .with_parallel(true);
+        let encoded = encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+        assert_eq!(decoded.info.width, w as u32);
+    }
+
+    // ── Additional effort tiers (cover compress.rs branches) ────────
+
+    #[test]
+    fn roundtrip_effort_3() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Effort(3)));
+    }
+
+    #[test]
+    fn roundtrip_effort_4() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Effort(4)));
+    }
+
+    #[test]
+    fn roundtrip_effort_5() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Effort(5)));
+    }
+
+    #[test]
+    fn roundtrip_effort_6() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Effort(6)));
+    }
+
+    #[test]
+    fn roundtrip_effort_8() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Effort(8)));
+    }
+
+    #[test]
+    fn roundtrip_effort_9() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Effort(9)));
+    }
+
+    #[test]
+    fn roundtrip_effort_10() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Effort(10)));
+    }
+
+    #[test]
+    fn roundtrip_effort_11() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Effort(11)));
+    }
+
+    #[test]
+    fn roundtrip_effort_12() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Effort(12)));
+    }
+
+    #[test]
+    fn roundtrip_effort_14() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Effort(14)));
+    }
+
+    #[test]
+    fn roundtrip_effort_15() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Effort(15)));
+    }
+
+    #[test]
+    fn roundtrip_effort_16() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Effort(16)));
+    }
+
+    #[test]
+    fn roundtrip_effort_19_high() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::High));
+    }
+
+    #[test]
+    fn roundtrip_effort_22_aggressive() {
+        roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Aggressive));
+    }
+
+    // ── Monotonicity: higher effort must not produce larger output ──
+
+    #[test]
+    fn monotonicity_effort_0_through_17() {
+        let (pixels, w, h) = small_rgb_image();
+        let img = Img::new(pixels, w, h);
+        let mut prev_size = usize::MAX;
+        for effort in [0, 1, 2, 7, 13, 17] {
+            let config = EncodeConfig::default().with_compression(Compression::Effort(effort));
+            let encoded =
+                encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
+            // At effort 0 (store), output is larger; but from effort 1+, should be monotonic
+            if effort > 0 && prev_size < usize::MAX {
+                assert!(
+                    encoded.len() <= prev_size,
+                    "effort {effort} produced {} bytes, worse than previous {} bytes",
+                    encoded.len(),
+                    prev_size
+                );
+            }
+            if effort > 0 {
+                prev_size = encoded.len();
+            }
+        }
+    }
+
+    // ── Near-lossless with RGBA (exercises transparent pixel zeroing) ──
+
+    #[test]
+    fn near_lossless_rgba() {
+        let (pixels, w, h) = small_rgba_image();
+        let img = Img::new(pixels, w, h);
+        let config = EncodeConfig::default()
+            .with_compression(Compression::Fast)
+            .with_near_lossless_bits(2);
+        let encoded =
+            encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+        assert_eq!(decoded.info.width, w as u32);
+    }
+
+    // ── Gray near-lossless ──────────────────────────────────────────
+
+    #[test]
+    fn near_lossless_gray() {
+        let pixels: Vec<Gray<u8>> = (0..32).map(|i| Gray(i * 8)).collect();
+        let img = Img::new(pixels, 8, 4);
+        let config = EncodeConfig::default()
+            .with_compression(Compression::Fast)
+            .with_near_lossless_bits(2);
+        let encoded =
+            encode_gray8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+        assert_eq!(decoded.info.width, 8);
+    }
+
+    // ── Metadata roundtrip ──────────────────────────────────────────
+
+    #[test]
+    fn encode_with_gama_chrm() {
+        let (pixels, w, h) = small_rgb_image();
+        let img = Img::new(pixels, w, h);
+        let chrm = PngChromaticities {
+            white_x: 31270,
+            white_y: 32900,
+            red_x: 64000,
+            red_y: 33000,
+            green_x: 30000,
+            green_y: 60000,
+            blue_x: 15000,
+            blue_y: 6000,
+        };
+        let config = EncodeConfig::default()
+            .with_compression(Compression::Fastest)
+            .with_source_gamma(Some(45455))
+            .with_chromaticities(Some(chrm));
+        let encoded = encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+        assert_eq!(decoded.info.source_gamma, Some(45455));
+        assert_eq!(decoded.info.chromaticities.unwrap().red_x, 64000);
+    }
+
+    #[test]
+    fn encode_with_srgb_intent() {
+        let (pixels, w, h) = small_rgb_image();
+        let img = Img::new(pixels, w, h);
+        let config = EncodeConfig::default()
+            .with_compression(Compression::Fastest)
+            .with_srgb_intent(Some(0));
+        let encoded = encode_rgb8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+        assert_eq!(decoded.info.srgb_intent, Some(0));
+    }
+}

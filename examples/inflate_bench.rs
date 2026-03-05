@@ -8,7 +8,11 @@ use std::time::Instant;
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
-        "/home/lilith/work/codec-corpus/qoi-benchmark/screenshot_web/reddit.com.png".to_string()
+        format!(
+            "{}/qoi-benchmark/screenshot_web/reddit.com.png",
+            std::env::var("CODEC_CORPUS_DIR")
+                .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string())
+        )
     });
     let source = std::fs::read(&path).expect("read");
 

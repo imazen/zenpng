@@ -17,7 +17,7 @@ pub(crate) const PNG_SIGNATURE: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
 // ── Chunk parser ────────────────────────────────────────────────────
 
 /// Reference to a single PNG chunk (zero-copy borrow of the file data).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct ChunkRef<'a> {
     pub chunk_type: [u8; 4],
     pub data: &'a [u8],
@@ -119,5 +119,124 @@ impl<'a> Iterator for ChunkIter<'a> {
             chunk_type,
             data: chunk_data,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a minimal chunk: length(4) + type(4) + data + crc(4).
+    fn make_chunk(chunk_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        buf.extend_from_slice(chunk_type);
+        buf.extend_from_slice(data);
+        let crc = crc32(crc32(0, chunk_type), data);
+        buf.extend_from_slice(&crc.to_be_bytes());
+        buf
+    }
+
+    fn make_png_with_chunks(chunks: &[Vec<u8>]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&PNG_SIGNATURE);
+        for chunk in chunks {
+            buf.extend_from_slice(chunk);
+        }
+        buf
+    }
+
+    #[test]
+    fn iter_empty_data_returns_none() {
+        // pos starts at 8, data is exactly 8 bytes (just the signature)
+        let data = PNG_SIGNATURE.to_vec();
+        let mut iter = ChunkIter::new(&data);
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn iter_truncated_header() {
+        // After signature, only 5 bytes — not enough for a chunk header (12)
+        let mut data = PNG_SIGNATURE.to_vec();
+        data.extend_from_slice(&[0; 5]);
+        let mut iter = ChunkIter::new(&data);
+        let result = iter.next();
+        assert!(result.is_some());
+        assert!(result.unwrap().is_err());
+    }
+
+    #[test]
+    fn iter_ancillary_bad_crc_is_skipped() {
+        // Ancillary chunk type: lowercase first byte (bit 5 set)
+        // "tEXt" is ancillary
+        let mut text_chunk = make_chunk(b"tEXt", b"hello");
+        // Corrupt the CRC (last 4 bytes)
+        let len = text_chunk.len();
+        text_chunk[len - 1] ^= 0xFF;
+
+        // Follow with a valid IEND
+        let iend_chunk = make_chunk(b"IEND", &[]);
+
+        let data = make_png_with_chunks(&[text_chunk, iend_chunk]);
+        let mut iter = ChunkIter::new(&data);
+        // The bad-CRC tEXt should be skipped, IEND returned
+        let chunk = iter.next().unwrap().unwrap();
+        assert_eq!(&chunk.chunk_type, b"IEND");
+    }
+
+    #[test]
+    fn iter_critical_bad_crc_is_error() {
+        // Critical chunk type: uppercase first byte (bit 5 clear)
+        // "IHDR" is critical
+        let ihdr_data = vec![0u8; 13]; // dummy IHDR data
+        let mut ihdr_chunk = make_chunk(b"IHDR", &ihdr_data);
+        // Corrupt the CRC
+        let len = ihdr_chunk.len();
+        ihdr_chunk[len - 1] ^= 0xFF;
+
+        let data = make_png_with_chunks(&[ihdr_chunk]);
+        let mut iter = ChunkIter::new(&data);
+        let result = iter.next();
+        assert!(result.is_some());
+        let err = result.unwrap().unwrap_err();
+        assert!(err.to_string().contains("CRC mismatch"));
+    }
+
+    #[test]
+    fn iter_valid_chunk_returns_data() {
+        let iend_chunk = make_chunk(b"IEND", &[]);
+        let data = make_png_with_chunks(&[iend_chunk]);
+        let mut iter = ChunkIter::new(&data);
+        let chunk = iter.next().unwrap().unwrap();
+        assert_eq!(&chunk.chunk_type, b"IEND");
+        assert_eq!(chunk.data.len(), 0);
+        // After IEND, should return None
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn iter_skip_crc_does_not_check() {
+        let ihdr_data = vec![0u8; 13];
+        let mut ihdr_chunk = make_chunk(b"IHDR", &ihdr_data);
+        // Corrupt the CRC
+        let len = ihdr_chunk.len();
+        ihdr_chunk[len - 1] ^= 0xFF;
+
+        let data = make_png_with_chunks(&[ihdr_chunk]);
+        let mut iter = ChunkIter::new_with_config(&data, true);
+        // With skip_crc, bad CRC should not cause error
+        let chunk = iter.next().unwrap().unwrap();
+        assert_eq!(&chunk.chunk_type, b"IHDR");
+    }
+
+    #[test]
+    fn pos_advances_correctly() {
+        let chunk1 = make_chunk(b"tEXt", b"hello");
+        let chunk2 = make_chunk(b"IEND", &[]);
+        let data = make_png_with_chunks(&[chunk1.clone(), chunk2]);
+        let mut iter = ChunkIter::new(&data);
+        assert_eq!(iter.pos(), 8); // after signature
+        let _ = iter.next().unwrap().unwrap();
+        assert_eq!(iter.pos(), 8 + chunk1.len());
     }
 }

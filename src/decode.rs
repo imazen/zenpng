@@ -390,15 +390,15 @@ pub(crate) fn detect_color_warnings(
         warnings.push(PngWarning::CicpChrmConflict);
     }
     if has_srgb {
-        if let Some(g) = gamma {
-            if g != 45455 {
-                warnings.push(PngWarning::SrgbGamaMismatch { actual_gamma: g });
-            }
+        if let Some(g) = gamma
+            && g != 45455
+        {
+            warnings.push(PngWarning::SrgbGamaMismatch { actual_gamma: g });
         }
-        if let Some(c) = chrm {
-            if c != &SRGB_CHRM {
-                warnings.push(PngWarning::SrgbChrmMismatch);
-            }
+        if let Some(c) = chrm
+            && c != &SRGB_CHRM
+        {
+            warnings.push(PngWarning::SrgbChrmMismatch);
         }
     }
     warnings
@@ -567,5 +567,21 @@ mod tests {
     fn no_warnings_when_clean() {
         let w = detect_color_warnings(Some(0), Some(45455), Some(&SRGB_CHRM), None, None);
         assert!(w.is_empty());
+    }
+
+    #[test]
+    fn with_skip_decompression_checksum_builder() {
+        let config = PngDecodeConfig::strict().with_skip_decompression_checksum(true);
+        assert!(config.skip_decompression_checksum);
+        let config2 = PngDecodeConfig::none().with_skip_decompression_checksum(false);
+        assert!(!config2.skip_decompression_checksum);
+    }
+
+    #[test]
+    fn with_skip_critical_chunk_crc_builder() {
+        let config = PngDecodeConfig::strict().with_skip_critical_chunk_crc(true);
+        assert!(config.skip_critical_chunk_crc);
+        let config2 = PngDecodeConfig::none().with_skip_critical_chunk_crc(false);
+        assert!(!config2.skip_critical_chunk_crc);
     }
 }
