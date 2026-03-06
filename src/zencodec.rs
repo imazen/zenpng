@@ -481,8 +481,8 @@ impl EncodeRgb8 for PngEncoder<'_> {
 impl EncodeRgba8 for PngEncoder<'_> {
     type Error = PngError;
     fn encode_rgba8(self, pixels: PixelSlice<'_, Rgba<u8>>) -> Result<EncodeOutput, PngError> {
-        // Auto-indexed path when quality < 100 and quantize feature is enabled
-        #[cfg(feature = "quantize")]
+        // Auto-indexed path when quality < 100 and any quantizer is enabled
+        #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
         if let Some(q) = self.config.quality
             && q < 100.0
         {
@@ -496,10 +496,11 @@ impl EncodeRgba8 for PngEncoder<'_> {
             let cancel: &dyn Stop = self.stop.unwrap_or(&enough::Unstoppable);
             let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
             let deadline = almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
-            let result = crate::encode_rgba8_auto(
+            let quantizer = crate::default_quantizer();
+            let result = crate::encode_auto(
                 img,
                 &self.config.config,
-                &crate::default_quantize_config(),
+                &*quantizer,
                 crate::QualityGate::MaxMpe(mpe),
                 self.metadata,
                 cancel,
@@ -631,8 +632,8 @@ impl EncodeRgbaF32 for PngEncoder<'_> {
             })
             .collect();
 
-        // Auto-indexed path when quality < 100 and quantize feature is enabled
-        #[cfg(feature = "quantize")]
+        // Auto-indexed path when quality < 100 and any quantizer is enabled
+        #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
         if let Some(q) = self.config.quality
             && q < 100.0
         {
@@ -644,10 +645,11 @@ impl EncodeRgbaF32 for PngEncoder<'_> {
             let cancel: &dyn Stop = self.stop.unwrap_or(&enough::Unstoppable);
             let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
             let deadline = almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
-            let result = crate::encode_rgba8_auto(
+            let quantizer = crate::default_quantizer();
+            let result = crate::encode_auto(
                 img,
                 &self.config.config,
-                &crate::default_quantize_config(),
+                &*quantizer,
                 crate::QualityGate::MaxMpe(mpe),
                 self.metadata,
                 cancel,
@@ -3708,17 +3710,35 @@ mod tests {
     #[test]
     fn encode_rgb16_roundtrip() {
         let enc = PngEncoderConfig::new();
-        let pixels = vec![Rgb { r: 1000u16, g: 2000, b: 3000 }; 4];
+        let pixels = vec![
+            Rgb {
+                r: 1000u16,
+                g: 2000,
+                b: 3000
+            };
+            4
+        ];
         let img = Img::new(pixels, 2, 2);
         let out = enc.encode_rgb16(img.as_ref()).unwrap();
         assert!(!out.data().is_empty());
-        assert_eq!(&out.data()[..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        assert_eq!(
+            &out.data()[..8],
+            &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        );
     }
 
     #[test]
     fn encode_rgba16_roundtrip() {
         let enc = PngEncoderConfig::new();
-        let pixels = vec![Rgba { r: 1000u16, g: 2000, b: 3000, a: 65535 }; 4];
+        let pixels = vec![
+            Rgba {
+                r: 1000u16,
+                g: 2000,
+                b: 3000,
+                a: 65535
+            };
+            4
+        ];
         let img = Img::new(pixels, 2, 2);
         let out = enc.encode_rgba16(img.as_ref()).unwrap();
         assert!(!out.data().is_empty());
@@ -3837,10 +3857,7 @@ mod tests {
     #[test]
     fn encode_job_frame_encoder() {
         let enc = PngEncoderConfig::new();
-        let job = enc
-            .job()
-            .with_canvas_size(8, 8)
-            .with_loop_count(Some(0));
+        let job = enc.job().with_canvas_size(8, 8).with_loop_count(Some(0));
         let frame_enc = job.frame_encoder();
         assert!(frame_enc.is_ok());
     }

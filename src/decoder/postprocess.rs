@@ -806,7 +806,9 @@ mod tests {
         let ihdr = make_ihdr(0, 8);
         let anc = anc_with_trns(vec![0, 10]);
         // 4 RGBA8 pixels
-        let pixels = vec![10, 10, 10, 0, 20, 20, 20, 255, 10, 10, 10, 0, 30, 30, 30, 255];
+        let pixels = vec![
+            10, 10, 10, 0, 20, 20, 20, 255, 10, 10, 10, 0, 30, 30, 30, 255,
+        ];
         let result = build_pixel_data(&ihdr, &anc, pixels, 4, 1).unwrap();
         assert_eq!(result.width(), 4);
     }
@@ -851,7 +853,9 @@ mod tests {
     fn build_pixel_data_rgb8_trns() {
         let ihdr = make_ihdr(2, 8);
         let anc = anc_with_trns(vec![0; 6]);
-        let pixels = vec![0, 0, 0, 0, 255, 0, 0, 255, 0, 0, 255, 255, 128, 128, 128, 255];
+        let pixels = vec![
+            0, 0, 0, 0, 255, 0, 0, 255, 0, 0, 255, 255, 128, 128, 128, 255,
+        ];
         let result = build_pixel_data(&ihdr, &anc, pixels, 4, 1).unwrap();
         assert_eq!(result.width(), 4);
     }
@@ -886,7 +890,9 @@ mod tests {
     fn build_pixel_data_indexed_with_trns() {
         let ihdr = make_ihdr(3, 8);
         let anc = anc_with_trns(vec![255, 0]);
-        let pixels = vec![255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 128, 128, 128, 128, 255];
+        let pixels = vec![
+            255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 128, 128, 128, 128, 255,
+        ];
         let result = build_pixel_data(&ihdr, &anc, pixels, 4, 1).unwrap();
         assert_eq!(result.width(), 4);
     }
@@ -929,7 +935,9 @@ mod tests {
     fn build_pixel_data_rgba8() {
         let ihdr = make_ihdr(6, 8);
         let anc = empty_anc();
-        let pixels = vec![255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 0, 128, 128, 128, 255];
+        let pixels = vec![
+            255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 0, 128, 128, 128, 255,
+        ];
         let result = build_pixel_data(&ihdr, &anc, pixels, 4, 1).unwrap();
         assert_eq!(result.width(), 4);
     }
