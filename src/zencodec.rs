@@ -3914,4 +3914,211 @@ mod tests {
         let enc_lossy = enc.with_generic_quality(90.0);
         assert_eq!(enc_lossy.is_lossless(), Some(false));
     }
+
+    // ── Encoder trait roundtrip tests ──
+
+    #[test]
+    fn encoder_trait_rgb8() {
+        use zencodec_types::Encoder;
+        let pixels: Vec<Rgb<u8>> = (0..16 * 16)
+            .map(|i| Rgb {
+                r: (i % 256) as u8,
+                g: ((i * 3) % 256) as u8,
+                b: ((i * 7) % 256) as u8,
+            })
+            .collect();
+        let img = imgref::ImgVec::new(pixels, 16, 16);
+        let config = PngEncoderConfig::new();
+        let encoder = config.job().encoder().unwrap();
+        let output = encoder
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        assert!(!output.is_empty());
+        assert_eq!(output.format(), ImageFormat::Png);
+    }
+
+    #[test]
+    fn encoder_trait_rgba8() {
+        use zencodec_types::Encoder;
+        let pixels: Vec<Rgba<u8>> = (0..16 * 16)
+            .map(|i| Rgba {
+                r: (i % 256) as u8,
+                g: ((i * 3) % 256) as u8,
+                b: ((i * 7) % 256) as u8,
+                a: 255,
+            })
+            .collect();
+        let img = imgref::ImgVec::new(pixels, 16, 16);
+        let config = PngEncoderConfig::new();
+        let encoder = config.job().encoder().unwrap();
+        let output = encoder
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        assert!(!output.is_empty());
+        assert_eq!(output.format(), ImageFormat::Png);
+    }
+
+    #[test]
+    fn encoder_trait_gray8() {
+        use zencodec_types::Encoder;
+        let pixels: Vec<Gray<u8>> = (0..16 * 16).map(|i| Gray((i % 256) as u8)).collect();
+        let img = imgref::ImgVec::new(pixels, 16, 16);
+        let config = PngEncoderConfig::new();
+        let encoder = config.job().encoder().unwrap();
+        let output = encoder
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        assert!(!output.is_empty());
+        assert_eq!(output.format(), ImageFormat::Png);
+    }
+
+    #[test]
+    fn encoder_trait_rgb16() {
+        use zencodec_types::Encoder;
+        let pixels: Vec<Rgb<u16>> = (0..16 * 16)
+            .map(|i| Rgb {
+                r: (i * 256) as u16,
+                g: ((i * 3 * 256) % 65536) as u16,
+                b: 0,
+            })
+            .collect();
+        let img = imgref::ImgVec::new(pixels, 16, 16);
+        let config = PngEncoderConfig::new();
+        let encoder = config.job().encoder().unwrap();
+        let output = encoder
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        assert!(!output.is_empty());
+        assert_eq!(output.format(), ImageFormat::Png);
+    }
+
+    #[test]
+    fn encoder_trait_rgba16() {
+        use zencodec_types::Encoder;
+        let pixels: Vec<Rgba<u16>> = (0..16 * 16)
+            .map(|i| Rgba {
+                r: (i * 256) as u16,
+                g: ((i * 3 * 256) % 65536) as u16,
+                b: 0,
+                a: 65535,
+            })
+            .collect();
+        let img = imgref::ImgVec::new(pixels, 16, 16);
+        let config = PngEncoderConfig::new();
+        let encoder = config.job().encoder().unwrap();
+        let output = encoder
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        assert!(!output.is_empty());
+        assert_eq!(output.format(), ImageFormat::Png);
+    }
+
+    #[test]
+    fn encoder_trait_gray16() {
+        use zencodec_types::Encoder;
+        let pixels: Vec<Gray<u16>> = (0..16 * 16).map(|i| Gray((i * 256) as u16)).collect();
+        let img = imgref::ImgVec::new(pixels, 16, 16);
+        let config = PngEncoderConfig::new();
+        let encoder = config.job().encoder().unwrap();
+        let output = encoder
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        assert!(!output.is_empty());
+        assert_eq!(output.format(), ImageFormat::Png);
+    }
+
+    #[test]
+    fn encoder_trait_rgb_f32() {
+        use zencodec_types::Encoder;
+        let pixels: Vec<Rgb<f32>> = (0..16 * 16)
+            .map(|i| Rgb {
+                r: (i % 256) as f32 / 255.0,
+                g: ((i * 3) % 256) as f32 / 255.0,
+                b: ((i * 7) % 256) as f32 / 255.0,
+            })
+            .collect();
+        let img = imgref::ImgVec::new(pixels, 16, 16);
+        let config = PngEncoderConfig::new();
+        let encoder = config.job().encoder().unwrap();
+        let output = encoder
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        assert!(!output.is_empty());
+        assert_eq!(output.format(), ImageFormat::Png);
+    }
+
+    #[test]
+    fn encoder_trait_rgba_f32() {
+        use zencodec_types::Encoder;
+        let pixels: Vec<Rgba<f32>> = (0..16 * 16)
+            .map(|i| Rgba {
+                r: (i % 256) as f32 / 255.0,
+                g: ((i * 3) % 256) as f32 / 255.0,
+                b: ((i * 7) % 256) as f32 / 255.0,
+                a: 1.0,
+            })
+            .collect();
+        let img = imgref::ImgVec::new(pixels, 16, 16);
+        let config = PngEncoderConfig::new();
+        let encoder = config.job().encoder().unwrap();
+        let output = encoder
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        assert!(!output.is_empty());
+        assert_eq!(output.format(), ImageFormat::Png);
+    }
+
+    #[test]
+    fn encoder_trait_gray_f32() {
+        use zencodec_types::Encoder;
+        let pixels: Vec<Gray<f32>> =
+            (0..16 * 16).map(|i| Gray((i % 256) as f32 / 255.0)).collect();
+        let img = imgref::ImgVec::new(pixels, 16, 16);
+        let config = PngEncoderConfig::new();
+        let encoder = config.job().encoder().unwrap();
+        let output = encoder
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        assert!(!output.is_empty());
+        assert_eq!(output.format(), ImageFormat::Png);
+    }
+
+    #[test]
+    fn encoder_trait_bgra8() {
+        use zencodec_types::Encoder;
+        let pixels: Vec<rgb::alt::BGRA<u8>> = (0..16 * 16)
+            .map(|i| rgb::alt::BGRA {
+                b: (i % 256) as u8,
+                g: 128,
+                r: 64,
+                a: 255,
+            })
+            .collect();
+        let img = imgref::ImgVec::new(pixels, 16, 16);
+        let config = PngEncoderConfig::new();
+        let encoder = config.job().encoder().unwrap();
+        let output = encoder
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        assert!(!output.is_empty());
+        assert_eq!(output.format(), ImageFormat::Png);
+    }
+
+    #[test]
+    fn encoder_trait_dyn_encoder() {
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 100,
+                g: 150,
+                b: 200,
+            };
+            32 * 32
+        ];
+        let img = imgref::ImgVec::new(pixels, 32, 32);
+        let config = PngEncoderConfig::new();
+        let dyn_enc = config.job().dyn_encoder().unwrap();
+        let output = dyn_enc(PixelSlice::from(img.as_ref()).into()).unwrap();
+        assert!(!output.is_empty());
+        assert_eq!(output.format(), ImageFormat::Png);
+    }
 }
