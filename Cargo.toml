@@ -18,6 +18,8 @@ enough = "0.4"
 zencodec-types = { version = "0.1", path = "../zencodec-types" }
 zenpixels = { version = "0.1", path = "../zenpixels/zenpixels", default-features = false, features = ["buffer"] }
 zenquant = { version = "0.1", path = "../zenquant", optional = true }
+imagequant = { version = "4", optional = true }
+quantette = { version = "0.5", optional = true, default-features = false, features = ["kmeans", "std"] }
 zenflate = { version = "0.3", path = "../zenflate" }
 archmage = { version = "0.9", default-features = false, features = ["macros", "std"] }
 safe_unaligned_simd = { version = "0.2.5", default-features = false }
@@ -40,6 +42,8 @@ opt-level = 2
 [features]
 default = ["quantize"]
 quantize = ["dep:zenquant"]
+imagequant = ["dep:imagequant"]
+quantette = ["dep:quantette"]
 joint = ["quantize", "zenquant/joint"]
 unchecked = ["zenflate/unchecked"]
 zopfli = ["dep:zenzop"]

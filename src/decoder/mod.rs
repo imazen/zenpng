@@ -2272,7 +2272,11 @@ mod tests {
                 png_files.push(path);
             }
         }
-        assert!(!png_files.is_empty(), "no test PNGs found in {}", regression_dir.display());
+        assert!(
+            !png_files.is_empty(),
+            "no test PNGs found in {}",
+            regression_dir.display()
+        );
 
         // Read all files once
         let test_data: Vec<(String, Vec<u8>)> = png_files
@@ -2306,11 +2310,7 @@ mod tests {
                     }
                 } else {
                     // Decode as static PNG
-                    match decode_png(
-                        data,
-                        &crate::decode::PngDecodeConfig::none(),
-                        &Unstoppable,
-                    ) {
+                    match decode_png(data, &crate::decode::PngDecodeConfig::none(), &Unstoppable) {
                         Ok(output) => {
                             assert!(
                                 output.info.width > 0 && output.info.height > 0,

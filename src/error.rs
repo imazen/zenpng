@@ -20,7 +20,7 @@ pub enum PngError {
     #[error("stopped: {0}")]
     Stopped(enough::StopReason),
 
-    /// Quantization error.
+    /// Quantization error (zenquant backend).
     #[cfg(feature = "quantize")]
     #[error("quantize error: {0}")]
     Quantize(#[from] zenquant::QuantizeError),
