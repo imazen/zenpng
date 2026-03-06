@@ -672,6 +672,8 @@ fn srgb_u8_to_oklab(lut: &linear_srgb::lut::SrgbConverter, r: u8, g: u8, b: u8) 
 }
 
 /// Compute mean OKLab ΔE between original pixels and their quantized versions.
+/// Mean OKLab ΔE between original and quantized pixels (color channels only — alpha ignored).
+/// Use `MaxMpe` or `MinSsim2` gates for full perceptual quality including alpha.
 fn compute_mean_delta_e(original: &[Rgba<u8>], palette_rgba: &[[u8; 4]], indices: &[u8]) -> f64 {
     if original.is_empty() {
         return 0.0;
@@ -686,6 +688,7 @@ fn compute_mean_delta_e(original: &[Rgba<u8>], palette_rgba: &[[u8; 4]], indices
         .collect();
 
     let mut sum = 0.0_f64;
+    let mut count = 0usize;
     for (pixel, &idx) in original.iter().zip(indices.iter()) {
         let orig = srgb_u8_to_oklab(&lut, pixel.r, pixel.g, pixel.b);
         let quant = &palette_oklab[idx as usize];
@@ -694,9 +697,13 @@ fn compute_mean_delta_e(original: &[Rgba<u8>], palette_rgba: &[[u8; 4]], indices
         let da = (orig[1] - quant[1]) as f64;
         let db = (orig[2] - quant[2]) as f64;
         sum += (dl * dl + da * da + db * db).sqrt();
+        count += 1;
     }
 
-    sum / original.len() as f64
+    if count == 0 {
+        return 0.0;
+    }
+    sum / count as f64
 }
 
 #[cfg(test)]

@@ -510,6 +510,22 @@ fn encode_raw_with_stats(
     let w = width as usize;
     let h = height as usize;
 
+    // Near-lossless: quantize LSBs for better compression (8-bit only)
+    let nl_bytes;
+    let bytes = if config.near_lossless_bits > 0 && bit_depth == BitDepth::Eight {
+        let channels: usize = match color_type {
+            ColorType::Grayscale => 1,
+            ColorType::Rgb => 3,
+            ColorType::GrayscaleAlpha => 2,
+            ColorType::Rgba => 4,
+        };
+        nl_bytes =
+            crate::optimize::near_lossless_quantize(bytes, channels, config.near_lossless_bits);
+        &nl_bytes
+    } else {
+        bytes
+    };
+
     // Determine optimal encoding (same logic as encode_raw)
     let (eff_bytes, eff_ct, eff_bd, eff_trns) = match (color_type, bit_depth) {
         (ColorType::Rgba, BitDepth::Eight) => {
@@ -1350,7 +1366,10 @@ mod tests {
         assert_eq!(decoded.info.bit_depth, 16);
         assert!(!decoded.info.has_alpha);
         let raw = decoded.pixels.copy_to_contiguous_bytes();
-        let expected: Vec<u8> = pixels.iter().flat_map(|p| p.value().to_ne_bytes()).collect();
+        let expected: Vec<u8> = pixels
+            .iter()
+            .flat_map(|p| p.value().to_ne_bytes())
+            .collect();
         assert_eq!(raw, expected);
     }
 

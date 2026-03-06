@@ -101,6 +101,14 @@ pub trait Quantizer: Send + Sync {
         }
         let total_height = height * frames.len();
         let result = self.quantize_rgba(&concat, width, total_height)?;
+        let expected_indices = concat.len();
+        if result.indices.len() < expected_indices {
+            return Err(PngError::InvalidInput(format!(
+                "quantize_rgba returned {} indices, expected {}",
+                result.indices.len(),
+                expected_indices
+            )));
+        }
         let n = frames.len();
         let mut frame_indices = Vec::with_capacity(n);
         for i in 0..n {
@@ -298,14 +306,20 @@ mod zenquant_backend {
             use imgref::ImgRef;
 
             let pixels_per_frame = width * height;
-            let frame_refs: Vec<ImgRef<'_, zenquant::RGBA<u8>>> = frames
-                .iter()
-                .map(|f| {
-                    let pixels: &[zenquant::RGBA<u8>] =
-                        bytemuck::cast_slice(&f[..pixels_per_frame]);
-                    ImgRef::new(pixels, width, height)
-                })
-                .collect();
+            let mut frame_refs: Vec<ImgRef<'_, zenquant::RGBA<u8>>> =
+                Vec::with_capacity(frames.len());
+            for (i, f) in frames.iter().enumerate() {
+                if f.len() < pixels_per_frame {
+                    return Err(PngError::InvalidInput(format!(
+                        "frame {} has {} pixels, expected {}",
+                        i,
+                        f.len(),
+                        pixels_per_frame
+                    )));
+                }
+                let pixels: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(&f[..pixels_per_frame]);
+                frame_refs.push(ImgRef::new(pixels, width, height));
+            }
 
             let palette_result = zenquant::build_palette_rgba(&frame_refs, &self.config)?;
             let palette_rgba = palette_result.palette_rgba().to_vec();
