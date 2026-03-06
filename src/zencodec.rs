@@ -464,6 +464,41 @@ impl<'a> PngEncoder<'a> {
     }
 }
 
+impl zencodec_types::Encoder for PngEncoder<'_> {
+    type Error = PngError;
+
+    fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, PngError> {
+        use zenpixels::PixelFormat;
+
+        match pixels.descriptor().pixel_format() {
+            PixelFormat::Rgb8 => self.encode_rgb8(pixels.try_typed().unwrap()),
+            PixelFormat::Rgba8 => self.encode_rgba8(pixels.try_typed().unwrap()),
+            PixelFormat::Gray8 => self.encode_gray8(pixels.try_typed().unwrap()),
+            PixelFormat::Rgb16 => self.encode_rgb16(pixels.try_typed().unwrap()),
+            PixelFormat::Rgba16 => self.encode_rgba16(pixels.try_typed().unwrap()),
+            PixelFormat::Gray16 => self.encode_gray16(pixels.try_typed().unwrap()),
+            PixelFormat::RgbF32 => self.encode_rgb_f32(pixels.try_typed().unwrap()),
+            PixelFormat::RgbaF32 => self.encode_rgba_f32(pixels.try_typed().unwrap()),
+            PixelFormat::GrayF32 => self.encode_gray_f32(pixels.try_typed().unwrap()),
+            PixelFormat::Bgra8 => {
+                // Swizzle BGRA → RGBA and encode
+                let raw = pixels.contiguous_bytes();
+                let rgba: Vec<u8> = raw
+                    .chunks_exact(4)
+                    .flat_map(|c| [c[2], c[1], c[0], c[3]])
+                    .collect();
+                self.do_encode(
+                    &rgba,
+                    pixels.width(),
+                    pixels.rows(),
+                    crate::encode::ColorType::Rgba,
+                )
+            }
+            _ => Err(zencodec_types::UnsupportedOperation::PixelFormat.into()),
+        }
+    }
+}
+
 impl EncodeRgb8 for PngEncoder<'_> {
     type Error = PngError;
     fn encode_rgb8(self, pixels: PixelSlice<'_, Rgb<u8>>) -> Result<EncodeOutput, PngError> {
