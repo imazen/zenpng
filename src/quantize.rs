@@ -596,3 +596,158 @@ mod quantette_backend {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── available_backends / quantizer_by_name ──────────────────────
+
+    #[test]
+    fn available_backends_includes_zenquant() {
+        let backends = available_backends();
+        assert!(
+            backends.contains(&"zenquant"),
+            "zenquant should be available"
+        );
+    }
+
+    #[test]
+    fn quantizer_by_name_zenquant() {
+        let q = quantizer_by_name("zenquant").unwrap();
+        assert_eq!(q.name(), "zenquant");
+    }
+
+    #[test]
+    fn quantizer_by_name_unknown_fails() {
+        let result = quantizer_by_name("nonexistent");
+        assert!(result.is_err());
+        let err = match result {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(err.contains("unknown or disabled"), "got: {err}");
+    }
+
+    // ── default_quantizer ──────────────────────────────────────────
+
+    #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
+    #[test]
+    fn default_quantizer_works() {
+        let q = default_quantizer();
+        assert!(!q.name().is_empty());
+    }
+
+    // ── Quantizer trait: with_quality_metrics default impl ──────────
+
+    struct DummyQuantizer;
+    impl Quantizer for DummyQuantizer {
+        fn quantize_rgba(
+            &self,
+            pixels: &[[u8; 4]],
+            _width: usize,
+            _height: usize,
+        ) -> Result<QuantizeOutput, crate::error::PngError> {
+            Ok(QuantizeOutput {
+                palette_rgba: vec![[0, 0, 0, 255], [255, 255, 255, 255]],
+                indices: vec![0; pixels.len()],
+                mpe_score: None,
+                ssim2_estimate: None,
+                butteraugli_estimate: None,
+            })
+        }
+        fn name(&self) -> &str {
+            "dummy"
+        }
+    }
+
+    #[test]
+    fn default_with_quality_metrics_returns_none() {
+        let q = DummyQuantizer;
+        assert!(q.with_quality_metrics().is_none());
+    }
+
+    #[test]
+    fn default_quantize_multi_frame_splits_correctly() {
+        let q = DummyQuantizer;
+        let frame0: Vec<[u8; 4]> = vec![[255, 0, 0, 255]; 4];
+        let frame1: Vec<[u8; 4]> = vec![[0, 255, 0, 255]; 4];
+        let frames: Vec<&[[u8; 4]]> = vec![&frame0, &frame1];
+
+        let result = q.quantize_multi_frame(&frames, 2, 2).unwrap();
+        assert_eq!(result.frame_indices.len(), 2);
+        assert_eq!(result.frame_indices[0].len(), 4);
+        assert_eq!(result.frame_indices[1].len(), 4);
+        assert_eq!(result.palette_rgba.len(), 2);
+        assert_eq!(result.mpe_scores, vec![None, None]);
+        assert_eq!(result.ssim2_estimates, vec![None, None]);
+    }
+
+    #[test]
+    fn default_quantize_multi_frame_rejects_short_frame() {
+        let q = DummyQuantizer;
+        let frame0: Vec<[u8; 4]> = vec![[255, 0, 0, 255]; 2]; // too short for 2x2
+        let frames: Vec<&[[u8; 4]]> = vec![&frame0];
+        let result = q.quantize_multi_frame(&frames, 2, 2);
+        assert!(result.is_err());
+    }
+
+    // ── ZenquantQuantizer ──────────────────────────────────────────
+
+    #[cfg(feature = "quantize")]
+    #[test]
+    fn zenquant_basic_quantize() {
+        let q = ZenquantQuantizer::new();
+        assert_eq!(q.name(), "zenquant");
+        let pixels: Vec<[u8; 4]> = (0..64)
+            .map(|i| [(i * 4) as u8, (i * 3) as u8, (i * 2) as u8, 255])
+            .collect();
+        let result = q.quantize_rgba(&pixels, 8, 8).unwrap();
+        assert!(!result.palette_rgba.is_empty());
+        assert!(result.palette_rgba.len() <= 256);
+        assert_eq!(result.indices.len(), 64);
+    }
+
+    #[cfg(feature = "quantize")]
+    #[test]
+    fn zenquant_with_quality_metrics() {
+        let q = ZenquantQuantizer::new();
+        let q2 = q.with_quality_metrics();
+        assert!(q2.is_some(), "zenquant should support quality metrics");
+        let q2 = q2.unwrap();
+        assert_eq!(q2.name(), "zenquant");
+    }
+
+    #[cfg(feature = "quantize")]
+    #[test]
+    fn zenquant_multi_frame() {
+        let q = ZenquantQuantizer::new();
+        let frame0: Vec<[u8; 4]> = vec![[255, 0, 0, 255]; 16];
+        let frame1: Vec<[u8; 4]> = vec![[0, 255, 0, 255]; 16];
+        let frames: Vec<&[[u8; 4]]> = vec![&frame0, &frame1];
+        let result = q.quantize_multi_frame(&frames, 4, 4).unwrap();
+        assert_eq!(result.frame_indices.len(), 2);
+        assert_eq!(result.frame_indices[0].len(), 16);
+    }
+
+    #[cfg(feature = "quantize")]
+    #[test]
+    fn zenquant_builder_methods() {
+        let q = ZenquantQuantizer::new()
+            .with_max_colors(64)
+            .with_compute_quality_metric(true);
+        let pixels: Vec<[u8; 4]> = (0..16).map(|i| [(i * 16) as u8, 0, 0, 255]).collect();
+        let result = q.quantize_rgba(&pixels, 4, 4).unwrap();
+        assert!(result.palette_rgba.len() <= 64);
+        // Quality metrics should be present
+        assert!(result.mpe_score.is_some());
+    }
+
+    #[cfg(feature = "quantize")]
+    #[test]
+    fn zenquant_config_access() {
+        let mut q = ZenquantQuantizer::new();
+        let _config = q.config();
+        let _config_mut = q.config_mut();
+    }
+}

@@ -2374,4 +2374,383 @@ mod tests {
         });
         eprintln!("encode-decode roundtrip tiers: {report}");
     }
+
+    // ── Decode error paths ──────────────────────────────────────────
+
+    #[test]
+    fn decode_empty_data_errors() {
+        let result = decode_png(&[], &crate::decode::PngDecodeConfig::none(), &Unstoppable);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_truncated_signature_errors() {
+        let result = decode_png(
+            &[0x89, 0x50, 0x4E],
+            &crate::decode::PngDecodeConfig::none(),
+            &Unstoppable,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_valid_signature_but_no_ihdr() {
+        let result = decode_png(
+            &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+            &crate::decode::PngDecodeConfig::none(),
+            &Unstoppable,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn probe_empty_data_errors() {
+        let result = probe_png(&[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn probe_valid_png_returns_info() {
+        // Encode a small image and probe it
+        let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 0, g: 0, b: 0 }; 4];
+        let img = imgref::Img::new(pixels, 2, 2);
+        let encoded = crate::encode::encode_rgb8(
+            img.as_ref(),
+            None,
+            &crate::encode::EncodeConfig::default()
+                .with_compression(crate::types::Compression::Fastest),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let info = probe_png(&encoded).unwrap();
+        assert_eq!(info.width, 2);
+        assert_eq!(info.height, 2);
+    }
+
+    // ── 16-bit encode+decode roundtrips for all color types ─────────
+
+    #[test]
+    fn roundtrip_gray16_strict() {
+        // Use values with nonzero low byte to prevent 16→8 reduction
+        let pixels: Vec<rgb::Gray<u16>> = (0..16).map(|i| rgb::Gray(i * 4096 + 1)).collect();
+        let img = imgref::Img::new(pixels.clone(), 4, 4);
+        let encoded = crate::encode::encode_gray16(
+            img.as_ref(),
+            None,
+            &crate::encode::EncodeConfig::default()
+                .with_compression(crate::types::Compression::Balanced),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let decoded = decode_png(
+            &encoded,
+            &crate::decode::PngDecodeConfig::strict(),
+            &Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, 4);
+        assert_eq!(decoded.info.height, 4);
+        assert_eq!(decoded.info.bit_depth, 16);
+        assert!(!decoded.info.has_alpha);
+    }
+
+    #[test]
+    fn roundtrip_rgb16_strict() {
+        let pixels: Vec<Rgb<u16>> = (0..16)
+            .map(|i| Rgb {
+                r: i * 4096 + 1,
+                g: i * 2048 + 3,
+                b: i * 1024 + 7,
+            })
+            .collect();
+        let img = imgref::Img::new(pixels, 4, 4);
+        let encoded = crate::encode::encode_rgb16(
+            img.as_ref(),
+            None,
+            &crate::encode::EncodeConfig::default()
+                .with_compression(crate::types::Compression::Balanced),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let decoded = decode_png(
+            &encoded,
+            &crate::decode::PngDecodeConfig::strict(),
+            &Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, 4);
+        assert_eq!(decoded.info.bit_depth, 16);
+    }
+
+    #[test]
+    fn roundtrip_rgba16_strict() {
+        let pixels: Vec<Rgba<u16>> = (0..16)
+            .map(|i| Rgba {
+                r: i * 4096 + 1,
+                g: i * 2048 + 3,
+                b: i * 1024 + 7,
+                a: 65535 - i * 1000,
+            })
+            .collect();
+        let img = imgref::Img::new(pixels, 4, 4);
+        let encoded = crate::encode::encode_rgba16(
+            img.as_ref(),
+            None,
+            &crate::encode::EncodeConfig::default()
+                .with_compression(crate::types::Compression::Balanced),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let decoded = decode_png(
+            &encoded,
+            &crate::decode::PngDecodeConfig::strict(),
+            &Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, 4);
+        assert_eq!(decoded.info.bit_depth, 16);
+        assert!(decoded.info.has_alpha);
+    }
+
+    // ── All 8-bit color types roundtrip ─────────────────────────────
+
+    #[test]
+    fn roundtrip_gray8_strict() {
+        let pixels: Vec<Gray<u8>> = (0..16).map(|i| Gray((i * 16) as u8)).collect();
+        let img = imgref::Img::new(pixels, 4, 4);
+        let encoded = crate::encode::encode_gray8(
+            img.as_ref(),
+            None,
+            &crate::encode::EncodeConfig::default()
+                .with_compression(crate::types::Compression::Balanced),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let decoded = decode_png(
+            &encoded,
+            &crate::decode::PngDecodeConfig::strict(),
+            &Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, 4);
+        assert_eq!(decoded.info.bit_depth, 8);
+    }
+
+    #[test]
+    fn roundtrip_rgb8_strict() {
+        let pixels: Vec<Rgb<u8>> = (0..16)
+            .map(|i| Rgb {
+                r: (i * 16) as u8,
+                g: (i * 8) as u8,
+                b: (i * 4) as u8,
+            })
+            .collect();
+        let img = imgref::Img::new(pixels, 4, 4);
+        let encoded = crate::encode::encode_rgb8(
+            img.as_ref(),
+            None,
+            &crate::encode::EncodeConfig::default()
+                .with_compression(crate::types::Compression::Balanced),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let decoded = decode_png(
+            &encoded,
+            &crate::decode::PngDecodeConfig::strict(),
+            &Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, 4);
+    }
+
+    #[test]
+    fn roundtrip_rgba8_strict() {
+        let pixels: Vec<Rgba<u8>> = (0..16)
+            .map(|i| Rgba {
+                r: (i * 16) as u8,
+                g: (i * 8) as u8,
+                b: (i * 4) as u8,
+                a: 200,
+            })
+            .collect();
+        let img = imgref::Img::new(pixels, 4, 4);
+        let encoded = crate::encode::encode_rgba8(
+            img.as_ref(),
+            None,
+            &crate::encode::EncodeConfig::default()
+                .with_compression(crate::types::Compression::Balanced),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let decoded = decode_png(
+            &encoded,
+            &crate::decode::PngDecodeConfig::strict(),
+            &Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, 4);
+        assert!(decoded.info.has_alpha);
+    }
+
+    // ── High effort encode+decode (exercises brute-force compress paths) ──
+
+    #[test]
+    fn roundtrip_rgb8_effort_24_intense() {
+        let pixels: Vec<Rgb<u8>> = (0..64)
+            .map(|i| Rgb {
+                r: (i * 4) as u8,
+                g: (i * 3) as u8,
+                b: (i * 2) as u8,
+            })
+            .collect();
+        let img = imgref::Img::new(pixels, 8, 8);
+        let encoded = crate::encode::encode_rgb8(
+            img.as_ref(),
+            None,
+            &crate::encode::EncodeConfig::default()
+                .with_compression(crate::types::Compression::Intense),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let decoded = decode_png(
+            &encoded,
+            &crate::decode::PngDecodeConfig::strict(),
+            &Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, 8);
+        assert_eq!(decoded.info.height, 8);
+    }
+
+    #[test]
+    fn roundtrip_rgba8_effort_27_crush() {
+        let pixels: Vec<Rgba<u8>> = (0..64)
+            .map(|i| Rgba {
+                r: (i * 4) as u8,
+                g: (i * 3) as u8,
+                b: (i * 2) as u8,
+                a: if i % 3 == 0 { 0 } else { 255 },
+            })
+            .collect();
+        let img = imgref::Img::new(pixels, 8, 8);
+        let encoded = crate::encode::encode_rgba8(
+            img.as_ref(),
+            None,
+            &crate::encode::EncodeConfig::default()
+                .with_compression(crate::types::Compression::Crush),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let decoded = decode_png(
+            &encoded,
+            &crate::decode::PngDecodeConfig::strict(),
+            &Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, 8);
+    }
+
+    #[test]
+    fn roundtrip_gray8_effort_30_maniac() {
+        let pixels: Vec<Gray<u8>> = (0..64).map(|i| Gray((i * 4) as u8)).collect();
+        let img = imgref::Img::new(pixels, 8, 8);
+        let encoded = crate::encode::encode_gray8(
+            img.as_ref(),
+            None,
+            &crate::encode::EncodeConfig::default()
+                .with_compression(crate::types::Compression::Maniac),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let decoded = decode_png(
+            &encoded,
+            &crate::decode::PngDecodeConfig::strict(),
+            &Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, 8);
+    }
+
+    #[test]
+    fn roundtrip_rgb16_effort_22_aggressive() {
+        let pixels: Vec<Rgb<u16>> = (0..16)
+            .map(|i| Rgb {
+                r: i * 4096 + 1,
+                g: i * 2048 + 3,
+                b: i * 1024 + 7,
+            })
+            .collect();
+        let img = imgref::Img::new(pixels, 4, 4);
+        let encoded = crate::encode::encode_rgb16(
+            img.as_ref(),
+            None,
+            &crate::encode::EncodeConfig::default()
+                .with_compression(crate::types::Compression::Aggressive),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let decoded = decode_png(
+            &encoded,
+            &crate::decode::PngDecodeConfig::strict(),
+            &Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, 4);
+    }
+
+    // ── Decode config builder ───────────────────────────────────────
+
+    #[test]
+    fn decode_config_builders_chain() {
+        let config = crate::decode::PngDecodeConfig::none()
+            .with_max_pixels(1000)
+            .with_max_memory(50000)
+            .with_skip_decompression_checksum(false)
+            .with_skip_critical_chunk_crc(false);
+        assert_eq!(config.max_pixels, Some(1000));
+        assert_eq!(config.max_memory_bytes, Some(50000));
+        assert!(!config.skip_decompression_checksum);
+        assert!(!config.skip_critical_chunk_crc);
+    }
+
+    // ── build_png_info covers metadata paths ────────────────────────
+
+    #[test]
+    fn build_png_info_with_cicp() {
+        let ihdr = Ihdr::parse(&make_ihdr(8, 8, 8, 2, 0)).unwrap();
+        let mut ancillary = crate::chunk::ancillary::PngAncillary::default();
+        ancillary.cicp = Some([1, 13, 0, 1]);
+        let info = build_png_info(&ihdr, &ancillary);
+        assert!(info.cicp.is_some());
+    }
+
+    #[test]
+    fn build_png_info_minimal() {
+        let ihdr = Ihdr::parse(&make_ihdr(4, 4, 8, 6, 0)).unwrap();
+        let ancillary = crate::chunk::ancillary::PngAncillary::default();
+        let info = build_png_info(&ihdr, &ancillary);
+        assert_eq!(info.width, 4);
+        assert_eq!(info.height, 4);
+        assert!(info.has_alpha);
+        assert!(!info.has_animation);
+        assert_eq!(info.frame_count, 1);
+        assert!(info.icc_profile.is_none());
+        assert!(info.exif.is_none());
+        assert!(info.xmp.is_none());
+        assert!(info.source_gamma.is_none());
+        assert!(info.srgb_intent.is_none());
+        assert!(info.chromaticities.is_none());
+        assert!(info.cicp.is_none());
+    }
 }

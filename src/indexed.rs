@@ -1358,4 +1358,332 @@ mod tests {
             );
         }
     }
+
+    // ── QualityGate unit tests ──────────────────────────────────────
+
+    #[test]
+    fn quality_gate_needs_metric() {
+        assert!(!QualityGate::MaxDeltaE(0.02).needs_metric());
+        assert!(QualityGate::MaxMpe(0.008).needs_metric());
+        assert!(QualityGate::MinSsim2(85.0).needs_metric());
+    }
+
+    #[test]
+    fn quality_gate_check_max_delta_e() {
+        let output = QuantizeOutput {
+            palette_rgba: vec![],
+            indices: vec![],
+            mpe_score: None,
+            ssim2_estimate: None,
+            butteraugli_estimate: None,
+        };
+        assert!(QualityGate::MaxDeltaE(0.05).check(&output, 0.02));
+        assert!(!QualityGate::MaxDeltaE(0.01).check(&output, 0.02));
+        assert!(QualityGate::MaxDeltaE(0.02).check(&output, 0.02)); // exact boundary
+    }
+
+    #[test]
+    fn quality_gate_check_max_mpe() {
+        let output_with = QuantizeOutput {
+            palette_rgba: vec![],
+            indices: vec![],
+            mpe_score: Some(0.005),
+            ssim2_estimate: None,
+            butteraugli_estimate: None,
+        };
+        assert!(QualityGate::MaxMpe(0.008).check(&output_with, 0.0));
+        assert!(!QualityGate::MaxMpe(0.003).check(&output_with, 0.0));
+
+        // Missing metric → gate fails conservatively
+        let output_none = QuantizeOutput {
+            palette_rgba: vec![],
+            indices: vec![],
+            mpe_score: None,
+            ssim2_estimate: None,
+            butteraugli_estimate: None,
+        };
+        assert!(!QualityGate::MaxMpe(1.0).check(&output_none, 0.0));
+    }
+
+    #[test]
+    fn quality_gate_check_min_ssim2() {
+        let output_with = QuantizeOutput {
+            palette_rgba: vec![],
+            indices: vec![],
+            mpe_score: None,
+            ssim2_estimate: Some(90.0),
+            butteraugli_estimate: None,
+        };
+        assert!(QualityGate::MinSsim2(85.0).check(&output_with, 0.0));
+        assert!(!QualityGate::MinSsim2(95.0).check(&output_with, 0.0));
+
+        // Missing metric → gate fails conservatively
+        let output_none = QuantizeOutput {
+            palette_rgba: vec![],
+            indices: vec![],
+            mpe_score: None,
+            ssim2_estimate: None,
+            butteraugli_estimate: None,
+        };
+        assert!(!QualityGate::MinSsim2(0.0).check(&output_none, 0.0));
+    }
+
+    // ── MaxMpe / MinSsim2 auto-encode paths ─────────────────────────
+
+    #[test]
+    fn auto_encode_max_mpe_gate() {
+        let img = test_image_4x4();
+        let config = EncodeConfig::default();
+        let quantizer = default_quantizer();
+
+        // Few colors → exact palette → passes any gate
+        let result = encode_auto(
+            img.as_ref(),
+            &config,
+            &*quantizer,
+            QualityGate::MaxMpe(0.008),
+            None,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert!(result.indexed);
+        assert_eq!(result.quality_loss, 0.0);
+        assert_eq!(result.mpe_score, Some(0.0));
+    }
+
+    #[test]
+    fn auto_encode_min_ssim2_gate() {
+        let img = test_image_4x4();
+        let config = EncodeConfig::default();
+        let quantizer = default_quantizer();
+
+        let result = encode_auto(
+            img.as_ref(),
+            &config,
+            &*quantizer,
+            QualityGate::MinSsim2(85.0),
+            None,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert!(result.indexed);
+        assert_eq!(result.ssim2_estimate, Some(100.0));
+    }
+
+    // ── with_quality_metrics integration ────────────────────────────
+
+    #[test]
+    fn auto_encode_mpe_gate_on_many_colors() {
+        // >256 colors → quantization required, MaxMpe needs metrics
+        let mut pixels = Vec::with_capacity(64 * 64);
+        for y in 0..64u32 {
+            for x in 0..64u32 {
+                pixels.push(Rgba {
+                    r: (x * 4).min(255) as u8,
+                    g: (y * 4).min(255) as u8,
+                    b: ((x + y) * 2).min(255) as u8,
+                    a: 255,
+                });
+            }
+        }
+        let img = ImgVec::new(pixels, 64, 64);
+        let config = EncodeConfig::default();
+        let quantizer = default_quantizer();
+
+        let result = encode_auto(
+            img.as_ref(),
+            &config,
+            &*quantizer,
+            QualityGate::MaxMpe(1.0), // very lenient
+            None,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        // Should have MPE metric populated
+        assert!(result.mpe_score.is_some());
+    }
+
+    // ── Truecolor fallback on strict gate ───────────────────────────
+
+    #[test]
+    fn auto_encode_truecolor_fallback_on_strict_mpe() {
+        let mut pixels = Vec::with_capacity(64 * 64);
+        for y in 0..64u32 {
+            for x in 0..64u32 {
+                pixels.push(Rgba {
+                    r: (x * 4).min(255) as u8,
+                    g: (y * 4).min(255) as u8,
+                    b: ((x + y) * 2).min(255) as u8,
+                    a: 255,
+                });
+            }
+        }
+        let img = ImgVec::new(pixels, 64, 64);
+        let config = EncodeConfig::default();
+        let quantizer = default_quantizer();
+
+        // Impossibly strict MPE gate → should fall back to truecolor
+        let result = encode_auto(
+            img.as_ref(),
+            &config,
+            &*quantizer,
+            QualityGate::MaxMpe(0.0),
+            None,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert!(!result.indexed, "should fall back to truecolor");
+    }
+
+    // ── encode_indexed with high effort ─────────────────────────────
+
+    #[test]
+    fn indexed_high_effort_roundtrip() {
+        let img = test_image_4x4();
+        let config = EncodeConfig::default().with_compression(crate::Compression::High);
+        let quantizer = default_quantizer();
+        let encoded = encode_indexed(
+            img.as_ref(),
+            &config,
+            &*quantizer,
+            None,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        let decoded = crate::decode::decode(
+            &encoded,
+            &crate::decode::PngDecodeConfig::strict(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, 4);
+    }
+
+    // ── APNG indexed roundtrip ──────────────────────────────────────
+
+    #[test]
+    fn apng_indexed_roundtrip() {
+        let w = 4u32;
+        let h = 4u32;
+        let sz = (w * h * 4) as usize;
+        // 4 unique colors across both frames
+        let frame0: Vec<u8> = (0..sz)
+            .map(|i| match (i / 4) % 4 {
+                0 => [255u8, 0, 0, 255],
+                1 => [0, 255, 0, 255],
+                2 => [0, 0, 255, 255],
+                _ => [255, 255, 0, 255],
+            }[i % 4])
+            .collect();
+        let frame1: Vec<u8> = (0..sz)
+            .map(|i| match (i / 4) % 4 {
+                0 => [0u8, 0, 255, 255],
+                1 => [255, 255, 0, 255],
+                2 => [255, 0, 0, 255],
+                _ => [0, 255, 0, 255],
+            }[i % 4])
+            .collect();
+
+        let frames = [
+            crate::encode::ApngFrameInput::new(&frame0, 1, 30),
+            crate::encode::ApngFrameInput::new(&frame1, 1, 30),
+        ];
+        let config = crate::encode::ApngEncodeConfig::default();
+        let quantizer = default_quantizer();
+
+        let params = crate::indexed::ApngEncodeParams {
+            frames: &frames,
+            canvas_width: w,
+            canvas_height: h,
+            config: &config,
+            quantizer: &*quantizer,
+            metadata: None,
+            cancel: &enough::Unstoppable,
+            deadline: &enough::Unstoppable,
+        };
+        let encoded = encode_apng_indexed(&params).unwrap();
+        assert!(!encoded.is_empty());
+        assert_eq!(&encoded[..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
+    }
+
+    // ── APNG auto roundtrip ─────────────────────────────────────────
+
+    #[test]
+    fn apng_auto_few_colors_uses_indexed() {
+        let w = 4u32;
+        let h = 4u32;
+        let sz = (w * h * 4) as usize;
+        // Only 2 unique colors
+        let frame0 = vec![255u8, 0, 0, 255].repeat(w as usize * h as usize);
+        let frame1 = vec![0u8, 255, 0, 255].repeat(w as usize * h as usize);
+        assert!(frame0.len() >= sz);
+        assert!(frame1.len() >= sz);
+
+        let frames = [
+            crate::encode::ApngFrameInput::new(&frame0, 1, 30),
+            crate::encode::ApngFrameInput::new(&frame1, 1, 30),
+        ];
+        let config = crate::encode::ApngEncodeConfig::default();
+        let quantizer = default_quantizer();
+
+        let params = crate::indexed::ApngEncodeParams {
+            frames: &frames,
+            canvas_width: w,
+            canvas_height: h,
+            config: &config,
+            quantizer: &*quantizer,
+            metadata: None,
+            cancel: &enough::Unstoppable,
+            deadline: &enough::Unstoppable,
+        };
+        let result = encode_apng_auto(&params, QualityGate::MaxDeltaE(0.02)).unwrap();
+        assert!(result.indexed, "2-color APNG should use indexed");
+        assert_eq!(result.quality_loss, 0.0);
+    }
+
+    #[test]
+    fn apng_auto_validates_empty_frames() {
+        let config = crate::encode::ApngEncodeConfig::default();
+        let quantizer = default_quantizer();
+        let frames: &[crate::encode::ApngFrameInput<'_>] = &[];
+        let params = crate::indexed::ApngEncodeParams {
+            frames,
+            canvas_width: 4,
+            canvas_height: 4,
+            config: &config,
+            quantizer: &*quantizer,
+            metadata: None,
+            cancel: &enough::Unstoppable,
+            deadline: &enough::Unstoppable,
+        };
+        let result = encode_apng_auto(&params, QualityGate::MaxDeltaE(0.02));
+        assert!(result.is_err());
+    }
+
+    // ── compute_mean_delta_e edge case ──────────────────────────────
+
+    #[test]
+    fn delta_e_empty_returns_zero() {
+        let result = compute_mean_delta_e(&[], &[], &[]);
+        assert_eq!(result, 0.0);
+    }
+
+    #[test]
+    fn delta_e_exact_match_returns_zero() {
+        let pixels = vec![Rgba {
+            r: 128,
+            g: 64,
+            b: 32,
+            a: 255,
+        }];
+        let palette = vec![[128, 64, 32, 255]];
+        let indices = vec![0];
+        let result = compute_mean_delta_e(&pixels, &palette, &indices);
+        assert!(result < 1e-10);
+    }
 }
