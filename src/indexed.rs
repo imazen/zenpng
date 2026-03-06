@@ -549,7 +549,278 @@ fn encode_exact_palette_result(
     })
 }
 
-// ── APNG indexed encoding ───────────────────────────────────────────
+// ── APNG trait-based API ───────────────────────────────────────────
+
+/// Bundled parameters for APNG encoding with any [`Quantizer`] backend.
+pub struct ApngQuantizeParams<'a> {
+    /// Canvas-sized RGBA8 frames to encode.
+    pub frames: &'a [crate::encode::ApngFrameInput<'a>],
+    /// Canvas width in pixels.
+    pub canvas_width: u32,
+    /// Canvas height in pixels.
+    pub canvas_height: u32,
+    /// APNG encoding configuration (compression, num_plays, etc.).
+    pub config: &'a crate::encode::ApngEncodeConfig,
+    /// Quantizer backend.
+    pub quantizer: &'a dyn Quantizer,
+    /// Optional PNG metadata (gAMA, sRGB, cHRM, iCCP, etc.).
+    pub metadata: Option<&'a MetadataView<'a>>,
+    /// Cancellation token.
+    pub cancel: &'a dyn Stop,
+    /// Deadline/timeout token.
+    pub deadline: &'a dyn Stop,
+}
+
+/// Encode canvas-sized RGBA8 frames into an indexed APNG with any [`Quantizer`].
+///
+/// Builds a shared palette via [`Quantizer::quantize_multi_frame`]. Zenquant
+/// provides temporal consistency (identical pixels across frames get the same
+/// index); other backends use concatenated quantization.
+pub fn encode_apng_indexed_q(params: &ApngQuantizeParams<'_>) -> Result<Vec<u8>, PngError> {
+    let frames = params.frames;
+    let w = params.canvas_width as usize;
+    let h = params.canvas_height as usize;
+    let config = params.config;
+    let cancel = params.cancel;
+    let deadline = params.deadline;
+
+    validate_apng_frames(frames, w, h)?;
+
+    let expected_len = w * h * 4;
+    let pixels_per_frame = w * h;
+
+    // Fast path: ≤256 unique colors across all frames
+    let frame_pixel_slices: Vec<&[u8]> = frames.iter().map(|f| &f.pixels[..expected_len]).collect();
+    if let Some(exact) = try_build_exact_palette(&frame_pixel_slices, pixels_per_frame) {
+        return encode_apng_from_palette(
+            frames,
+            &exact.palette_rgba,
+            &exact.frame_indices,
+            params.canvas_width,
+            params.canvas_height,
+            config,
+            params.metadata,
+            cancel,
+            deadline,
+        );
+    }
+
+    // Multi-frame quantization via the trait
+    let frame_rgba: Vec<&[[u8; 4]]> = frames
+        .iter()
+        .map(|f| {
+            let pixels: &[[u8; 4]] = bytemuck::cast_slice(&f.pixels[..expected_len]);
+            pixels
+        })
+        .collect();
+
+    let mf = params.quantizer.quantize_multi_frame(&frame_rgba, w, h)?;
+
+    encode_apng_from_palette(
+        frames,
+        &mf.palette_rgba,
+        &mf.frame_indices,
+        params.canvas_width,
+        params.canvas_height,
+        config,
+        params.metadata,
+        cancel,
+        deadline,
+    )
+}
+
+/// Encode APNG frames, auto-choosing indexed or truecolor, with any [`Quantizer`].
+///
+/// Quantizes via [`Quantizer::quantize_multi_frame`], checks quality gate
+/// per frame. Falls back to truecolor if any frame fails the gate.
+///
+/// **Note:** `MaxMpe`/`MinSsim2` gates require per-frame metrics, which only
+/// zenquant provides. With other backends these gates fail → truecolor fallback.
+/// Use `MaxDeltaE` for backend-agnostic gating.
+pub fn encode_apng_auto_q(
+    params: &ApngQuantizeParams<'_>,
+    gate: QualityGate,
+) -> Result<AutoEncodeResult, PngError> {
+    let frames = params.frames;
+    let w = params.canvas_width as usize;
+    let h = params.canvas_height as usize;
+    let config = params.config;
+    let cancel = params.cancel;
+    let deadline = params.deadline;
+
+    validate_apng_frames(frames, w, h)?;
+
+    let expected_len = w * h * 4;
+    let pixels_per_frame = w * h;
+
+    // Fast path: ≤256 unique colors (zero loss)
+    let frame_pixel_slices: Vec<&[u8]> = frames.iter().map(|f| &f.pixels[..expected_len]).collect();
+    if let Some(exact) = try_build_exact_palette(&frame_pixel_slices, pixels_per_frame) {
+        let data = encode_apng_from_palette(
+            frames,
+            &exact.palette_rgba,
+            &exact.frame_indices,
+            params.canvas_width,
+            params.canvas_height,
+            config,
+            params.metadata,
+            cancel,
+            deadline,
+        )?;
+        return Ok(AutoEncodeResult {
+            data,
+            indexed: true,
+            quality_loss: 0.0,
+            mpe_score: Some(0.0),
+            ssim2_estimate: Some(100.0),
+            butteraugli_estimate: Some(0.0),
+        });
+    }
+
+    // Multi-frame quantization
+    let frame_rgba: Vec<&[[u8; 4]]> = frames
+        .iter()
+        .map(|f| {
+            let pixels: &[[u8; 4]] = bytemuck::cast_slice(&f.pixels[..expected_len]);
+            pixels
+        })
+        .collect();
+
+    let mf = params.quantizer.quantize_multi_frame(&frame_rgba, w, h)?;
+
+    // Per-frame quality gate check
+    let mut worst_loss = 0.0_f64;
+    let mut worst_mpe: Option<f32> = None;
+    let mut worst_ssim2: Option<f32> = None;
+    let mut worst_ba: Option<f32> = None;
+
+    for (i, indices) in mf.frame_indices.iter().enumerate() {
+        cancel.check()?;
+
+        let frame_pixels: &[Rgba<u8>] = bytemuck::cast_slice(&frames[i].pixels[..expected_len]);
+        let frame_loss = compute_mean_delta_e(frame_pixels, &mf.palette_rgba, indices);
+
+        let frame_output = QuantizeOutput {
+            palette_rgba: mf.palette_rgba.clone(),
+            indices: indices.clone(),
+            mpe_score: mf.mpe_scores[i],
+            ssim2_estimate: mf.ssim2_estimates[i],
+            butteraugli_estimate: mf.butteraugli_estimates[i],
+        };
+
+        if !gate.check_output(&frame_output, frame_loss) {
+            // Frame failed — bail to truecolor
+            let data = crate::encode::encode_apng(
+                frames,
+                params.canvas_width,
+                params.canvas_height,
+                config,
+                params.metadata,
+                cancel,
+                deadline,
+            )?;
+            return Ok(AutoEncodeResult {
+                data,
+                indexed: false,
+                quality_loss: frame_loss,
+                mpe_score: frame_output.mpe_score,
+                ssim2_estimate: frame_output.ssim2_estimate,
+                butteraugli_estimate: frame_output.butteraugli_estimate,
+            });
+        }
+
+        worst_loss = worst_loss.max(frame_loss);
+        if let Some(mpe) = mf.mpe_scores[i] {
+            worst_mpe = Some(worst_mpe.map_or(mpe, |prev: f32| prev.max(mpe)));
+        }
+        if let Some(ss2) = mf.ssim2_estimates[i] {
+            worst_ssim2 = Some(worst_ssim2.map_or(ss2, |prev: f32| prev.min(ss2)));
+        }
+        if let Some(ba) = mf.butteraugli_estimates[i] {
+            worst_ba = Some(worst_ba.map_or(ba, |prev: f32| prev.max(ba)));
+        }
+    }
+
+    // All frames passed
+    let data = encode_apng_from_palette(
+        frames,
+        &mf.palette_rgba,
+        &mf.frame_indices,
+        params.canvas_width,
+        params.canvas_height,
+        config,
+        params.metadata,
+        cancel,
+        deadline,
+    )?;
+
+    Ok(AutoEncodeResult {
+        data,
+        indexed: true,
+        quality_loss: worst_loss,
+        mpe_score: worst_mpe,
+        ssim2_estimate: worst_ssim2,
+        butteraugli_estimate: worst_ba,
+    })
+}
+
+/// Validate APNG frame dimensions and buffer sizes.
+fn validate_apng_frames(
+    frames: &[crate::encode::ApngFrameInput<'_>],
+    w: usize,
+    h: usize,
+) -> Result<(), PngError> {
+    if frames.is_empty() {
+        return Err(PngError::InvalidInput(
+            "APNG requires at least one frame".into(),
+        ));
+    }
+    let expected_len = w * h * 4;
+    for (i, frame) in frames.iter().enumerate() {
+        if frame.pixels.len() < expected_len {
+            return Err(PngError::InvalidInput(alloc::format!(
+                "frame {i}: pixel buffer too small: need {expected_len}, got {}",
+                frame.pixels.len()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Shared APNG encoding from palette + per-frame indices.
+#[allow(clippy::too_many_arguments)]
+fn encode_apng_from_palette(
+    frames: &[crate::encode::ApngFrameInput<'_>],
+    palette_rgba: &[[u8; 4]],
+    all_indices: &[Vec<u8>],
+    canvas_width: u32,
+    canvas_height: u32,
+    config: &crate::encode::ApngEncodeConfig,
+    metadata: Option<&MetadataView<'_>>,
+    cancel: &dyn Stop,
+    deadline: &dyn Stop,
+) -> Result<Vec<u8>, PngError> {
+    let effort = config.encode.compression.effort();
+    let mut write_meta = crate::encoder::PngWriteMetadata::from_metadata(metadata);
+    write_meta.source_gamma = config.encode.source_gamma;
+    write_meta.srgb_intent = config.encode.srgb_intent;
+    write_meta.chromaticities = config.encode.chromaticities;
+
+    crate::encoder::apng::encode_apng_indexed_from_indices(
+        frames,
+        palette_rgba,
+        all_indices,
+        canvas_width,
+        canvas_height,
+        &write_meta,
+        config.num_plays,
+        effort,
+        cancel,
+        deadline,
+    )
+}
+
+// ── Legacy APNG API (zenquant-specific) ───────────────────────────
 
 /// Bundled parameters for APNG indexed/auto encoding, reducing argument counts.
 #[derive(Clone)]

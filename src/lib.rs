@@ -60,8 +60,9 @@ pub use encode::{
 pub use error::PngError;
 #[cfg(feature = "quantize")]
 pub use indexed::{
-    ApngEncodeParams, AutoEncodeResult, QualityGate, default_quantize_config, encode_apng_auto,
-    encode_apng_indexed, encode_auto, encode_indexed, encode_indexed_rgba8, encode_rgba8_auto,
+    ApngEncodeParams, ApngQuantizeParams, AutoEncodeResult, QualityGate, default_quantize_config,
+    encode_apng_auto, encode_apng_auto_q, encode_apng_indexed, encode_apng_indexed_q, encode_auto,
+    encode_indexed, encode_indexed_rgba8, encode_rgba8_auto,
 };
 #[cfg(feature = "imagequant")]
 pub use quantize::ImagequantQuantizer;
