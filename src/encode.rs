@@ -1350,7 +1350,7 @@ mod tests {
         assert_eq!(decoded.info.bit_depth, 16);
         assert!(!decoded.info.has_alpha);
         let raw = decoded.pixels.copy_to_contiguous_bytes();
-        let expected: Vec<u8> = pixels.iter().flat_map(|p| p.0.to_ne_bytes()).collect();
+        let expected: Vec<u8> = pixels.iter().flat_map(|p| p.value().to_ne_bytes()).collect();
         assert_eq!(raw, expected);
     }
 
