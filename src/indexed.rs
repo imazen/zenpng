@@ -672,8 +672,9 @@ fn srgb_u8_to_oklab(lut: &linear_srgb::lut::SrgbConverter, r: u8, g: u8, b: u8) 
 }
 
 /// Compute mean OKLab ΔE between original pixels and their quantized versions.
-/// Mean OKLab ΔE between original and quantized pixels (color channels only — alpha ignored).
-/// Use `MaxMpe` or `MinSsim2` gates for full perceptual quality including alpha.
+/// Mean OKLab ΔE between original and quantized pixels, alpha-aware via dual-background
+/// compositing: each pixel is composited against black and white, and the max ΔE of the
+/// two is used. This makes alpha mismatches visible as color differences.
 fn compute_mean_delta_e(original: &[Rgba<u8>], palette_rgba: &[[u8; 4]], indices: &[u8]) -> f64 {
     if original.is_empty() {
         return 0.0;
@@ -681,22 +682,42 @@ fn compute_mean_delta_e(original: &[Rgba<u8>], palette_rgba: &[[u8; 4]], indices
 
     let lut = linear_srgb::lut::SrgbConverter::new();
 
-    // Precompute OKLab for all palette entries
-    let palette_oklab: Vec<[f32; 3]> = palette_rgba
+    // Precompute OKLab for all palette entries composited against black and white
+    let palette_on_black: Vec<[f32; 3]> = palette_rgba
         .iter()
-        .map(|e| srgb_u8_to_oklab(&lut, e[0], e[1], e[2]))
+        .map(|e| {
+            let (r, g, b) = composite_over_black(e[0], e[1], e[2], e[3]);
+            srgb_u8_to_oklab(&lut, r, g, b)
+        })
+        .collect();
+    let palette_on_white: Vec<[f32; 3]> = palette_rgba
+        .iter()
+        .map(|e| {
+            let (r, g, b) = composite_over_white(e[0], e[1], e[2], e[3]);
+            srgb_u8_to_oklab(&lut, r, g, b)
+        })
         .collect();
 
     let mut sum = 0.0_f64;
     let mut count = 0usize;
     for (pixel, &idx) in original.iter().zip(indices.iter()) {
-        let orig = srgb_u8_to_oklab(&lut, pixel.r, pixel.g, pixel.b);
-        let quant = &palette_oklab[idx as usize];
+        let idx = idx as usize;
 
-        let dl = (orig[0] - quant[0]) as f64;
-        let da = (orig[1] - quant[1]) as f64;
-        let db = (orig[2] - quant[2]) as f64;
-        sum += (dl * dl + da * da + db * db).sqrt();
+        let (ob_r, ob_g, ob_b) = composite_over_black(pixel.r, pixel.g, pixel.b, pixel.a);
+        let orig_black = srgb_u8_to_oklab(&lut, ob_r, ob_g, ob_b);
+        let quant_black = &palette_on_black[idx];
+        let de_black = oklab_delta_e(&orig_black, quant_black);
+
+        let (ow_r, ow_g, ow_b) = composite_over_white(pixel.r, pixel.g, pixel.b, pixel.a);
+        let orig_white = srgb_u8_to_oklab(&lut, ow_r, ow_g, ow_b);
+        let quant_white = &palette_on_white[idx];
+        let de_white = oklab_delta_e(&orig_white, quant_white);
+
+        sum += if de_black > de_white {
+            de_black
+        } else {
+            de_white
+        };
         count += 1;
     }
 
@@ -704,6 +725,38 @@ fn compute_mean_delta_e(original: &[Rgba<u8>], palette_rgba: &[[u8; 4]], indices
         return 0.0;
     }
     sum / count as f64
+}
+
+/// Composite RGBA over black background → resulting sRGB u8.
+#[inline]
+fn composite_over_black(r: u8, g: u8, b: u8, a: u8) -> (u8, u8, u8) {
+    let af = a as u16;
+    (
+        ((r as u16 * af + 127) / 255) as u8,
+        ((g as u16 * af + 127) / 255) as u8,
+        ((b as u16 * af + 127) / 255) as u8,
+    )
+}
+
+/// Composite RGBA over white background → resulting sRGB u8.
+#[inline]
+fn composite_over_white(r: u8, g: u8, b: u8, a: u8) -> (u8, u8, u8) {
+    let af = a as u16;
+    let inv = 255 - af;
+    (
+        ((r as u16 * af + 255 * inv + 127) / 255) as u8,
+        ((g as u16 * af + 255 * inv + 127) / 255) as u8,
+        ((b as u16 * af + 255 * inv + 127) / 255) as u8,
+    )
+}
+
+/// OKLab Euclidean distance (ΔE).
+#[inline]
+fn oklab_delta_e(a: &[f32; 3], b: &[f32; 3]) -> f64 {
+    let dl = (a[0] - b[0]) as f64;
+    let da = (a[1] - b[1]) as f64;
+    let db = (a[2] - b[2]) as f64;
+    (dl * dl + da * da + db * db).sqrt()
 }
 
 #[cfg(test)]
@@ -1692,5 +1745,51 @@ mod tests {
         let indices = vec![0];
         let result = compute_mean_delta_e(&pixels, &palette, &indices);
         assert!(result < 1e-10);
+    }
+
+    #[test]
+    fn delta_e_detects_alpha_mismatch() {
+        // Same RGB, different alpha — old version would return 0.0
+        let pixels = vec![Rgba {
+            r: 200,
+            g: 100,
+            b: 50,
+            a: 255,
+        }];
+        let palette = vec![[200, 100, 50, 0]]; // fully transparent
+        let indices = vec![0];
+        let result = compute_mean_delta_e(&pixels, &palette, &indices);
+        // Opaque vs transparent must produce significant ΔE
+        assert!(result > 0.1, "expected large ΔE for alpha mismatch, got {result}");
+    }
+
+    #[test]
+    fn delta_e_transparent_exact_match_is_zero() {
+        // Both fully transparent — composited result is the same regardless of RGB
+        let pixels = vec![Rgba {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 0,
+        }];
+        let palette = vec![[0, 255, 0, 0]]; // different RGB but both alpha=0
+        let indices = vec![0];
+        let result = compute_mean_delta_e(&pixels, &palette, &indices);
+        assert!(result < 1e-10, "transparent pixels should match regardless of RGB, got {result}");
+    }
+
+    #[test]
+    fn delta_e_shorter_indices_uses_correct_count() {
+        // 3 pixels but only 2 indices — should divide by 2, not 3
+        let pixels = vec![
+            Rgba { r: 0, g: 0, b: 0, a: 255 },
+            Rgba { r: 255, g: 255, b: 255, a: 255 },
+            Rgba { r: 128, g: 128, b: 128, a: 255 },
+        ];
+        let palette = vec![[0, 0, 0, 255], [255, 255, 255, 255]];
+        let indices = vec![0, 1]; // only 2 indices for 3 pixels
+        let result = compute_mean_delta_e(&pixels, &palette, &indices);
+        // Both matched pixels are exact matches → ΔE should be ~0
+        assert!(result < 1e-10, "exact matches should give ~0 ΔE, got {result}");
     }
 }
