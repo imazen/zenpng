@@ -116,6 +116,17 @@ pub trait Quantizer: Send + Sync {
         })
     }
 
+    /// Return a version of this quantizer with quality metric computation enabled.
+    ///
+    /// Called by [`encode_auto`](crate::encode_auto) and [`encode_apng_auto`](crate::encode_apng_auto)
+    /// when the quality gate requires metrics (`MaxMpe`, `MinSsim2`).
+    ///
+    /// Backends that support quality metrics (zenquant) should return a copy
+    /// with metrics enabled. Returns `None` if not supported (default).
+    fn with_quality_metrics(&self) -> Option<Box<dyn Quantizer>> {
+        None
+    }
+
     /// Backend name for diagnostics and logging.
     fn name(&self) -> &str;
 }
@@ -334,6 +345,10 @@ mod zenquant_backend {
                 ssim2_estimates,
                 butteraugli_estimates,
             })
+        }
+
+        fn with_quality_metrics(&self) -> Option<Box<dyn Quantizer>> {
+            Some(Box::new(self.clone().with_compute_quality_metric(true)))
         }
 
         fn name(&self) -> &str {

@@ -228,6 +228,20 @@ pub fn encode_auto(
         );
     }
 
+    // Enable quality metrics if the gate needs them
+    let adjusted;
+    let quantizer: &dyn Quantizer = if gate.needs_metric() {
+        match quantizer.with_quality_metrics() {
+            Some(q) => {
+                adjusted = q;
+                &*adjusted
+            }
+            None => quantizer,
+        }
+    } else {
+        quantizer
+    };
+
     // Quantization path
     let rgba: &[[u8; 4]] = bytemuck::cast_slice(buf.as_ref());
     let result = quantizer.quantize_rgba(rgba, w, _h)?;
@@ -479,6 +493,20 @@ pub fn encode_apng_auto(
         });
     }
 
+    // Enable quality metrics if the gate needs them
+    let adjusted;
+    let quantizer: &dyn Quantizer = if gate.needs_metric() {
+        match params.quantizer.with_quality_metrics() {
+            Some(q) => {
+                adjusted = q;
+                &*adjusted
+            }
+            None => params.quantizer,
+        }
+    } else {
+        params.quantizer
+    };
+
     // Multi-frame quantization
     let frame_rgba: Vec<&[[u8; 4]]> = frames
         .iter()
@@ -488,7 +516,7 @@ pub fn encode_apng_auto(
         })
         .collect();
 
-    let mf = params.quantizer.quantize_multi_frame(&frame_rgba, w, h)?;
+    let mf = quantizer.quantize_multi_frame(&frame_rgba, w, h)?;
 
     // Per-frame quality gate check
     let mut worst_loss = 0.0_f64;
