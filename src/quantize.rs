@@ -27,6 +27,7 @@ use crate::error::PngError;
 
 /// Output of a single-image quantization.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct QuantizeOutput {
     /// RGBA palette entries (2–256).
     pub palette_rgba: Vec<[u8; 4]>,
@@ -42,6 +43,7 @@ pub struct QuantizeOutput {
 
 /// Output of multi-frame quantization with a shared palette.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MultiFrameOutput {
     /// Shared RGBA palette across all frames.
     pub palette_rgba: Vec<[u8; 4]>,

@@ -39,7 +39,7 @@ mod decoder;
 mod encode;
 mod encoder;
 mod error;
-#[cfg(feature = "quantize")]
+#[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
 mod indexed;
 mod optimize;
 mod quantize;
@@ -58,11 +58,10 @@ pub use encode::{
     encode_rgb8, encode_rgb16, encode_rgba8, encode_rgba16,
 };
 pub use error::PngError;
-#[cfg(feature = "quantize")]
+#[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
 pub use indexed::{
-    ApngEncodeParams, ApngQuantizeParams, AutoEncodeResult, QualityGate, default_quantize_config,
-    encode_apng_auto, encode_apng_auto_q, encode_apng_indexed, encode_apng_indexed_q, encode_auto,
-    encode_indexed, encode_indexed_rgba8, encode_rgba8_auto,
+    ApngEncodeParams, AutoEncodeResult, QualityGate, encode_apng_auto, encode_apng_indexed,
+    encode_auto, encode_indexed,
 };
 #[cfg(feature = "imagequant")]
 pub use quantize::ImagequantQuantizer;

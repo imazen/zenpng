@@ -214,8 +214,8 @@ fully-transparent pixels (`alpha == 0 → [0,0,0,0]`) before filtering/compressi
 Quick `has_any_transparent_pixel()` scan avoids copying when no transparent pixels exist.
 Creates runs of identical bytes that compress significantly better. No quality impact.
 
-### Auto-indexed encoding via zenquant
-`encode_rgba8_auto()` and `encode_apng_auto()` quantize via zenquant and check a
+### Auto-indexed encoding
+`encode_auto()` and `encode_apng_auto()` quantize via any `Quantizer` backend and check a
 `QualityGate` to decide indexed vs truecolor. Three gate types:
 
 | Gate | Scale | Good default | Meaning |

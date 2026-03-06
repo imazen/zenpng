@@ -10,7 +10,7 @@ use rgb::Rgba;
 use zencodec_types::PixelBufferConvertExt;
 
 use zenpng::{
-    ApngEncodeConfig, ApngEncodeParams, ApngFrameInput, QualityGate, default_quantize_config,
+    ApngEncodeConfig, ApngEncodeParams, ApngFrameInput, QualityGate, ZenquantQuantizer,
     encode_apng_auto,
 };
 
@@ -166,7 +166,7 @@ struct PerFileResult {
 fn bench_corpus(
     _label: &str,
     corpus: &[DecodedApng],
-    qconfig: &zenquant::QuantizeConfig,
+    quantizer: &dyn zenpng::Quantizer,
 ) -> Vec<PerFileResult> {
     let config = ApngEncodeConfig::default();
     let gate = QualityGate::MaxDeltaE(0.05);
@@ -186,7 +186,7 @@ fn bench_corpus(
             canvas_width: item.w,
             canvas_height: item.h,
             config: &config,
-            quant_config: qconfig,
+            quantizer,
             metadata: None,
             cancel: &enough::Unstoppable,
             deadline: &enough::Unstoppable,
@@ -226,13 +226,15 @@ fn main() {
         corpus.len() - n_exact_palette
     );
 
-    let qc_default = default_quantize_config();
-    let qc_no_dither = default_quantize_config()._with_no_dither();
+    let q_default = ZenquantQuantizer::new();
+    let q_no_dither = ZenquantQuantizer::from_config(
+        zenquant::QuantizeConfig::new(zenquant::OutputFormat::Png)._with_no_dither(),
+    );
 
     eprintln!("\nBenchmarking floyd-steinberg...");
-    let fs_results = bench_corpus("floyd-steinberg", &corpus, &qc_default);
+    let fs_results = bench_corpus("floyd-steinberg", &corpus, &q_default);
     eprintln!("Benchmarking no-dither...");
-    let nd_results = bench_corpus("no dither", &corpus, &qc_no_dither);
+    let nd_results = bench_corpus("no dither", &corpus, &q_no_dither);
 
     // Per-file comparison
     println!(
