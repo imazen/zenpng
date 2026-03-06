@@ -11,7 +11,7 @@ use imgref::ImgVec;
 use rgb::Rgba;
 
 use zencodec_types::PixelBufferConvertExt;
-use zenpng::{EncodeConfig, PngDecodeConfig, decode, encode_indexed_rgba8};
+use zenpng::{EncodeConfig, PngDecodeConfig, ZenquantQuantizer, decode, encode_indexed};
 
 use zenquant::{OutputFormat, Quality, QuantizeConfig};
 
@@ -48,18 +48,13 @@ struct EncResult {
 
 fn encode_with_config(img: &ImgVec<Rgba<u8>>, quant_config: &QuantizeConfig) -> Option<EncResult> {
     let enc_config = EncodeConfig::default();
-    let rgba_slice: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(img.buf().as_slice());
+    let quantizer = ZenquantQuantizer::from_config(quant_config.clone());
 
-    // Quantize (includes joint optimization if PngJoint format)
-    let result =
-        zenquant::quantize_rgba(rgba_slice, img.width(), img.height(), quant_config).ok()?;
-
-    // Encode to PNG from the quantized result
     let start = Instant::now();
-    let data = encode_indexed_rgba8(
+    let data = encode_indexed(
         img.as_ref(),
         &enc_config,
-        quant_config,
+        &quantizer,
         None,
         &enough::Unstoppable,
         &enough::Unstoppable,
@@ -67,7 +62,10 @@ fn encode_with_config(img: &ImgVec<Rgba<u8>>, quant_config: &QuantizeConfig) -> 
     .ok()?;
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
-    // Compute fast-ssim2 on the ACTUAL indices (including joint modifications)
+    // Compute metrics separately for reporting
+    let rgba_slice: &[zenquant::RGBA<u8>] = bytemuck::cast_slice(img.buf().as_slice());
+    let result =
+        zenquant::quantize_rgba(rgba_slice, img.width(), img.height(), quant_config).ok()?;
     let mpe_result = zenquant::_internals::compute_mpe_rgba(
         rgba_slice,
         result.palette_rgba(),

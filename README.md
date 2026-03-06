@@ -111,19 +111,19 @@ Decoding APNG returns fully composited canvas-sized frames via `decode_apng()`.
 
 ## Auto-indexed encoding
 
-When the `quantize` feature is enabled (on by default), `encode_rgba8_auto()`
-quantizes to 256 colors via zenquant and checks a quality gate before committing
+When any quantizer feature is enabled (`quantize`, `imagequant`, or `quantette`),
+`encode_auto()` quantizes to 256 colors and checks a quality gate before committing
 to indexed output:
 
 ```rust
-use zenpng::{encode_rgba8_auto, QualityGate, EncodeConfig};
-use zenquant::QuantizeConfig;
+use zenpng::{encode_auto, QualityGate, EncodeConfig, default_quantizer};
 use enough::Unstoppable;
 
-let result = encode_rgba8_auto(
+let quantizer = default_quantizer();
+let result = encode_auto(
     img.as_ref(),
     &EncodeConfig::default(),
-    &QuantizeConfig::default(),
+    &*quantizer,
     QualityGate::MaxDeltaE(0.02),
     None,
     &Unstoppable,
@@ -199,7 +199,9 @@ via `PngWarning` variants.
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `quantize` | yes | Auto-indexed encoding via zenquant |
+| `quantize` | yes | Auto-indexed encoding via zenquant (perceptual quality metrics, joint optimization) |
+| `imagequant` | no | libimagequant quantizer backend (high-quality dithering) |
+| `quantette` | no | quantette quantizer backend (fast k-means, RGB only) |
 | `zopfli` | no | Zenzop recompression for Crush/Maniac and effort 31+ (enhanced zopfli fork) |
 | `joint` | no | Joint quantization (requires `quantize`) |
 | `zencodec` | no | zencodec-types trait integration |

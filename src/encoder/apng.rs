@@ -233,7 +233,7 @@ fn build_over_subframe(
 ///
 /// Since indexed canvas tracking is by index, we check palette alpha of the target index
 /// and whether the canvas index maps to a transparent palette entry.
-#[cfg(feature = "quantize")]
+#[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
 fn can_use_over_indexed(
     target_indices: &[u8],
     canvas_indices: &[u8],
@@ -269,7 +269,7 @@ fn can_use_over_indexed(
 /// Changed pixels use their actual target index.
 ///
 /// Caller must verify `can_use_over_indexed()` first.
-#[cfg(feature = "quantize")]
+#[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
 fn build_over_subframe_indexed(
     target_indices: &[u8],
     canvas_indices: &[u8],
@@ -699,7 +699,7 @@ fn lookahead_next_frame_size(
 ///
 /// If a transparent palette entry exists, evaluates all 6 combos (SOURCE + OVER).
 /// Otherwise, evaluates 3 dispose options with SOURCE only.
-#[cfg(feature = "quantize")]
+#[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
 fn optimize_apng_indexed(
     frame_indices: &[Vec<u8>],
     palette_rgba: &[[u8; 4]],
@@ -896,7 +896,7 @@ fn optimize_apng_indexed(
 }
 
 /// Compute the best trial-compressed size for the next indexed frame.
-#[cfg(feature = "quantize")]
+#[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
 #[allow(clippy::too_many_arguments)]
 fn lookahead_next_frame_size_indexed(
     canvas: &[u8],
@@ -1245,7 +1245,7 @@ pub(crate) fn encode_apng_truecolor(
 /// Find the bounding box of differing indices between two canvas-sized index buffers.
 ///
 /// Returns `None` if the buffers are identical.
-#[cfg(feature = "quantize")]
+#[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
 fn compute_delta_region_indexed(prev: &[u8], curr: &[u8], w: u32, h: u32) -> Option<DeltaRegion> {
     let w = w as usize;
     let h = h as usize;
@@ -1280,7 +1280,7 @@ fn compute_delta_region_indexed(prev: &[u8], curr: &[u8], w: u32, h: u32) -> Opt
 }
 
 /// Extract a rectangular subregion from a canvas-sized index buffer (1 byte/pixel).
-#[cfg(feature = "quantize")]
+#[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
 fn extract_subframe_indexed(indices: &[u8], canvas_w: u32, region: &DeltaRegion) -> Vec<u8> {
     let canvas_w = canvas_w as usize;
     let rw = region.width as usize;
@@ -1303,7 +1303,7 @@ fn extract_subframe_indexed(indices: &[u8], canvas_w: u32, region: &DeltaRegion)
 /// Takes pre-built palette and per-frame index buffers (from zenquant remap).
 /// Delta regions are computed on index buffers directly (more correct with
 /// temporal clamping since identical indices mean identical visual output).
-#[cfg(feature = "quantize")]
+#[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_apng_indexed_from_indices(
     frames: &[ApngFrameInput<'_>],
@@ -1920,7 +1920,7 @@ mod tests {
 
     // ── Indexed APNG tests ──────────────────────────────────────────
 
-    #[cfg(feature = "quantize")]
+    #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
     #[test]
     fn indexed_apng_roundtrip() {
         let w = 4u32;
@@ -1952,14 +1952,14 @@ mod tests {
             },
         ];
 
-        let quant_config = zenquant::QuantizeConfig::new(zenquant::OutputFormat::Png);
+        let quantizer = crate::quantize::default_quantizer();
         let apng_config = crate::encode::ApngEncodeConfig::default();
         let apng_params = crate::indexed::ApngEncodeParams {
             frames: &frames,
             canvas_width: w,
             canvas_height: h,
             config: &apng_config,
-            quant_config: &quant_config,
+            quantizer: &*quantizer,
             metadata: None,
             cancel: &enough::Unstoppable,
             deadline: &enough::Unstoppable,

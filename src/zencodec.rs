@@ -61,7 +61,7 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
 ///
 /// Use [`with_compression`](PngEncoderConfig::with_compression) to control compression level.
 /// When the `quantize` feature is enabled, setting quality < 100 enables
-/// auto-indexed encoding via [`encode_rgba8_auto`](crate::encode_rgba8_auto),
+/// auto-indexed encoding via [`encode_auto`](crate::encode_auto),
 /// which quantizes RGBA8 images to ≤256 colors when quality is acceptable.
 #[derive(Clone, Debug)]
 pub struct PngEncoderConfig {
