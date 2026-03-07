@@ -4071,8 +4071,9 @@ mod tests {
     #[test]
     fn encoder_trait_gray_f32() {
         use zencodec_types::Encoder;
-        let pixels: Vec<Gray<f32>> =
-            (0..16 * 16).map(|i| Gray((i % 256) as f32 / 255.0)).collect();
+        let pixels: Vec<Gray<f32>> = (0..16 * 16)
+            .map(|i| Gray((i % 256) as f32 / 255.0))
+            .collect();
         let img = imgref::ImgVec::new(pixels, 16, 16);
         let config = PngEncoderConfig::new();
         let encoder = config.job().encoder().unwrap();

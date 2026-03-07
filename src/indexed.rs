@@ -1760,7 +1760,10 @@ mod tests {
         let indices = vec![0];
         let result = compute_mean_delta_e(&pixels, &palette, &indices);
         // Opaque vs transparent must produce significant ΔE
-        assert!(result > 0.1, "expected large ΔE for alpha mismatch, got {result}");
+        assert!(
+            result > 0.1,
+            "expected large ΔE for alpha mismatch, got {result}"
+        );
     }
 
     #[test]
@@ -1775,21 +1778,42 @@ mod tests {
         let palette = vec![[0, 255, 0, 0]]; // different RGB but both alpha=0
         let indices = vec![0];
         let result = compute_mean_delta_e(&pixels, &palette, &indices);
-        assert!(result < 1e-10, "transparent pixels should match regardless of RGB, got {result}");
+        assert!(
+            result < 1e-10,
+            "transparent pixels should match regardless of RGB, got {result}"
+        );
     }
 
     #[test]
     fn delta_e_shorter_indices_uses_correct_count() {
         // 3 pixels but only 2 indices — should divide by 2, not 3
         let pixels = vec![
-            Rgba { r: 0, g: 0, b: 0, a: 255 },
-            Rgba { r: 255, g: 255, b: 255, a: 255 },
-            Rgba { r: 128, g: 128, b: 128, a: 255 },
+            Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            Rgba {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255,
+            },
+            Rgba {
+                r: 128,
+                g: 128,
+                b: 128,
+                a: 255,
+            },
         ];
         let palette = vec![[0, 0, 0, 255], [255, 255, 255, 255]];
         let indices = vec![0, 1]; // only 2 indices for 3 pixels
         let result = compute_mean_delta_e(&pixels, &palette, &indices);
         // Both matched pixels are exact matches → ΔE should be ~0
-        assert!(result < 1e-10, "exact matches should give ~0 ΔE, got {result}");
+        assert!(
+            result < 1e-10,
+            "exact matches should give ~0 ΔE, got {result}"
+        );
     }
 }
