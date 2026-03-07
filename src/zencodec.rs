@@ -62,6 +62,7 @@ pub struct PngEncoderConfig {
     config: EncodeConfig,
     effort: Option<i32>,
     quality: Option<f32>,
+    lossless: bool,
 }
 
 impl PngEncoderConfig {
@@ -72,6 +73,7 @@ impl PngEncoderConfig {
             config: EncodeConfig::default(),
             effort: None,
             quality: None,
+            lossless: true,
         }
     }
 
@@ -308,6 +310,10 @@ impl zc::encode::EncoderConfig for PngEncoderConfig {
 
     fn with_generic_quality(mut self, quality: f32) -> Self {
         self.quality = Some(quality);
+        // Setting quality < 100 implicitly enables lossy (auto-indexed) mode
+        if quality < 100.0 {
+            self.lossless = false;
+        }
         self
     }
 
@@ -315,11 +321,13 @@ impl zc::encode::EncoderConfig for PngEncoderConfig {
         self.quality
     }
 
+    fn with_lossless(mut self, lossless: bool) -> Self {
+        self.lossless = lossless;
+        self
+    }
+
     fn is_lossless(&self) -> Option<bool> {
-        match self.quality {
-            Some(q) if q < 100.0 => Some(false),
-            _ => Some(true),
-        }
+        Some(self.lossless)
     }
 
     fn job(&self) -> PngEncodeJob<'_> {
@@ -479,6 +487,10 @@ impl zc::encode::Encoder for PngEncoder<'_> {
         PngError::from(op).start_at()
     }
 
+    fn preferred_strip_height(&self) -> u32 {
+        1 // PNG uses row-at-a-time filtering
+    }
+
     fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<PngError>> {
         use linear_srgb::default::linear_to_srgb_u8;
         use zenpixels::PixelFormat;
@@ -488,16 +500,17 @@ impl zc::encode::Encoder for PngEncoder<'_> {
 
         match pixels.descriptor().pixel_format() {
             PixelFormat::Rgb8 => {
-                let bytes = collect_contiguous_bytes(&pixels);
+                let bytes = contiguous_bytes(&pixels);
                 self.do_encode(&bytes, w, h, crate::encode::ColorType::Rgb)
             }
             PixelFormat::Rgba8 => {
-                // Auto-indexed path when quality < 100 and any quantizer is enabled
+                // Auto-indexed path when not lossless and quality < 100
                 #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
-                if let Some(q) = self.config.quality
+                if !self.config.lossless
+                    && let Some(q) = self.config.quality
                     && q < 100.0
                 {
-                    let bytes = collect_contiguous_bytes(&pixels);
+                    let bytes = contiguous_bytes(&pixels);
                     let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&bytes);
                     let img = imgref::Img::new(rgba, w as usize, h as usize);
                     let mpe = quality_to_mpe(q);
@@ -518,15 +531,15 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                     return Ok(EncodeOutput::new(result.data, ImageFormat::Png));
                 }
 
-                let bytes = collect_contiguous_bytes(&pixels);
+                let bytes = contiguous_bytes(&pixels);
                 self.do_encode(&bytes, w, h, crate::encode::ColorType::Rgba)
             }
             PixelFormat::Gray8 => {
-                let bytes = collect_gray8_bytes(&pixels);
+                let bytes = contiguous_bytes(&pixels);
                 self.do_encode(&bytes, w, h, crate::encode::ColorType::Grayscale)
             }
             PixelFormat::Rgb16 => {
-                let bytes = collect_contiguous_bytes(&pixels);
+                let bytes = contiguous_bytes(&pixels);
                 let be = native_to_be_16(&bytes);
                 self.do_encode_with_depth(
                     &be,
@@ -537,7 +550,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                 )
             }
             PixelFormat::Rgba16 => {
-                let bytes = collect_contiguous_bytes(&pixels);
+                let bytes = contiguous_bytes(&pixels);
                 let be = native_to_be_16(&bytes);
                 self.do_encode_with_depth(
                     &be,
@@ -548,7 +561,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                 )
             }
             PixelFormat::Gray16 => {
-                let bytes = collect_contiguous_bytes(&pixels);
+                let bytes = contiguous_bytes(&pixels);
                 let be = native_to_be_16(&bytes);
                 self.do_encode_with_depth(
                     &be,
@@ -559,7 +572,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                 )
             }
             PixelFormat::RgbF32 => {
-                let src = collect_contiguous_bytes(&pixels);
+                let src = contiguous_bytes(&pixels);
                 let srgb: Vec<u8> = src
                     .chunks_exact(12)
                     .flat_map(|c| {
@@ -576,7 +589,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                 self.do_encode(&srgb, w, h, crate::encode::ColorType::Rgb)
             }
             PixelFormat::RgbaF32 => {
-                let src = collect_contiguous_bytes(&pixels);
+                let src = contiguous_bytes(&pixels);
                 let srgb: Vec<u8> = src
                     .chunks_exact(16)
                     .flat_map(|c| {
@@ -593,9 +606,10 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                     })
                     .collect();
 
-                // Auto-indexed path when quality < 100 and any quantizer is enabled
+                // Auto-indexed path when not lossless and quality < 100
                 #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
-                if let Some(q) = self.config.quality
+                if !self.config.lossless
+                    && let Some(q) = self.config.quality
                     && q < 100.0
                 {
                     let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&srgb);
@@ -621,7 +635,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                 self.do_encode(&srgb, w, h, crate::encode::ColorType::Rgba)
             }
             PixelFormat::GrayF32 => {
-                let src = collect_contiguous_bytes(&pixels);
+                let src = contiguous_bytes(&pixels);
                 let srgb: Vec<u8> = src
                     .chunks_exact(4)
                     .map(|c| {
@@ -632,7 +646,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                 self.do_encode(&srgb, w, h, crate::encode::ColorType::Grayscale)
             }
             PixelFormat::Bgra8 => {
-                let raw = collect_contiguous_bytes(&pixels);
+                let raw = contiguous_bytes(&pixels);
                 let rgba: Vec<u8> = raw
                     .chunks_exact(4)
                     .flat_map(|c| [c[2], c[1], c[0], c[3]])
@@ -730,17 +744,17 @@ impl PngFrameEncoder {
         let desc = pixels.descriptor();
         match (desc.channel_type(), desc.layout()) {
             (zenpixels::ChannelType::U8, zenpixels::ChannelLayout::Rgba) => {
-                Ok(collect_contiguous_bytes(pixels))
+                Ok(contiguous_bytes(pixels).into_owned())
             }
             (zenpixels::ChannelType::U8, zenpixels::ChannelLayout::Bgra) => {
-                let src = collect_contiguous_bytes(pixels);
+                let src = contiguous_bytes(pixels);
                 Ok(src
                     .chunks_exact(4)
                     .flat_map(|c| [c[2], c[1], c[0], c[3]])
                     .collect())
             }
             (zenpixels::ChannelType::U8, zenpixels::ChannelLayout::Rgb) => {
-                let src = collect_contiguous_bytes(pixels);
+                let src = contiguous_bytes(pixels);
                 Ok(src
                     .chunks_exact(3)
                     .flat_map(|c| [c[0], c[1], c[2], 255])
@@ -1083,7 +1097,12 @@ impl zc::decode::Decode for PngDecoder<'_> {
         let png_config = self.effective_config();
         let result = crate::decode::decode(self.data, &png_config, cancel)?;
         let info = convert_info(&result.info);
-        Ok(DecodeOutput::new(result.pixels, info))
+        let pixels = if self.preferred.is_empty() {
+            result.pixels
+        } else {
+            negotiate_and_convert(result.pixels, &self.preferred)
+        };
+        Ok(DecodeOutput::new(pixels, info))
     }
 }
 
@@ -1179,14 +1198,43 @@ impl zc::decode::FrameDecode for PngFrameDecoder {
     }
 }
 
-// ── Pixel conversion helpers ─────────────────────────────────────────
-//
-// PNG decoder produces Rgb8, Rgba8, Gray8, Rgb16, Rgba16, Gray16,
-// GrayAlpha16. These helpers convert to any requested target format.
+// ── Pixel format negotiation ─────────────────────────────────────────
 
 use rgb::{Gray, Rgb, Rgba};
 use zenpixels::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer};
 use zenpixels_convert::PixelBufferConvertExt as _;
+
+/// Negotiate output format from the caller's preference list and convert.
+///
+/// Uses `negotiate_pixel_format` to pick the best match, then converts
+/// if the native format doesn't already match.
+fn negotiate_and_convert(pixels: PixelBuffer, preferred: &[PixelDescriptor]) -> PixelBuffer {
+    use zenpixels::PixelFormat;
+
+    let native_desc = pixels.descriptor();
+    let target = zc::decode::negotiate_pixel_format(preferred, DECODE_DESCRIPTORS);
+
+    // Already in the target format — no conversion needed
+    if native_desc.pixel_format() == target.pixel_format() {
+        return pixels;
+    }
+
+    // Convert to the negotiated format (8-bit conversions available)
+    match target.pixel_format() {
+        PixelFormat::Rgb8 => pixels.to_rgb8().erase(),
+        PixelFormat::Rgba8 => pixels.to_rgba8().erase(),
+        PixelFormat::Gray8 => pixels.to_gray8().erase(),
+        PixelFormat::Bgra8 => pixels.to_bgra8().erase(),
+        // For 16-bit and F32 formats, zenpixels-convert doesn't have
+        // conversion functions yet — return native format unchanged
+        _ => pixels,
+    }
+}
+
+// ── Pixel conversion helpers ─────────────────────────────────────────
+//
+// PNG decoder produces Rgb8, Rgba8, Gray8, Rgb16, Rgba16, Gray16,
+// GrayAlpha16. These helpers convert to any requested target format.
 
 /// Convert native PNG pixel data to Rgb8. Delegates to `PixelBuffer::to_rgb8()`.
 fn to_rgb8(pixels: PixelBuffer) -> imgref::ImgVec<Rgb<u8>> {
@@ -1260,24 +1308,12 @@ fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
     zi
 }
 
-/// Collect contiguous bytes from a PixelSlice (handles stride).
-fn collect_contiguous_bytes(pixels: &PixelSlice<'_>) -> Vec<u8> {
-    let h = pixels.rows();
-    let w = pixels.width();
-    let bpp = pixels.descriptor().bytes_per_pixel();
-    let row_bytes = w as usize * bpp;
-
-    let mut out = Vec::with_capacity(row_bytes * h as usize);
-    for y in 0..h {
-        out.extend_from_slice(&pixels.row(y)[..row_bytes]);
-    }
-    out
-}
-
-/// Collect Gray8 pixel bytes (Gray<u8> has padding so we can't use ComponentBytes).
-fn collect_gray8_bytes(pixels: &PixelSlice<'_>) -> Vec<u8> {
-    // Gray<u8> is 1 byte per pixel, so contiguous bytes are already correct
-    collect_contiguous_bytes(pixels)
+/// Get contiguous pixel bytes from a PixelSlice, borrowing when possible.
+///
+/// Returns `Cow::Borrowed` when rows are tightly packed (zero-copy),
+/// `Cow::Owned` when stride padding must be stripped.
+fn contiguous_bytes<'a>(pixels: &'a PixelSlice<'a>) -> alloc::borrow::Cow<'a, [u8]> {
+    pixels.contiguous_bytes()
 }
 
 /// Copy rows from a typed ImgVec into a PixelSliceMut via byte reinterpretation.
