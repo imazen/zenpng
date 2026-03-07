@@ -8,6 +8,7 @@ extern crate std;
 
 use alloc::vec::Vec;
 
+use whereat::{At, ErrorAtExt};
 use zc::decode::{DecodeCapabilities, DecodeFrame, DecodeOutput, OutputInfo};
 use zc::encode::{EncodeCapabilities, EncodeOutput};
 use zc::{ImageFormat, ImageInfo, MetadataView, ResourceLimits};
@@ -89,7 +90,10 @@ impl PngEncoderConfig {
     }
 
     /// Convenience: encode RGB8 pixels in one call.
-    pub fn encode_rgb8(&self, img: imgref::ImgRef<'_, Rgb<u8>>) -> Result<EncodeOutput, PngError> {
+    pub fn encode_rgb8(
+        &self,
+        img: imgref::ImgRef<'_, Rgb<u8>>,
+    ) -> Result<EncodeOutput, At<PngError>> {
         use zc::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
@@ -98,7 +102,7 @@ impl PngEncoderConfig {
     pub fn encode_rgba8(
         &self,
         img: imgref::ImgRef<'_, Rgba<u8>>,
-    ) -> Result<EncodeOutput, PngError> {
+    ) -> Result<EncodeOutput, At<PngError>> {
         use zc::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
@@ -107,7 +111,7 @@ impl PngEncoderConfig {
     pub fn encode_gray8(
         &self,
         img: imgref::ImgRef<'_, Gray<u8>>,
-    ) -> Result<EncodeOutput, PngError> {
+    ) -> Result<EncodeOutput, At<PngError>> {
         use zc::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
@@ -116,7 +120,7 @@ impl PngEncoderConfig {
     pub fn encode_rgb16(
         &self,
         img: imgref::ImgRef<'_, Rgb<u16>>,
-    ) -> Result<EncodeOutput, PngError> {
+    ) -> Result<EncodeOutput, At<PngError>> {
         use zc::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
@@ -125,7 +129,7 @@ impl PngEncoderConfig {
     pub fn encode_rgba16(
         &self,
         img: imgref::ImgRef<'_, Rgba<u16>>,
-    ) -> Result<EncodeOutput, PngError> {
+    ) -> Result<EncodeOutput, At<PngError>> {
         use zc::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
@@ -134,7 +138,7 @@ impl PngEncoderConfig {
     pub fn encode_gray16(
         &self,
         img: imgref::ImgRef<'_, Gray<u16>>,
-    ) -> Result<EncodeOutput, PngError> {
+    ) -> Result<EncodeOutput, At<PngError>> {
         use zc::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
@@ -143,7 +147,7 @@ impl PngEncoderConfig {
     pub fn encode_rgb_f32(
         &self,
         img: imgref::ImgRef<'_, Rgb<f32>>,
-    ) -> Result<EncodeOutput, PngError> {
+    ) -> Result<EncodeOutput, At<PngError>> {
         use zc::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
@@ -152,7 +156,7 @@ impl PngEncoderConfig {
     pub fn encode_rgba_f32(
         &self,
         img: imgref::ImgRef<'_, Rgba<f32>>,
-    ) -> Result<EncodeOutput, PngError> {
+    ) -> Result<EncodeOutput, At<PngError>> {
         use zc::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
@@ -161,7 +165,7 @@ impl PngEncoderConfig {
     pub fn encode_gray_f32(
         &self,
         img: imgref::ImgRef<'_, Gray<f32>>,
-    ) -> Result<EncodeOutput, PngError> {
+    ) -> Result<EncodeOutput, At<PngError>> {
         use zc::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
@@ -170,7 +174,7 @@ impl PngEncoderConfig {
     pub fn encode_bgra8(
         &self,
         img: imgref::ImgRef<'_, rgb::alt::BGRA<u8>>,
-    ) -> Result<EncodeOutput, PngError> {
+    ) -> Result<EncodeOutput, At<PngError>> {
         use zc::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
@@ -277,7 +281,7 @@ static PNG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_quality_range(0.0, 100.0);
 
 impl zc::encode::EncoderConfig for PngEncoderConfig {
-    type Error = PngError;
+    type Error = At<PngError>;
     type Job<'a> = PngEncodeJob<'a>;
 
     fn format() -> ImageFormat {
@@ -345,7 +349,7 @@ pub struct PngEncodeJob<'a> {
 }
 
 impl<'a> zc::encode::EncodeJob<'a> for PngEncodeJob<'a> {
-    type Error = PngError;
+    type Error = At<PngError>;
     type Enc = PngEncoder<'a>;
     type FrameEnc = PngFrameEncoder;
 
@@ -375,7 +379,7 @@ impl<'a> zc::encode::EncodeJob<'a> for PngEncodeJob<'a> {
         self
     }
 
-    fn encoder(self) -> Result<PngEncoder<'a>, PngError> {
+    fn encoder(self) -> Result<PngEncoder<'a>, At<PngError>> {
         Ok(PngEncoder {
             config: self.config,
             stop: self.stop,
@@ -384,7 +388,7 @@ impl<'a> zc::encode::EncodeJob<'a> for PngEncodeJob<'a> {
         })
     }
 
-    fn frame_encoder(self) -> Result<PngFrameEncoder, PngError> {
+    fn frame_encoder(self) -> Result<PngFrameEncoder, At<PngError>> {
         let owned_meta = self.metadata.map(OwnedMetadata::from_metadata);
         let mut enc = PngFrameEncoder::new(
             self.config.config.clone(),
@@ -414,7 +418,7 @@ impl<'a> PngEncoder<'a> {
         w: u32,
         h: u32,
         color_type: crate::encode::ColorType,
-    ) -> Result<EncodeOutput, PngError> {
+    ) -> Result<EncodeOutput, At<PngError>> {
         self.do_encode_with_depth(bytes, w, h, color_type, crate::encode::BitDepth::Eight)
     }
 
@@ -425,10 +429,10 @@ impl<'a> PngEncoder<'a> {
         h: u32,
         color_type: crate::encode::ColorType,
         bit_depth: crate::encode::BitDepth,
-    ) -> Result<EncodeOutput, PngError> {
+    ) -> Result<EncodeOutput, At<PngError>> {
         let cancel: &dyn enough::Stop = self.stop.unwrap_or(&enough::Unstoppable);
         // Pre-flight stop check
-        cancel.check()?;
+        cancel.check().map_err(PngError::from)?;
         // Pre-flight limit checks
         if let Some(ref limits) = self.limits {
             limits
@@ -469,13 +473,13 @@ impl<'a> PngEncoder<'a> {
 }
 
 impl zc::encode::Encoder for PngEncoder<'_> {
-    type Error = PngError;
+    type Error = At<PngError>;
 
-    fn reject(op: zc::UnsupportedOperation) -> PngError {
-        op.into()
+    fn reject(op: zc::UnsupportedOperation) -> At<PngError> {
+        PngError::from(op).start_at()
     }
 
-    fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, PngError> {
+    fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<PngError>> {
         use linear_srgb::default::linear_to_srgb_u8;
         use zenpixels::PixelFormat;
 
@@ -635,7 +639,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                     .collect();
                 self.do_encode(&rgba, w, h, crate::encode::ColorType::Rgba)
             }
-            _ => Err(zc::UnsupportedOperation::PixelFormat.into()),
+            _ => Err(PngError::from(zc::UnsupportedOperation::PixelFormat).start_at()),
         }
     }
 }
@@ -751,13 +755,13 @@ impl PngFrameEncoder {
 }
 
 impl zc::encode::FrameEncoder for PngFrameEncoder {
-    type Error = PngError;
+    type Error = At<PngError>;
 
-    fn reject(op: zc::UnsupportedOperation) -> PngError {
-        op.into()
+    fn reject(op: zc::UnsupportedOperation) -> At<PngError> {
+        PngError::from(op).start_at()
     }
 
-    fn push_frame(&mut self, pixels: PixelSlice<'_>, duration_ms: u32) -> Result<(), PngError> {
+    fn push_frame(&mut self, pixels: PixelSlice<'_>, duration_ms: u32) -> Result<(), At<PngError>> {
         let rgba = Self::pixels_to_rgba8(&pixels)?;
         self.frames.push(AccumulatedFrame {
             pixels: rgba,
@@ -766,8 +770,8 @@ impl zc::encode::FrameEncoder for PngFrameEncoder {
         Ok(())
     }
 
-    fn finish(self) -> Result<EncodeOutput, PngError> {
-        self.do_finish()
+    fn finish(self) -> Result<EncodeOutput, At<PngError>> {
+        self.do_finish().map_err(ErrorAtExt::start_at)
     }
 }
 
@@ -840,19 +844,19 @@ impl PngDecoderConfig {
 
 impl PngDecoderConfig {
     /// Convenience: decode in one call (native format).
-    pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, PngError> {
+    pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, At<PngError>> {
         use zc::decode::{Decode, DecodeJob, DecoderConfig};
         self.job().decoder(data, &[])?.decode()
     }
 
     /// Convenience: probe image header.
-    pub fn probe(&self, data: &[u8]) -> Result<ImageInfo, PngError> {
+    pub fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<PngError>> {
         use zc::decode::{DecodeJob, DecoderConfig};
         self.job().probe(data)
     }
 
     /// Convenience: probe header (alias for backwards compatibility).
-    pub fn probe_header(&self, data: &[u8]) -> Result<ImageInfo, PngError> {
+    pub fn probe_header(&self, data: &[u8]) -> Result<ImageInfo, At<PngError>> {
         self.probe(data)
     }
 
@@ -861,7 +865,7 @@ impl PngDecoderConfig {
         &self,
         data: &[u8],
         dst: imgref::ImgRefMut<'_, Rgb<u8>>,
-    ) -> Result<ImageInfo, PngError> {
+    ) -> Result<ImageInfo, At<PngError>> {
         let mut dst: PixelSliceMut<'_> = PixelSliceMut::from(dst).erase();
         let output = self.decode(data)?;
         let info = output.info().clone();
@@ -876,7 +880,7 @@ impl PngDecoderConfig {
         &self,
         data: &[u8],
         dst: imgref::ImgRefMut<'_, Rgb<u16>>,
-    ) -> Result<ImageInfo, PngError> {
+    ) -> Result<ImageInfo, At<PngError>> {
         let mut dst: PixelSliceMut<'_> = PixelSliceMut::from(dst).erase();
         let output = self.decode(data)?;
         let info = output.info().clone();
@@ -890,7 +894,7 @@ impl PngDecoderConfig {
         &self,
         data: &[u8],
         dst: imgref::ImgRefMut<'_, Rgb<f32>>,
-    ) -> Result<ImageInfo, PngError> {
+    ) -> Result<ImageInfo, At<PngError>> {
         let mut dst: PixelSliceMut<'_> = PixelSliceMut::from(dst).erase();
         let output = self.decode(data)?;
         let info = output.info().clone();
@@ -904,7 +908,7 @@ impl PngDecoderConfig {
         &self,
         data: &[u8],
         dst: imgref::ImgRefMut<'_, Rgba<f32>>,
-    ) -> Result<ImageInfo, PngError> {
+    ) -> Result<ImageInfo, At<PngError>> {
         let mut dst: PixelSliceMut<'_> = PixelSliceMut::from(dst).erase();
         let output = self.decode(data)?;
         let info = output.info().clone();
@@ -918,7 +922,7 @@ impl PngDecoderConfig {
         &self,
         data: &[u8],
         dst: imgref::ImgRefMut<'_, Gray<f32>>,
-    ) -> Result<ImageInfo, PngError> {
+    ) -> Result<ImageInfo, At<PngError>> {
         let mut dst: PixelSliceMut<'_> = PixelSliceMut::from(dst).erase();
         let output = self.decode(data)?;
         let info = output.info().clone();
@@ -949,7 +953,7 @@ static PNG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_enforces_max_memory(true);
 
 impl zc::decode::DecoderConfig for PngDecoderConfig {
-    type Error = PngError;
+    type Error = At<PngError>;
     type Job<'a> = PngDecodeJob<'a>;
 
     fn format() -> ImageFormat {
@@ -983,9 +987,9 @@ pub struct PngDecodeJob<'a> {
 }
 
 impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
-    type Error = PngError;
+    type Error = At<PngError>;
     type Dec = PngDecoder<'a>;
-    type StreamDec = zc::Unsupported<PngError>;
+    type StreamDec = zc::Unsupported<At<PngError>>;
     type FrameDec = PngFrameDecoder;
 
     fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
@@ -998,12 +1002,12 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
         self
     }
 
-    fn probe(&self, data: &[u8]) -> Result<ImageInfo, PngError> {
+    fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<PngError>> {
         let info = crate::decode::probe(data)?;
         Ok(convert_info(&info))
     }
 
-    fn output_info(&self, data: &[u8]) -> Result<OutputInfo, PngError> {
+    fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<PngError>> {
         let info = crate::decode::probe(data)?;
         let has_alpha = info.has_alpha;
         let is_16bit = info.bit_depth == 16;
@@ -1020,7 +1024,7 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
         self,
         data: &'a [u8],
         preferred: &[PixelDescriptor],
-    ) -> Result<PngDecoder<'a>, PngError> {
+    ) -> Result<PngDecoder<'a>, At<PngError>> {
         Ok(PngDecoder {
             config: self.config,
             stop: self.stop,
@@ -1034,16 +1038,16 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
         self,
         _data: &'a [u8],
         _preferred: &[PixelDescriptor],
-    ) -> Result<zc::Unsupported<PngError>, PngError> {
-        Err(zc::UnsupportedOperation::RowLevelDecode.into())
+    ) -> Result<zc::Unsupported<At<PngError>>, At<PngError>> {
+        Err(PngError::from(zc::UnsupportedOperation::RowLevelDecode).start_at())
     }
 
     fn frame_decoder(
         self,
         data: &'a [u8],
         _preferred: &[PixelDescriptor],
-    ) -> Result<PngFrameDecoder, PngError> {
-        PngFrameDecoder::new(data, self.config, self.stop)
+    ) -> Result<PngFrameDecoder, At<PngError>> {
+        PngFrameDecoder::new(data, self.config, self.stop).map_err(ErrorAtExt::start_at)
     }
 }
 
@@ -1071,11 +1075,11 @@ impl PngDecoder<'_> {
 }
 
 impl zc::decode::Decode for PngDecoder<'_> {
-    type Error = PngError;
+    type Error = At<PngError>;
 
-    fn decode(self) -> Result<DecodeOutput, PngError> {
+    fn decode(self) -> Result<DecodeOutput, At<PngError>> {
         let cancel: &dyn enough::Stop = self.stop.unwrap_or(&enough::Unstoppable);
-        cancel.check()?;
+        cancel.check().map_err(PngError::from)?;
         let png_config = self.effective_config();
         let result = crate::decode::decode(self.data, &png_config, cancel)?;
         let info = convert_info(&result.info);
@@ -1127,7 +1131,7 @@ impl PngFrameDecoder {
 }
 
 impl zc::decode::FrameDecode for PngFrameDecoder {
-    type Error = PngError;
+    type Error = At<PngError>;
 
     fn frame_count(&self) -> Option<u32> {
         Some(self.decoder_state.num_frames)
@@ -1137,7 +1141,7 @@ impl zc::decode::FrameDecode for PngFrameDecoder {
         Some(self.decoder_state.num_plays)
     }
 
-    fn next_frame(&mut self) -> Result<Option<DecodeFrame>, PngError> {
+    fn next_frame(&mut self) -> Result<Option<DecodeFrame>, At<PngError>> {
         // Restore decoder from saved state (O(1), no re-scanning)
         let mut decoder = crate::decoder::apng::ApngDecoder::from_state(
             &self.file_data,
@@ -3390,7 +3394,7 @@ mod tests {
         use zc::encode::Encoder;
         let result = encoder.encode(slice.erase());
         assert!(result.is_err());
-        match result.unwrap_err() {
+        match result.unwrap_err().into_inner() {
             PngError::Stopped(reason) => {
                 assert_eq!(reason, StopReason::Cancelled);
             }
