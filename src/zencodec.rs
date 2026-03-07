@@ -471,6 +471,10 @@ impl<'a> PngEncoder<'a> {
 impl zc::encode::Encoder for PngEncoder<'_> {
     type Error = PngError;
 
+    fn reject(op: zc::UnsupportedOperation) -> PngError {
+        op.into()
+    }
+
     fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, PngError> {
         use linear_srgb::default::linear_to_srgb_u8;
         use zenpixels::PixelFormat;
@@ -749,6 +753,10 @@ impl PngFrameEncoder {
 impl zc::encode::FrameEncoder for PngFrameEncoder {
     type Error = PngError;
 
+    fn reject(op: zc::UnsupportedOperation) -> PngError {
+        op.into()
+    }
+
     fn push_frame(&mut self, pixels: PixelSlice<'_>, duration_ms: u32) -> Result<(), PngError> {
         let rgba = Self::pixels_to_rgba8(&pixels)?;
         self.frames.push(AccumulatedFrame {
@@ -965,23 +973,6 @@ impl zc::decode::DecoderConfig for PngDecoderConfig {
     }
 }
 
-// ── PngStreamingDecoder (rejection stub) ────────────────────────────
-
-/// Stub type for streaming decode — PNG does not support pull-based streaming.
-pub struct PngStreamingDecoder;
-
-impl zc::decode::StreamingDecode for PngStreamingDecoder {
-    type Error = PngError;
-
-    fn next_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, PngError> {
-        Err(zc::UnsupportedOperation::RowLevelDecode.into())
-    }
-
-    fn info(&self) -> &ImageInfo {
-        panic!("StreamingDecode not supported for PNG")
-    }
-}
-
 // ── PngDecodeJob ─────────────────────────────────────────────────────
 
 /// Per-operation PNG decode job.
@@ -994,7 +985,7 @@ pub struct PngDecodeJob<'a> {
 impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
     type Error = PngError;
     type Dec = PngDecoder<'a>;
-    type StreamDec = PngStreamingDecoder;
+    type StreamDec = zc::Unsupported<PngError>;
     type FrameDec = PngFrameDecoder;
 
     fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
@@ -1043,7 +1034,7 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
         self,
         _data: &'a [u8],
         _preferred: &[PixelDescriptor],
-    ) -> Result<PngStreamingDecoder, PngError> {
+    ) -> Result<zc::Unsupported<PngError>, PngError> {
         Err(zc::UnsupportedOperation::RowLevelDecode.into())
     }
 
