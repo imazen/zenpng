@@ -76,7 +76,7 @@ pub use quantize::{
 };
 pub use zencodec::{
     PngDecodeJob, PngDecoder, PngDecoderConfig, PngEncodeJob, PngEncoder, PngEncoderConfig,
-    PngFrameDecoder, PngFrameEncoder,
+    PngFullFrameDecoder, PngFullFrameEncoder,
 };
 
 pub use types::{Compression, Filter};
