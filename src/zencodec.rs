@@ -13,7 +13,7 @@ use whereat::{At, ErrorAtExt};
 use zc::decode::{DecodeCapabilities, DecodeOutput, FullFrame, OutputInfo};
 use zc::encode::{EncodeCapabilities, EncodeOutput};
 use zc::{ImageFormat, ImageInfo, MetadataView, ResourceLimits};
-use zenpixels::{PixelDescriptor, PixelSlice, PixelSliceMut};
+use zenpixels::{Pixel, PixelDescriptor, PixelSlice, PixelSliceMut};
 
 use crate::decode::PngDecodeConfig;
 use crate::encode::EncodeConfig;
