@@ -793,51 +793,6 @@ impl zc::encode::FrameEncoder for PngFrameEncoder {
         Ok(())
     }
 
-    fn push_encode_frame(
-        &mut self,
-        frame: zc::encode::EncodeFrame<'_>,
-    ) -> Result<(), At<PngError>> {
-        let sub_rgba = Self::pixels_to_rgba8(&frame.pixels)?;
-        let canvas_size = (self.canvas_width as usize) * (self.canvas_height as usize) * 4;
-
-        let full_canvas = if let Some([x, y, w, h]) = frame.frame_rect {
-            // Sub-canvas frame: composite onto a canvas-sized buffer
-            let mut canvas = vec![0u8; canvas_size];
-
-            // Copy the last frame's pixels as the canvas base if blending OVER
-            if frame.blend == zc::FrameBlend::Over
-                && let Some(prev) = self.frames.last()
-            {
-                canvas.copy_from_slice(&prev.pixels);
-            }
-
-            // Place sub-region pixels onto the canvas
-            let cw = self.canvas_width as usize;
-            let sw = w as usize;
-            let sx = x as usize;
-            let sy = y as usize;
-            for row in 0..h as usize {
-                let canvas_off = ((sy + row) * cw + sx) * 4;
-                let sub_off = row * sw * 4;
-                let len = sw * 4;
-                if canvas_off + len <= canvas.len() && sub_off + len <= sub_rgba.len() {
-                    canvas[canvas_off..canvas_off + len]
-                        .copy_from_slice(&sub_rgba[sub_off..sub_off + len]);
-                }
-            }
-            canvas
-        } else {
-            // Full-canvas frame
-            sub_rgba
-        };
-
-        self.frames.push(AccumulatedFrame {
-            pixels: full_canvas,
-            duration_ms: frame.duration_ms,
-        });
-        Ok(())
-    }
-
     fn with_loop_count(&mut self, count: Option<u32>) {
         self.loop_count = count.unwrap_or(0);
     }
