@@ -1028,8 +1028,8 @@ impl zc::decode::DecoderConfig for PngDecoderConfig {
     type Error = At<PngError>;
     type Job<'a> = PngDecodeJob<'a>;
 
-    fn format() -> ImageFormat {
-        ImageFormat::Png
+    fn formats() -> &'static [ImageFormat] {
+        &[ImageFormat::Png]
     }
 
     fn supported_descriptors() -> &'static [PixelDescriptor] {
@@ -2183,8 +2183,8 @@ mod tests {
             ImageFormat::Png
         );
         assert_eq!(
-            <PngDecoderConfig as DecoderConfig>::format(),
-            ImageFormat::Png
+            <PngDecoderConfig as DecoderConfig>::formats(),
+            &[ImageFormat::Png]
         );
     }
 
