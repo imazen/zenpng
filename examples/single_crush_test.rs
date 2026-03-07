@@ -1,6 +1,6 @@
 use enough::Unstoppable;
-use zencodec_types::PixelBufferConvertExt;
 use zenpixels::descriptor::{ChannelLayout, ChannelType};
+use zenpixels_convert::PixelBufferConvertExt;
 
 /// Test Crush level with various deadlines on a single image.
 fn main() {

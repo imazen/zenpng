@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use zencodec_types::{Cicp, ContentLightLevel, MasteringDisplay, MetadataView};
+use zc::{Cicp, ContentLightLevel, MasteringDisplay, MetadataView};
 use zenflate::{CompressionLevel, Compressor, Unstoppable};
 
 use crate::chunk::write::write_chunk;

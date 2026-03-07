@@ -7,10 +7,10 @@
 use std::path::{Path, PathBuf};
 
 use enough::Unstoppable;
-use zencodec_types::MetadataView;
-use zencodec_types::PixelBufferConvertExt;
+use zc::MetadataView;
 use zenpixels::PixelBuffer;
 use zenpixels::descriptor::{ChannelLayout, ChannelType};
+use zenpixels_convert::PixelBufferConvertExt;
 use zenpng::{EncodeConfig, PngInfo};
 
 fn main() {

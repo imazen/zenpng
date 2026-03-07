@@ -7,8 +7,8 @@
 /// Usage: cargo run --release --features zopfli --example full_optimal_bench [-- /path/to/image.png]
 use enough::Unstoppable;
 use std::time::Instant;
-use zencodec_types::PixelBufferConvertExt;
 use zenpixels::descriptor::{ChannelLayout, ChannelType};
+use zenpixels_convert::PixelBufferConvertExt;
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
