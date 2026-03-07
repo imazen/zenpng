@@ -997,6 +997,7 @@ impl zc::decode::DecoderConfig for PngDecoderConfig {
             stop: None,
             limits: None,
             policy: None,
+            start_frame_index: 0,
         }
     }
 }
@@ -1009,6 +1010,7 @@ pub struct PngDecodeJob<'a> {
     stop: Option<&'a dyn enough::Stop>,
     limits: Option<ResourceLimits>,
     policy: Option<zc::decode::DecodePolicy>,
+    start_frame_index: u32,
 }
 
 impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
@@ -1029,6 +1031,11 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
 
     fn with_policy(mut self, policy: zc::decode::DecodePolicy) -> Self {
         self.policy = Some(policy);
+        self
+    }
+
+    fn with_start_frame_index(mut self, index: u32) -> Self {
+        self.start_frame_index = index;
         self
     }
 
@@ -1078,7 +1085,7 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
     ) -> Result<PngFullFrameDecoder, At<PngError>> {
-        PngFullFrameDecoder::new(&data, self.config, self.stop, preferred)
+        PngFullFrameDecoder::new(&data, self.config, self.stop, preferred, self.start_frame_index)
             .map_err(ErrorAtExt::start_at)
     }
 }
@@ -1144,6 +1151,11 @@ pub struct PngFullFrameDecoder {
     preferred: Vec<PixelDescriptor>,
     /// Internal canvas buffer holding the last rendered frame's pixels.
     canvas: Option<PixelBuffer>,
+    /// First frame index to yield (skip earlier frames, but still decode them
+    /// because APNG compositing depends on prior frames).
+    start_frame_index: u32,
+    /// Number of frames decoded so far (used to track position vs `start_frame_index`).
+    frames_decoded: u32,
 }
 
 impl PngFullFrameDecoder {
@@ -1152,6 +1164,7 @@ impl PngFullFrameDecoder {
         config: &PngDecoderConfig,
         _stop: Option<&dyn enough::Stop>,
         preferred: &[PixelDescriptor],
+        start_frame_index: u32,
     ) -> Result<Self, PngError> {
         let probe_info = crate::decode::probe(data)?;
         let image_info = convert_info(&probe_info);
@@ -1173,6 +1186,8 @@ impl PngFullFrameDecoder {
             decoder_state,
             preferred: preferred.to_vec(),
             canvas: None,
+            start_frame_index,
+            frames_decoded: 0,
         })
     }
 }
@@ -1197,39 +1212,49 @@ impl zc::decode::FullFrameDecoder for PngFullFrameDecoder {
     }
 
     fn render_next_frame(&mut self) -> Result<Option<FullFrame<'_>>, At<PngError>> {
-        // Restore decoder from saved state (O(1), no re-scanning)
-        let mut decoder = crate::decoder::apng::ApngDecoder::from_state(
-            &self.file_data,
-            self.decoder_state.clone(),
-        );
+        loop {
+            // Restore decoder from saved state (O(1), no re-scanning)
+            let mut decoder = crate::decoder::apng::ApngDecoder::from_state(
+                &self.file_data,
+                self.decoder_state.clone(),
+            );
 
-        let raw = match decoder.next_frame(&enough::Unstoppable)? {
-            Some(f) => f,
-            None => return Ok(None),
-        };
+            let raw = match decoder.next_frame(&enough::Unstoppable)? {
+                Some(f) => f,
+                None => return Ok(None),
+            };
 
-        // Save updated state (chunk_pos / current_frame advanced)
-        let idx = self.decoder_state.current_frame;
-        self.decoder_state = decoder.save_state();
+            // Save updated state (chunk_pos / current_frame advanced)
+            let idx = self.decoder_state.current_frame;
+            self.decoder_state = decoder.save_state();
+            self.frames_decoded += 1;
 
-        let delay_ms = raw.fctl.delay_ms();
+            // Skip frames before start_frame_index. We must still decode them
+            // (not skip) because APNG compositing depends on prior frame disposal
+            // and blending, but we don't yield them to the caller.
+            if idx < self.start_frame_index {
+                continue;
+            }
 
-        // Apply format negotiation to frame pixels if preferred formats specified
-        let pixels = if self.preferred.is_empty() {
-            raw.pixels
-        } else {
-            negotiate_and_convert(raw.pixels, &self.preferred)
-        };
+            let delay_ms = raw.fctl.delay_ms();
 
-        // Store the rendered frame in the internal canvas buffer
-        self.canvas = Some(pixels);
+            // Apply format negotiation to frame pixels if preferred formats specified
+            let pixels = if self.preferred.is_empty() {
+                raw.pixels
+            } else {
+                negotiate_and_convert(raw.pixels, &self.preferred)
+            };
 
-        // Borrow from the canvas we just stored
-        let canvas = self.canvas.as_ref().unwrap();
-        let pixel_slice = canvas.as_slice();
-        let frame = FullFrame::new(pixel_slice, delay_ms, idx);
+            // Store the rendered frame in the internal canvas buffer
+            self.canvas = Some(pixels);
 
-        Ok(Some(frame))
+            // Borrow from the canvas we just stored
+            let canvas = self.canvas.as_ref().unwrap();
+            let pixel_slice = canvas.as_slice();
+            let frame = FullFrame::new(pixel_slice, delay_ms, idx);
+
+            return Ok(Some(frame));
+        }
     }
 }
 
