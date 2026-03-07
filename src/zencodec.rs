@@ -1095,9 +1095,7 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
         sink: &mut dyn zc::decode::DecodeRowSink,
         preferred: &[PixelDescriptor],
     ) -> Result<OutputInfo, At<PngError>> {
-        zc::decode::push_decoder_via_full_decode(self, data, sink, preferred, |e| {
-            PngError::InvalidInput(alloc::format!("sink error: {e}")).start_at()
-        })
+        push_decoder_native(self, data, sink, preferred)
     }
 }
 
@@ -1142,6 +1140,180 @@ impl zc::decode::Decode for PngDecoder<'_> {
         };
         Ok(DecodeOutput::new(pixels, info))
     }
+}
+
+// ── Native push_decoder ─────────────────────────────────────────────
+
+/// Determine the native output `PixelDescriptor` for a given PNG color
+/// type, bit depth, and tRNS presence. Must match `build_pixel_data`.
+fn native_output_descriptor(
+    color_type: u8,
+    bit_depth: u8,
+    has_trns: bool,
+) -> PixelDescriptor {
+    match (color_type, bit_depth, has_trns) {
+        (0, 16, false) => PixelDescriptor::GRAY16_SRGB,
+        (0, 16, true) => GrayAlpha16::DESCRIPTOR, // GRAYA16
+        (0, _, false) => PixelDescriptor::GRAY8_SRGB,
+        (0, _, true) => PixelDescriptor::RGBA8_SRGB,
+        (2, 16, false) => PixelDescriptor::RGB16_SRGB,
+        (2, 16, true) => PixelDescriptor::RGBA16_SRGB,
+        (2, 8, false) => PixelDescriptor::RGB8_SRGB,
+        (2, 8, true) => PixelDescriptor::RGBA8_SRGB,
+        (3, _, true) => PixelDescriptor::RGBA8_SRGB,
+        (3, _, false) => PixelDescriptor::RGB8_SRGB,
+        (4, 16, _) => GrayAlpha16::DESCRIPTOR, // GRAYA16
+        (4, 8, _) => PixelDescriptor::RGBA8_SRGB,
+        (6, 16, _) => PixelDescriptor::RGBA16_SRGB,
+        (6, 8, _) => PixelDescriptor::RGBA8_SRGB,
+        _ => PixelDescriptor::RGBA8_SRGB, // fallback
+    }
+}
+
+/// Native row-streaming push decoder. Decodes PNG rows one at a time
+/// directly into the sink buffer, avoiding the 2x peak memory of the
+/// full-decode-then-copy fallback.
+///
+/// Falls back to `push_decoder_via_full_decode` for interlaced PNGs
+/// (Adam7 scatters pixels across 7 passes and requires a full canvas).
+fn push_decoder_native<'a>(
+    job: PngDecodeJob<'a>,
+    data: Cow<'a, [u8]>,
+    sink: &mut dyn zc::decode::DecodeRowSink,
+    preferred: &[PixelDescriptor],
+) -> Result<OutputInfo, At<PngError>> {
+    use crate::decoder::postprocess::post_process_row;
+    use crate::decoder::row::RowDecoder;
+
+    let wrap_sink = |e: zc::decode::SinkError| -> At<PngError> {
+        PngError::InvalidInput(alloc::format!("sink error: {e}")).start_at()
+    };
+
+    // Check for interlacing — fall back to full decode for Adam7
+    if data.len() >= 29
+        && data[..8] == crate::chunk::PNG_SIGNATURE
+        && data[28] == 1
+    {
+        return zc::decode::push_decoder_via_full_decode(job, data, sink, preferred, |e| {
+            PngError::InvalidInput(alloc::format!("sink error: {e}")).start_at()
+        });
+    }
+
+    // Build effective config (limits + policy)
+    let limits = job.limits.as_ref().unwrap_or(&job.config.limits);
+    let png_config = PngDecodeConfig {
+        max_pixels: limits.max_pixels,
+        max_memory_bytes: limits.max_memory_bytes,
+        skip_decompression_checksum: true,
+        skip_critical_chunk_crc: true,
+    };
+    let png_config = apply_decode_policy(png_config, job.policy.as_ref());
+
+    let cancel: &dyn enough::Stop = job.stop.unwrap_or(&enough::Unstoppable);
+    cancel.check().map_err(PngError::from)?;
+
+    let mut reader = RowDecoder::new(&data, &png_config)?;
+    let ihdr = *reader.ihdr();
+    let has_trns = reader.ancillary().trns.is_some();
+
+    let w = ihdr.width;
+    let h = ihdr.height;
+    let descriptor = native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns);
+
+    sink.begin(w, h, descriptor).map_err(wrap_sink)?;
+
+    // Passthrough fast path: RGB8 or RGBA8 without tRNS — raw unfiltered
+    // data IS the output pixels. Decode directly into the sink buffer.
+    let is_passthrough =
+        !has_trns && ihdr.bit_depth == 8 && (ihdr.color_type == 6 || ihdr.color_type == 2);
+
+    if is_passthrough {
+        let raw_row_bytes = ihdr.raw_row_bytes();
+
+        // Request the full sink buffer up front so we can use split_at_mut
+        // for zero-copy prev-row references during unfiltering.
+        let mut dst = sink
+            .provide_next_buffer(0, h, w, descriptor)
+            .map_err(wrap_sink)?;
+
+        // Row 0: prev is zeros
+        if h > 0 {
+            let zeros = alloc::vec![0u8; raw_row_bytes];
+            let row_slice = dst.row_mut(0);
+            match reader.next_raw_row_direct(&mut row_slice[..raw_row_bytes], &zeros) {
+                Some(Ok(())) => {}
+                Some(Err(e)) => return Err(e.start_at()),
+                None => {
+                    return Err(PngError::Decode(
+                        "unexpected end of image data at row 0".into(),
+                    )
+                    .start_at());
+                }
+            }
+            cancel.check().map_err(PngError::from)?;
+        }
+
+        // Rows 1..h: prev is the previous row in the sink buffer.
+        // We cannot borrow two rows from PixelSliceMut simultaneously via
+        // row_mut, so copy the previous row into a temp buffer for unfilter.
+        let mut prev_buf = alloc::vec![0u8; raw_row_bytes];
+        for y in 1..h {
+            // Save previous row for unfilter reference
+            prev_buf.copy_from_slice(&dst.row_mut(y - 1)[..raw_row_bytes]);
+            let row_slice = dst.row_mut(y);
+            match reader.next_raw_row_direct(&mut row_slice[..raw_row_bytes], &prev_buf) {
+                Some(Ok(())) => {}
+                Some(Err(e)) => return Err(e.start_at()),
+                None => {
+                    return Err(PngError::Decode(alloc::format!(
+                        "unexpected end of image data at row {y}"
+                    ))
+                    .start_at());
+                }
+            }
+            cancel.check().map_err(PngError::from)?;
+        }
+        drop(dst);
+    } else {
+        // General path: post-process each raw row, then write to sink.
+        let out_bpp = descriptor.bytes_per_pixel();
+        let out_row_bytes = w as usize * out_bpp;
+        let mut row_buf = Vec::new();
+        let mut raw_copy = alloc::vec![0u8; ihdr.raw_row_bytes()];
+
+        let mut dst = sink
+            .provide_next_buffer(0, h, w, descriptor)
+            .map_err(wrap_sink)?;
+
+        let mut y = 0u32;
+        while let Some(result) = reader.next_raw_row() {
+            let raw = result?;
+            cancel.check().map_err(PngError::from)?;
+
+            // Copy raw row data so the borrow on reader is released (NLL),
+            // allowing reader.ancillary() below.
+            raw_copy[..raw.len()].copy_from_slice(raw);
+
+            post_process_row(
+                &raw_copy[..ihdr.raw_row_bytes()],
+                &ihdr,
+                reader.ancillary(),
+                &mut row_buf,
+            );
+
+            let sink_row = dst.row_mut(y);
+            let copy_len = out_row_bytes.min(row_buf.len()).min(sink_row.len());
+            sink_row[..copy_len].copy_from_slice(&row_buf[..copy_len]);
+            y += 1;
+        }
+        drop(dst);
+    }
+
+    reader.finish_metadata();
+    sink.finish().map_err(wrap_sink)?;
+
+    let has_alpha = descriptor.has_alpha();
+    Ok(OutputInfo::full_decode(w, h, descriptor).with_alpha(has_alpha))
 }
 
 // ── PngFullFrameDecoder ──────────────────────────────────────────────
