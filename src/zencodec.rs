@@ -1088,6 +1088,17 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
         PngFullFrameDecoder::new(&data, self.config, self.stop, preferred, self.start_frame_index)
             .map_err(ErrorAtExt::start_at)
     }
+
+    fn push_decoder(
+        self,
+        data: Cow<'a, [u8]>,
+        sink: &mut dyn zc::decode::DecodeRowSink,
+        preferred: &[PixelDescriptor],
+    ) -> Result<OutputInfo, At<PngError>> {
+        zc::decode::push_decoder_via_full_decode(self, data, sink, preferred, |e| {
+            PngError::InvalidInput(alloc::format!("sink error: {e}")).start_at()
+        })
+    }
 }
 
 // ── PngDecoder ───────────────────────────────────────────────────────
@@ -1209,6 +1220,13 @@ impl zc::decode::FullFrameDecoder for PngFullFrameDecoder {
 
     fn loop_count(&self) -> Option<u32> {
         Some(self.decoder_state.num_plays)
+    }
+
+    fn render_next_frame_to_sink(
+        &mut self,
+        sink: &mut dyn zc::decode::DecodeRowSink,
+    ) -> Result<Option<OutputInfo>, At<PngError>> {
+        zc::decode::render_frame_to_sink_via_copy(self, sink)
     }
 
     fn render_next_frame(&mut self) -> Result<Option<FullFrame<'_>>, At<PngError>> {
