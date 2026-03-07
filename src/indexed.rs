@@ -8,7 +8,7 @@ use imgref::ImgRef;
 use rgb::Rgba;
 use std::collections::HashMap;
 
-use zencodec_types::MetadataView;
+use zc::MetadataView;
 
 use enough::Stop;
 
@@ -1267,7 +1267,7 @@ mod tests {
     #[test]
     fn joint_compression_comparison() {
         use crate::quantize::ZenquantQuantizer;
-        use zencodec_types::PixelBufferConvertExt;
+        use zenpixels_convert::PixelBufferConvertExt;
 
         fn compare(name: &str, img: ImgRef<'_, Rgba<u8>>, tolerance: f32) {
             let config = EncodeConfig::default();
@@ -1366,7 +1366,7 @@ mod tests {
 
     #[test]
     fn exact_palette_pixel_perfect_roundtrip() {
-        use zencodec_types::PixelBufferConvertExt;
+        use zenpixels_convert::PixelBufferConvertExt;
 
         let mut pixels = Vec::with_capacity(64);
         for y in 0..8u8 {

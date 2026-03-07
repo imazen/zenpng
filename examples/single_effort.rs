@@ -3,8 +3,8 @@
 /// Usage: cargo run --release --features _dev --example single_effort -- EFFORT [CORPUS]
 use enough::Unstoppable;
 use std::path::{Path, PathBuf};
-use zencodec_types::PixelBufferConvertExt;
 use zenpixels::descriptor::{ChannelLayout, ChannelType};
+use zenpixels_convert::PixelBufferConvertExt;
 
 fn main() {
     let effort: u32 = std::env::args()

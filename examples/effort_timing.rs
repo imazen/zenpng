@@ -13,8 +13,8 @@
 use std::time::Instant;
 
 use enough::Unstoppable;
-use zencodec_types::PixelBufferConvertExt;
 use zenpixels::descriptor::{ChannelLayout, ChannelType};
+use zenpixels_convert::PixelBufferConvertExt;
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {

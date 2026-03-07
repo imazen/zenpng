@@ -9,8 +9,8 @@
 use enough::Unstoppable;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use zencodec_types::PixelBufferConvertExt;
 use zenpixels::descriptor::{ChannelLayout, ChannelType};
+use zenpixels_convert::PixelBufferConvertExt;
 
 fn main() {
     let dir = std::env::args()

@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use imgref::ImgRef;
 use rgb::{Gray, Rgb, Rgba};
 
-use zencodec_types::MetadataView;
+use zc::MetadataView;
 
 use enough::Stop;
 

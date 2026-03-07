@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 use enough::Stop;
 use imgref::ImgVec;
-use zencodec_types::{Cicp, ContentLightLevel, MasteringDisplay};
+use zc::{Cicp, ContentLightLevel, MasteringDisplay};
 use zenpixels::PixelBuffer;
 
 use crate::chunk::ancillary::PngAncillary;
@@ -1523,7 +1523,7 @@ mod tests {
     #[test]
     #[ignore]
     fn streaming_vs_batch_decompressor() {
-        use zencodec_types::Unstoppable;
+        use enough::Unstoppable;
 
         let cb = std::env::var("CORPUS_BUILDER_OUTPUT_DIR")
             .unwrap_or_else(|_| "/mnt/v/output/corpus-builder".to_string());
@@ -1750,7 +1750,7 @@ mod tests {
         let our = decode_png(
             &data,
             &crate::decode::PngDecodeConfig::none(),
-            &zencodec_types::Unstoppable,
+            &enough::Unstoppable,
         )
         .unwrap();
         let our_bytes = pixel_data_to_bytes(&our.pixels);
@@ -1832,7 +1832,7 @@ mod tests {
         let mut batch_output = vec![0u8; 128 * 1024 * 1024];
         let mut batch = zenflate::Decompressor::new();
         let batch_result =
-            batch.zlib_decompress(&idat_data, &mut batch_output, zencodec_types::Unstoppable);
+            batch.zlib_decompress(&idat_data, &mut batch_output, enough::Unstoppable);
         let batch_len = match &batch_result {
             Ok(outcome) => {
                 eprintln!("Batch: OK, {} bytes", outcome.output_written);
@@ -1963,7 +1963,7 @@ mod tests {
             let our = decode_png(
                 &data,
                 &crate::decode::PngDecodeConfig::none(),
-                &zencodec_types::Unstoppable,
+                &enough::Unstoppable,
             );
             let reference = decode_with_png_crate(&data);
             match (&our, &reference) {

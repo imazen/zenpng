@@ -25,8 +25,8 @@
 //!
 //! # zencodec-types traits
 //!
-//! [`PngEncoderConfig`] implements [`zencodec_types::EncoderConfig`] and [`PngDecoderConfig`]
-//! implements [`zencodec_types::DecoderConfig`] for use with multi-codec dispatchers.
+//! [`PngEncoderConfig`] implements [`zc::EncoderConfig`] and [`PngDecoderConfig`]
+//! implements [`zc::DecoderConfig`] for use with multi-codec dispatchers.
 
 #![forbid(unsafe_code)]
 

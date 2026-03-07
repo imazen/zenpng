@@ -10,7 +10,7 @@ use std::time::Instant;
 use imgref::ImgVec;
 use rgb::Rgba;
 
-use zencodec_types::PixelBufferConvertExt;
+use zenpixels_convert::PixelBufferConvertExt;
 use zenpng::{EncodeConfig, PngDecodeConfig, ZenquantQuantizer, decode, encode_indexed};
 
 use zenquant::{OutputFormat, Quality, QuantizeConfig};

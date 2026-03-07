@@ -10,8 +10,8 @@
 use enough::Unstoppable;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use zencodec_types::PixelBufferConvertExt;
 use zenpixels::descriptor::{ChannelLayout, ChannelType};
+use zenpixels_convert::PixelBufferConvertExt;
 
 fn main() {
     let corpus_dir = std::env::args().nth(1).unwrap_or_else(|| {
