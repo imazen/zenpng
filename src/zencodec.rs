@@ -10,7 +10,7 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use whereat::{At, ErrorAtExt};
-use zc::decode::{DecodeCapabilities, DecodeFrame, DecodeOutput, OutputInfo};
+use zc::decode::{DecodeCapabilities, DecodeOutput, FullFrame, OutputInfo};
 use zc::encode::{EncodeCapabilities, EncodeOutput};
 use zc::{ImageFormat, ImageInfo, MetadataView, ResourceLimits};
 use zenpixels::{PixelDescriptor, PixelSlice, PixelSliceMut};
@@ -362,7 +362,7 @@ pub struct PngEncodeJob<'a> {
 impl<'a> zc::encode::EncodeJob<'a> for PngEncodeJob<'a> {
     type Error = At<PngError>;
     type Enc = PngEncoder<'a>;
-    type FrameEnc = PngFrameEncoder;
+    type FullFrameEnc = PngFullFrameEncoder;
 
     fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
         self.stop = Some(stop);
@@ -405,10 +405,10 @@ impl<'a> zc::encode::EncodeJob<'a> for PngEncodeJob<'a> {
         })
     }
 
-    fn frame_encoder(self) -> Result<PngFrameEncoder, At<PngError>> {
+    fn full_frame_encoder(self) -> Result<PngFullFrameEncoder, At<PngError>> {
         let effective_meta = apply_encode_policy(self.metadata, self.policy.as_ref());
         let owned_meta = effective_meta.as_ref().map(OwnedMetadata::from_metadata);
-        let mut enc = PngFrameEncoder::new(
+        let mut enc = PngFullFrameEncoder::new(
             self.config.config.clone(),
             self.canvas_width,
             self.canvas_height,
@@ -667,7 +667,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
     }
 }
 
-// ── PngFrameEncoder ──────────────────────────────────────────────────
+// ── PngFullFrameEncoder ──────────────────────────────────────────────
 
 /// Accumulated frame data for APNG encoding.
 struct AccumulatedFrame {
@@ -709,10 +709,10 @@ impl OwnedMetadata {
     }
 }
 
-/// APNG frame-by-frame encoder implementing [`FrameEncoder`](zc::encode::FrameEncoder).
+/// APNG frame-by-frame encoder implementing [`FullFrameEncoder`](zc::encode::FullFrameEncoder).
 ///
-/// Accumulates canvas-sized RGBA8 frames, then encodes them all on [`finish()`](PngFrameEncoder::do_finish).
-pub struct PngFrameEncoder {
+/// Accumulates canvas-sized RGBA8 frames, then encodes them all on [`finish()`](PngFullFrameEncoder::do_finish).
+pub struct PngFullFrameEncoder {
     frames: Vec<AccumulatedFrame>,
     canvas_width: u32,
     canvas_height: u32,
@@ -730,7 +730,7 @@ struct BuildingFrame {
     rows_pushed: u32,
 }
 
-impl PngFrameEncoder {
+impl PngFullFrameEncoder {
     fn new(
         config: crate::encode::EncodeConfig,
         canvas_width: u32,
@@ -777,7 +777,7 @@ impl PngFrameEncoder {
     }
 }
 
-impl zc::encode::FrameEncoder for PngFrameEncoder {
+impl zc::encode::FullFrameEncoder for PngFullFrameEncoder {
     type Error = At<PngError>;
 
     fn reject(op: zc::UnsupportedOperation) -> At<PngError> {
@@ -793,16 +793,12 @@ impl zc::encode::FrameEncoder for PngFrameEncoder {
         Ok(())
     }
 
-    fn with_loop_count(&mut self, count: Option<u32>) {
-        self.loop_count = count.unwrap_or(0);
-    }
-
     fn finish(self) -> Result<EncodeOutput, At<PngError>> {
         self.do_finish().map_err(ErrorAtExt::start_at)
     }
 }
 
-impl PngFrameEncoder {
+impl PngFullFrameEncoder {
     fn do_finish(self) -> Result<EncodeOutput, PngError> {
         if self.frames.is_empty() {
             return Err(PngError::InvalidInput(
@@ -1019,7 +1015,7 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
     type Error = At<PngError>;
     type Dec = PngDecoder<'a>;
     type StreamDec = zc::Unsupported<At<PngError>>;
-    type FrameDec = PngFrameDecoder;
+    type FullFrameDec = PngFullFrameDecoder;
 
     fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
         self.stop = Some(stop);
@@ -1077,12 +1073,12 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
         Err(PngError::from(zc::UnsupportedOperation::RowLevelDecode).start_at())
     }
 
-    fn frame_decoder(
+    fn full_frame_decoder(
         self,
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
-    ) -> Result<PngFrameDecoder, At<PngError>> {
-        PngFrameDecoder::new(&data, self.config, self.stop, preferred).map_err(ErrorAtExt::start_at)
+    ) -> Result<PngFullFrameDecoder, At<PngError>> {
+        PngFullFrameDecoder::new(&data, self.config, self.stop, preferred).map_err(ErrorAtExt::start_at)
     }
 }
 
@@ -1129,24 +1125,27 @@ impl zc::decode::Decode for PngDecoder<'_> {
     }
 }
 
-// ── PngFrameDecoder ──────────────────────────────────────────────────
+// ── PngFullFrameDecoder ──────────────────────────────────────────────
 
-/// APNG frame-by-frame decoder implementing [`FrameDecode`](zc::FrameDecode).
+/// APNG frame-by-frame decoder implementing [`FullFrameDecoder`](zc::decode::FullFrameDecoder).
 ///
-/// Yields raw (non-composited) subframes with blend/disposal metadata.
-/// The caller is responsible for compositing if desired.
-pub struct PngFrameDecoder {
+/// Yields composited full-canvas frames. The returned [`FullFrame`] borrows
+/// the decoder's internal canvas buffer; calling `render_next_frame()` again
+/// invalidates the previous borrow.
+pub struct PngFullFrameDecoder {
     /// Owned copy of the PNG file data.
     file_data: Vec<u8>,
-    /// Shared image info for all frames.
-    info: std::sync::Arc<ImageInfo>,
+    /// Image info for all frames.
+    info: ImageInfo,
     /// Saved decoder state for O(1) resumption between frames.
     decoder_state: crate::decoder::apng::ApngDecoderState,
     /// Preferred output pixel formats for format negotiation.
     preferred: Vec<PixelDescriptor>,
+    /// Internal canvas buffer holding the last rendered frame's pixels.
+    canvas: Option<PixelBuffer>,
 }
 
-impl PngFrameDecoder {
+impl PngFullFrameDecoder {
     fn new(
         data: &[u8],
         config: &PngDecoderConfig,
@@ -1169,15 +1168,24 @@ impl PngFrameDecoder {
 
         Ok(Self {
             file_data: data.to_vec(),
-            info: std::sync::Arc::new(image_info),
+            info: image_info,
             decoder_state,
             preferred: preferred.to_vec(),
+            canvas: None,
         })
     }
 }
 
-impl zc::decode::FrameDecode for PngFrameDecoder {
+impl zc::decode::FullFrameDecoder for PngFullFrameDecoder {
     type Error = At<PngError>;
+
+    fn wrap_sink_error(err: zc::decode::SinkError) -> At<PngError> {
+        PngError::InvalidInput(alloc::format!("sink error: {err}")).start_at()
+    }
+
+    fn info(&self) -> &ImageInfo {
+        &self.info
+    }
 
     fn frame_count(&self) -> Option<u32> {
         Some(self.decoder_state.num_frames)
@@ -1187,7 +1195,7 @@ impl zc::decode::FrameDecode for PngFrameDecoder {
         Some(self.decoder_state.num_plays)
     }
 
-    fn next_frame(&mut self) -> Result<Option<DecodeFrame>, At<PngError>> {
+    fn render_next_frame(&mut self) -> Result<Option<FullFrame<'_>>, At<PngError>> {
         // Restore decoder from saved state (O(1), no re-scanning)
         let mut decoder = crate::decoder::apng::ApngDecoder::from_state(
             &self.file_data,
@@ -1203,18 +1211,7 @@ impl zc::decode::FrameDecode for PngFrameDecoder {
         let idx = self.decoder_state.current_frame;
         self.decoder_state = decoder.save_state();
 
-        let fctl = &raw.fctl;
-        let blend = match fctl.blend_op {
-            0 => zc::FrameBlend::Source,
-            _ => zc::FrameBlend::Over,
-        };
-        let disposal = match fctl.dispose_op {
-            0 => zc::FrameDisposal::None,
-            1 => zc::FrameDisposal::RestoreBackground,
-            _ => zc::FrameDisposal::RestorePrevious,
-        };
-        let delay_ms = fctl.delay_ms();
-        let frame_rect = [fctl.x_offset, fctl.y_offset, fctl.width, fctl.height];
+        let delay_ms = raw.fctl.delay_ms();
 
         // Apply format negotiation to frame pixels if preferred formats specified
         let pixels = if self.preferred.is_empty() {
@@ -1223,10 +1220,13 @@ impl zc::decode::FrameDecode for PngFrameDecoder {
             negotiate_and_convert(raw.pixels, &self.preferred)
         };
 
-        let frame = DecodeFrame::new(pixels, self.info.clone(), delay_ms, idx)
-            .with_blend(blend)
-            .with_disposal(disposal)
-            .with_frame_rect(frame_rect);
+        // Store the rendered frame in the internal canvas buffer
+        self.canvas = Some(pixels);
+
+        // Borrow from the canvas we just stored
+        let canvas = self.canvas.as_ref().unwrap();
+        let pixel_slice = canvas.as_slice();
+        let frame = FullFrame::new(pixel_slice, delay_ms, idx);
 
         Ok(Some(frame))
     }
@@ -3896,10 +3896,10 @@ mod tests {
     }
 
     #[test]
-    fn encode_job_frame_encoder() {
+    fn encode_job_full_frame_encoder() {
         let enc = PngEncoderConfig::new();
         let job = enc.job().with_canvas_size(8, 8).with_loop_count(Some(0));
-        let frame_enc = job.frame_encoder();
+        let frame_enc = job.full_frame_encoder();
         assert!(frame_enc.is_ok());
     }
 
