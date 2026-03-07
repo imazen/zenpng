@@ -337,6 +337,7 @@ impl zc::encode::EncoderConfig for PngEncoderConfig {
             stop: None,
             metadata: None,
             limits: None,
+            policy: None,
             canvas_width: 0,
             canvas_height: 0,
             loop_count: None,
@@ -352,6 +353,7 @@ pub struct PngEncodeJob<'a> {
     stop: Option<&'a dyn enough::Stop>,
     metadata: Option<&'a MetadataView<'a>>,
     limits: Option<ResourceLimits>,
+    policy: Option<zc::encode::EncodePolicy>,
     canvas_width: u32,
     canvas_height: u32,
     loop_count: Option<u32>,
@@ -377,6 +379,11 @@ impl<'a> zc::encode::EncodeJob<'a> for PngEncodeJob<'a> {
         self
     }
 
+    fn with_policy(mut self, policy: zc::encode::EncodePolicy) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
     fn with_canvas_size(mut self, width: u32, height: u32) -> Self {
         self.canvas_width = width;
         self.canvas_height = height;
@@ -394,11 +401,13 @@ impl<'a> zc::encode::EncodeJob<'a> for PngEncodeJob<'a> {
             stop: self.stop,
             metadata: self.metadata,
             limits: self.limits,
+            policy: self.policy,
         })
     }
 
     fn frame_encoder(self) -> Result<PngFrameEncoder, At<PngError>> {
-        let owned_meta = self.metadata.map(OwnedMetadata::from_metadata);
+        let effective_meta = apply_encode_policy(self.metadata, self.policy.as_ref());
+        let owned_meta = effective_meta.as_ref().map(OwnedMetadata::from_metadata);
         let mut enc = PngFrameEncoder::new(
             self.config.config.clone(),
             self.canvas_width,
@@ -418,6 +427,7 @@ pub struct PngEncoder<'a> {
     stop: Option<&'a dyn enough::Stop>,
     metadata: Option<&'a MetadataView<'a>>,
     limits: Option<ResourceLimits>,
+    policy: Option<zc::encode::EncodePolicy>,
 }
 
 impl<'a> PngEncoder<'a> {
@@ -466,16 +476,11 @@ impl<'a> PngEncoder<'a> {
         let config = &self.config.config;
         let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
         let deadline = almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
+        // Apply encode policy to filter metadata
+        let effective_meta = apply_encode_policy(self.metadata, self.policy.as_ref());
+        let meta_ref = effective_meta.as_ref();
         let data = crate::encode::encode_raw(
-            bytes,
-            w,
-            h,
-            color_type,
-            bit_depth,
-            self.metadata,
-            config,
-            cancel,
-            &deadline,
+            bytes, w, h, color_type, bit_depth, meta_ref, config, cancel, &deadline,
         )?;
         Ok(EncodeOutput::new(data, ImageFormat::Png))
     }
@@ -498,6 +503,9 @@ impl zc::encode::Encoder for PngEncoder<'_> {
 
         let w = pixels.width();
         let h = pixels.rows();
+        // Policy-filtered metadata for auto-indexed paths
+        let effective_meta = apply_encode_policy(self.metadata, self.policy.as_ref());
+        let meta_ref = effective_meta.as_ref();
 
         match pixels.descriptor().pixel_format() {
             PixelFormat::Rgb8 => {
@@ -525,7 +533,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                         &self.config.config,
                         &*quantizer,
                         crate::QualityGate::MaxMpe(mpe),
-                        self.metadata,
+                        meta_ref,
                         cancel,
                         &deadline,
                     )?;
@@ -626,7 +634,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                         &self.config.config,
                         &*quantizer,
                         crate::QualityGate::MaxMpe(mpe),
-                        self.metadata,
+                        meta_ref,
                         cancel,
                         &deadline,
                     )?;
@@ -783,6 +791,55 @@ impl zc::encode::FrameEncoder for PngFrameEncoder {
             duration_ms,
         });
         Ok(())
+    }
+
+    fn push_encode_frame(
+        &mut self,
+        frame: zc::encode::EncodeFrame<'_>,
+    ) -> Result<(), At<PngError>> {
+        let sub_rgba = Self::pixels_to_rgba8(&frame.pixels)?;
+        let canvas_size = (self.canvas_width as usize) * (self.canvas_height as usize) * 4;
+
+        let full_canvas = if let Some([x, y, w, h]) = frame.frame_rect {
+            // Sub-canvas frame: composite onto a canvas-sized buffer
+            let mut canvas = vec![0u8; canvas_size];
+
+            // Copy the last frame's pixels as the canvas base if blending OVER
+            if frame.blend == zc::FrameBlend::Over
+                && let Some(prev) = self.frames.last()
+            {
+                canvas.copy_from_slice(&prev.pixels);
+            }
+
+            // Place sub-region pixels onto the canvas
+            let cw = self.canvas_width as usize;
+            let sw = w as usize;
+            let sx = x as usize;
+            let sy = y as usize;
+            for row in 0..h as usize {
+                let canvas_off = ((sy + row) * cw + sx) * 4;
+                let sub_off = row * sw * 4;
+                let len = sw * 4;
+                if canvas_off + len <= canvas.len() && sub_off + len <= sub_rgba.len() {
+                    canvas[canvas_off..canvas_off + len]
+                        .copy_from_slice(&sub_rgba[sub_off..sub_off + len]);
+                }
+            }
+            canvas
+        } else {
+            // Full-canvas frame
+            sub_rgba
+        };
+
+        self.frames.push(AccumulatedFrame {
+            pixels: full_canvas,
+            duration_ms: frame.duration_ms,
+        });
+        Ok(())
+    }
+
+    fn with_loop_count(&mut self, count: Option<u32>) {
+        self.loop_count = count.unwrap_or(0);
     }
 
     fn finish(self) -> Result<EncodeOutput, At<PngError>> {
@@ -988,6 +1045,7 @@ impl zc::decode::DecoderConfig for PngDecoderConfig {
             config: self,
             stop: None,
             limits: None,
+            policy: None,
         }
     }
 }
@@ -999,6 +1057,7 @@ pub struct PngDecodeJob<'a> {
     config: &'a PngDecoderConfig,
     stop: Option<&'a dyn enough::Stop>,
     limits: Option<ResourceLimits>,
+    policy: Option<zc::decode::DecodePolicy>,
 }
 
 impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
@@ -1014,6 +1073,11 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
 
     fn with_limits(mut self, limits: ResourceLimits) -> Self {
         self.limits = Some(limits);
+        self
+    }
+
+    fn with_policy(mut self, policy: zc::decode::DecodePolicy) -> Self {
+        self.policy = Some(policy);
         self
     }
 
@@ -1044,6 +1108,7 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
             config: self.config,
             stop: self.stop,
             limits: self.limits,
+            policy: self.policy,
             data,
             preferred: preferred.to_vec(),
         })
@@ -1060,9 +1125,9 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
     fn frame_decoder(
         self,
         data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
+        preferred: &[PixelDescriptor],
     ) -> Result<PngFrameDecoder, At<PngError>> {
-        PngFrameDecoder::new(&data, self.config, self.stop).map_err(ErrorAtExt::start_at)
+        PngFrameDecoder::new(&data, self.config, self.stop, preferred).map_err(ErrorAtExt::start_at)
     }
 }
 
@@ -1073,6 +1138,7 @@ pub struct PngDecoder<'a> {
     config: &'a PngDecoderConfig,
     stop: Option<&'a dyn enough::Stop>,
     limits: Option<ResourceLimits>,
+    policy: Option<zc::decode::DecodePolicy>,
     data: Cow<'a, [u8]>,
     preferred: Vec<PixelDescriptor>,
 }
@@ -1080,12 +1146,13 @@ pub struct PngDecoder<'a> {
 impl PngDecoder<'_> {
     fn effective_config(&self) -> PngDecodeConfig {
         let limits = self.limits.as_ref().unwrap_or(&self.config.limits);
-        PngDecodeConfig {
+        let config = PngDecodeConfig {
             max_pixels: limits.max_pixels,
             max_memory_bytes: limits.max_memory_bytes,
             skip_decompression_checksum: true,
             skip_critical_chunk_crc: true,
-        }
+        };
+        apply_decode_policy(config, self.policy.as_ref())
     }
 }
 
@@ -1120,6 +1187,8 @@ pub struct PngFrameDecoder {
     info: std::sync::Arc<ImageInfo>,
     /// Saved decoder state for O(1) resumption between frames.
     decoder_state: crate::decoder::apng::ApngDecoderState,
+    /// Preferred output pixel formats for format negotiation.
+    preferred: Vec<PixelDescriptor>,
 }
 
 impl PngFrameDecoder {
@@ -1127,6 +1196,7 @@ impl PngFrameDecoder {
         data: &[u8],
         config: &PngDecoderConfig,
         _stop: Option<&dyn enough::Stop>,
+        preferred: &[PixelDescriptor],
     ) -> Result<Self, PngError> {
         let probe_info = crate::decode::probe(data)?;
         let image_info = convert_info(&probe_info);
@@ -1146,6 +1216,7 @@ impl PngFrameDecoder {
             file_data: data.to_vec(),
             info: std::sync::Arc::new(image_info),
             decoder_state,
+            preferred: preferred.to_vec(),
         })
     }
 }
@@ -1190,7 +1261,14 @@ impl zc::decode::FrameDecode for PngFrameDecoder {
         let delay_ms = fctl.delay_ms();
         let frame_rect = [fctl.x_offset, fctl.y_offset, fctl.width, fctl.height];
 
-        let frame = DecodeFrame::new(raw.pixels, self.info.clone(), delay_ms, idx)
+        // Apply format negotiation to frame pixels if preferred formats specified
+        let pixels = if self.preferred.is_empty() {
+            raw.pixels
+        } else {
+            negotiate_and_convert(raw.pixels, &self.preferred)
+        };
+
+        let frame = DecodeFrame::new(pixels, self.info.clone(), delay_ms, idx)
             .with_blend(blend)
             .with_disposal(disposal)
             .with_frame_rect(frame_rect);
@@ -1210,25 +1288,18 @@ use zenpixels_convert::PixelBufferConvertExt as _;
 /// Uses `negotiate_pixel_format` to pick the best match, then converts
 /// if the native format doesn't already match.
 fn negotiate_and_convert(pixels: PixelBuffer, preferred: &[PixelDescriptor]) -> PixelBuffer {
-    use zenpixels::PixelFormat;
-
     let native_desc = pixels.descriptor();
     let target = zc::decode::negotiate_pixel_format(preferred, DECODE_DESCRIPTORS);
 
     // Already in the target format — no conversion needed
-    if native_desc.pixel_format() == target.pixel_format() {
+    if native_desc == target {
         return pixels;
     }
 
-    // Convert to the negotiated format (8-bit conversions available)
-    match target.pixel_format() {
-        PixelFormat::Rgb8 => pixels.to_rgb8().erase(),
-        PixelFormat::Rgba8 => pixels.to_rgba8().erase(),
-        PixelFormat::Gray8 => pixels.to_gray8().erase(),
-        PixelFormat::Bgra8 => pixels.to_bgra8().erase(),
-        // For 16-bit and F32 formats, zenpixels-convert doesn't have
-        // conversion functions yet — return native format unchanged
-        _ => pixels,
+    // Use convert_to() for all format conversions (8/16/F32, all layouts)
+    match pixels.convert_to(target) {
+        Ok(converted) => converted,
+        Err(_) => pixels, // Fallback to native format if conversion unavailable
     }
 }
 
@@ -1307,6 +1378,49 @@ fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
         zi = zi.with_mastering_display(mdcv);
     }
     zi
+}
+
+/// Apply encode policy to filter metadata fields.
+///
+/// Returns a new `MetadataView` with fields stripped according to the policy,
+/// or `None` if no metadata was provided.
+fn apply_encode_policy<'a>(
+    metadata: Option<&'a MetadataView<'a>>,
+    policy: Option<&zc::encode::EncodePolicy>,
+) -> Option<MetadataView<'a>> {
+    let meta = metadata?;
+    let Some(policy) = policy else {
+        return Some(meta.clone());
+    };
+    let mut filtered = meta.clone();
+    if policy.embed_icc == Some(false) {
+        filtered.icc_profile = None;
+    }
+    if policy.embed_exif == Some(false) {
+        filtered.exif = None;
+    }
+    if policy.embed_xmp == Some(false) {
+        filtered.xmp = None;
+    }
+    Some(filtered)
+}
+
+/// Apply decode policy to control metadata extraction and strictness.
+///
+/// Returns adjusted `PngDecodeConfig` based on the policy.
+fn apply_decode_policy(
+    mut config: PngDecodeConfig,
+    policy: Option<&zc::decode::DecodePolicy>,
+) -> PngDecodeConfig {
+    let Some(policy) = policy else {
+        return config;
+    };
+    // Strict policy: enable CRC and Adler-32 verification
+    if policy.strict == Some(true) {
+        config.skip_critical_chunk_crc = false;
+        config.skip_decompression_checksum = false;
+    }
+    config
 }
 
 /// Get contiguous pixel bytes from a PixelSlice, borrowing when possible.
