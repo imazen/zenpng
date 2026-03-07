@@ -1078,7 +1078,8 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
     ) -> Result<PngFullFrameDecoder, At<PngError>> {
-        PngFullFrameDecoder::new(&data, self.config, self.stop, preferred).map_err(ErrorAtExt::start_at)
+        PngFullFrameDecoder::new(&data, self.config, self.stop, preferred)
+            .map_err(ErrorAtExt::start_at)
     }
 }
 
