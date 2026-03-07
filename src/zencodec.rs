@@ -6,6 +6,7 @@
 
 extern crate std;
 
+use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use whereat::{At, ErrorAtExt};
@@ -860,7 +861,7 @@ impl PngDecoderConfig {
     /// Convenience: decode in one call (native format).
     pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, At<PngError>> {
         use zc::decode::{Decode, DecodeJob, DecoderConfig};
-        self.job().decoder(data, &[])?.decode()
+        self.job().decoder(Cow::Borrowed(data), &[])?.decode()
     }
 
     /// Convenience: probe image header.
@@ -1036,7 +1037,7 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
 
     fn decoder(
         self,
-        data: &'a [u8],
+        data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
     ) -> Result<PngDecoder<'a>, At<PngError>> {
         Ok(PngDecoder {
@@ -1050,7 +1051,7 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
 
     fn streaming_decoder(
         self,
-        _data: &'a [u8],
+        _data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
     ) -> Result<zc::Unsupported<At<PngError>>, At<PngError>> {
         Err(PngError::from(zc::UnsupportedOperation::RowLevelDecode).start_at())
@@ -1058,10 +1059,10 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
 
     fn frame_decoder(
         self,
-        data: &'a [u8],
+        data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
     ) -> Result<PngFrameDecoder, At<PngError>> {
-        PngFrameDecoder::new(data, self.config, self.stop).map_err(ErrorAtExt::start_at)
+        PngFrameDecoder::new(&data, self.config, self.stop).map_err(ErrorAtExt::start_at)
     }
 }
 
@@ -1072,7 +1073,7 @@ pub struct PngDecoder<'a> {
     config: &'a PngDecoderConfig,
     stop: Option<&'a dyn enough::Stop>,
     limits: Option<ResourceLimits>,
-    data: &'a [u8],
+    data: Cow<'a, [u8]>,
     preferred: Vec<PixelDescriptor>,
 }
 
@@ -1095,7 +1096,7 @@ impl zc::decode::Decode for PngDecoder<'_> {
         let cancel: &dyn enough::Stop = self.stop.unwrap_or(&enough::Unstoppable);
         cancel.check().map_err(PngError::from)?;
         let png_config = self.effective_config();
-        let result = crate::decode::decode(self.data, &png_config, cancel)?;
+        let result = crate::decode::decode(&self.data, &png_config, cancel)?;
         let info = convert_info(&result.info);
         let pixels = if self.preferred.is_empty() {
             result.pixels
@@ -2171,7 +2172,7 @@ mod tests {
         let config = PngDecoderConfig::new();
         let decoded = config
             .job()
-            .decoder(encoded.data(), &[])
+            .decoder(Cow::Borrowed(encoded.data()), &[])
             .unwrap()
             .decode()
             .unwrap();
