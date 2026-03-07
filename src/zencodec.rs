@@ -784,7 +784,7 @@ impl zc::encode::FullFrameEncoder for PngFullFrameEncoder {
         PngError::from(op).start_at()
     }
 
-    fn push_frame(&mut self, pixels: PixelSlice<'_>, duration_ms: u32) -> Result<(), At<PngError>> {
+    fn push_frame(&mut self, pixels: PixelSlice<'_>, duration_ms: u32, _stop: Option<&dyn enough::Stop>) -> Result<(), At<PngError>> {
         let rgba = Self::pixels_to_rgba8(&pixels)?;
         self.frames.push(AccumulatedFrame {
             pixels: rgba,
@@ -793,7 +793,7 @@ impl zc::encode::FullFrameEncoder for PngFullFrameEncoder {
         Ok(())
     }
 
-    fn finish(self) -> Result<EncodeOutput, At<PngError>> {
+    fn finish(self, _stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, At<PngError>> {
         self.do_finish().map_err(ErrorAtExt::start_at)
     }
 }
@@ -1396,12 +1396,13 @@ impl zc::decode::FullFrameDecoder for PngFullFrameDecoder {
 
     fn render_next_frame_to_sink(
         &mut self,
+        stop: Option<&dyn enough::Stop>,
         sink: &mut dyn zc::decode::DecodeRowSink,
     ) -> Result<Option<OutputInfo>, At<PngError>> {
-        zc::decode::render_frame_to_sink_via_copy(self, sink)
+        zc::decode::render_frame_to_sink_via_copy(self, stop, sink)
     }
 
-    fn render_next_frame(&mut self) -> Result<Option<FullFrame<'_>>, At<PngError>> {
+    fn render_next_frame(&mut self, _stop: Option<&dyn enough::Stop>) -> Result<Option<FullFrame<'_>>, At<PngError>> {
         loop {
             // Restore decoder from saved state (O(1), no re-scanning)
             let mut decoder = crate::decoder::apng::ApngDecoder::from_state(
