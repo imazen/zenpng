@@ -1123,7 +1123,11 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
 
     fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<PngError>> {
         let info = crate::decode::probe(data)?;
-        Ok(convert_info(&info))
+        let mut image_info = convert_info(&info);
+        if let Ok(probe) = crate::detect::probe(data) {
+            image_info = image_info.with_source_encoding_details(probe);
+        }
+        Ok(image_info)
     }
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<PngError>> {
