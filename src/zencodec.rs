@@ -4738,6 +4738,93 @@ mod tests {
         assert!(result.is_ok(), "expected success, got: {:?}", result.err());
     }
 
+    // ── ThreadingPolicy tests ──
+
+    #[test]
+    fn encode_single_thread_produces_valid_png() {
+        use zc::ThreadingPolicy;
+        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let pixels: Vec<Rgb<u8>> = (0..32 * 32)
+            .map(|i| Rgb {
+                r: (i % 256) as u8,
+                g: ((i * 3) % 256) as u8,
+                b: ((i * 7) % 256) as u8,
+            })
+            .collect();
+        let img = imgref::ImgVec::new(pixels, 32, 32);
+
+        let config = PngEncoderConfig::new();
+        let limits = ResourceLimits::none().with_threading(ThreadingPolicy::SingleThread);
+        let encoder = config.job().with_limits(limits).encoder().unwrap();
+        let output = encoder
+            .encode(PixelSlice::from(img.as_ref()).erase())
+            .unwrap();
+
+        // Valid PNG header
+        assert_eq!(
+            &output.data()[0..8],
+            &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        );
+
+        // Roundtrip: decode it back
+        use zc::decode::{Decode, DecodeJob, DecoderConfig};
+        let dec = PngDecoderConfig::new();
+        let result = dec
+            .job()
+            .decoder(Cow::Borrowed(output.data()), &[])
+            .unwrap()
+            .decode();
+        assert!(
+            result.is_ok(),
+            "roundtrip decode failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn encode_single_thread_matches_default_threading() {
+        use zc::ThreadingPolicy;
+        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 100,
+                g: 150,
+                b: 200,
+            };
+            16 * 16
+        ];
+        let img = imgref::ImgVec::new(pixels, 16, 16);
+
+        // Encode with SingleThread
+        let config_st = PngEncoderConfig::new();
+        let limits = ResourceLimits::none().with_threading(ThreadingPolicy::SingleThread);
+        let st_output = config_st
+            .job()
+            .with_limits(limits)
+            .encoder()
+            .unwrap()
+            .encode(PixelSlice::from(img.as_ref()).erase())
+            .unwrap();
+
+        // Encode with default (Unlimited)
+        let config_def = PngEncoderConfig::new();
+        let def_output = config_def
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(PixelSlice::from(img.as_ref()).erase())
+            .unwrap();
+
+        // Both must be valid PNGs (same content, so should be identical)
+        assert_eq!(
+            &st_output.data()[0..8],
+            &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        );
+        assert_eq!(st_output.data().len(), def_output.data().len());
+    }
+
     // TODO: fix lifetime issue — `config` must outlive `dyn_enc`
     // #[test]
     // fn encoder_trait_dyn_encoder() {
