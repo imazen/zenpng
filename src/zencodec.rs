@@ -276,6 +276,25 @@ fn quality_to_mpe(quality: f32) -> f32 {
     TABLE[last].1
 }
 
+/// Convert a [`ThreadingPolicy`](zc::ThreadingPolicy) to a concrete thread count.
+///
+/// Returns 0 for "no limit" (use as many threads as beneficial),
+/// 1 for single-threaded, or N for a specific cap.
+fn threading_to_count(policy: zc::ThreadingPolicy) -> usize {
+    match policy {
+        zc::ThreadingPolicy::SingleThread => 1,
+        zc::ThreadingPolicy::LimitOrSingle { max_threads } => max_threads as usize,
+        zc::ThreadingPolicy::LimitOrAny {
+            preferred_max_threads,
+        } => preferred_max_threads as usize,
+        zc::ThreadingPolicy::Balanced => {
+            std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1))
+        }
+        zc::ThreadingPolicy::Unlimited => 0, // 0 = no limit
+        _ => 0,                              // future variants: default to no limit
+    }
+}
+
 static PNG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_icc(true)
     .with_exif(true)
@@ -418,12 +437,17 @@ impl<'a> zc::encode::EncodeJob<'a> for PngEncodeJob<'a> {
     fn full_frame_encoder(self) -> Result<PngFullFrameEncoder, At<PngError>> {
         let effective_meta = apply_encode_policy(self.metadata, self.policy.as_ref());
         let owned_meta = effective_meta.as_ref().map(OwnedMetadata::from_metadata);
-        let mut enc = PngFullFrameEncoder::new(
-            self.config.config.clone(),
-            self.canvas_width,
-            self.canvas_height,
-            owned_meta,
-        );
+        // Apply threading policy from limits to the config.
+        let mut config = self.config.config.clone();
+        if let Some(ref limits) = self.limits {
+            let thread_count = threading_to_count(limits.threading());
+            config.max_threads = thread_count;
+            if thread_count == 1 {
+                config.parallel = false;
+            }
+        }
+        let mut enc =
+            PngFullFrameEncoder::new(config, self.canvas_width, self.canvas_height, owned_meta);
         enc.loop_count = self.loop_count.unwrap_or(0);
         enc.limits = self.limits;
         Ok(enc)
@@ -442,6 +466,19 @@ pub struct PngEncoder<'a> {
 }
 
 impl<'a> PngEncoder<'a> {
+    /// Build an `EncodeConfig` with threading policy applied from resource limits.
+    fn config_with_threading(&self) -> EncodeConfig {
+        let mut config = self.config.config.clone();
+        if let Some(ref limits) = self.limits {
+            let thread_count = threading_to_count(limits.threading());
+            config.max_threads = thread_count;
+            if thread_count == 1 {
+                config.parallel = false;
+            }
+        }
+        config
+    }
+
     fn do_encode(
         &self,
         bytes: &[u8],
@@ -484,14 +521,14 @@ impl<'a> PngEncoder<'a> {
                 .check_memory(estimated_mem)
                 .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
         }
-        let config = &self.config.config;
+        let config = self.config_with_threading();
         let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
         let deadline = almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
         // Apply encode policy to filter metadata
         let effective_meta = apply_encode_policy(self.metadata, self.policy.as_ref());
         let meta_ref = effective_meta.as_ref();
         let data = crate::encode::encode_raw(
-            bytes, w, h, color_type, bit_depth, meta_ref, config, cancel, &deadline,
+            bytes, w, h, color_type, bit_depth, meta_ref, &config, cancel, &deadline,
         )?;
         // Post-encode output size check
         if let Some(ref limits) = self.limits {
@@ -545,9 +582,10 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                     let deadline =
                         almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
                     let quantizer = crate::default_quantizer();
+                    let config = self.config_with_threading();
                     let result = crate::encode_auto(
                         img,
-                        &self.config.config,
+                        &config,
                         &*quantizer,
                         crate::QualityGate::MaxMpe(mpe),
                         meta_ref,
@@ -646,9 +684,10 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                     let deadline =
                         almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
                     let quantizer = crate::default_quantizer();
+                    let config = self.config_with_threading();
                     let result = crate::encode_auto(
                         img,
-                        &self.config.config,
+                        &config,
                         &*quantizer,
                         crate::QualityGate::MaxMpe(mpe),
                         meta_ref,

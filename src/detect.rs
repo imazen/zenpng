@@ -264,14 +264,10 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
                                 if rest.len() >= 2 {
                                     let after_method = &rest[2..];
                                     // Skip lang_tag\0
-                                    if let Some(p1) =
-                                        after_method.iter().position(|&b| b == 0)
-                                    {
+                                    if let Some(p1) = after_method.iter().position(|&b| b == 0) {
                                         let after_lang = &after_method[p1 + 1..];
                                         // Skip translated_keyword\0
-                                        if let Some(p2) =
-                                            after_lang.iter().position(|&b| b == 0)
-                                        {
+                                        if let Some(p2) = after_lang.iter().position(|&b| b == 0) {
                                             let text = &after_lang[p2 + 1..];
                                             if let Ok(s) = core::str::from_utf8(text) {
                                                 creating_tool = Some(String::from(s));
@@ -291,9 +287,8 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
         pos = chunk_data_start + chunk_len + 4;
     }
 
-    let has_alpha = color_type == ColorType::GrayscaleAlpha
-        || color_type == ColorType::Rgba
-        || has_trns;
+    let has_alpha =
+        color_type == ColorType::GrayscaleAlpha || color_type == ColorType::Rgba || has_trns;
 
     // Calculate raw data size
     let channels = if has_trns && color_type == ColorType::Indexed {
@@ -301,10 +296,8 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
     } else {
         color_type.channels()
     };
-    let raw_data_size = width as u64
-        * height as u64
-        * channels as u64
-        * (bit_depth.max(8) as u64 / 8);
+    let raw_data_size =
+        width as u64 * height as u64 * channels as u64 * (bit_depth.max(8) as u64 / 8);
 
     let compression_ratio = if raw_data_size > 0 {
         idat_total as f32 / raw_data_size as f32
@@ -322,10 +315,10 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
         // Rough estimate: zenpng at high effort can typically achieve
         // 10-30% better compression than average tools
         let estimated_saving = match compression_ratio {
-            r if r > 0.8 => 25.0,  // Poorly compressed — big gains likely
-            r if r > 0.5 => 15.0,  // Average compression
-            r if r > 0.3 => 8.0,   // Decent compression
-            _ => 3.0,              // Already pretty good
+            r if r > 0.8 => 25.0, // Poorly compressed — big gains likely
+            r if r > 0.5 => 15.0, // Average compression
+            r if r > 0.3 => 8.0,  // Decent compression
+            _ => 3.0,             // Already pretty good
         };
         CompressionAssessment::Improvable {
             estimated_saving_pct: estimated_saving,
@@ -390,10 +383,10 @@ impl PngProbe {
     /// is poorly compressed (easy wins available at any effort).
     pub fn recommended_effort(&self) -> u32 {
         match self.compression_ratio {
-            r if r > 0.7 => 7,   // Poorly compressed — even low effort wins
-            r if r > 0.4 => 13,  // Average — balanced effort
-            r if r > 0.2 => 19,  // Well compressed — need high effort
-            _ => 27,             // Very well compressed — need crush level
+            r if r > 0.7 => 7,  // Poorly compressed — even low effort wins
+            r if r > 0.4 => 13, // Average — balanced effort
+            r if r > 0.2 => 19, // Well compressed — need high effort
+            _ => 27,            // Very well compressed — need crush level
         }
     }
 }
