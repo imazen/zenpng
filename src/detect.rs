@@ -389,28 +389,24 @@ impl PngProbe {
             _ => 27,            // Very well compressed — need crush level
         }
     }
+
+    /// Bits per pixel (all channels combined).
+    ///
+    /// PNG24 = 24, PNG32 = 32, PNG48 = 48, PNG64 = 64,
+    /// indexed = 8 (1/2/4/8 depending on bit depth),
+    /// grayscale = 8 or 16.
+    pub fn bits_per_pixel(&self) -> u16 {
+        self.color_type.channels() as u16 * self.bit_depth as u16
+    }
 }
 
 impl zc::SourceEncodingDetails for PngProbe {
     fn source_generic_quality(&self) -> Option<f32> {
-        // PNG is lossless — no quality level to report.
         None
     }
 
     fn is_lossless(&self) -> bool {
         true
-    }
-
-    fn source_bits_per_pixel(&self) -> Option<u16> {
-        Some(self.color_type.channels() as u16 * self.bit_depth as u16)
-    }
-
-    fn source_palette_size(&self) -> Option<u16> {
-        if self.color_type == ColorType::Indexed {
-            Some(self.palette_size)
-        } else {
-            None
-        }
     }
 }
 
