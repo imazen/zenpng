@@ -144,31 +144,41 @@ impl Ihdr {
     /// Raw row bytes (unfiltered row data, not including filter byte).
     /// For sub-8-bit depths, accounts for bit packing.
     ///
-    /// # Panics
-    /// Panics if the computation overflows `usize`. This cannot happen for
-    /// IHDR values that passed through [`Ihdr::parse`], which validates that
-    /// row bytes fit in `usize`.
-    pub fn raw_row_bytes(&self) -> usize {
+    /// Returns an error if the computation overflows `usize`. This cannot
+    /// happen for IHDR values that passed through [`Ihdr::parse`], which
+    /// validates that row bytes fit in `usize`.
+    pub fn raw_row_bytes(&self) -> Result<usize, PngError> {
         let bits_per_row = (self.width as u64)
             .checked_mul(self.channels() as u64)
             .and_then(|v| v.checked_mul(self.bit_depth as u64))
-            .expect("bits_per_row overflow (IHDR should have been validated)");
+            .ok_or_else(|| {
+                PngError::LimitExceeded(alloc::format!(
+                    "bits_per_row overflow for width={} channels={} bit_depth={}",
+                    self.width,
+                    self.channels(),
+                    self.bit_depth
+                ))
+            })?;
         let row_bytes = bits_per_row
             .checked_add(7)
             .map(|v| v / 8)
-            .expect("row_bytes overflow (IHDR should have been validated)");
-        usize::try_from(row_bytes)
-            .expect("row_bytes exceeds usize (IHDR should have been validated)")
+            .ok_or_else(|| PngError::LimitExceeded("row_bytes overflow during rounding".into()))?;
+        usize::try_from(row_bytes).map_err(|_| {
+            PngError::LimitExceeded(alloc::format!(
+                "row_bytes {} exceeds platform address space",
+                row_bytes
+            ))
+        })
     }
 
     /// Stride = 1 (filter byte) + raw_row_bytes.
     ///
-    /// # Panics
-    /// Panics if the computation overflows `usize`. See [`raw_row_bytes`](Self::raw_row_bytes).
-    pub fn stride(&self) -> usize {
-        self.raw_row_bytes()
+    /// Returns an error if the computation overflows `usize`. See
+    /// [`raw_row_bytes`](Self::raw_row_bytes).
+    pub fn stride(&self) -> Result<usize, PngError> {
+        self.raw_row_bytes()?
             .checked_add(1)
-            .expect("stride overflow (IHDR should have been validated)")
+            .ok_or_else(|| PngError::LimitExceeded("stride overflow".into()))
     }
 
     /// Whether the image uses sub-8-bit depth (1, 2, or 4).
@@ -329,12 +339,12 @@ mod tests {
     fn raw_row_bytes_and_stride() {
         // RGB 8-bit, width=10: 30 bytes/row, stride=31
         let ihdr = Ihdr::parse(&make_ihdr(10, 1, 8, 2, 0)).unwrap();
-        assert_eq!(ihdr.raw_row_bytes(), 30);
-        assert_eq!(ihdr.stride(), 31);
+        assert_eq!(ihdr.raw_row_bytes().unwrap(), 30);
+        assert_eq!(ihdr.stride().unwrap(), 31);
 
         // Gray 1-bit, width=10: ceil(10/8) = 2 bytes/row
         let ihdr = Ihdr::parse(&make_ihdr(10, 1, 1, 0, 0)).unwrap();
-        assert_eq!(ihdr.raw_row_bytes(), 2);
+        assert_eq!(ihdr.raw_row_bytes().unwrap(), 2);
     }
 
     #[test]
@@ -437,12 +447,11 @@ mod tests {
             interlace: 0,
         };
         // On 64-bit: row_bytes = (2^31-1)*4*16/8 = 17,179,869,176 — fits in usize.
-        // On 32-bit this would panic (checked_mul catches overflow).
+        // On 32-bit this returns Err (overflow detected).
         if cfg!(target_pointer_width = "64") {
-            assert_eq!(ihdr.raw_row_bytes(), 17_179_869_176);
+            assert_eq!(ihdr.raw_row_bytes().unwrap(), 17_179_869_176);
+        } else {
+            assert!(ihdr.raw_row_bytes().is_err());
         }
-        // On 32-bit targets, this would panic rather than silently wrap.
-        // We can't easily test the panic path in a platform-dependent way here,
-        // but the checked arithmetic in raw_row_bytes guarantees no silent overflow.
     }
 }

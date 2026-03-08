@@ -268,8 +268,8 @@ impl<'a> ApngDecoder<'a> {
             interlace: 0,
         };
 
-        let stride = frame_ihdr.stride();
-        let raw_row_bytes = frame_ihdr.raw_row_bytes();
+        let stride = frame_ihdr.stride()?;
+        let raw_row_bytes = frame_ihdr.raw_row_bytes()?;
         let bpp = frame_ihdr.filter_bpp();
 
         let source = IdatSource::new(
@@ -380,8 +380,8 @@ impl<'a> ApngDecoder<'a> {
             interlace: 0,
         };
 
-        let stride = frame_ihdr.stride();
-        let raw_row_bytes = frame_ihdr.raw_row_bytes();
+        let stride = frame_ihdr.stride()?;
+        let raw_row_bytes = frame_ihdr.raw_row_bytes()?;
         let bpp = frame_ihdr.filter_bpp();
 
         let fdat_pos = self.chunk_pos;

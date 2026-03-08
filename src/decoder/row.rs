@@ -337,8 +337,8 @@ impl<'a> RowDecoder<'a> {
         let output_bpp = output_bytes_per_pixel(&ihdr, &ancillary) as u32;
         config.validate(ihdr.width, ihdr.height, output_bpp)?;
 
-        let stride = ihdr.stride();
-        let raw_row_bytes = ihdr.raw_row_bytes();
+        let stride = ihdr.stride()?;
+        let raw_row_bytes = ihdr.raw_row_bytes()?;
         let bpp = ihdr.filter_bpp();
 
         // Create IDAT source and decompressor

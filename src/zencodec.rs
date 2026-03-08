@@ -1240,7 +1240,7 @@ fn push_decoder_native<'a>(
         !has_trns && ihdr.bit_depth == 8 && (ihdr.color_type == 6 || ihdr.color_type == 2);
 
     if is_passthrough {
-        let raw_row_bytes = ihdr.raw_row_bytes();
+        let raw_row_bytes = ihdr.raw_row_bytes()?;
 
         // Request the full sink buffer up front so we can use split_at_mut
         // for zero-copy prev-row references during unfiltering.
@@ -1290,7 +1290,7 @@ fn push_decoder_native<'a>(
         let out_bpp = descriptor.bytes_per_pixel();
         let out_row_bytes = w as usize * out_bpp;
         let mut row_buf = Vec::new();
-        let mut raw_copy = alloc::vec![0u8; ihdr.raw_row_bytes()];
+        let mut raw_copy = alloc::vec![0u8; ihdr.raw_row_bytes()?];
 
         let mut dst = sink
             .provide_next_buffer(0, h, w, descriptor)
@@ -1306,7 +1306,7 @@ fn push_decoder_native<'a>(
             raw_copy[..raw.len()].copy_from_slice(raw);
 
             post_process_row(
-                &raw_copy[..ihdr.raw_row_bytes()],
+                &raw_copy[..ihdr.raw_row_bytes()?],
                 &ihdr,
                 reader.ancillary(),
                 &mut row_buf,
@@ -1406,7 +1406,7 @@ impl<'a> PngStreamingDecoder<'a> {
         let is_passthrough =
             !has_trns && ihdr.bit_depth == 8 && (ihdr.color_type == 6 || ihdr.color_type == 2);
 
-        let raw_row_bytes = ihdr.raw_row_bytes();
+        let raw_row_bytes = ihdr.raw_row_bytes().map_err(ErrorAtExt::start_at)?;
         let out_row_bytes = w as usize * descriptor.bytes_per_pixel();
 
         Ok(Self {
@@ -1449,7 +1449,11 @@ impl zc::decode::StreamingDecode for PngStreamingDecoder<'_> {
         } else {
             // Need post-processing: copy raw to release borrow on reader
             self.raw_copy[..raw.len()].copy_from_slice(raw);
-            let raw_len = self.reader.ihdr().raw_row_bytes();
+            let raw_len = self
+                .reader
+                .ihdr()
+                .raw_row_bytes()
+                .map_err(ErrorAtExt::start_at)?;
 
             // Post-process expands/converts the raw row into row_buf
             let mut tmp = core::mem::take(&mut self.row_buf);
