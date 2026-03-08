@@ -307,6 +307,7 @@ static PNG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_native_gray(true)
     .with_native_16bit(true)
     .with_native_alpha(true)
+    .with_row_level(true)
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
     .with_effort_range(0, 12)
@@ -431,6 +432,9 @@ impl<'a> zc::encode::EncodeJob<'a> for PngEncodeJob<'a> {
             metadata: self.metadata,
             limits: self.limits,
             policy: self.policy,
+            canvas_width: self.canvas_width,
+            canvas_height: self.canvas_height,
+            streaming: None,
         })
     }
 
@@ -463,6 +467,25 @@ pub struct PngEncoder<'a> {
     metadata: Option<&'a MetadataView<'a>>,
     limits: Option<ResourceLimits>,
     policy: Option<zc::encode::EncodePolicy>,
+    /// Canvas dimensions for push_rows mode (set via `with_canvas_size`).
+    canvas_width: u32,
+    canvas_height: u32,
+    /// Streaming state, lazily initialized on first push_rows() call.
+    streaming: Option<StreamingEncodeState>,
+}
+
+/// Internal state for row-level streaming encode via `push_rows()` + `finish()`.
+struct StreamingEncodeState {
+    /// Accumulated raw pixel bytes in PNG's native byte order.
+    pixel_data: Vec<u8>,
+    /// PNG color type (0=Gray, 2=RGB, 4=GrayAlpha, 6=RGBA).
+    color_type: crate::encode::ColorType,
+    /// PNG bit depth.
+    bit_depth: crate::encode::BitDepth,
+    /// Bytes per row (width × bpp, no filter byte).
+    row_bytes: usize,
+    /// Rows received so far.
+    rows_pushed: u32,
 }
 
 impl<'a> PngEncoder<'a> {
@@ -720,6 +743,218 @@ impl zc::encode::Encoder for PngEncoder<'_> {
             }
             _ => Err(PngError::from(zc::UnsupportedOperation::PixelFormat).start_at()),
         }
+    }
+
+    fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), At<PngError>> {
+        use linear_srgb::default::linear_to_srgb_u8;
+        use zenpixels::PixelFormat;
+
+        let w = rows.width();
+        let h = rows.rows();
+
+        if h == 0 {
+            return Ok(());
+        }
+
+        // Determine PNG format from pixel descriptor on first call.
+        let state = if let Some(ref mut s) = self.streaming {
+            s
+        } else {
+            let (color_type, bit_depth) = match rows.descriptor().pixel_format() {
+                PixelFormat::Rgb8 => (
+                    crate::encode::ColorType::Rgb,
+                    crate::encode::BitDepth::Eight,
+                ),
+                PixelFormat::Rgba8 => (
+                    crate::encode::ColorType::Rgba,
+                    crate::encode::BitDepth::Eight,
+                ),
+                PixelFormat::Gray8 => (
+                    crate::encode::ColorType::Grayscale,
+                    crate::encode::BitDepth::Eight,
+                ),
+                PixelFormat::Rgb16 => (
+                    crate::encode::ColorType::Rgb,
+                    crate::encode::BitDepth::Sixteen,
+                ),
+                PixelFormat::Rgba16 => (
+                    crate::encode::ColorType::Rgba,
+                    crate::encode::BitDepth::Sixteen,
+                ),
+                PixelFormat::Gray16 => (
+                    crate::encode::ColorType::Grayscale,
+                    crate::encode::BitDepth::Sixteen,
+                ),
+                // Float and BGRA are converted to 8-bit on the fly
+                PixelFormat::RgbF32 => (
+                    crate::encode::ColorType::Rgb,
+                    crate::encode::BitDepth::Eight,
+                ),
+                PixelFormat::RgbaF32 => (
+                    crate::encode::ColorType::Rgba,
+                    crate::encode::BitDepth::Eight,
+                ),
+                PixelFormat::GrayF32 => (
+                    crate::encode::ColorType::Grayscale,
+                    crate::encode::BitDepth::Eight,
+                ),
+                PixelFormat::Bgra8 => (
+                    crate::encode::ColorType::Rgba,
+                    crate::encode::BitDepth::Eight,
+                ),
+                _ => {
+                    return Err(PngError::from(zc::UnsupportedOperation::PixelFormat).start_at());
+                }
+            };
+
+            // Validate canvas dimensions
+            if self.canvas_width == 0 || self.canvas_height == 0 {
+                // Infer from first push if canvas_size was not set
+                if self.canvas_width == 0 {
+                    self.canvas_width = w;
+                }
+            }
+
+            let channels: usize = match color_type {
+                crate::encode::ColorType::Grayscale => 1,
+                crate::encode::ColorType::Rgb => 3,
+                crate::encode::ColorType::GrayscaleAlpha => 2,
+                crate::encode::ColorType::Rgba => 4,
+            };
+            let depth_bytes: usize = match bit_depth {
+                crate::encode::BitDepth::Eight => 1,
+                crate::encode::BitDepth::Sixteen => 2,
+            };
+            let row_bytes = self.canvas_width as usize * channels * depth_bytes;
+
+            // Pre-allocate for all rows if height is known
+            let capacity = if self.canvas_height > 0 {
+                row_bytes * self.canvas_height as usize
+            } else {
+                row_bytes * h as usize
+            };
+
+            self.streaming = Some(StreamingEncodeState {
+                pixel_data: Vec::with_capacity(capacity),
+                color_type,
+                bit_depth,
+                row_bytes,
+                rows_pushed: 0,
+            });
+            self.streaming.as_mut().unwrap()
+        };
+
+        // Width must be consistent across calls
+        if w != self.canvas_width && self.canvas_width > 0 {
+            return Err(PngError::InvalidInput(alloc::format!(
+                "push_rows: width {} does not match canvas width {}",
+                w,
+                self.canvas_width
+            ))
+            .start_at());
+        }
+
+        // Check for overflow
+        if self.canvas_height > 0 && state.rows_pushed + h > self.canvas_height {
+            return Err(PngError::InvalidInput(alloc::format!(
+                "push_rows: would exceed canvas height {} (already pushed {}, pushing {})",
+                self.canvas_height,
+                state.rows_pushed,
+                h
+            ))
+            .start_at());
+        }
+
+        let format = rows.descriptor().pixel_format();
+
+        for y in 0..h {
+            let src = rows.row(y);
+            match format {
+                PixelFormat::Rgb8 | PixelFormat::Rgba8 | PixelFormat::Gray8 => {
+                    state.pixel_data.extend_from_slice(&src[..state.row_bytes]);
+                }
+                PixelFormat::Rgb16 | PixelFormat::Rgba16 | PixelFormat::Gray16 => {
+                    // Convert native u16 to big-endian
+                    for pair in src[..state.row_bytes].chunks_exact(2) {
+                        let val = u16::from_ne_bytes([pair[0], pair[1]]);
+                        state.pixel_data.extend_from_slice(&val.to_be_bytes());
+                    }
+                }
+                PixelFormat::RgbF32 => {
+                    for c in src.chunks_exact(12) {
+                        let r = f32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
+                        let g = f32::from_ne_bytes([c[4], c[5], c[6], c[7]]);
+                        let b = f32::from_ne_bytes([c[8], c[9], c[10], c[11]]);
+                        state.pixel_data.push(linear_to_srgb_u8(r.clamp(0.0, 1.0)));
+                        state.pixel_data.push(linear_to_srgb_u8(g.clamp(0.0, 1.0)));
+                        state.pixel_data.push(linear_to_srgb_u8(b.clamp(0.0, 1.0)));
+                    }
+                }
+                PixelFormat::RgbaF32 => {
+                    for c in src.chunks_exact(16) {
+                        let r = f32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
+                        let g = f32::from_ne_bytes([c[4], c[5], c[6], c[7]]);
+                        let b = f32::from_ne_bytes([c[8], c[9], c[10], c[11]]);
+                        let a = f32::from_ne_bytes([c[12], c[13], c[14], c[15]]);
+                        state.pixel_data.push(linear_to_srgb_u8(r.clamp(0.0, 1.0)));
+                        state.pixel_data.push(linear_to_srgb_u8(g.clamp(0.0, 1.0)));
+                        state.pixel_data.push(linear_to_srgb_u8(b.clamp(0.0, 1.0)));
+                        state
+                            .pixel_data
+                            .push((a.clamp(0.0, 1.0) * 255.0 + 0.5) as u8);
+                    }
+                }
+                PixelFormat::GrayF32 => {
+                    for c in src.chunks_exact(4) {
+                        let v = f32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
+                        state.pixel_data.push(linear_to_srgb_u8(v.clamp(0.0, 1.0)));
+                    }
+                }
+                PixelFormat::Bgra8 => {
+                    for c in src.chunks_exact(4) {
+                        state
+                            .pixel_data
+                            .extend_from_slice(&[c[2], c[1], c[0], c[3]]);
+                    }
+                }
+                _ => {
+                    return Err(PngError::from(zc::UnsupportedOperation::PixelFormat).start_at());
+                }
+            }
+        }
+
+        state.rows_pushed += h;
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<EncodeOutput, At<PngError>> {
+        let state = self.streaming.take().ok_or_else(|| {
+            PngError::InvalidInput("finish() called without any push_rows() calls".into())
+                .start_at()
+        })?;
+
+        let h = state.rows_pushed;
+        let w = self.canvas_width;
+
+        if w == 0 || h == 0 {
+            return Err(PngError::InvalidInput("no pixel data pushed".into()).start_at());
+        }
+
+        // Validate total data size
+        let expected = state.row_bytes * h as usize;
+        if state.pixel_data.len() != expected {
+            return Err(PngError::InvalidInput(alloc::format!(
+                "finish: pixel data size {} does not match expected {} ({}×{} rows)",
+                state.pixel_data.len(),
+                expected,
+                state.row_bytes,
+                h
+            ))
+            .start_at());
+        }
+
+        // Delegate to the same pipeline as encode()
+        self.do_encode_with_depth(&state.pixel_data, w, h, state.color_type, state.bit_depth)
     }
 }
 
@@ -4892,4 +5127,274 @@ mod tests {
     //     assert!(!output.is_empty());
     //     assert_eq!(output.format(), ImageFormat::Png);
     // }
+
+    // ── push_rows / finish tests ──
+
+    #[test]
+    fn push_rows_rgb8_roundtrip() {
+        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let w = 4u32;
+        let h = 6u32;
+        let pixels: Vec<Rgb<u8>> = (0..w * h)
+            .map(|i| Rgb {
+                r: (i * 7) as u8,
+                g: (i * 13) as u8,
+                b: (i * 19) as u8,
+            })
+            .collect();
+        let img = Img::new(pixels.clone(), w as usize, h as usize);
+
+        // Encode via push_rows (2 rows at a time)
+        let config = PngEncoderConfig::new();
+        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        for strip_y in (0..h).step_by(2) {
+            let strip = img.sub_image(0, strip_y as usize, w as usize, 2);
+            let slice = PixelSlice::from(strip).erase();
+            encoder.push_rows(slice).unwrap();
+        }
+        let push_output = encoder.finish().unwrap();
+
+        // Encode via one-shot for comparison
+        let oneshot_output = config
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(PixelSlice::from(img.as_ref()).erase())
+            .unwrap();
+
+        // Both should produce valid PNG of the same dimensions
+        assert!(!push_output.data().is_empty());
+        let decoded_push = crate::decode(
+            push_output.data(),
+            &crate::PngDecodeConfig::strict(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        let decoded_one = crate::decode(
+            oneshot_output.data(),
+            &crate::PngDecodeConfig::strict(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded_push.info.width, w);
+        assert_eq!(decoded_push.info.height, h);
+        // Pixel data should be identical
+        assert_eq!(
+            decoded_push.pixels.copy_to_contiguous_bytes(),
+            decoded_one.pixels.copy_to_contiguous_bytes()
+        );
+    }
+
+    #[test]
+    fn push_rows_rgba8_single_row_at_a_time() {
+        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let w = 3u32;
+        let h = 4u32;
+        let pixels: Vec<Rgba<u8>> = (0..w * h)
+            .map(|i| Rgba {
+                r: (i * 5) as u8,
+                g: (i * 11) as u8,
+                b: (i * 17) as u8,
+                a: 255,
+            })
+            .collect();
+        let img = Img::new(pixels, w as usize, h as usize);
+
+        let config = PngEncoderConfig::new();
+        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        for y in 0..h {
+            let strip = img.sub_image(0, y as usize, w as usize, 1);
+            encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
+        }
+        let output = encoder.finish().unwrap();
+
+        let decoded = crate::decode(
+            output.data(),
+            &crate::PngDecodeConfig::strict(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, w);
+        assert_eq!(decoded.info.height, h);
+    }
+
+    #[test]
+    fn push_rows_all_at_once() {
+        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let w = 8u32;
+        let h = 8u32;
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 128,
+                g: 64,
+                b: 32,
+            };
+            (w * h) as usize
+        ];
+        let img = Img::new(pixels, w as usize, h as usize);
+
+        let config = PngEncoderConfig::new();
+        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        encoder
+            .push_rows(PixelSlice::from(img.as_ref()).erase())
+            .unwrap();
+        let output = encoder.finish().unwrap();
+
+        let decoded = crate::decode(
+            output.data(),
+            &crate::PngDecodeConfig::strict(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, w);
+        assert_eq!(decoded.info.height, h);
+    }
+
+    #[test]
+    fn push_rows_gray8() {
+        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let w = 5u32;
+        let h = 3u32;
+        let pixels: Vec<Gray<u8>> = (0..w * h).map(|i| Gray::new((i * 17) as u8)).collect();
+        let img = Img::new(pixels, w as usize, h as usize);
+
+        let config = PngEncoderConfig::new();
+        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        encoder
+            .push_rows(PixelSlice::from(img.as_ref()).erase())
+            .unwrap();
+        let output = encoder.finish().unwrap();
+
+        let decoded = crate::decode(
+            output.data(),
+            &crate::PngDecodeConfig::strict(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, w);
+        assert_eq!(decoded.info.height, h);
+    }
+
+    #[test]
+    fn push_rows_finish_without_push_errors() {
+        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let config = PngEncoderConfig::new();
+        let encoder = config.job().with_canvas_size(4, 4).encoder().unwrap();
+        assert!(encoder.finish().is_err());
+    }
+
+    #[test]
+    fn push_rows_overflow_errors() {
+        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let w = 2u32;
+        let h = 2u32;
+        let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 0, g: 0, b: 0 }; (w * 3) as usize]; // 3 rows worth
+        let img = Img::new(pixels, w as usize, 3);
+
+        let config = PngEncoderConfig::new();
+        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        // Pushing 3 rows when canvas is 2 tall should error
+        let result = encoder.push_rows(PixelSlice::from(img.as_ref()).erase());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn push_rows_matches_encode_output() {
+        // Verify push_rows produces byte-identical output to encode()
+        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let w = 16u32;
+        let h = 16u32;
+        let pixels: Vec<Rgba<u8>> = (0..w * h)
+            .map(|i| Rgba {
+                r: (i % 256) as u8,
+                g: ((i * 3) % 256) as u8,
+                b: ((i * 7) % 256) as u8,
+                a: 255,
+            })
+            .collect();
+        let img = Img::new(pixels, w as usize, h as usize);
+
+        // push_rows path
+        let config = PngEncoderConfig::new().with_generic_effort(3);
+        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        for y in (0..h).step_by(4) {
+            let rows = (h - y).min(4);
+            let strip = img.sub_image(0, y as usize, w as usize, rows as usize);
+            encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
+        }
+        let push_out = encoder.finish().unwrap();
+
+        // encode() path
+        let one_enc = config.job().encoder().unwrap();
+        let one_out = one_enc
+            .encode(PixelSlice::from(img.as_ref()).erase())
+            .unwrap();
+
+        // Should decode to identical pixels
+        let dec_push = crate::decode(
+            push_out.data(),
+            &crate::PngDecodeConfig::strict(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        let dec_one = crate::decode(
+            one_out.data(),
+            &crate::PngDecodeConfig::strict(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(
+            dec_push.pixels.copy_to_contiguous_bytes(),
+            dec_one.pixels.copy_to_contiguous_bytes()
+        );
+    }
+
+    #[test]
+    fn push_rows_caps_advertised() {
+        use zc::encode::EncoderConfig;
+
+        let caps = PngEncoderConfig::capabilities();
+        assert!(caps.supports(zc::UnsupportedOperation::RowLevelEncode));
+    }
+
+    #[test]
+    fn push_rows_infer_canvas_width() {
+        // If canvas_size not set, width inferred from first push
+        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let w = 4u32;
+        let h = 2u32;
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 100,
+                g: 100,
+                b: 100,
+            };
+            (w * h) as usize
+        ];
+        let img = Img::new(pixels, w as usize, h as usize);
+
+        let config = PngEncoderConfig::new();
+        let mut encoder = config.job().encoder().unwrap(); // no with_canvas_size
+        encoder
+            .push_rows(PixelSlice::from(img.as_ref()).erase())
+            .unwrap();
+        let output = encoder.finish().unwrap();
+
+        let decoded = crate::decode(
+            output.data(),
+            &crate::PngDecodeConfig::strict(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, w);
+        assert_eq!(decoded.info.height, h);
+    }
 }

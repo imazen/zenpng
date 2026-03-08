@@ -2033,6 +2033,7 @@ fn num_cpus() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use enough::Unstoppable;
 
     // ---- EffortParams::from_effort property tests ----
 
