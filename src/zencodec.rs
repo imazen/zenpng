@@ -867,6 +867,9 @@ impl zc::encode::Encoder for PngEncoder<'_> {
 
         let format = rows.descriptor().pixel_format();
 
+        // Reserve all needed capacity in one shot — no per-row reallocs.
+        state.pixel_data.reserve(state.row_bytes * h as usize);
+
         for y in 0..h {
             let src = rows.row(y);
             match format {
@@ -885,9 +888,11 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                         let r = f32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
                         let g = f32::from_ne_bytes([c[4], c[5], c[6], c[7]]);
                         let b = f32::from_ne_bytes([c[8], c[9], c[10], c[11]]);
-                        state.pixel_data.push(linear_to_srgb_u8(r.clamp(0.0, 1.0)));
-                        state.pixel_data.push(linear_to_srgb_u8(g.clamp(0.0, 1.0)));
-                        state.pixel_data.push(linear_to_srgb_u8(b.clamp(0.0, 1.0)));
+                        state.pixel_data.extend_from_slice(&[
+                            linear_to_srgb_u8(r.clamp(0.0, 1.0)),
+                            linear_to_srgb_u8(g.clamp(0.0, 1.0)),
+                            linear_to_srgb_u8(b.clamp(0.0, 1.0)),
+                        ]);
                     }
                 }
                 PixelFormat::RgbaF32 => {
@@ -896,12 +901,12 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                         let g = f32::from_ne_bytes([c[4], c[5], c[6], c[7]]);
                         let b = f32::from_ne_bytes([c[8], c[9], c[10], c[11]]);
                         let a = f32::from_ne_bytes([c[12], c[13], c[14], c[15]]);
-                        state.pixel_data.push(linear_to_srgb_u8(r.clamp(0.0, 1.0)));
-                        state.pixel_data.push(linear_to_srgb_u8(g.clamp(0.0, 1.0)));
-                        state.pixel_data.push(linear_to_srgb_u8(b.clamp(0.0, 1.0)));
-                        state
-                            .pixel_data
-                            .push((a.clamp(0.0, 1.0) * 255.0 + 0.5) as u8);
+                        state.pixel_data.extend_from_slice(&[
+                            linear_to_srgb_u8(r.clamp(0.0, 1.0)),
+                            linear_to_srgb_u8(g.clamp(0.0, 1.0)),
+                            linear_to_srgb_u8(b.clamp(0.0, 1.0)),
+                            (a.clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                        ]);
                     }
                 }
                 PixelFormat::GrayF32 => {
