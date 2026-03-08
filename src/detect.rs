@@ -400,6 +400,18 @@ impl zc::SourceEncodingDetails for PngProbe {
     fn is_lossless(&self) -> bool {
         true
     }
+
+    fn source_bits_per_pixel(&self) -> Option<u16> {
+        Some(self.color_type.channels() as u16 * self.bit_depth as u16)
+    }
+
+    fn source_palette_size(&self) -> Option<u16> {
+        if self.color_type == ColorType::Indexed {
+            Some(self.palette_size)
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]
