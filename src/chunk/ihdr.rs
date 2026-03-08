@@ -314,4 +314,49 @@ mod tests {
         assert!(Ihdr::parse(&make_ihdr(1, 1, 8, 4, 0)).unwrap().has_alpha());
         assert!(Ihdr::parse(&make_ihdr(1, 1, 8, 6, 0)).unwrap().has_alpha());
     }
+
+    #[test]
+    fn parse_rejects_dimension_exceeding_png_spec_max() {
+        // PNG spec maximum dimension is 2^31 - 1
+        let max_plus_one = 0x8000_0000u32; // 2^31
+        assert!(Ihdr::parse(&make_ihdr(max_plus_one, 1, 8, 0, 0)).is_err());
+        assert!(Ihdr::parse(&make_ihdr(1, max_plus_one, 8, 0, 0)).is_err());
+        // u32::MAX is also invalid
+        assert!(Ihdr::parse(&make_ihdr(u32::MAX, 1, 8, 0, 0)).is_err());
+        assert!(Ihdr::parse(&make_ihdr(1, u32::MAX, 8, 0, 0)).is_err());
+    }
+
+    #[test]
+    fn parse_accepts_png_spec_max_dimension_grayscale() {
+        // 2^31 - 1 is the PNG spec maximum; grayscale 8-bit has 1 byte/pixel
+        // so row bytes = 2^31 - 1 which fits in u32/usize on all platforms.
+        let png_max = 0x7FFF_FFFFu32;
+        let result = Ihdr::parse(&make_ihdr(png_max, 1, 8, 0, 0));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_rejects_row_bytes_overflow() {
+        // width=536870912 (0x2000_0000), RGBA (4 channels), 16-bit depth
+        // bits_per_row = 536870912 * 4 * 16 = 34,359,738,368 which exceeds u32::MAX.
+        // This must be rejected to prevent usize overflow on wasm32.
+        let width = 536_870_912u32;
+        let result = Ihdr::parse(&make_ihdr(width, 1, 16, 6, 0));
+        assert!(
+            result.is_err(),
+            "should reject dimensions that overflow row bytes on 32-bit"
+        );
+    }
+
+    #[test]
+    fn parse_rejects_large_rgba16_width() {
+        // Even at PNG spec max width, RGBA 16-bit = 2^31-1 * 4 * 16 / 8 = ~16 GiB per row.
+        // This overflows u32 and should be rejected for portability (wasm32).
+        let png_max = 0x7FFF_FFFFu32;
+        let result = Ihdr::parse(&make_ihdr(png_max, 1, 16, 6, 0));
+        assert!(
+            result.is_err(),
+            "RGBA 16-bit at max width overflows 32-bit row bytes"
+        );
+    }
 }
