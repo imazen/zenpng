@@ -1493,6 +1493,7 @@ pub(crate) fn compress_filtered(
                             fo_effort,
                             opts.cancel,
                             &mut best_compressed,
+                            opts.max_threads,
                         )?;
                         if let Some(b) = fo_best {
                             best_compressed = Some(b);
@@ -1502,8 +1503,12 @@ pub(crate) fn compress_filtered(
             } else {
                 // Normal tier: NearOptimal + optional FullOptimal + optional zenzop
                 // Zenflate NearOptimal recompression: effort 30 (always available)
-                let zenflate_best =
-                    zenflate_recompress(&recompress_candidates, opts.cancel, &mut best_compressed)?;
+                let zenflate_best = zenflate_recompress(
+                    &recompress_candidates,
+                    opts.cancel,
+                    &mut best_compressed,
+                    opts.max_threads,
+                )?;
                 if let Some(b) = zenflate_best {
                     best_compressed = Some(b);
                 }
@@ -1517,6 +1522,7 @@ pub(crate) fn compress_filtered(
                         fo_effort,
                         opts.cancel,
                         &mut best_compressed,
+                        opts.max_threads,
                     )?;
                     if let Some(b) = fo_best {
                         best_compressed = Some(b);
@@ -1533,6 +1539,7 @@ pub(crate) fn compress_filtered(
                             opts.deadline,
                             opts.remaining_ns,
                             &mut best_compressed,
+                            opts.max_threads,
                         )?;
                         if let Some(b) = zopfli_best {
                             best_compressed = Some(b);
@@ -1757,43 +1764,50 @@ fn write_stored_block_header(out: &mut Vec<u8>, len: usize, is_final: bool) {
     out.push(((nlen >> 8) & 0xFF) as u8);
 }
 
+/// Recompress a single candidate with zenflate effort 30.
+fn recompress_one(data: &[u8], cancel: &dyn Stop) -> Result<Vec<u8>, PngError> {
+    let mut compressor = Compressor::new(CompressionLevel::new(30));
+    let bound = Compressor::zlib_compress_bound(data.len());
+    let mut output = vec![0u8; bound];
+    let len = compressor
+        .zlib_compress(data, &mut output, cancel)
+        .map_err(|e| match e {
+            zenflate::CompressionError::Stopped(reason) => PngError::Stopped(reason),
+            other => PngError::InvalidInput(alloc::format!("zenflate recompress failed: {other}")),
+        })?;
+    output.truncate(len);
+    Ok(output)
+}
+
 /// Recompress top candidates with zenflate effort 30.
 ///
 /// This re-compresses filtered data using zenflate's near-optimal parser
 /// with ECT-derived optimizations. Runs candidates in parallel when
-/// multiple are available.
+/// `max_threads != 1` and multiple candidates are available.
 fn zenflate_recompress(
     candidates: &[(usize, Vec<u8>)],
     cancel: &dyn Stop,
     current_best: &mut Option<Vec<u8>>,
+    max_threads: usize,
 ) -> Result<Option<Vec<u8>>, PngError> {
     let mut best: Option<Vec<u8>> = None;
 
-    let results: Vec<Result<Vec<u8>, PngError>> = std::thread::scope(|s| {
-        let handles: Vec<_> = candidates
+    let results: Vec<Result<Vec<u8>, PngError>> = if max_threads == 1 || candidates.len() <= 1 {
+        // Sequential
+        candidates
             .iter()
-            .map(|(_size, data)| {
-                s.spawn(|| {
-                    let mut compressor = Compressor::new(CompressionLevel::new(30));
-                    let bound = Compressor::zlib_compress_bound(data.len());
-                    let mut output = vec![0u8; bound];
-                    let len = compressor
-                        .zlib_compress(data, &mut output, cancel)
-                        .map_err(|e| match e {
-                            zenflate::CompressionError::Stopped(reason) => {
-                                PngError::Stopped(reason)
-                            }
-                            other => PngError::InvalidInput(alloc::format!(
-                                "zenflate recompress failed: {other}"
-                            )),
-                        })?;
-                    output.truncate(len);
-                    Ok(output)
-                })
-            })
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    });
+            .map(|(_size, data)| recompress_one(data, cancel))
+            .collect()
+    } else {
+        // Parallel
+        std::thread::scope(|s| {
+            let handles: Vec<_> = candidates
+                .iter()
+                .map(|(_size, data)| s.spawn(|| recompress_one(data, cancel)))
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        })
+    };
 
     for result in results {
         let compressed = result?;
@@ -1813,39 +1827,57 @@ fn zenflate_recompress(
 ///
 /// Uses zenflate effort 31+ which maps to (effort-16) iterations of iterative
 /// cost model refinement with forward DP parsing. Runs candidates in parallel.
+/// Recompress a single candidate with zenflate FullOptimal at the given effort.
+fn full_optimal_recompress_one(
+    data: &[u8],
+    effort: u32,
+    cancel: &dyn Stop,
+) -> Result<Vec<u8>, PngError> {
+    let mut compressor = Compressor::new(CompressionLevel::new(effort));
+    let bound = Compressor::zlib_compress_bound(data.len());
+    let mut output = vec![0u8; bound];
+    let len = compressor
+        .zlib_compress(data, &mut output, cancel)
+        .map_err(|e| match e {
+            zenflate::CompressionError::Stopped(reason) => PngError::Stopped(reason),
+            other => PngError::InvalidInput(alloc::format!(
+                "zenflate FullOptimal recompress failed: {other}"
+            )),
+        })?;
+    output.truncate(len);
+    Ok(output)
+}
+
+/// Recompress top candidates with zenflate FullOptimal (Zopfli-style forward DP).
+///
+/// Uses zenflate effort 31+ which maps to (effort-16) iterations of iterative
+/// cost model refinement with forward DP parsing. Runs candidates in parallel
+/// when `max_threads != 1` and multiple candidates are available.
 fn zenflate_full_optimal_recompress(
     candidates: &[(usize, Vec<u8>)],
     effort: u32,
     cancel: &dyn Stop,
     current_best: &mut Option<Vec<u8>>,
+    max_threads: usize,
 ) -> Result<Option<Vec<u8>>, PngError> {
     let mut best: Option<Vec<u8>> = None;
 
-    let results: Vec<Result<Vec<u8>, PngError>> = std::thread::scope(|s| {
-        let handles: Vec<_> = candidates
+    let results: Vec<Result<Vec<u8>, PngError>> = if max_threads == 1 || candidates.len() <= 1 {
+        // Sequential
+        candidates
             .iter()
-            .map(|(_size, data)| {
-                s.spawn(|| {
-                    let mut compressor = Compressor::new(CompressionLevel::new(effort));
-                    let bound = Compressor::zlib_compress_bound(data.len());
-                    let mut output = vec![0u8; bound];
-                    let len = compressor
-                        .zlib_compress(data, &mut output, cancel)
-                        .map_err(|e| match e {
-                            zenflate::CompressionError::Stopped(reason) => {
-                                PngError::Stopped(reason)
-                            }
-                            other => PngError::InvalidInput(alloc::format!(
-                                "zenflate FullOptimal recompress failed: {other}"
-                            )),
-                        })?;
-                    output.truncate(len);
-                    Ok(output)
-                })
-            })
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    });
+            .map(|(_size, data)| full_optimal_recompress_one(data, effort, cancel))
+            .collect()
+    } else {
+        // Parallel
+        std::thread::scope(|s| {
+            let handles: Vec<_> = candidates
+                .iter()
+                .map(|(_size, data)| s.spawn(|| full_optimal_recompress_one(data, effort, cancel)))
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        })
+    };
 
     for result in results {
         let compressed = result?;
@@ -1875,6 +1907,7 @@ fn zopfli_adaptive(
     deadline: &dyn Stop,
     remaining_ns: Option<&dyn Fn() -> Option<u64>>,
     current_best: &mut Option<Vec<u8>>,
+    max_threads: usize,
 ) -> Result<Option<Vec<u8>>, PngError> {
     use std::time::Instant;
 
@@ -1906,6 +1939,11 @@ fn zopfli_adaptive(
     // Phase 2: Determine max affordable iterations.
     // Calibration gives us a target, but the combined stop provides a hard backstop —
     // if calibration overestimates, zenzop will gracefully stop when deadline expires.
+    let effective_parallelism = if max_threads == 1 {
+        1.0
+    } else {
+        num_cpus() as f64
+    };
     let max_iters = match remaining_ns.and_then(|f| f()) {
         Some(ns) => {
             let remaining_ms = ns as f64 / 1_000_000.0;
@@ -1916,7 +1954,7 @@ fn zopfli_adaptive(
             // Divide remaining time across candidates running in parallel.
             // With N threads, wall time = time for one candidate.
             let n_candidates = candidates.len().min(3) as f64;
-            let parallel_factor = n_candidates.min(num_cpus() as f64);
+            let parallel_factor = n_candidates.min(effective_parallelism);
             let ms_per_candidate = remaining_ms * parallel_factor / n_candidates;
             let iters = (ms_per_candidate / ms_per_iter).floor() as u64;
             iters.clamp(5, 100)
@@ -1928,16 +1966,25 @@ fn zopfli_adaptive(
         return Ok(best);
     }
 
-    // Phase 3: Run top candidates in parallel with calculated iterations.
+    // Phase 3: Run top candidates in parallel (or sequentially if single-threaded).
     // All threads share the combined stop — deadline expiry gracefully stops
     // all threads, cancellation hard-aborts them.
-    let zopfli_results: Vec<Result<Vec<u8>, PngError>> = std::thread::scope(|s| {
-        let handles: Vec<_> = candidates
+    let zopfli_results: Vec<Result<Vec<u8>, PngError>> = if max_threads == 1
+        || candidates.len() <= 1
+    {
+        candidates
             .iter()
-            .map(|(_size, data)| s.spawn(|| compress_with_zopfli_n(data, max_iters, &combined)))
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    });
+            .map(|(_size, data)| compress_with_zopfli_n(data, max_iters, &combined))
+            .collect()
+    } else {
+        std::thread::scope(|s| {
+            let handles: Vec<_> = candidates
+                .iter()
+                .map(|(_size, data)| s.spawn(|| compress_with_zopfli_n(data, max_iters, &combined)))
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        })
+    };
 
     for result in zopfli_results {
         update_best(result?);
@@ -2233,6 +2280,7 @@ mod tests {
             deadline: &Unstoppable,
             parallel: false,
             remaining_ns: None,
+            max_threads: 0,
         };
         let result = compress_filtered(&data, 12, 4, 3, 0, opts, None).unwrap();
         let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();
@@ -2248,6 +2296,7 @@ mod tests {
             deadline: &Unstoppable,
             parallel: false,
             remaining_ns: None,
+            max_threads: 0,
         };
         let result = compress_filtered(&data, 12, 4, 3, 1, opts, None).unwrap();
         // Should produce valid zlib
@@ -2263,6 +2312,7 @@ mod tests {
             deadline: &Unstoppable,
             parallel: false,
             remaining_ns: None,
+            max_threads: 0,
         };
         let mut stats = PhaseStats::default();
         let result = compress_filtered(&data, 12, 4, 3, 10, opts, Some(&mut stats)).unwrap();
@@ -2285,6 +2335,7 @@ mod tests {
             deadline: &Unstoppable,
             parallel: true,
             remaining_ns: None,
+            max_threads: 0,
         };
         let result = compress_filtered(&data, 12, 4, 3, 7, opts, None).unwrap();
         let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();
@@ -2306,6 +2357,7 @@ mod tests {
             deadline: &Unstoppable,
             parallel: false,
             remaining_ns: None,
+            max_threads: 0,
         };
         let result = compress_filtered(&data, 16, 4, 4, 2, opts, None).unwrap();
         let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();

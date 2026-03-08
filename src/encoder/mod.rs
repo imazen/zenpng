@@ -30,6 +30,8 @@ pub(crate) struct CompressOptions<'a> {
     /// Returns remaining nanoseconds, or `None` if unknown/unlimited.
     #[allow(dead_code)] // read only with `zopfli` feature
     pub remaining_ns: Option<&'a dyn Fn() -> Option<u64>>,
+    /// Maximum thread count for compression. 0 = no limit, 1 = single-threaded.
+    pub max_threads: usize,
 }
 
 /// Statistics for one compression phase.
@@ -482,6 +484,7 @@ mod tests {
             cancel: &Unstoppable,
             deadline: &Unstoppable,
             remaining_ns: None,
+            max_threads: 0,
         }
     }
 

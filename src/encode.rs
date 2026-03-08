@@ -53,6 +53,19 @@ pub struct EncodeConfig {
     ///
     /// Default: 0 (lossless). Does not affect indexed (palette) encoding.
     pub near_lossless_bits: u8,
+    /// Maximum number of threads for compression.
+    ///
+    /// - `0` means no limit (use as many threads as beneficial).
+    /// - `1` forces fully single-threaded operation: no `std::thread::scope`
+    ///   calls anywhere in the compression pipeline.
+    /// - `N > 1` caps parallelism to at most N threads.
+    ///
+    /// When set to 1, both the screening/refinement phases and the
+    /// recompression phase run sequentially. This is derived from
+    /// [`ThreadingPolicy`](zc::ThreadingPolicy) when using the zencodec adapter.
+    ///
+    /// Default: 0 (no limit).
+    pub max_threads: usize,
 }
 
 impl EncodeConfig {
@@ -113,10 +126,11 @@ impl EncodeConfig {
         remaining_ns: Option<&'a dyn Fn() -> Option<u64>>,
     ) -> crate::encoder::CompressOptions<'a> {
         crate::encoder::CompressOptions {
-            parallel: self.parallel,
+            parallel: self.parallel && self.max_threads != 1,
             cancel,
             deadline,
             remaining_ns,
+            max_threads: self.max_threads,
         }
     }
 }
