@@ -415,6 +415,7 @@ impl<'a> zc::encode::EncodeJob<'a> for PngEncodeJob<'a> {
             owned_meta,
         );
         enc.loop_count = self.loop_count.unwrap_or(0);
+        enc.limits = self.limits;
         Ok(enc)
     }
 }
@@ -482,6 +483,12 @@ impl<'a> PngEncoder<'a> {
         let data = crate::encode::encode_raw(
             bytes, w, h, color_type, bit_depth, meta_ref, config, cancel, &deadline,
         )?;
+        // Post-encode output size check
+        if let Some(ref limits) = self.limits {
+            limits
+                .check_output_size(data.len() as u64)
+                .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+        }
         Ok(EncodeOutput::new(data, ImageFormat::Png))
     }
 }
@@ -721,6 +728,10 @@ pub struct PngFullFrameEncoder {
     loop_count: u32,
     /// In-progress frame being built row-by-row.
     building_frame: Option<BuildingFrame>,
+    /// Resource limits for frame accumulation.
+    limits: Option<ResourceLimits>,
+    /// Cumulative pixel data size across all accumulated frames.
+    cumulative_pixel_bytes: u64,
 }
 
 /// State for row-by-row frame construction.
@@ -745,6 +756,8 @@ impl PngFullFrameEncoder {
             metadata,
             loop_count: 0,
             building_frame: None,
+            limits: None,
+            cumulative_pixel_bytes: 0,
         }
     }
 
@@ -791,6 +804,19 @@ impl zc::encode::FullFrameEncoder for PngFullFrameEncoder {
         _stop: Option<&dyn enough::Stop>,
     ) -> Result<(), At<PngError>> {
         let rgba = Self::pixels_to_rgba8(&pixels)?;
+        // Check resource limits before accumulating
+        if let Some(ref limits) = self.limits {
+            // Check max_frames (new frame count = current + 1)
+            limits
+                .check_frames(self.frames.len() as u32 + 1)
+                .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+            // Check max_memory (cumulative pixel data size)
+            let new_cumulative = self.cumulative_pixel_bytes + rgba.len() as u64;
+            limits
+                .check_memory(new_cumulative)
+                .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+        }
+        self.cumulative_pixel_bytes += rgba.len() as u64;
         self.frames.push(AccumulatedFrame {
             pixels: rgba,
             duration_ms,
@@ -979,6 +1005,7 @@ static PNG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_native_alpha(true)
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
+    .with_enforces_max_input_bytes(true)
     .with_row_level(true);
 
 impl zc::decode::DecoderConfig for PngDecoderConfig {
@@ -1098,6 +1125,11 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
     ) -> Result<PngFullFrameDecoder, At<PngError>> {
+        // Check input size limit
+        let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
+        effective_limits
+            .check_input_size(data.len() as u64)
+            .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
         PngFullFrameDecoder::new(
             &data,
             self.config,
@@ -1149,6 +1181,11 @@ impl zc::decode::Decode for PngDecoder<'_> {
     fn decode(self) -> Result<DecodeOutput, At<PngError>> {
         let cancel: &dyn enough::Stop = self.stop.unwrap_or(&enough::Unstoppable);
         cancel.check().map_err(PngError::from)?;
+        // Check input size limit
+        let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
+        effective_limits
+            .check_input_size(self.data.len() as u64)
+            .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
         let png_config = self.effective_config();
         let result = crate::decode::decode(&self.data, &png_config, cancel)?;
         let info = convert_info(&result.info);
@@ -1203,6 +1240,12 @@ fn push_decoder_native<'a>(
     let wrap_sink = |e: zc::decode::SinkError| -> At<PngError> {
         PngError::InvalidInput(alloc::format!("sink error: {e}")).start_at()
     };
+
+    // Check input size limit
+    let effective_limits = job.limits.as_ref().unwrap_or(&job.config.limits);
+    effective_limits
+        .check_input_size(data.len() as u64)
+        .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
 
     // Check for interlacing — fall back to full decode for Adam7
     if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
@@ -1369,6 +1412,10 @@ impl<'a> PngStreamingDecoder<'a> {
         cancel.check().map_err(PngError::from)?;
 
         let effective_limits = limits.unwrap_or(&config.limits);
+        // Check input size limit
+        effective_limits
+            .check_input_size(data.len() as u64)
+            .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
         let png_config = PngDecodeConfig {
             max_pixels: effective_limits.max_pixels,
             max_memory_bytes: effective_limits.max_memory_bytes,
