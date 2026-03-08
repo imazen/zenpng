@@ -207,6 +207,15 @@ impl PngAncillary {
                 if chunk.data.len() == 8 {
                     let num_frames = u32::from_be_bytes(chunk.data[0..4].try_into().unwrap());
                     let num_plays = u32::from_be_bytes(chunk.data[4..8].try_into().unwrap());
+                    if num_frames == 0 {
+                        return Err(PngError::Decode("acTL: num_frames must be > 0".into()));
+                    }
+                    if num_frames > 65536 {
+                        return Err(PngError::LimitExceeded(alloc::format!(
+                            "acTL: num_frames {} exceeds limit of 65536",
+                            num_frames
+                        )));
+                    }
                     self.actl = Some((num_frames, num_plays));
                 }
             }
