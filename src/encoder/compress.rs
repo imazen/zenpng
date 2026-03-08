@@ -5,7 +5,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use enough::Stop;
-use zenflate::{CompressionLevel, Compressor, Unstoppable};
+use zenflate::{CompressionLevel, Compressor};
 
 use crate::error::PngError;
 
@@ -741,7 +741,7 @@ pub(crate) fn try_compress(
         {
             let mut decompressor = zenflate::Decompressor::new();
             if decompressor
-                .zlib_decompress(&compress_buf[..compressed_len], verify_buf, Unstoppable)
+                .zlib_decompress(&compress_buf[..compressed_len], verify_buf, cancel)
                 .is_err()
             {
                 continue;
@@ -951,7 +951,7 @@ pub(crate) fn compress_filtered(
                             .zlib_decompress(
                                 &t_compress_buf[..compressed_len],
                                 &mut t_verify_buf,
-                                Unstoppable,
+                                opts.cancel,
                             )
                             .ok()?;
 
@@ -1029,7 +1029,7 @@ pub(crate) fn compress_filtered(
                     .zlib_decompress(
                         &compress_buf[..compressed_len],
                         &mut verify_buf,
-                        Unstoppable,
+                        opts.cancel,
                     )
                     .is_ok()
             };
@@ -1129,7 +1129,7 @@ pub(crate) fn compress_filtered(
                                         .zlib_decompress(
                                             &t_compress_buf[..len],
                                             &mut t_verify_buf,
-                                            Unstoppable,
+                                            opts.cancel,
                                         )
                                         .is_ok()
                                     {
