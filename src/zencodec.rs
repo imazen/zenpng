@@ -210,36 +210,46 @@ fn effort_to_compression(effort: i32) -> crate::Compression {
 
 /// Convert generic quality (0–100) to MPE threshold.
 ///
-/// Piecewise-linear interpolation calibrated against JPEG quality equivalences
-/// from zenquant's MPE↔SSIM2↔butteraugli corpus data (1992 images).
+/// Piecewise-linear interpolation calibrated so that `quality=Q` produces
+/// the same SSIMULACRA2 score as libjpeg-turbo at quality Q, via the chain:
 ///
-/// | quality | ≈ JPEG q | MPE    |
-/// |---------|----------|--------|
-/// | 100     | lossless | 0.0    |
-/// | 99      | —        | 0.001  |
-/// | 95      | 95       | 0.008  |
-/// | 90      | 90       | 0.012  |
-/// | 85      | 85       | 0.015  |
-/// | 75      | 75       | 0.020  |
-/// | 50      | 50       | 0.028  |
-/// | 30      | 30       | 0.034  |
-/// | 0       | —        | 0.100  |
+///   quality → MPE threshold → (zenquant quantization) → MPE → SSIM2
 ///
-/// Values above q99 are near-lossless; values below q30 are increasingly lossy.
+/// Derived from 27,170 libjpeg-turbo measurements across 209 CID22-512
+/// images (SSIM2 anchor), plus zenquant's 1992-image MPE↔SSIM2 calibration.
+///
+/// | quality | libjpeg SSIM2 | MPE    |
+/// |---------|---------------|--------|
+/// | 100     | lossless      | 0.000  |
+/// | 99      | 95.9          | 0.003  |
+/// | 95      | 91.5          | 0.007  |
+/// | 90      | 87.7          | 0.011  |
+/// | 85      | 84.3          | 0.015  |
+/// | 80      | 81.2          | 0.020  |
+/// | 75      | 78.3          | 0.026  |
+/// | 70      | 75.3          | 0.031  |
+/// | 60      | 72.0          | 0.037  |
+/// | 50      | 68.4          | 0.044  |
+/// | 40      | 63.9          | 0.052  |
+/// | 30      | 59.2          | 0.060  |
+/// | 0       | —             | 0.100  |
 fn quality_to_mpe(quality: f32) -> f32 {
-    // (quality, mpe) — sorted descending by quality
-    // Near-lossless range (99–100) plus JPEG-equivalent calibration points.
-    const TABLE: [(f32, f32); 11] = [
-        (100.0, 0.0),
-        (99.0, 0.001),
-        (95.0, 0.008),
-        (90.0, 0.012),
+    // (quality, mpe) — sorted descending by quality.
+    // Calibrated to match libjpeg-turbo SSIMULACRA2 at each quality level.
+    const TABLE: [(f32, f32); 14] = [
+        (100.0, 0.000),
+        (99.0, 0.003),
+        (95.0, 0.007),
+        (90.0, 0.011),
         (85.0, 0.015),
-        (80.0, 0.017),
-        (75.0, 0.020),
-        (60.0, 0.025),
-        (50.0, 0.028),
-        (30.0, 0.034),
+        (80.0, 0.020),
+        (75.0, 0.026),
+        (70.0, 0.031),
+        (60.0, 0.037),
+        (50.0, 0.044),
+        (40.0, 0.052),
+        (30.0, 0.060),
+        (10.0, 0.085),
         (0.0, 0.100),
     ];
 
@@ -4057,25 +4067,25 @@ mod tests {
     fn quality_to_mpe_curve() {
         // Exact table points
         assert_eq!(quality_to_mpe(100.0), 0.0);
-        assert_eq!(quality_to_mpe(99.0), 0.001);
+        assert_eq!(quality_to_mpe(99.0), 0.003);
         assert_eq!(quality_to_mpe(0.0), 0.100);
 
-        // JPEG-equivalent calibration points
+        // libjpeg-turbo SSIM2-calibrated points
         let mpe_95 = quality_to_mpe(95.0);
-        assert!((mpe_95 - 0.008).abs() < 0.001, "q95 mpe={mpe_95}");
+        assert!((mpe_95 - 0.007).abs() < 0.001, "q95 mpe={mpe_95}");
 
         let mpe_90 = quality_to_mpe(90.0);
-        assert!((mpe_90 - 0.012).abs() < 0.001, "q90 mpe={mpe_90}");
+        assert!((mpe_90 - 0.011).abs() < 0.001, "q90 mpe={mpe_90}");
 
         let mpe_75 = quality_to_mpe(75.0);
-        assert!((mpe_75 - 0.020).abs() < 0.001, "q75 mpe={mpe_75}");
+        assert!((mpe_75 - 0.026).abs() < 0.001, "q75 mpe={mpe_75}");
 
         let mpe_50 = quality_to_mpe(50.0);
-        assert!((mpe_50 - 0.028).abs() < 0.001, "q50 mpe={mpe_50}");
+        assert!((mpe_50 - 0.044).abs() < 0.001, "q50 mpe={mpe_50}");
 
-        // Interpolated mid-point: q97 between q99 (0.001) and q95 (0.008)
+        // Interpolated mid-point: q97 between q99 (0.003) and q95 (0.007)
         let mpe_97 = quality_to_mpe(97.0);
-        assert!(mpe_97 > 0.001 && mpe_97 < 0.008, "q97 mpe={mpe_97}");
+        assert!(mpe_97 > 0.003 && mpe_97 < 0.007, "q97 mpe={mpe_97}");
 
         // Monotonicity: lower quality → higher MPE (more tolerant)
         assert!(quality_to_mpe(90.0) > quality_to_mpe(99.0));
@@ -4268,13 +4278,13 @@ mod tests {
 
     #[test]
     fn quality_to_mpe_interpolation() {
-        // q=95 should be 0.008
-        assert!((quality_to_mpe(95.0) - 0.008).abs() < 0.0001);
-        // q=50 should be 0.028
-        assert!((quality_to_mpe(50.0) - 0.028).abs() < 0.0001);
+        // q=95 should be 0.007
+        assert!((quality_to_mpe(95.0) - 0.007).abs() < 0.0001);
+        // q=50 should be 0.044
+        assert!((quality_to_mpe(50.0) - 0.044).abs() < 0.0001);
         // Interpolated value between 95 and 99
         let mid = quality_to_mpe(97.0);
-        assert!(mid > 0.001 && mid < 0.008);
+        assert!(mid > 0.003 && mid < 0.007);
     }
 
     // ── EncodeJob trait methods ──
