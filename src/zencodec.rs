@@ -575,7 +575,9 @@ impl zc::encode::Encoder for PngEncoder<'_> {
     }
 
     fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<PngError>> {
-        use linear_srgb::default::linear_to_srgb_u8;
+        use linear_srgb::default::{
+            linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice,
+        };
         use zenpixels::PixelFormat;
 
         let w = pixels.width();
@@ -660,38 +662,16 @@ impl zc::encode::Encoder for PngEncoder<'_> {
             }
             PixelFormat::RgbF32 => {
                 let src = contiguous_bytes(&pixels);
-                let srgb: Vec<u8> = src
-                    .chunks_exact(12)
-                    .flat_map(|c| {
-                        let r = f32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
-                        let g = f32::from_ne_bytes([c[4], c[5], c[6], c[7]]);
-                        let b = f32::from_ne_bytes([c[8], c[9], c[10], c[11]]);
-                        [
-                            linear_to_srgb_u8(r.clamp(0.0, 1.0)),
-                            linear_to_srgb_u8(g.clamp(0.0, 1.0)),
-                            linear_to_srgb_u8(b.clamp(0.0, 1.0)),
-                        ]
-                    })
-                    .collect();
+                let floats: &[f32] = bytemuck::cast_slice(&src);
+                let mut srgb = vec![0u8; floats.len()];
+                linear_to_srgb_u8_slice(floats, &mut srgb);
                 self.do_encode(&srgb, w, h, crate::encode::ColorType::Rgb)
             }
             PixelFormat::RgbaF32 => {
                 let src = contiguous_bytes(&pixels);
-                let srgb: Vec<u8> = src
-                    .chunks_exact(16)
-                    .flat_map(|c| {
-                        let r = f32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
-                        let g = f32::from_ne_bytes([c[4], c[5], c[6], c[7]]);
-                        let b = f32::from_ne_bytes([c[8], c[9], c[10], c[11]]);
-                        let a = f32::from_ne_bytes([c[12], c[13], c[14], c[15]]);
-                        [
-                            linear_to_srgb_u8(r.clamp(0.0, 1.0)),
-                            linear_to_srgb_u8(g.clamp(0.0, 1.0)),
-                            linear_to_srgb_u8(b.clamp(0.0, 1.0)),
-                            (a.clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
-                        ]
-                    })
-                    .collect();
+                let floats: &[f32] = bytemuck::cast_slice(&src);
+                let mut srgb = vec![0u8; floats.len()];
+                linear_to_srgb_u8_rgba_slice(floats, &mut srgb);
 
                 // Auto-indexed path when not lossless and quality < 100
                 #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
@@ -724,13 +704,9 @@ impl zc::encode::Encoder for PngEncoder<'_> {
             }
             PixelFormat::GrayF32 => {
                 let src = contiguous_bytes(&pixels);
-                let srgb: Vec<u8> = src
-                    .chunks_exact(4)
-                    .map(|c| {
-                        let v = f32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
-                        linear_to_srgb_u8(v.clamp(0.0, 1.0))
-                    })
-                    .collect();
+                let floats: &[f32] = bytemuck::cast_slice(&src);
+                let mut srgb = vec![0u8; floats.len()];
+                linear_to_srgb_u8_slice(floats, &mut srgb);
                 self.do_encode(&srgb, w, h, crate::encode::ColorType::Grayscale)
             }
             PixelFormat::Bgra8 => {
@@ -746,7 +722,9 @@ impl zc::encode::Encoder for PngEncoder<'_> {
     }
 
     fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), At<PngError>> {
-        use linear_srgb::default::linear_to_srgb_u8;
+        use linear_srgb::default::{
+            linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice,
+        };
         use zenpixels::PixelFormat;
 
         let w = rows.width();
@@ -878,42 +856,26 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                 }
                 PixelFormat::Rgb16 | PixelFormat::Rgba16 | PixelFormat::Gray16 => {
                     // Convert native u16 to big-endian
-                    for pair in src[..state.row_bytes].chunks_exact(2) {
-                        let val = u16::from_ne_bytes([pair[0], pair[1]]);
+                    let samples: &[u16] =
+                        bytemuck::cast_slice(&src[..state.row_bytes]);
+                    for &val in samples {
                         state.pixel_data.extend_from_slice(&val.to_be_bytes());
                     }
                 }
-                PixelFormat::RgbF32 => {
-                    for c in src.chunks_exact(12) {
-                        let r = f32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
-                        let g = f32::from_ne_bytes([c[4], c[5], c[6], c[7]]);
-                        let b = f32::from_ne_bytes([c[8], c[9], c[10], c[11]]);
-                        state.pixel_data.extend_from_slice(&[
-                            linear_to_srgb_u8(r.clamp(0.0, 1.0)),
-                            linear_to_srgb_u8(g.clamp(0.0, 1.0)),
-                            linear_to_srgb_u8(b.clamp(0.0, 1.0)),
-                        ]);
-                    }
+                PixelFormat::RgbF32 | PixelFormat::GrayF32 => {
+                    let floats: &[f32] = bytemuck::cast_slice(src);
+                    let start = state.pixel_data.len();
+                    state.pixel_data.resize(start + floats.len(), 0);
+                    linear_to_srgb_u8_slice(floats, &mut state.pixel_data[start..]);
                 }
                 PixelFormat::RgbaF32 => {
-                    for c in src.chunks_exact(16) {
-                        let r = f32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
-                        let g = f32::from_ne_bytes([c[4], c[5], c[6], c[7]]);
-                        let b = f32::from_ne_bytes([c[8], c[9], c[10], c[11]]);
-                        let a = f32::from_ne_bytes([c[12], c[13], c[14], c[15]]);
-                        state.pixel_data.extend_from_slice(&[
-                            linear_to_srgb_u8(r.clamp(0.0, 1.0)),
-                            linear_to_srgb_u8(g.clamp(0.0, 1.0)),
-                            linear_to_srgb_u8(b.clamp(0.0, 1.0)),
-                            (a.clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
-                        ]);
-                    }
-                }
-                PixelFormat::GrayF32 => {
-                    for c in src.chunks_exact(4) {
-                        let v = f32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
-                        state.pixel_data.push(linear_to_srgb_u8(v.clamp(0.0, 1.0)));
-                    }
+                    let floats: &[f32] = bytemuck::cast_slice(src);
+                    let start = state.pixel_data.len();
+                    state.pixel_data.resize(start + floats.len(), 0);
+                    linear_to_srgb_u8_rgba_slice(
+                        floats,
+                        &mut state.pixel_data[start..],
+                    );
                 }
                 PixelFormat::Bgra8 => {
                     for c in src.chunks_exact(4) {
