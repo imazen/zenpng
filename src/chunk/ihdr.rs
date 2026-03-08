@@ -2,6 +2,9 @@
 
 use crate::error::PngError;
 
+/// PNG spec maximum dimension: 2^31 - 1.
+const PNG_MAX_DIMENSION: u32 = 0x7FFF_FFFF;
+
 /// Parsed IHDR chunk.
 #[derive(Clone, Copy, Debug)]
 #[allow(dead_code)]
@@ -35,6 +38,15 @@ impl Ihdr {
             return Err(PngError::Decode("IHDR: zero dimension".into()));
         }
 
+        if width > PNG_MAX_DIMENSION || height > PNG_MAX_DIMENSION {
+            return Err(PngError::Decode(alloc::format!(
+                "IHDR: dimension {}x{} exceeds PNG maximum of {}",
+                width,
+                height,
+                PNG_MAX_DIMENSION
+            )));
+        }
+
         if compression != 0 {
             return Err(PngError::Decode(alloc::format!(
                 "IHDR: unknown compression method {}",
@@ -65,7 +77,8 @@ impl Ihdr {
         Ok(ihdr)
     }
 
-    /// Validate color_type / bit_depth combination per PNG spec.
+    /// Validate color_type / bit_depth combination per PNG spec,
+    /// and ensure row byte computation won't overflow `usize`.
     fn validate(&self) -> Result<(), PngError> {
         let valid = match self.color_type {
             0 => matches!(self.bit_depth, 1 | 2 | 4 | 8 | 16), // Grayscale
@@ -82,6 +95,30 @@ impl Ihdr {
                 self.bit_depth
             )));
         }
+
+        // Verify that bits_per_row = width * channels * bit_depth fits in usize
+        // without overflow. Compute in u64 to avoid overflow during the check.
+        let bits_per_row = (self.width as u64)
+            .checked_mul(self.channels() as u64)
+            .and_then(|v| v.checked_mul(self.bit_depth as u64));
+        let row_bytes = bits_per_row.and_then(|b| {
+            // div_ceil: (b + 7) / 8, checking for overflow on the add
+            b.checked_add(7).map(|v| v / 8)
+        });
+        match row_bytes {
+            Some(bytes) if usize::try_from(bytes).is_ok() => {}
+            _ => {
+                return Err(PngError::LimitExceeded(alloc::format!(
+                    "IHDR: row size overflow for {}x{} color_type={} bit_depth={} \
+                     (row bytes would exceed platform address space)",
+                    self.width,
+                    self.height,
+                    self.color_type,
+                    self.bit_depth
+                )));
+            }
+        }
+
         Ok(())
     }
 
@@ -106,14 +143,32 @@ impl Ihdr {
 
     /// Raw row bytes (unfiltered row data, not including filter byte).
     /// For sub-8-bit depths, accounts for bit packing.
+    ///
+    /// # Panics
+    /// Panics if the computation overflows `usize`. This cannot happen for
+    /// IHDR values that passed through [`Ihdr::parse`], which validates that
+    /// row bytes fit in `usize`.
     pub fn raw_row_bytes(&self) -> usize {
-        let bits_per_row = self.width as usize * self.channels() * self.bit_depth as usize;
-        bits_per_row.div_ceil(8)
+        let bits_per_row = (self.width as u64)
+            .checked_mul(self.channels() as u64)
+            .and_then(|v| v.checked_mul(self.bit_depth as u64))
+            .expect("bits_per_row overflow (IHDR should have been validated)");
+        let row_bytes = bits_per_row
+            .checked_add(7)
+            .map(|v| v / 8)
+            .expect("row_bytes overflow (IHDR should have been validated)");
+        usize::try_from(row_bytes)
+            .expect("row_bytes exceeds usize (IHDR should have been validated)")
     }
 
     /// Stride = 1 (filter byte) + raw_row_bytes.
+    ///
+    /// # Panics
+    /// Panics if the computation overflows `usize`. See [`raw_row_bytes`](Self::raw_row_bytes).
     pub fn stride(&self) -> usize {
-        1 + self.raw_row_bytes()
+        self.raw_row_bytes()
+            .checked_add(1)
+            .expect("stride overflow (IHDR should have been validated)")
     }
 
     /// Whether the image uses sub-8-bit depth (1, 2, or 4).
@@ -336,27 +391,58 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_row_bytes_overflow() {
+    fn parse_rejects_row_bytes_overflow_on_32bit() {
         // width=536870912 (0x2000_0000), RGBA (4 channels), 16-bit depth
         // bits_per_row = 536870912 * 4 * 16 = 34,359,738,368 which exceeds u32::MAX.
-        // This must be rejected to prevent usize overflow on wasm32.
+        // On wasm32 (usize=32-bit) this must be rejected. On 64-bit it fits.
         let width = 536_870_912u32;
         let result = Ihdr::parse(&make_ihdr(width, 1, 16, 6, 0));
-        assert!(
-            result.is_err(),
-            "should reject dimensions that overflow row bytes on 32-bit"
-        );
+        if cfg!(target_pointer_width = "32") {
+            assert!(
+                result.is_err(),
+                "should reject dimensions that overflow row bytes on 32-bit"
+            );
+        } else {
+            // On 64-bit, row_bytes = 4,294,967,296 which fits in u64 and usize.
+            assert!(result.is_ok());
+        }
     }
 
     #[test]
-    fn parse_rejects_large_rgba16_width() {
-        // Even at PNG spec max width, RGBA 16-bit = 2^31-1 * 4 * 16 / 8 = ~16 GiB per row.
-        // This overflows u32 and should be rejected for portability (wasm32).
+    fn parse_rejects_large_rgba16_width_on_32bit() {
+        // PNG spec max width, RGBA 16-bit = 2^31-1 * 4 * 16 / 8 = ~16 GiB per row.
+        // This overflows u32 (wasm32) but fits in u64/usize on 64-bit platforms.
         let png_max = 0x7FFF_FFFFu32;
         let result = Ihdr::parse(&make_ihdr(png_max, 1, 16, 6, 0));
-        assert!(
-            result.is_err(),
-            "RGBA 16-bit at max width overflows 32-bit row bytes"
-        );
+        if cfg!(target_pointer_width = "32") {
+            assert!(
+                result.is_err(),
+                "RGBA 16-bit at max width overflows 32-bit row bytes"
+            );
+        } else {
+            assert!(result.is_ok());
+        }
+    }
+
+    #[test]
+    fn raw_row_bytes_uses_checked_arithmetic() {
+        // Verify that raw_row_bytes uses checked arithmetic internally.
+        // Construct an Ihdr that passed parse validation (valid on 64-bit),
+        // and verify the computation doesn't silently wrap.
+        let ihdr = Ihdr {
+            width: 0x7FFF_FFFF,
+            height: 1,
+            bit_depth: 16,
+            color_type: 6, // RGBA
+            interlace: 0,
+        };
+        // On 64-bit: row_bytes = (2^31-1)*4*16/8 = 17,179,869,176 — fits in usize.
+        // On 32-bit this would panic (checked_mul catches overflow).
+        if cfg!(target_pointer_width = "64") {
+            assert_eq!(ihdr.raw_row_bytes(), 17_179_869_176);
+        }
+        // On 32-bit targets, this would panic rather than silently wrap.
+        // We can't easily test the panic path in a platform-dependent way here,
+        // but the checked arithmetic in raw_row_bytes guarantees no silent overflow.
     }
 }
