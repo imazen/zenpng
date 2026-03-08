@@ -4499,6 +4499,188 @@ mod tests {
         assert_eq!(output.format(), ImageFormat::Png);
     }
 
+    // ── ResourceLimits enforcement tests ──
+
+    #[test]
+    fn encode_max_output_bytes_rejects_large_output() {
+        use zc::encode::Encoder;
+        // Encode a 32x32 RGB image — output will be well over 100 bytes.
+        let pixels: Vec<Rgb<u8>> = (0..32 * 32)
+            .map(|i| Rgb {
+                r: (i % 256) as u8,
+                g: ((i * 3) % 256) as u8,
+                b: ((i * 7) % 256) as u8,
+            })
+            .collect();
+        let img = imgref::ImgVec::new(pixels, 32, 32);
+        let config = PngEncoderConfig::new();
+        let limits = ResourceLimits::none().with_max_output(100);
+        let encoder = config.job().with_limits(limits).encoder().unwrap();
+        let result = encoder.encode(PixelSlice::from(img.as_ref()).erase());
+        let err = result.unwrap_err();
+        let msg = alloc::format!("{}", err);
+        assert!(
+            msg.contains("limit exceeded") || msg.contains("output size"),
+            "expected limit exceeded error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn encode_max_output_bytes_allows_small_output() {
+        use zc::encode::Encoder;
+        // 2x2 tiny image — output will be small but still a valid PNG
+        let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 0, g: 0, b: 0 }; 4];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+        let config = PngEncoderConfig::new();
+        // Allow up to 10 KB — should be plenty for a 2x2 PNG
+        let limits = ResourceLimits::none().with_max_output(10_000);
+        let encoder = config.job().with_limits(limits).encoder().unwrap();
+        let result = encoder.encode(PixelSlice::from(img.as_ref()).erase());
+        assert!(result.is_ok(), "expected success, got: {:?}", result.err());
+    }
+
+    #[test]
+    fn apng_push_frame_rejects_over_max_frames() {
+        use zc::encode::FullFrameEncoder;
+        let config = PngEncoderConfig::new();
+        let limits = ResourceLimits::none().with_max_frames(2);
+        let job = config
+            .job()
+            .with_canvas_size(4, 4)
+            .with_loop_count(Some(0))
+            .with_limits(limits);
+        let mut enc = job.full_frame_encoder().unwrap();
+
+        let make_frame = || {
+            let pixels: Vec<Rgba<u8>> = vec![
+                Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                };
+                16
+            ];
+            imgref::ImgVec::new(pixels, 4, 4)
+        };
+
+        // First two frames should succeed
+        let img1 = make_frame();
+        enc.push_frame(PixelSlice::from(img1.as_ref()).erase(), 100, None)
+            .unwrap();
+        let img2 = make_frame();
+        enc.push_frame(PixelSlice::from(img2.as_ref()).erase(), 100, None)
+            .unwrap();
+
+        // Third frame should fail with limit exceeded
+        let img3 = make_frame();
+        let result = enc.push_frame(PixelSlice::from(img3.as_ref()).erase(), 100, None);
+        let err = result.unwrap_err();
+        let msg = alloc::format!("{}", err);
+        assert!(
+            msg.contains("limit exceeded") || msg.contains("frame count"),
+            "expected frame limit error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn apng_push_frame_rejects_over_max_memory() {
+        use zc::encode::FullFrameEncoder;
+        let config = PngEncoderConfig::new();
+        // 4x4 RGBA8 = 64 bytes per frame. Limit to 100 bytes total.
+        let limits = ResourceLimits::none().with_max_memory(100);
+        let job = config
+            .job()
+            .with_canvas_size(4, 4)
+            .with_loop_count(Some(0))
+            .with_limits(limits);
+        let mut enc = job.full_frame_encoder().unwrap();
+
+        let make_frame = || {
+            let pixels: Vec<Rgba<u8>> = vec![
+                Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                };
+                16
+            ];
+            imgref::ImgVec::new(pixels, 4, 4)
+        };
+
+        // First frame is 64 bytes — should succeed (64 <= 100)
+        let img1 = make_frame();
+        enc.push_frame(PixelSlice::from(img1.as_ref()).erase(), 100, None)
+            .unwrap();
+
+        // Second frame would be 128 bytes cumulative — should fail (128 > 100)
+        let img2 = make_frame();
+        let result = enc.push_frame(PixelSlice::from(img2.as_ref()).erase(), 100, None);
+        let err = result.unwrap_err();
+        let msg = alloc::format!("{}", err);
+        assert!(
+            msg.contains("limit exceeded") || msg.contains("memory"),
+            "expected memory limit error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn decode_max_input_bytes_rejects_large_input() {
+        use zc::decode::{Decode, DecodeJob, DecoderConfig};
+        // First, encode a valid PNG
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 128,
+                g: 64,
+                b: 32
+            };
+            64
+        ];
+        let img = imgref::ImgVec::new(pixels, 8, 8);
+        let enc = PngEncoderConfig::new();
+        let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
+        let data = encoded.data();
+
+        // Now try to decode with a very small max_input_bytes limit
+        let dec = PngDecoderConfig::new();
+        let limits = ResourceLimits::none().with_max_input_bytes(10);
+        let result = dec
+            .job()
+            .with_limits(limits)
+            .decoder(Cow::Borrowed(data), &[])
+            .unwrap()
+            .decode();
+        let err = result.unwrap_err();
+        let msg = alloc::format!("{}", err);
+        assert!(
+            msg.contains("limit exceeded") || msg.contains("input size"),
+            "expected input size limit error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn decode_max_input_bytes_allows_small_input() {
+        use zc::decode::{Decode, DecodeJob, DecoderConfig};
+        // Encode a tiny PNG
+        let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 0, g: 0, b: 0 }; 4];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+        let enc = PngEncoderConfig::new();
+        let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
+        let data = encoded.data();
+
+        // Generous limit — should succeed
+        let dec = PngDecoderConfig::new();
+        let limits = ResourceLimits::none().with_max_input_bytes(100_000);
+        let result = dec
+            .job()
+            .with_limits(limits)
+            .decoder(Cow::Borrowed(data), &[])
+            .unwrap()
+            .decode();
+        assert!(result.is_ok(), "expected success, got: {:?}", result.err());
+    }
+
     // TODO: fix lifetime issue — `config` must outlive `dyn_enc`
     // #[test]
     // fn encoder_trait_dyn_encoder() {
