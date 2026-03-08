@@ -973,7 +973,8 @@ static PNG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_native_16bit(true)
     .with_native_alpha(true)
     .with_enforces_max_pixels(true)
-    .with_enforces_max_memory(true);
+    .with_enforces_max_memory(true)
+    .with_row_level(true);
 
 impl zc::decode::DecoderConfig for PngDecoderConfig {
     type Error = At<PngError>;
@@ -1016,7 +1017,7 @@ pub struct PngDecodeJob<'a> {
 impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
     type Error = At<PngError>;
     type Dec = PngDecoder<'a>;
-    type StreamDec = zc::Unsupported<At<PngError>>;
+    type StreamDec = PngStreamingDecoder<'a>;
     type FullFrameDec = PngFullFrameDecoder;
 
     fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
@@ -1074,10 +1075,10 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
 
     fn streaming_decoder(
         self,
-        _data: Cow<'a, [u8]>,
-        _preferred: &[PixelDescriptor],
-    ) -> Result<zc::Unsupported<At<PngError>>, At<PngError>> {
-        Err(PngError::from(zc::UnsupportedOperation::RowLevelDecode).start_at())
+        data: Cow<'a, [u8]>,
+        preferred: &[PixelDescriptor],
+    ) -> Result<PngStreamingDecoder<'a>, At<PngError>> {
+        PngStreamingDecoder::new(data, self.config, self.stop, self.limits.as_ref(), self.policy.as_ref(), preferred)
     }
 
     fn full_frame_decoder(
@@ -1314,6 +1315,162 @@ fn push_decoder_native<'a>(
 
     let has_alpha = descriptor.has_alpha();
     Ok(OutputInfo::full_decode(w, h, descriptor).with_alpha(has_alpha))
+}
+
+// ── PngStreamingDecoder ──────────────────────────────────────────────
+
+/// Pull-based streaming PNG decoder implementing [`StreamingDecode`](zc::decode::StreamingDecode).
+///
+/// Yields one post-processed row per `next_batch()` call, backed by
+/// [`RowDecoder`](crate::decoder::row::RowDecoder). Only non-interlaced
+/// PNGs are supported; interlaced images are rejected at construction.
+pub struct PngStreamingDecoder<'a> {
+    reader: crate::decoder::row::RowDecoder<'a>,
+    info: ImageInfo,
+    descriptor: PixelDescriptor,
+    /// Post-processed row buffer, reused across calls.
+    row_buf: Vec<u8>,
+    /// Raw row copy buffer (needed to release borrow on reader before
+    /// calling `reader.ancillary()` for post-processing).
+    raw_copy: Vec<u8>,
+    /// Current row index (y coordinate).
+    y: u32,
+    width: u32,
+    height: u32,
+    /// True when the raw format is passthrough (no post-processing needed).
+    is_passthrough: bool,
+}
+
+impl<'a> PngStreamingDecoder<'a> {
+    fn new(
+        data: Cow<'a, [u8]>,
+        config: &PngDecoderConfig,
+        stop: Option<&'a dyn enough::Stop>,
+        limits: Option<&ResourceLimits>,
+        policy: Option<&zc::decode::DecodePolicy>,
+        _preferred: &[PixelDescriptor],
+    ) -> Result<Self, At<PngError>> {
+        // Reject interlaced PNGs — Adam7 requires full-canvas buffering
+        if data.len() >= 29
+            && data[..8] == crate::chunk::PNG_SIGNATURE
+            && data[28] == 1
+        {
+            return Err(PngError::from(zc::UnsupportedOperation::RowLevelDecode).start_at());
+        }
+
+        let cancel: &dyn enough::Stop = stop.unwrap_or(&enough::Unstoppable);
+        cancel.check().map_err(PngError::from)?;
+
+        let effective_limits = limits.unwrap_or(&config.limits);
+        let png_config = PngDecodeConfig {
+            max_pixels: effective_limits.max_pixels,
+            max_memory_bytes: effective_limits.max_memory_bytes,
+            skip_decompression_checksum: true,
+            skip_critical_chunk_crc: true,
+        };
+        let png_config = apply_decode_policy(png_config, policy);
+
+        // RowDecoder requires &'a [u8], but we have Cow<'a, [u8]>.
+        // Cow::Borrowed gives us &'a [u8] directly. Cow::Owned can't
+        // provide a borrow with lifetime 'a, but in practice streaming_decoder
+        // is always called with borrowed data.
+        let data_ref: &'a [u8] = match data {
+            Cow::Borrowed(b) => b,
+            Cow::Owned(_) => {
+                return Err(PngError::InvalidInput(
+                    "streaming decoder requires borrowed data".into(),
+                )
+                .start_at());
+            }
+        };
+
+        let reader = crate::decoder::row::RowDecoder::new(data_ref, &png_config)
+            .map_err(ErrorAtExt::start_at)?;
+        let ihdr = *reader.ihdr();
+        let has_trns = reader.ancillary().trns.is_some();
+
+        let w = ihdr.width;
+        let h = ihdr.height;
+        let descriptor = native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns);
+
+        let probe_info = crate::decode::probe(data_ref).map_err(ErrorAtExt::start_at)?;
+        let info = convert_info(&probe_info);
+
+        let is_passthrough =
+            !has_trns && ihdr.bit_depth == 8 && (ihdr.color_type == 6 || ihdr.color_type == 2);
+
+        let raw_row_bytes = ihdr.raw_row_bytes();
+        let out_row_bytes = w as usize * descriptor.bytes_per_pixel();
+
+        Ok(Self {
+            reader,
+            info,
+            descriptor,
+            row_buf: alloc::vec![0u8; out_row_bytes],
+            raw_copy: alloc::vec![0u8; raw_row_bytes],
+            y: 0,
+            width: w,
+            height: h,
+            is_passthrough,
+        })
+    }
+}
+
+impl zc::decode::StreamingDecode for PngStreamingDecoder<'_> {
+    type Error = At<PngError>;
+
+    fn next_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, At<PngError>> {
+        use crate::decoder::postprocess::post_process_row;
+
+        if self.y >= self.height {
+            return Ok(None);
+        }
+
+        let raw = match self.reader.next_raw_row() {
+            Some(Ok(row)) => row,
+            Some(Err(e)) => return Err(e.start_at()),
+            None => return Ok(None),
+        };
+
+        let y = self.y;
+        self.y += 1;
+
+        if self.is_passthrough {
+            // Raw unfiltered data IS the output — copy into row_buf
+            let copy_len = raw.len().min(self.row_buf.len());
+            self.row_buf[..copy_len].copy_from_slice(&raw[..copy_len]);
+        } else {
+            // Need post-processing: copy raw to release borrow on reader
+            self.raw_copy[..raw.len()].copy_from_slice(raw);
+            let raw_len = self.reader.ihdr().raw_row_bytes();
+
+            // Post-process expands/converts the raw row into row_buf
+            let mut tmp = core::mem::take(&mut self.row_buf);
+            post_process_row(
+                &self.raw_copy[..raw_len],
+                self.reader.ihdr(),
+                self.reader.ancillary(),
+                &mut tmp,
+            );
+            self.row_buf = tmp;
+        }
+
+        let stride = self.width as usize * self.descriptor.bytes_per_pixel();
+        let slice = PixelSlice::new(
+            &self.row_buf[..stride],
+            self.width,
+            1,
+            stride,
+            self.descriptor,
+        )
+        .map_err(|e| PngError::InvalidInput(alloc::format!("pixel slice: {e}")).start_at())?;
+
+        Ok(Some((y, slice)))
+    }
+
+    fn info(&self) -> &ImageInfo {
+        &self.info
+    }
 }
 
 // ── PngFullFrameDecoder ──────────────────────────────────────────────
