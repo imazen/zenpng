@@ -1,0 +1,49 @@
+[package]
+name = "zenpng-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+enough = "0.4"
+
+[dependencies.zenpng]
+path = ".."
+
+[[bin]]
+name = "fuzz_decode"
+path = "fuzz_targets/fuzz_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_probe"
+path = "fuzz_targets/fuzz_probe.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_decode_apng"
+path = "fuzz_targets/fuzz_decode_apng.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_decode_strict"
+path = "fuzz_targets/fuzz_decode_strict.rs"
+test = false
+doc = false
+bench = false
+
+[patch.crates-io]
+zenpixels = { path = "../../zenpixels/zenpixels" }
+zenpixels-convert = { path = "../../zenpixels/zenpixels-convert" }
+zenflate = { path = "../../zenflate" }
+zencodec-types = { path = "../../zencodec-types" }
