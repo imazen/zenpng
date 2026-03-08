@@ -36,6 +36,8 @@ extern crate std;
 mod chunk;
 mod decode;
 mod decoder;
+/// PNG source analysis, compression assessment, and re-encoding recommendations.
+pub mod detect;
 mod encode;
 mod encoder;
 mod error;
