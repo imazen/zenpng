@@ -391,6 +391,17 @@ impl PngProbe {
     }
 }
 
+impl zc::SourceEncodingDetails for PngProbe {
+    fn source_generic_quality(&self) -> Option<f32> {
+        // PNG is lossless — no quality level to report.
+        None
+    }
+
+    fn is_lossless(&self) -> bool {
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
