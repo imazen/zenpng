@@ -1243,7 +1243,11 @@ impl zc::decode::Decode for PngDecoder<'_> {
         } else {
             negotiate_and_convert(result.pixels, &self.preferred)
         };
-        Ok(DecodeOutput::new(pixels, info))
+        let mut output = DecodeOutput::new(pixels, info);
+        if let Ok(probe) = crate::detect::probe(&self.data) {
+            output = output.with_source_encoding_details(probe);
+        }
+        Ok(output)
     }
 }
 
