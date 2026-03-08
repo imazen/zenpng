@@ -489,7 +489,7 @@ pub(crate) fn decode_apng_composed(
 
     // Canvas starts as transparent black
     let mut canvas = vec![0u8; canvas_bytes];
-    let mut frames = Vec::with_capacity(num_frames as usize);
+    let mut frames = Vec::with_capacity((num_frames as usize).min(65536));
 
     // For RestorePrevious: saved frame region (not full canvas)
     let mut saved_region: Option<SavedRegion> = None;
