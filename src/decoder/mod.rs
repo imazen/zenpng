@@ -169,9 +169,9 @@ pub(crate) fn decode_png(
         !has_trns && ihdr.bit_depth == 8 && (ihdr.color_type == 6 || ihdr.color_type == 2); // RGBA8 or RGB8
 
     if is_passthrough {
-        let raw_row_bytes = ihdr.raw_row_bytes();
+        let raw_row_bytes = ihdr.raw_row_bytes()?;
         let total = raw_row_bytes * h;
-        let stride = ihdr.stride(); // raw_row_bytes + 1 (filter byte)
+        let stride = ihdr.stride()?; // raw_row_bytes + 1 (filter byte)
         let bpp = ihdr.filter_bpp();
 
         // Try stored-block fast path: if the zlib stream is entirely stored
@@ -290,7 +290,7 @@ pub(crate) fn decode_png(
 
     let mut all_pixels = Vec::with_capacity(out_row_bytes * h);
     let mut row_buf = Vec::new();
-    let mut raw_copy = vec![0u8; ihdr.raw_row_bytes()];
+    let mut raw_copy = vec![0u8; ihdr.raw_row_bytes()?];
 
     while let Some(result) = reader.next_raw_row() {
         let raw = result?;

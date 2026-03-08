@@ -116,7 +116,7 @@ pub(crate) fn decode_interlaced(
     // The capacity must be at least as large as the widest pass stride,
     // otherwise the fill loop cannot accumulate a full row and spins forever.
     // Pass 7 (x_step=1) gives the widest rows: full image width.
-    let max_pass_stride = ihdr.stride(); // 1 + raw_row_bytes for full width
+    let max_pass_stride = ihdr.stride()?; // 1 + raw_row_bytes for full width
     let capacity = max_pass_stride * 2;
     let source = IdatSource::new(data, first_idat_pos, config.skip_critical_chunk_crc);
     let mut decompressor = zenflate::StreamDecompressor::zlib(source, capacity)
