@@ -34,7 +34,7 @@ fn read_chunk_header(data: &[u8], pos: usize) -> Option<(usize, [u8; 4], usize, 
     let length = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
     let chunk_type: [u8; 4] = data[pos + 4..pos + 8].try_into().unwrap();
     let data_start = pos + 8;
-    let crc_end = data_start + length + 4;
+    let crc_end = data_start.checked_add(length)?.checked_add(4)?;
     if crc_end > data.len() {
         return None;
     }
@@ -482,7 +482,14 @@ pub(crate) fn decode_apng_composed(
     let canvas_h = decoder.ihdr().height as usize;
     let is_16bit = decoder.ihdr().bit_depth == 16;
     let bpp = if is_16bit { 8 } else { 4 }; // RGBA16 vs RGBA8
-    let canvas_bytes = canvas_w * canvas_h * bpp;
+
+    // Validate limits before allocating canvas-sized buffers.
+    config.validate(decoder.ihdr().width, decoder.ihdr().height, bpp as u32)?;
+
+    let canvas_bytes = canvas_w
+        .checked_mul(canvas_h)
+        .and_then(|v| v.checked_mul(bpp))
+        .ok_or_else(|| PngError::LimitExceeded("canvas size overflow".into()))?;
 
     let num_frames = decoder.num_frames;
     let num_plays = decoder.num_plays;

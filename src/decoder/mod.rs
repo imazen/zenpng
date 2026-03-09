@@ -366,8 +366,12 @@ fn try_decode_stored(
         let length = u32::from_be_bytes(file_data[pos..pos + 4].try_into().unwrap()) as usize;
         let chunk_type: [u8; 4] = file_data[pos + 4..pos + 8].try_into().unwrap();
         let data_start = pos + 8;
-        let data_end = data_start + length;
-        let crc_end = data_end + 4;
+        let Some(data_end) = data_start.checked_add(length) else {
+            break;
+        };
+        let Some(crc_end) = data_end.checked_add(4) else {
+            break;
+        };
         if crc_end > file_data.len() {
             break;
         }
@@ -1550,8 +1554,13 @@ mod tests {
                 let length = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
                 let chunk_type: [u8; 4] = data[pos + 4..pos + 8].try_into().unwrap();
                 let data_start = pos + 8;
-                let data_end = data_start + length;
-                if data_end + 4 > data.len() {
+                let Some(data_end) = data_start.checked_add(length) else {
+                    break;
+                };
+                let Some(crc_end) = data_end.checked_add(4) else {
+                    break;
+                };
+                if crc_end > data.len() {
                     break;
                 }
                 if &chunk_type == b"IHDR" {
@@ -1561,7 +1570,7 @@ mod tests {
                 } else if &chunk_type == b"IEND" {
                     break;
                 }
-                pos = data_end + 4;
+                pos = crc_end;
             }
 
             let ihdr = ihdr_data.unwrap();
@@ -1815,16 +1824,22 @@ mod tests {
         while pos + 12 <= data.len() {
             let length = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
             let chunk_type: [u8; 4] = data[pos + 4..pos + 8].try_into().unwrap();
-            let data_end = pos + 8 + length;
-            if data_end + 4 > data.len() {
+            let data_start = pos + 8;
+            let Some(data_end) = data_start.checked_add(length) else {
+                break;
+            };
+            let Some(crc_end) = data_end.checked_add(4) else {
+                break;
+            };
+            if crc_end > data.len() {
                 break;
             }
             if &chunk_type == b"IDAT" {
-                idat_data.extend_from_slice(&data[pos + 8..data_end]);
+                idat_data.extend_from_slice(&data[data_start..data_end]);
             } else if &chunk_type == b"IEND" {
                 break;
             }
-            pos = data_end + 4;
+            pos = crc_end;
         }
         eprintln!("IDAT: {} bytes compressed", idat_data.len());
 
@@ -2025,8 +2040,12 @@ mod tests {
         while pos + 12 <= result.len() {
             let length = u32::from_be_bytes(result[pos..pos + 4].try_into().unwrap()) as usize;
             let chunk_type: [u8; 4] = result[pos + 4..pos + 8].try_into().unwrap();
-            let crc_start = pos + 8 + length;
-            let crc_end = crc_start + 4;
+            let Some(crc_start) = (pos + 8).checked_add(length) else {
+                break;
+            };
+            let Some(crc_end) = crc_start.checked_add(4) else {
+                break;
+            };
             if crc_end > result.len() {
                 break;
             }
@@ -2052,8 +2071,12 @@ mod tests {
             let length = u32::from_be_bytes(result[pos..pos + 4].try_into().unwrap()) as usize;
             let chunk_type: [u8; 4] = result[pos + 4..pos + 8].try_into().unwrap();
             let data_start = pos + 8;
-            let data_end = data_start + length;
-            let crc_end = data_end + 4;
+            let Some(data_end) = data_start.checked_add(length) else {
+                break;
+            };
+            let Some(crc_end) = data_end.checked_add(4) else {
+                break;
+            };
             if crc_end > result.len() {
                 break;
             }
@@ -2070,9 +2093,13 @@ mod tests {
             let length = u32::from_be_bytes(result[pos..pos + 4].try_into().unwrap()) as usize;
             let chunk_type: [u8; 4] = result[pos + 4..pos + 8].try_into().unwrap();
             let data_start = pos + 8;
-            let data_end_chunk = data_start + length;
+            let Some(data_end_chunk) = data_start.checked_add(length) else {
+                break;
+            };
             let crc_start = data_end_chunk;
-            let crc_end = crc_start + 4;
+            let Some(crc_end) = crc_start.checked_add(4) else {
+                break;
+            };
             if crc_end > result.len() {
                 break;
             }
