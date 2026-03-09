@@ -500,8 +500,7 @@ impl<'a> RowDecoder<'a> {
         while pos + 12 <= data.len() {
             let length = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
             let chunk_type: [u8; 4] = data[pos + 4..pos + 8].try_into().unwrap();
-            let Some(crc_end) = (pos + 8).checked_add(length).and_then(|v| v.checked_add(4))
-            else {
+            let Some(crc_end) = (pos + 8).checked_add(length).and_then(|v| v.checked_add(4)) else {
                 return;
             };
             if crc_end > data.len() {
