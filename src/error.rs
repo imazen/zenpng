@@ -64,7 +64,7 @@ mod tests {
     fn error_from_stop_reason() {
         let reason = enough::StopReason::Cancelled;
         let e: PngError = reason.into();
-        matches!(e, PngError::Stopped(_));
+        assert!(matches!(e, PngError::Stopped(_)));
     }
 
     #[test]

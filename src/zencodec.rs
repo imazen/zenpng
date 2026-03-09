@@ -2367,6 +2367,14 @@ impl TrueStreamingState {
         };
         let idat_data_len = 2 + 5 * num_blocks + total_filtered + 4; // zlib header + blocks + adler
 
+        // PNG chunk lengths are u32. Reject images whose stored IDAT exceeds this.
+        if idat_data_len > u32::MAX as usize {
+            return Err(PngError::LimitExceeded(
+                "image too large for single IDAT chunk at effort 0".into(),
+            )
+            .start_at());
+        }
+
         // Build metadata
         let effective_meta = apply_encode_policy(metadata, policy);
         let mut write_meta = PngWriteMetadata::from_metadata(effective_meta.as_ref());

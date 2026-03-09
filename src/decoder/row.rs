@@ -83,8 +83,12 @@ impl<'a> zenflate::InputSource for IdatSource<'a> {
                 .try_into()
                 .unwrap();
             let data_start = self.chunk_pos + 8;
-            let data_end = data_start + length;
-            let crc_end = data_end + 4;
+            let Some(data_end) = data_start.checked_add(length) else {
+                return Err(PngError::Decode("IDAT chunk length overflow".into()));
+            };
+            let Some(crc_end) = data_end.checked_add(4) else {
+                return Err(PngError::Decode("IDAT chunk length overflow".into()));
+            };
 
             if crc_end > self.data.len() {
                 return Err(PngError::Decode("truncated IDAT chunk".into()));
@@ -201,8 +205,12 @@ impl<'a> zenflate::InputSource for FdatSource<'a> {
                 .try_into()
                 .unwrap();
             let data_start = self.chunk_pos + 8;
-            let data_end = data_start + length;
-            let crc_end = data_end + 4;
+            let Some(data_end) = data_start.checked_add(length) else {
+                return Err(PngError::Decode("fdAT chunk length overflow".into()));
+            };
+            let Some(crc_end) = data_end.checked_add(4) else {
+                return Err(PngError::Decode("fdAT chunk length overflow".into()));
+            };
 
             if crc_end > self.data.len() {
                 return Err(PngError::Decode("truncated fdAT chunk".into()));
@@ -492,7 +500,10 @@ impl<'a> RowDecoder<'a> {
         while pos + 12 <= data.len() {
             let length = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
             let chunk_type: [u8; 4] = data[pos + 4..pos + 8].try_into().unwrap();
-            let crc_end = pos + 8 + length + 4;
+            let Some(crc_end) = (pos + 8).checked_add(length).and_then(|v| v.checked_add(4))
+            else {
+                return;
+            };
             if crc_end > data.len() {
                 return;
             }
@@ -507,8 +518,12 @@ impl<'a> RowDecoder<'a> {
             let length = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
             let chunk_type: [u8; 4] = data[pos + 4..pos + 8].try_into().unwrap();
             let data_start = pos + 8;
-            let data_end = data_start + length;
-            let crc_end = data_end + 4;
+            let Some(data_end) = data_start.checked_add(length) else {
+                break;
+            };
+            let Some(crc_end) = data_end.checked_add(4) else {
+                break;
+            };
 
             if crc_end > data.len() {
                 break;

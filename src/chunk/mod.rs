@@ -63,62 +63,77 @@ impl<'a> Iterator for ChunkIter<'a> {
     type Item = Result<ChunkRef<'a>, PngError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.pos >= self.data.len() {
-            return None;
-        }
+        loop {
+            if self.pos >= self.data.len() {
+                return None;
+            }
 
-        // Need at least 12 bytes: length(4) + type(4) + crc(4) (data can be 0)
-        if self.pos + 12 > self.data.len() {
-            return Some(Err(PngError::Decode("truncated chunk header".into())));
-        }
+            // Need at least 12 bytes: length(4) + type(4) + crc(4) (data can be 0)
+            if self.pos + 12 > self.data.len() {
+                return Some(Err(PngError::Decode("truncated chunk header".into())));
+            }
 
-        let length =
-            u32::from_be_bytes(self.data[self.pos..self.pos + 4].try_into().unwrap()) as usize;
-        let chunk_type: [u8; 4] = self.data[self.pos + 4..self.pos + 8].try_into().unwrap();
+            let length = u32::from_be_bytes(
+                self.data[self.pos..self.pos + 4].try_into().unwrap(),
+            ) as usize;
+            let chunk_type: [u8; 4] =
+                self.data[self.pos + 4..self.pos + 8].try_into().unwrap();
 
-        let data_start = self.pos + 8;
-        let data_end = data_start + length;
-        let crc_end = data_end + 4;
-
-        if crc_end > self.data.len() {
-            return Some(Err(PngError::Decode(alloc::format!(
-                "truncated chunk {:?} at offset {}",
-                core::str::from_utf8(&chunk_type).unwrap_or("????"),
-                self.pos
-            ))));
-        }
-
-        let chunk_data = &self.data[data_start..data_end];
-        let stored_crc = u32::from_be_bytes(self.data[data_end..crc_end].try_into().unwrap());
-
-        // CRC covers type + data. Skip computation entirely when skip_critical_crc
-        // is set (saves CRC-32 computation over all chunk data).
-        if self.skip_critical_crc {
-            // Skip CRC computation entirely — no warning emitted.
-        } else {
-            let computed_crc = crc32(crc32(0, &chunk_type), chunk_data);
-            if stored_crc != computed_crc {
-                // PNG spec: bit 5 of the first byte indicates ancillary (lowercase).
-                // Ancillary chunks with bad CRC should be skipped, not fatal.
-                let is_ancillary = chunk_type[0] & 0x20 != 0;
-                if is_ancillary {
-                    self.pos = crc_end;
-                    return self.next(); // skip this chunk, try next
-                }
+            let data_start = self.pos + 8;
+            let Some(data_end) = data_start.checked_add(length) else {
                 return Some(Err(PngError::Decode(alloc::format!(
-                    "CRC mismatch in {:?} chunk at offset {}",
+                    "chunk length overflow at offset {}",
+                    self.pos
+                ))));
+            };
+            let Some(crc_end) = data_end.checked_add(4) else {
+                return Some(Err(PngError::Decode(alloc::format!(
+                    "chunk length overflow at offset {}",
+                    self.pos
+                ))));
+            };
+
+            if crc_end > self.data.len() {
+                return Some(Err(PngError::Decode(alloc::format!(
+                    "truncated chunk {:?} at offset {}",
                     core::str::from_utf8(&chunk_type).unwrap_or("????"),
                     self.pos
                 ))));
             }
+
+            let chunk_data = &self.data[data_start..data_end];
+            let stored_crc =
+                u32::from_be_bytes(self.data[data_end..crc_end].try_into().unwrap());
+
+            // CRC covers type + data. Skip computation entirely when skip_critical_crc
+            // is set (saves CRC-32 computation over all chunk data).
+            if self.skip_critical_crc {
+                // Skip CRC computation entirely — no warning emitted.
+            } else {
+                let computed_crc = crc32(crc32(0, &chunk_type), chunk_data);
+                if stored_crc != computed_crc {
+                    // PNG spec: bit 5 of the first byte indicates ancillary (lowercase).
+                    // Ancillary chunks with bad CRC should be skipped, not fatal.
+                    let is_ancillary = chunk_type[0] & 0x20 != 0;
+                    if is_ancillary {
+                        self.pos = crc_end;
+                        continue; // skip this chunk, try next
+                    }
+                    return Some(Err(PngError::Decode(alloc::format!(
+                        "CRC mismatch in {:?} chunk at offset {}",
+                        core::str::from_utf8(&chunk_type).unwrap_or("????"),
+                        self.pos
+                    ))));
+                }
+            }
+
+            self.pos = crc_end;
+
+            return Some(Ok(ChunkRef {
+                chunk_type,
+                data: chunk_data,
+            }));
         }
-
-        self.pos = crc_end;
-
-        Some(Ok(ChunkRef {
-            chunk_type,
-            data: chunk_data,
-        }))
     }
 }
 
@@ -238,5 +253,24 @@ mod tests {
         assert_eq!(iter.pos(), 8); // after signature
         let _ = iter.next().unwrap().unwrap();
         assert_eq!(iter.pos(), 8 + chunk1.len());
+    }
+
+    #[test]
+    fn many_bad_crc_ancillary_chunks_no_stack_overflow() {
+        // Regression test: previously used recursion to skip bad-CRC ancillary
+        // chunks, which could overflow the stack with enough consecutive bad chunks.
+        let mut chunks = Vec::new();
+        for _ in 0..10_000 {
+            let mut bad_text = make_chunk(b"tEXt", b"x");
+            let len = bad_text.len();
+            bad_text[len - 1] ^= 0xFF; // corrupt CRC
+            chunks.push(bad_text);
+        }
+        chunks.push(make_chunk(b"IEND", &[]));
+        let data = make_png_with_chunks(&chunks);
+        let mut iter = ChunkIter::new(&data);
+        // Should skip all 10,000 bad ancillary chunks and find IEND
+        let chunk = iter.next().unwrap().unwrap();
+        assert_eq!(&chunk.chunk_type, b"IEND");
     }
 }
