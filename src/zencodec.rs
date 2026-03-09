@@ -476,10 +476,13 @@ pub struct PngEncoder<'a> {
 
 /// Streaming mode selection for push_rows/finish.
 enum StreamingMode {
-    /// Buffer all pixel data, encode in finish() (effort > 0).
+    /// Buffer all pixel data, encode in finish() (effort > 1).
     Buffered(BufferedStreamingState),
     /// True streaming: emit stored DEFLATE blocks as rows arrive (effort 0).
     TrueStreaming(TrueStreamingState),
+    /// Pre-filtered streaming: filter rows on arrival, compress in finish() (effort 1).
+    /// Saves ~1× image size vs Buffered by eliminating the raw pixel buffer.
+    PreFiltered(PreFilteredState),
 }
 
 /// Buffered state: accumulates raw pixel bytes, delegates to encode_raw in finish().
@@ -531,6 +534,39 @@ struct TrueStreamingState {
     color_type: crate::encode::ColorType,
     /// PNG bit depth.
     bit_depth: crate::encode::BitDepth,
+}
+
+/// Pre-filtered streaming state: filters rows on arrival, compresses in finish().
+///
+/// At effort 1, the single Paeth filter is applied per-row as data arrives.
+/// The filtered bytes (filter_byte + row_data per row) accumulate in `filtered_data`.
+/// On finish(), the buffer is compressed with Turbo and assembled into a PNG.
+///
+/// Peak memory: ~1× image (filtered data) + compressed output.
+/// vs Buffered: ~2× image (raw pixels + filter pass inside compress_filtered).
+struct PreFilteredState {
+    /// PNG preamble: signature + IHDR + metadata chunks.
+    preamble: Vec<u8>,
+    /// Accumulated pre-filtered row data ([filter_byte, filtered_row...] per row).
+    filtered_data: Vec<u8>,
+    /// Previous row in PNG byte order (for Paeth reference). Zeroed for first row.
+    prev_row: Vec<u8>,
+    /// Scratch buffer for format conversion (row_bytes).
+    convert_buf: Vec<u8>,
+    /// PNG filter type (4 = Paeth).
+    filter_type: u8,
+    /// Bytes per pixel in PNG output format.
+    bpp: usize,
+    /// Bytes per row (width × bpp, no filter byte).
+    row_bytes: usize,
+    /// Rows received so far.
+    rows_pushed: u32,
+    /// PNG color type.
+    color_type: crate::encode::ColorType,
+    /// PNG bit depth.
+    bit_depth: crate::encode::BitDepth,
+    /// Zenflate compression effort for finish().
+    zenflate_effort: u32,
 }
 
 impl<'a> PngEncoder<'a> {
@@ -804,6 +840,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
             let row_bytes = self.canvas_width as usize * channels * depth_bytes;
             let effort = self.config.config.compression.effort();
 
+            let bpp = channels * depth_bytes;
             if effort == 0 && self.canvas_height > 0 {
                 // True streaming: write PNG header and IDAT incrementally.
                 self.streaming = Some(StreamingMode::TrueStreaming(
@@ -813,7 +850,22 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                         color_type,
                         bit_depth,
                         row_bytes,
-                        channels * depth_bytes,
+                        bpp,
+                        self.metadata,
+                        self.policy.as_ref(),
+                        &self.config.config,
+                    )?,
+                ));
+            } else if effort == 1 && self.canvas_height > 0 {
+                // Pre-filtered streaming: filter rows on arrival, compress in finish().
+                self.streaming = Some(StreamingMode::PreFiltered(
+                    PreFilteredState::new(
+                        self.canvas_width,
+                        self.canvas_height,
+                        color_type,
+                        bit_depth,
+                        row_bytes,
+                        bpp,
                         self.metadata,
                         self.policy.as_ref(),
                         &self.config.config,
@@ -972,6 +1024,64 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                     }
                 }
             }
+            StreamingMode::PreFiltered(state) => {
+                // Check for overflow
+                if state.rows_pushed + h > self.canvas_height {
+                    return Err(PngError::InvalidInput(alloc::format!(
+                        "push_rows: would exceed canvas height {} (already pushed {}, pushing {})",
+                        self.canvas_height,
+                        state.rows_pushed,
+                        h
+                    ))
+                    .start_at());
+                }
+
+                for y in 0..h {
+                    let src = rows.row(y);
+                    match format {
+                        PixelFormat::Rgb8 | PixelFormat::Rgba8 | PixelFormat::Gray8 => {
+                            state.push_raw_row(&src[..state.row_bytes]);
+                        }
+                        PixelFormat::Rgb16 | PixelFormat::Rgba16 | PixelFormat::Gray16 => {
+                            let samples: &[u16] =
+                                bytemuck::cast_slice(&src[..state.row_bytes]);
+                            for (i, &val) in samples.iter().enumerate() {
+                                let be = val.to_be_bytes();
+                                state.convert_buf[i * 2] = be[0];
+                                state.convert_buf[i * 2 + 1] = be[1];
+                            }
+                            state.push_converted_row();
+                        }
+                        PixelFormat::RgbF32 | PixelFormat::GrayF32 => {
+                            let floats: &[f32] = bytemuck::cast_slice(src);
+                            linear_to_srgb_u8_slice(floats, &mut state.convert_buf);
+                            state.push_converted_row();
+                        }
+                        PixelFormat::RgbaF32 => {
+                            let floats: &[f32] = bytemuck::cast_slice(src);
+                            linear_to_srgb_u8_rgba_slice(
+                                floats,
+                                &mut state.convert_buf,
+                            );
+                            state.push_converted_row();
+                        }
+                        PixelFormat::Bgra8 => {
+                            for (i, c) in src.chunks_exact(4).enumerate() {
+                                state.convert_buf[i * 4] = c[2];
+                                state.convert_buf[i * 4 + 1] = c[1];
+                                state.convert_buf[i * 4 + 2] = c[0];
+                                state.convert_buf[i * 4 + 3] = c[3];
+                            }
+                            state.push_converted_row();
+                        }
+                        _ => {
+                            return Err(
+                                PngError::from(zc::UnsupportedOperation::PixelFormat).start_at()
+                            );
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -1021,7 +1131,22 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                     );
                 }
                 let data = state.finish();
-                // Post-encode output size check
+                if let Some(ref limits) = self.limits {
+                    limits
+                        .check_output_size(data.len() as u64)
+                        .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+                }
+                Ok(EncodeOutput::new(data, ImageFormat::Png))
+            }
+            StreamingMode::PreFiltered(state) => {
+                if state.rows_pushed == 0 {
+                    return Err(
+                        PngError::InvalidInput("no pixel data pushed".into()).start_at()
+                    );
+                }
+                let cancel: &dyn enough::Stop =
+                    self.stop.unwrap_or(&enough::Unstoppable);
+                let data = state.finish(cancel)?;
                 if let Some(ref limits) = self.limits {
                     limits
                         .check_output_size(data.len() as u64)
@@ -2412,6 +2537,156 @@ impl TrueStreamingState {
         crate::chunk::write::write_chunk(&mut self.output, b"IEND", &[]);
 
         self.output
+    }
+}
+
+impl PreFilteredState {
+    /// Initialize pre-filtered streaming: build PNG preamble, allocate filter buffers.
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        width: u32,
+        height: u32,
+        color_type: crate::encode::ColorType,
+        bit_depth: crate::encode::BitDepth,
+        row_bytes: usize,
+        bpp: usize,
+        metadata: Option<&MetadataView<'_>>,
+        policy: Option<&zc::encode::EncodePolicy>,
+        config: &EncodeConfig,
+    ) -> Result<Self, At<PngError>> {
+        use crate::chunk::{write::write_chunk, PNG_SIGNATURE};
+        use crate::encoder::{metadata_size_estimate, write_all_metadata, PngWriteMetadata};
+
+        let effective_meta = apply_encode_policy(metadata, policy);
+        let mut write_meta = PngWriteMetadata::from_metadata(effective_meta.as_ref());
+        write_meta.source_gamma = config.source_gamma;
+        write_meta.srgb_intent = config.srgb_intent;
+        write_meta.chromaticities = config.chromaticities;
+
+        // Build preamble: PNG signature + IHDR + metadata
+        let est = 8 + 25 + metadata_size_estimate(&write_meta);
+        let mut preamble = Vec::with_capacity(est);
+        preamble.extend_from_slice(&PNG_SIGNATURE);
+
+        let mut ihdr = [0u8; 13];
+        ihdr[0..4].copy_from_slice(&width.to_be_bytes());
+        ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+        ihdr[8] = match bit_depth {
+            crate::encode::BitDepth::Eight => 8,
+            crate::encode::BitDepth::Sixteen => 16,
+        };
+        ihdr[9] = match color_type {
+            crate::encode::ColorType::Grayscale => 0,
+            crate::encode::ColorType::Rgb => 2,
+            crate::encode::ColorType::GrayscaleAlpha => 4,
+            crate::encode::ColorType::Rgba => 6,
+        };
+        write_chunk(&mut preamble, b"IHDR", &ihdr);
+        write_all_metadata(&mut preamble, &write_meta)?;
+
+        let filtered_row = row_bytes + 1;
+        let total_filtered = filtered_row * height as usize;
+
+        Ok(Self {
+            preamble,
+            filtered_data: Vec::with_capacity(total_filtered),
+            prev_row: vec![0u8; row_bytes],
+            convert_buf: vec![0u8; row_bytes],
+            filter_type: 4, // Paeth
+            bpp,
+            row_bytes,
+            rows_pushed: 0,
+            color_type,
+            bit_depth,
+            zenflate_effort: 1, // Turbo
+        })
+    }
+
+    /// Push one row of pixel data (already in PNG byte order). Applies Paeth filter.
+    fn push_raw_row(&mut self, row: &[u8]) {
+        debug_assert_eq!(row.len(), self.row_bytes);
+
+        // Filter byte
+        self.filtered_data.push(self.filter_type);
+
+        // Apply Paeth filter
+        let start = self.filtered_data.len();
+        self.filtered_data.resize(start + self.row_bytes, 0);
+        crate::encoder::filter::apply_filter(
+            self.filter_type,
+            row,
+            &self.prev_row,
+            self.bpp,
+            &mut self.filtered_data[start..],
+        );
+
+        // Save current row as prev
+        self.prev_row.copy_from_slice(row);
+        self.rows_pushed += 1;
+    }
+
+    /// Push one row from `self.convert_buf`. Avoids borrow issues.
+    fn push_converted_row(&mut self) {
+        // Filter byte
+        self.filtered_data.push(self.filter_type);
+
+        // Apply Paeth filter from convert_buf
+        let start = self.filtered_data.len();
+        let row_bytes = self.row_bytes;
+        self.filtered_data.resize(start + row_bytes, 0);
+        crate::encoder::filter::apply_filter(
+            self.filter_type,
+            &self.convert_buf[..row_bytes],
+            &self.prev_row,
+            self.bpp,
+            &mut self.filtered_data[start..],
+        );
+
+        // Save current row as prev
+        self.prev_row
+            .copy_from_slice(&self.convert_buf[..row_bytes]);
+        self.rows_pushed += 1;
+    }
+
+    /// Compress pre-filtered data and assemble the final PNG.
+    ///
+    /// Peak memory during this call: ~2× image (filtered_data + compress_bound).
+    /// After compression, filtered_data is dropped before assembling output.
+    fn finish(self, cancel: &dyn enough::Stop) -> Result<Vec<u8>, At<PngError>> {
+        use crate::chunk::write::write_chunk;
+
+        // Destructure to allow dropping filtered_data independently.
+        let Self {
+            preamble,
+            filtered_data,
+            zenflate_effort,
+            ..
+        } = self;
+
+        // Compress filtered data with zenflate.
+        // Peak: filtered_data (~1×) + compressed_bound (~1×) = ~2× image.
+        let level = zenflate::CompressionLevel::new(zenflate_effort);
+        let mut compressor = zenflate::Compressor::new(level);
+        let bound = zenflate::Compressor::zlib_compress_bound(filtered_data.len());
+        let mut compressed = vec![0u8; bound];
+        let len = compressor
+            .zlib_compress(&filtered_data, &mut compressed, cancel)
+            .map_err(|e| match e {
+                zenflate::CompressionError::Stopped(reason) => PngError::Stopped(reason),
+                other => PngError::InvalidInput(alloc::format!("compression failed: {other}")),
+            })?;
+        compressed.truncate(len);
+
+        // Free the filtered data before building output.
+        drop(filtered_data);
+
+        // Assemble: preamble + IDAT + IEND
+        let mut out = preamble;
+        out.reserve(12 + compressed.len() + 12);
+        write_chunk(&mut out, b"IDAT", &compressed);
+        write_chunk(&mut out, b"IEND", &[]);
+
+        Ok(out)
     }
 }
 
@@ -5935,6 +6210,174 @@ mod tests {
         encoder
             .push_rows(PixelSlice::from(img.as_ref()).erase())
             .unwrap();
+        let output = encoder.finish().unwrap();
+
+        let decoded = crate::decode(
+            output.data(),
+            &crate::PngDecodeConfig::strict(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, w);
+        assert_eq!(decoded.info.height, h);
+    }
+
+    // ── Pre-filtered streaming (effort 1) tests ─────────────────────
+
+    #[test]
+    fn streaming_effort1_rgb8_roundtrip() {
+        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let w = 8u32;
+        let h = 6u32;
+        let pixels: Vec<Rgb<u8>> = (0..w * h)
+            .map(|i| Rgb {
+                r: (i * 7) as u8,
+                g: (i * 13) as u8,
+                b: (i * 19) as u8,
+            })
+            .collect();
+        let img = Img::new(pixels.clone(), w as usize, h as usize);
+
+        let config = PngEncoderConfig::new().with_compression(crate::Compression::Fastest);
+        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        for strip_y in (0..h).step_by(2) {
+            let strip = img.sub_image(0, strip_y as usize, w as usize, 2);
+            encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
+        }
+        let output = encoder.finish().unwrap();
+
+        let decoded = crate::decode(
+            output.data(),
+            &crate::PngDecodeConfig::strict(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, w);
+        assert_eq!(decoded.info.height, h);
+
+        // Pixel-exact match with one-shot
+        let oneshot = config
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(PixelSlice::from(img.as_ref()).erase())
+            .unwrap();
+        let decoded_one = crate::decode(
+            oneshot.data(),
+            &crate::PngDecodeConfig::strict(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(
+            decoded.pixels.copy_to_contiguous_bytes(),
+            decoded_one.pixels.copy_to_contiguous_bytes()
+        );
+    }
+
+    #[test]
+    fn streaming_effort1_matches_oneshot_bytes() {
+        // Pre-filtered streaming at effort 1 should produce byte-identical
+        // output to one-shot encode at effort 1 (both use Paeth + Turbo).
+        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let w = 12u32;
+        let h = 8u32;
+        let pixels: Vec<Rgb<u8>> = (0..w * h)
+            .map(|i| Rgb {
+                r: (i * 3 + 7) as u8,
+                g: (i * 5 + 11) as u8,
+                b: (i * 7 + 13) as u8,
+            })
+            .collect();
+        let img = Img::new(pixels, w as usize, h as usize);
+
+        let config = PngEncoderConfig::new().with_compression(crate::Compression::Fastest);
+
+        let oneshot = config
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(PixelSlice::from(img.as_ref()).erase())
+            .unwrap();
+
+        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        for strip_y in (0..h).step_by(3) {
+            let strip_h = (h - strip_y).min(3);
+            let strip = img.sub_image(0, strip_y as usize, w as usize, strip_h as usize);
+            encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
+        }
+        let streaming = encoder.finish().unwrap();
+
+        // Byte-identical (no auto-opt for RGB)
+        assert_eq!(oneshot.data(), streaming.data());
+    }
+
+    #[test]
+    fn streaming_effort1_smaller_than_effort0() {
+        // Effort 1 (Paeth + Turbo) should compress better than effort 0 (None + Store).
+        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let w = 64u32;
+        let h = 64u32;
+        // Smooth gradient compresses well with Paeth
+        let pixels: Vec<Rgb<u8>> = (0..w * h)
+            .map(|i| {
+                let x = (i % w) as u8;
+                let y = (i / w) as u8;
+                Rgb {
+                    r: x,
+                    g: y,
+                    b: x.wrapping_add(y),
+                }
+            })
+            .collect();
+        let img = Img::new(pixels, w as usize, h as usize);
+
+        let config0 = PngEncoderConfig::new().with_compression(crate::Compression::None);
+        let config1 = PngEncoderConfig::new().with_compression(crate::Compression::Fastest);
+
+        let mut enc0 = config0.job().with_canvas_size(w, h).encoder().unwrap();
+        let mut enc1 = config1.job().with_canvas_size(w, h).encoder().unwrap();
+
+        enc0.push_rows(PixelSlice::from(img.as_ref()).erase())
+            .unwrap();
+        enc1.push_rows(PixelSlice::from(img.as_ref()).erase())
+            .unwrap();
+
+        let out0 = enc0.finish().unwrap();
+        let out1 = enc1.finish().unwrap();
+
+        assert!(
+            out1.data().len() < out0.data().len(),
+            "effort 1 ({}) should be smaller than effort 0 ({})",
+            out1.data().len(),
+            out0.data().len()
+        );
+    }
+
+    #[test]
+    fn streaming_effort1_rgba8_single_row() {
+        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let w = 5u32;
+        let h = 4u32;
+        let pixels: Vec<Rgba<u8>> = (0..w * h)
+            .map(|i| Rgba {
+                r: (i * 5) as u8,
+                g: (i * 11) as u8,
+                b: (i * 17) as u8,
+                a: 200,
+            })
+            .collect();
+        let img = Img::new(pixels, w as usize, h as usize);
+
+        let config = PngEncoderConfig::new().with_compression(crate::Compression::Fastest);
+        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        for y in 0..h {
+            let strip = img.sub_image(0, y as usize, w as usize, 1);
+            encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
+        }
         let output = encoder.finish().unwrap();
 
         let decoded = crate::decode(
