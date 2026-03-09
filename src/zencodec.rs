@@ -2142,6 +2142,9 @@ fn negotiate_and_convert(pixels: PixelBuffer, preferred: &[PixelDescriptor]) -> 
     let target = zc::decode::negotiate_pixel_format(preferred, DECODE_DESCRIPTORS);
 
     // Already in the target format — no conversion needed
+    let Some(target) = target else {
+        return pixels;
+    };
     if native_desc == target {
         return pixels;
     }
