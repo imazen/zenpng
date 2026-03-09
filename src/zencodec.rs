@@ -644,9 +644,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
     }
 
     fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<PngError>> {
-        use linear_srgb::default::{
-            linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice,
-        };
+        use linear_srgb::default::{linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice};
         use zenpixels::PixelFormat;
 
         let w = pixels.width();
@@ -791,9 +789,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
     }
 
     fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), At<PngError>> {
-        use linear_srgb::default::{
-            linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice,
-        };
+        use linear_srgb::default::{linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice};
         use zenpixels::PixelFormat;
 
         let w = rows.width();
@@ -806,9 +802,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
         // Initialize streaming state on first call.
         if self.streaming.is_none() {
             let (color_type, bit_depth) = pixel_format_to_png(rows.descriptor().pixel_format())
-                .ok_or_else(|| {
-                    PngError::from(zc::UnsupportedOperation::PixelFormat).start_at()
-                })?;
+                .ok_or_else(|| PngError::from(zc::UnsupportedOperation::PixelFormat).start_at())?;
 
             // Infer width from first push if not set via with_canvas_size
             if self.canvas_width == 0 {
@@ -831,33 +825,29 @@ impl zc::encode::Encoder for PngEncoder<'_> {
             let bpp = channels * depth_bytes;
             if effort == 0 && self.canvas_height > 0 {
                 // True streaming: write PNG header and IDAT incrementally.
-                self.streaming = Some(StreamingMode::TrueStreaming(
-                    TrueStreamingState::new(
-                        self.canvas_width,
-                        self.canvas_height,
-                        color_type,
-                        bit_depth,
-                        row_bytes,
-                        self.metadata,
-                        self.policy.as_ref(),
-                        &self.config.config,
-                    )?,
-                ));
+                self.streaming = Some(StreamingMode::TrueStreaming(TrueStreamingState::new(
+                    self.canvas_width,
+                    self.canvas_height,
+                    color_type,
+                    bit_depth,
+                    row_bytes,
+                    self.metadata,
+                    self.policy.as_ref(),
+                    &self.config.config,
+                )?));
             } else if effort == 1 && self.canvas_height > 0 {
                 // Pre-filtered streaming: filter rows on arrival, compress in finish().
-                self.streaming = Some(StreamingMode::PreFiltered(
-                    PreFilteredState::new(
-                        self.canvas_width,
-                        self.canvas_height,
-                        color_type,
-                        bit_depth,
-                        row_bytes,
-                        bpp,
-                        self.metadata,
-                        self.policy.as_ref(),
-                        &self.config.config,
-                    )?,
-                ));
+                self.streaming = Some(StreamingMode::PreFiltered(PreFilteredState::new(
+                    self.canvas_width,
+                    self.canvas_height,
+                    color_type,
+                    bit_depth,
+                    row_bytes,
+                    bpp,
+                    self.metadata,
+                    self.policy.as_ref(),
+                    &self.config.config,
+                )?));
             } else {
                 // Buffered: accumulate pixel data, encode in finish().
                 let capacity = if self.canvas_height > 0 {
@@ -911,8 +901,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                             state.pixel_data.extend_from_slice(&src[..state.row_bytes]);
                         }
                         PixelFormat::Rgb16 | PixelFormat::Rgba16 | PixelFormat::Gray16 => {
-                            let samples: &[u16] =
-                                bytemuck::cast_slice(&src[..state.row_bytes]);
+                            let samples: &[u16] = bytemuck::cast_slice(&src[..state.row_bytes]);
                             for &val in samples {
                                 state.pixel_data.extend_from_slice(&val.to_be_bytes());
                             }
@@ -921,19 +910,13 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                             let floats: &[f32] = bytemuck::cast_slice(src);
                             let start = state.pixel_data.len();
                             state.pixel_data.resize(start + floats.len(), 0);
-                            linear_to_srgb_u8_slice(
-                                floats,
-                                &mut state.pixel_data[start..],
-                            );
+                            linear_to_srgb_u8_slice(floats, &mut state.pixel_data[start..]);
                         }
                         PixelFormat::RgbaF32 => {
                             let floats: &[f32] = bytemuck::cast_slice(src);
                             let start = state.pixel_data.len();
                             state.pixel_data.resize(start + floats.len(), 0);
-                            linear_to_srgb_u8_rgba_slice(
-                                floats,
-                                &mut state.pixel_data[start..],
-                            );
+                            linear_to_srgb_u8_rgba_slice(floats, &mut state.pixel_data[start..]);
                         }
                         PixelFormat::Bgra8 => {
                             for c in src.chunks_exact(4) {
@@ -972,8 +955,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                             state.push_raw_row(&src[..state.row_bytes]);
                         }
                         PixelFormat::Rgb16 | PixelFormat::Rgba16 | PixelFormat::Gray16 => {
-                            let samples: &[u16] =
-                                bytemuck::cast_slice(&src[..state.row_bytes]);
+                            let samples: &[u16] = bytemuck::cast_slice(&src[..state.row_bytes]);
                             for (i, &val) in samples.iter().enumerate() {
                                 let be = val.to_be_bytes();
                                 state.convert_buf[i * 2] = be[0];
@@ -988,10 +970,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                         }
                         PixelFormat::RgbaF32 => {
                             let floats: &[f32] = bytemuck::cast_slice(src);
-                            linear_to_srgb_u8_rgba_slice(
-                                floats,
-                                &mut state.convert_buf,
-                            );
+                            linear_to_srgb_u8_rgba_slice(floats, &mut state.convert_buf);
                             state.push_converted_row();
                         }
                         PixelFormat::Bgra8 => {
@@ -1030,8 +1009,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                             state.push_raw_row(&src[..state.row_bytes]);
                         }
                         PixelFormat::Rgb16 | PixelFormat::Rgba16 | PixelFormat::Gray16 => {
-                            let samples: &[u16] =
-                                bytemuck::cast_slice(&src[..state.row_bytes]);
+                            let samples: &[u16] = bytemuck::cast_slice(&src[..state.row_bytes]);
                             for (i, &val) in samples.iter().enumerate() {
                                 let be = val.to_be_bytes();
                                 state.convert_buf[i * 2] = be[0];
@@ -1046,10 +1024,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                         }
                         PixelFormat::RgbaF32 => {
                             let floats: &[f32] = bytemuck::cast_slice(src);
-                            linear_to_srgb_u8_rgba_slice(
-                                floats,
-                                &mut state.convert_buf,
-                            );
+                            linear_to_srgb_u8_rgba_slice(floats, &mut state.convert_buf);
                             state.push_converted_row();
                         }
                         PixelFormat::Bgra8 => {
@@ -1085,9 +1060,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                 let w = self.canvas_width;
 
                 if w == 0 || h == 0 {
-                    return Err(
-                        PngError::InvalidInput("no pixel data pushed".into()).start_at()
-                    );
+                    return Err(PngError::InvalidInput("no pixel data pushed".into()).start_at());
                 }
 
                 // Validate total data size
@@ -1113,9 +1086,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
             }
             StreamingMode::TrueStreaming(state) => {
                 if state.rows_pushed == 0 {
-                    return Err(
-                        PngError::InvalidInput("no pixel data pushed".into()).start_at()
-                    );
+                    return Err(PngError::InvalidInput("no pixel data pushed".into()).start_at());
                 }
                 let data = state.finish();
                 if let Some(ref limits) = self.limits {
@@ -1127,12 +1098,9 @@ impl zc::encode::Encoder for PngEncoder<'_> {
             }
             StreamingMode::PreFiltered(state) => {
                 if state.rows_pushed == 0 {
-                    return Err(
-                        PngError::InvalidInput("no pixel data pushed".into()).start_at()
-                    );
+                    return Err(PngError::InvalidInput("no pixel data pushed".into()).start_at());
                 }
-                let cancel: &dyn enough::Stop =
-                    self.stop.unwrap_or(&enough::Unstoppable);
+                let cancel: &dyn enough::Stop = self.stop.unwrap_or(&enough::Unstoppable);
                 let data = state.finish(cancel)?;
                 if let Some(ref limits) = self.limits {
                     limits
@@ -1233,6 +1201,10 @@ impl PngFullFrameEncoder {
     }
 
     /// Extract RGBA8 bytes from a PixelSlice, converting as needed.
+    ///
+    /// Supports RGBA8, BGRA8, RGB8, and Gray8 inputs. Other formats
+    /// (16-bit, float) are rejected with a clear error listing the
+    /// supported formats.
     fn pixels_to_rgba8(pixels: &PixelSlice<'_>) -> Result<Vec<u8>, PngError> {
         let desc = pixels.descriptor();
         match (desc.channel_type(), desc.layout()) {
@@ -1253,8 +1225,13 @@ impl PngFullFrameEncoder {
                     .flat_map(|c| [c[0], c[1], c[2], 255])
                     .collect())
             }
+            (zenpixels::ChannelType::U8, zenpixels::ChannelLayout::Gray) => {
+                let src = contiguous_bytes(pixels);
+                Ok(src.iter().flat_map(|&g| [g, g, g, 255]).collect())
+            }
             _ => Err(PngError::InvalidInput(alloc::format!(
-                "APNG frame encoder: unsupported pixel format {:?}, need RGBA8",
+                "APNG frame encoder: unsupported pixel format {:?}; \
+                 supported formats are RGBA8, BGRA8, RGB8, and Gray8",
                 desc
             ))),
         }
@@ -1295,13 +1272,16 @@ impl zc::encode::FullFrameEncoder for PngFullFrameEncoder {
         Ok(())
     }
 
-    fn finish(self, _stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, At<PngError>> {
-        self.do_finish().map_err(ErrorAtExt::start_at)
+    fn finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, At<PngError>> {
+        self.do_finish(stop).map_err(ErrorAtExt::start_at)
     }
 }
 
 impl PngFullFrameEncoder {
-    fn do_finish(self) -> Result<EncodeOutput, PngError> {
+    fn do_finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, PngError> {
+        let cancel: &dyn enough::Stop = stop.unwrap_or(&enough::Unstoppable);
+        cancel.check().map_err(PngError::from)?;
+
         if self.frames.is_empty() {
             return Err(PngError::InvalidInput(
                 "APNG frame encoder: no frames pushed".into(),
@@ -1339,7 +1319,7 @@ impl PngFullFrameEncoder {
             self.canvas_height,
             &apng_config,
             metadata_ref,
-            &enough::Unstoppable,
+            cancel,
             &deadline,
         )?;
 
@@ -1554,15 +1534,16 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<PngError>> {
         let info = crate::decode::probe(data)?;
-        let has_alpha = info.has_alpha;
-        let is_16bit = info.bit_depth == 16;
-        let native_format = match (has_alpha, is_16bit) {
-            (true, true) => PixelDescriptor::RGBA16_SRGB,
-            (true, false) => PixelDescriptor::RGBA8_SRGB,
-            (false, true) => PixelDescriptor::RGB16_SRGB,
-            (false, false) => PixelDescriptor::RGB8_SRGB,
-        };
-        Ok(OutputInfo::full_decode(info.width, info.height, native_format).with_alpha(has_alpha))
+        // Derive has_trns: has_alpha is set for color types 4/6 (intrinsic alpha)
+        // or when a tRNS chunk is present. If has_alpha is true but color_type
+        // doesn't have intrinsic alpha, then tRNS must be present.
+        let intrinsic_alpha = info.color_type == 4 || info.color_type == 6;
+        let has_trns = info.has_alpha && !intrinsic_alpha;
+        let native_format = native_output_descriptor(info.color_type, info.bit_depth, has_trns);
+        Ok(
+            OutputInfo::full_decode(info.width, info.height, native_format)
+                .with_alpha(info.has_alpha),
+        )
     }
 
     fn decoder(
@@ -2306,17 +2287,22 @@ fn pixel_format_to_png(
 ) -> Option<(crate::encode::ColorType, crate::encode::BitDepth)> {
     use zenpixels::PixelFormat;
     match format {
-        PixelFormat::Rgb8 => Some((crate::encode::ColorType::Rgb, crate::encode::BitDepth::Eight)),
-        PixelFormat::Rgba8 => {
-            Some((crate::encode::ColorType::Rgba, crate::encode::BitDepth::Eight))
-        }
+        PixelFormat::Rgb8 => Some((
+            crate::encode::ColorType::Rgb,
+            crate::encode::BitDepth::Eight,
+        )),
+        PixelFormat::Rgba8 => Some((
+            crate::encode::ColorType::Rgba,
+            crate::encode::BitDepth::Eight,
+        )),
         PixelFormat::Gray8 => Some((
             crate::encode::ColorType::Grayscale,
             crate::encode::BitDepth::Eight,
         )),
-        PixelFormat::Rgb16 => {
-            Some((crate::encode::ColorType::Rgb, crate::encode::BitDepth::Sixteen))
-        }
+        PixelFormat::Rgb16 => Some((
+            crate::encode::ColorType::Rgb,
+            crate::encode::BitDepth::Sixteen,
+        )),
         PixelFormat::Rgba16 => Some((
             crate::encode::ColorType::Rgba,
             crate::encode::BitDepth::Sixteen,
@@ -2326,17 +2312,22 @@ fn pixel_format_to_png(
             crate::encode::BitDepth::Sixteen,
         )),
         // Float and BGRA are converted to 8-bit on the fly
-        PixelFormat::RgbF32 => Some((crate::encode::ColorType::Rgb, crate::encode::BitDepth::Eight)),
-        PixelFormat::RgbaF32 => {
-            Some((crate::encode::ColorType::Rgba, crate::encode::BitDepth::Eight))
-        }
+        PixelFormat::RgbF32 => Some((
+            crate::encode::ColorType::Rgb,
+            crate::encode::BitDepth::Eight,
+        )),
+        PixelFormat::RgbaF32 => Some((
+            crate::encode::ColorType::Rgba,
+            crate::encode::BitDepth::Eight,
+        )),
         PixelFormat::GrayF32 => Some((
             crate::encode::ColorType::Grayscale,
             crate::encode::BitDepth::Eight,
         )),
-        PixelFormat::Bgra8 => {
-            Some((crate::encode::ColorType::Rgba, crate::encode::BitDepth::Eight))
-        }
+        PixelFormat::Bgra8 => Some((
+            crate::encode::ColorType::Rgba,
+            crate::encode::BitDepth::Eight,
+        )),
         _ => None,
     }
 }
@@ -2355,8 +2346,8 @@ impl TrueStreamingState {
         policy: Option<&zc::encode::EncodePolicy>,
         config: &EncodeConfig,
     ) -> Result<Self, At<PngError>> {
-        use crate::chunk::{write::write_chunk, PNG_SIGNATURE};
-        use crate::encoder::{metadata_size_estimate, write_all_metadata, PngWriteMetadata};
+        use crate::chunk::{PNG_SIGNATURE, write::write_chunk};
+        use crate::encoder::{PngWriteMetadata, metadata_size_estimate, write_all_metadata};
 
         let filtered_row = row_bytes + 1; // filter byte + row data
         let total_filtered = filtered_row * height as usize;
@@ -2382,8 +2373,7 @@ impl TrueStreamingState {
         write_meta.srgb_intent = config.srgb_intent;
         write_meta.chromaticities = config.chromaticities;
 
-        let est =
-            8 + 25 + (12 + idat_data_len) + 12 + metadata_size_estimate(&write_meta);
+        let est = 8 + 25 + (12 + idat_data_len) + 12 + metadata_size_estimate(&write_meta);
         let mut output = Vec::with_capacity(est);
 
         // PNG signature
@@ -2542,8 +2532,8 @@ impl PreFilteredState {
         policy: Option<&zc::encode::EncodePolicy>,
         config: &EncodeConfig,
     ) -> Result<Self, At<PngError>> {
-        use crate::chunk::{write::write_chunk, PNG_SIGNATURE};
-        use crate::encoder::{metadata_size_estimate, write_all_metadata, PngWriteMetadata};
+        use crate::chunk::{PNG_SIGNATURE, write::write_chunk};
+        use crate::encoder::{PngWriteMetadata, metadata_size_estimate, write_all_metadata};
 
         let effective_meta = apply_encode_policy(metadata, policy);
         let mut write_meta = PngWriteMetadata::from_metadata(effective_meta.as_ref());
@@ -6376,5 +6366,232 @@ mod tests {
         .unwrap();
         assert_eq!(decoded.info.width, w);
         assert_eq!(decoded.info.height, h);
+    }
+
+    // ── Fix verification tests ──
+
+    #[test]
+    fn output_info_returns_gray8_for_grayscale_png() {
+        // Encode a grayscale image
+        let pixels: Vec<Gray<u8>> = vec![Gray(128); 16];
+        let img = Img::new(pixels, 4, 4);
+        let enc = PngEncoderConfig::new();
+        let output = enc.encode_gray8(img.as_ref()).unwrap();
+
+        // output_info() should report GRAY8_SRGB, not RGB8_SRGB
+        let dec = PngDecoderConfig::new();
+        let info = dec.job().output_info(output.data()).unwrap();
+        assert_eq!(info.width, 4);
+        assert_eq!(info.height, 4);
+        assert_eq!(
+            info.native_format,
+            PixelDescriptor::GRAY8_SRGB,
+            "grayscale PNG should report GRAY8_SRGB, not {:?}",
+            info.native_format
+        );
+    }
+
+    #[test]
+    fn output_info_returns_gray16_for_grayscale16_png() {
+        // Encode a 16-bit grayscale image.
+        // Use a value with non-zero low byte (32769 = 0x8001) to prevent
+        // the optimizer from reducing it to 8-bit.
+        let pixels: Vec<Gray<u16>> = vec![Gray(32769); 16];
+        let img = Img::new(pixels, 4, 4);
+        let enc = PngEncoderConfig::new();
+        let output = enc.encode_gray16(img.as_ref()).unwrap();
+
+        let dec = PngDecoderConfig::new();
+        let info = dec.job().output_info(output.data()).unwrap();
+        assert_eq!(
+            info.native_format,
+            PixelDescriptor::GRAY16_SRGB,
+            "16-bit grayscale PNG should report GRAY16_SRGB, not {:?}",
+            info.native_format
+        );
+    }
+
+    #[test]
+    fn output_info_returns_rgb8_for_rgb_png() {
+        // Encode an RGB image
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 100,
+                g: 150,
+                b: 200,
+            };
+            16
+        ];
+        let img = Img::new(pixels, 4, 4);
+        let enc = PngEncoderConfig::new();
+        let output = enc.encode_rgb8(img.as_ref()).unwrap();
+
+        let dec = PngDecoderConfig::new();
+        let info = dec.job().output_info(output.data()).unwrap();
+        assert_eq!(
+            info.native_format,
+            PixelDescriptor::RGB8_SRGB,
+            "RGB PNG should report RGB8_SRGB, not {:?}",
+            info.native_format
+        );
+    }
+
+    #[test]
+    fn output_info_returns_rgba8_for_rgba_png() {
+        let pixels: Vec<Rgba<u8>> = vec![
+            Rgba {
+                r: 100,
+                g: 150,
+                b: 200,
+                a: 128,
+            };
+            16
+        ];
+        let img = Img::new(pixels, 4, 4);
+        let enc = PngEncoderConfig::new();
+        let output = enc.encode_rgba8(img.as_ref()).unwrap();
+
+        let dec = PngDecoderConfig::new();
+        let info = dec.job().output_info(output.data()).unwrap();
+        assert_eq!(
+            info.native_format,
+            PixelDescriptor::RGBA8_SRGB,
+            "RGBA PNG should report RGBA8_SRGB, not {:?}",
+            info.native_format
+        );
+    }
+
+    #[test]
+    fn apng_finish_respects_stop_token() {
+        use enough::{Stop, StopReason};
+        use zc::encode::FullFrameEncoder;
+
+        /// A Stop that always says "stop now".
+        struct AlreadyCancelled;
+        impl Stop for AlreadyCancelled {
+            fn check(&self) -> Result<(), StopReason> {
+                Err(StopReason::Cancelled)
+            }
+        }
+
+        let config = PngEncoderConfig::new();
+        let job = config.job().with_canvas_size(4, 4).with_loop_count(Some(0));
+        let mut enc = job.full_frame_encoder().unwrap();
+
+        // Push one frame
+        let pixels: Vec<Rgba<u8>> = vec![
+            Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            };
+            16
+        ];
+        let img = imgref::ImgVec::new(pixels, 4, 4);
+        enc.push_frame(PixelSlice::from(img.as_ref()).erase(), 100, None)
+            .unwrap();
+
+        // finish() with a cancelled stop token should fail
+        let result = enc.finish(Some(&AlreadyCancelled));
+        assert!(result.is_err(), "finish with cancelled stop should fail");
+        match result.unwrap_err().into_inner() {
+            PngError::Stopped(reason) => {
+                assert_eq!(reason, StopReason::Cancelled);
+            }
+            other => panic!("expected PngError::Stopped, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn apng_finish_succeeds_without_stop_token() {
+        use zc::encode::FullFrameEncoder;
+
+        let config = PngEncoderConfig::new();
+        let job = config.job().with_canvas_size(4, 4).with_loop_count(Some(0));
+        let mut enc = job.full_frame_encoder().unwrap();
+
+        let pixels: Vec<Rgba<u8>> = vec![
+            Rgba {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            };
+            16
+        ];
+        let img = imgref::ImgVec::new(pixels, 4, 4);
+        enc.push_frame(PixelSlice::from(img.as_ref()).erase(), 100, None)
+            .unwrap();
+
+        // finish() without stop token should succeed
+        let result = enc.finish(None);
+        assert!(
+            result.is_ok(),
+            "finish without stop should succeed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn apng_pixels_to_rgba8_rejects_unsupported_format() {
+        use zc::encode::FullFrameEncoder;
+
+        let config = PngEncoderConfig::new();
+        let job = config.job().with_canvas_size(4, 4).with_loop_count(Some(0));
+        let mut enc = job.full_frame_encoder().unwrap();
+
+        // Try pushing a 16-bit frame, which is not supported by the APNG encoder
+        let pixels: Vec<Rgba<u16>> = vec![
+            Rgba {
+                r: 1000,
+                g: 2000,
+                b: 3000,
+                a: 65535,
+            };
+            16
+        ];
+        let img = imgref::ImgVec::new(pixels, 4, 4);
+        let result = enc.push_frame(PixelSlice::from(img.as_ref()).erase(), 100, None);
+        assert!(result.is_err(), "16-bit RGBA should be rejected");
+        let msg = alloc::format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("unsupported pixel format"),
+            "error should mention unsupported pixel format, got: {msg}"
+        );
+        assert!(
+            msg.contains("RGBA8") || msg.contains("supported formats"),
+            "error should list supported formats, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn apng_pixels_to_rgba8_handles_gray8() {
+        use zc::encode::FullFrameEncoder;
+
+        let config = PngEncoderConfig::new();
+        let job = config.job().with_canvas_size(4, 4).with_loop_count(Some(0));
+        let mut enc = job.full_frame_encoder().unwrap();
+
+        // Push a Gray8 frame — should be accepted and converted to RGBA8
+        let pixels: Vec<Gray<u8>> = vec![Gray(128); 16];
+        let img = imgref::ImgVec::new(pixels, 4, 4);
+        enc.push_frame(PixelSlice::from(img.as_ref()).erase(), 100, None)
+            .unwrap();
+
+        // Finish and verify it produces valid output
+        let output = enc.finish(None).unwrap();
+        assert!(!output.data().is_empty());
+        assert_eq!(output.format(), ImageFormat::Png);
+
+        // Verify round-trip: decode and check pixel values
+        let decoded = crate::decode::decode(
+            output.data(),
+            &PngDecodeConfig::none(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(decoded.info.width, 4);
+        assert_eq!(decoded.info.height, 4);
     }
 }

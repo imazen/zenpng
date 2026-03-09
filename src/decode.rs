@@ -50,6 +50,8 @@ pub struct PngInfo {
     pub frame_count: u32,
     /// Source bit depth per channel (before any transformations).
     pub bit_depth: u8,
+    /// PNG color type from IHDR (0=Grayscale, 2=RGB, 3=Indexed, 4=GrayAlpha, 6=RGBA).
+    pub color_type: u8,
     /// Embedded ICC color profile.
     pub icc_profile: Option<Vec<u8>>,
     /// Embedded EXIF metadata.

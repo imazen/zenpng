@@ -73,11 +73,9 @@ impl<'a> Iterator for ChunkIter<'a> {
                 return Some(Err(PngError::Decode("truncated chunk header".into())));
             }
 
-            let length = u32::from_be_bytes(
-                self.data[self.pos..self.pos + 4].try_into().unwrap(),
-            ) as usize;
-            let chunk_type: [u8; 4] =
-                self.data[self.pos + 4..self.pos + 8].try_into().unwrap();
+            let length =
+                u32::from_be_bytes(self.data[self.pos..self.pos + 4].try_into().unwrap()) as usize;
+            let chunk_type: [u8; 4] = self.data[self.pos + 4..self.pos + 8].try_into().unwrap();
 
             let data_start = self.pos + 8;
             let Some(data_end) = data_start.checked_add(length) else {
@@ -102,8 +100,7 @@ impl<'a> Iterator for ChunkIter<'a> {
             }
 
             let chunk_data = &self.data[data_start..data_end];
-            let stored_crc =
-                u32::from_be_bytes(self.data[data_end..crc_end].try_into().unwrap());
+            let stored_crc = u32::from_be_bytes(self.data[data_end..crc_end].try_into().unwrap());
 
             // CRC covers type + data. Skip computation entirely when skip_critical_crc
             // is set (saves CRC-32 computation over all chunk data).

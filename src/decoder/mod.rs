@@ -86,6 +86,7 @@ pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &PngAncillary) -> PngInfo {
         has_animation,
         frame_count,
         bit_depth: ihdr.bit_depth,
+        color_type: ihdr.color_type,
         icc_profile: ancillary.icc_profile.clone(),
         exif: ancillary.exif.clone(),
         xmp: ancillary.xmp.clone(),
@@ -1068,6 +1069,13 @@ mod tests {
             }
         };
 
+        let src_color_type = match reader.info().color_type {
+            png::ColorType::Grayscale => 0,
+            png::ColorType::Rgb => 2,
+            png::ColorType::Indexed => 3,
+            png::ColorType::GrayscaleAlpha => 4,
+            png::ColorType::Rgba => 6,
+        };
         let info = PngInfo {
             width: w as u32,
             height: h as u32,
@@ -1075,6 +1083,7 @@ mod tests {
             has_animation: false,
             frame_count: 1,
             bit_depth: src_bit_depth,
+            color_type: src_color_type,
             icc_profile: None,
             exif: None,
             xmp: None,
