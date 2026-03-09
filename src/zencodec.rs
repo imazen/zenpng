@@ -507,15 +507,9 @@ struct BufferedStreamingState {
 struct TrueStreamingState {
     /// Growing PNG output (signature + IHDR + metadata already written).
     output: Vec<u8>,
-    /// Previous row in PNG byte order (for filter reference). Zeroed for first row.
-    prev_row: Vec<u8>,
-    /// Scratch buffer for the filtered row (filter_byte + row_bytes).
-    filter_buf: Vec<u8>,
     /// Scratch buffer for format conversion (row_bytes). Only allocated for
     /// formats that need conversion (float, 16-bit, BGRA); empty otherwise.
     convert_buf: Vec<u8>,
-    /// Bytes per pixel in PNG output format.
-    bpp: usize,
     /// Bytes per row (width × bpp, no filter byte).
     row_bytes: usize,
     /// Rows received so far.
@@ -528,12 +522,6 @@ struct TrueStreamingState {
     block_remaining: usize,
     /// Remaining filtered bytes in the entire image.
     filtered_remaining: usize,
-    /// Total filtered bytes (for final block detection).
-    total_filtered: usize,
-    /// PNG color type.
-    color_type: crate::encode::ColorType,
-    /// PNG bit depth.
-    bit_depth: crate::encode::BitDepth,
 }
 
 /// Pre-filtered streaming state: filters rows on arrival, compresses in finish().
@@ -850,7 +838,6 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                         color_type,
                         bit_depth,
                         row_bytes,
-                        bpp,
                         self.metadata,
                         self.policy.as_ref(),
                         &self.config.config,
@@ -2364,7 +2351,6 @@ impl TrueStreamingState {
         color_type: crate::encode::ColorType,
         bit_depth: crate::encode::BitDepth,
         row_bytes: usize,
-        bpp: usize,
         metadata: Option<&MetadataView<'_>>,
         policy: Option<&zc::encode::EncodePolicy>,
         config: &EncodeConfig,
@@ -2424,19 +2410,13 @@ impl TrueStreamingState {
 
         Ok(Self {
             output,
-            prev_row: vec![0u8; row_bytes],
-            filter_buf: vec![0u8; filtered_row],
             convert_buf: vec![0u8; row_bytes],
-            bpp,
             row_bytes,
             rows_pushed: 0,
             adler: 1,
             idat_len_pos,
             block_remaining: 0,
             filtered_remaining: total_filtered,
-            total_filtered,
-            color_type,
-            bit_depth,
         })
     }
 
