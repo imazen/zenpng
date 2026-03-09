@@ -14,6 +14,8 @@ use enough::Stop;
 
 use crate::encode::{self, EncodeConfig};
 use crate::encoder::PngWriteMetadata;
+use whereat::at;
+
 use crate::error::PngError;
 use crate::quantize::{QuantizeOutput, Quantizer};
 
@@ -165,7 +167,7 @@ pub fn encode_indexed(
     metadata: Option<&MetadataView<'_>>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let width = img.width() as u32;
     let height = img.height() as u32;
     let (buf, w, h) = img.to_contiguous_buf();
@@ -208,7 +210,7 @@ pub fn encode_auto(
     metadata: Option<&MetadataView<'_>>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<AutoEncodeResult, PngError> {
+) -> crate::error::Result<AutoEncodeResult> {
     let (buf, w, _h) = img.to_contiguous_buf();
     let width = img.width() as u32;
     let height = img.height() as u32;
@@ -289,7 +291,7 @@ fn encode_from_quantize_output(
     metadata: Option<&MetadataView<'_>>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let sp = split_palette(&result.palette_rgba);
     let alpha = if sp.has_transparency {
         Some(sp.alpha.as_slice())
@@ -305,7 +307,7 @@ fn encode_from_quantize_output(
     let effort = encode_config.compression.effort();
     let opts = encode_config.compress_options(cancel, deadline, None);
 
-    crate::encoder::write_indexed_png(
+    Ok(crate::encoder::write_indexed_png(
         &result.indices,
         width,
         height,
@@ -314,7 +316,7 @@ fn encode_from_quantize_output(
         &write_meta,
         effort,
         opts,
-    )
+    )?)
 }
 
 /// Internal: encode result from an exact palette (≤256 unique colors, zero loss).
@@ -328,7 +330,7 @@ fn encode_exact_palette_result(
     metadata: Option<&MetadataView<'_>>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<AutoEncodeResult, PngError> {
+) -> crate::error::Result<AutoEncodeResult> {
     let sp = split_palette(&exact.palette_rgba);
     let alpha = if sp.has_transparency {
         Some(sp.alpha.as_slice())
@@ -392,7 +394,7 @@ pub struct ApngEncodeParams<'a> {
 /// Builds a shared palette via [`Quantizer::quantize_multi_frame`]. Zenquant
 /// provides temporal consistency (identical pixels across frames get the same
 /// index); other backends use concatenated quantization.
-pub fn encode_apng_indexed(params: &ApngEncodeParams<'_>) -> Result<Vec<u8>, PngError> {
+pub fn encode_apng_indexed(params: &ApngEncodeParams<'_>) -> crate::error::Result<Vec<u8>> {
     let frames = params.frames;
     let w = params.canvas_width as usize;
     let h = params.canvas_height as usize;
@@ -456,7 +458,7 @@ pub fn encode_apng_indexed(params: &ApngEncodeParams<'_>) -> Result<Vec<u8>, Png
 pub fn encode_apng_auto(
     params: &ApngEncodeParams<'_>,
     gate: QualityGate,
-) -> Result<AutoEncodeResult, PngError> {
+) -> crate::error::Result<AutoEncodeResult> {
     let frames = params.frames;
     let w = params.canvas_width as usize;
     let h = params.canvas_height as usize;
@@ -525,7 +527,7 @@ pub fn encode_apng_auto(
     let mut worst_ba: Option<f32> = None;
 
     for (i, indices) in mf.frame_indices.iter().enumerate() {
-        cancel.check()?;
+        cancel.check().map_err(PngError::from)?;
 
         let frame_pixels: &[Rgba<u8>] = bytemuck::cast_slice(&frames[i].pixels[..expected_len]);
         let frame_loss = compute_mean_delta_e(frame_pixels, &mf.palette_rgba, indices);
@@ -599,19 +601,19 @@ fn validate_apng_frames(
     frames: &[crate::encode::ApngFrameInput<'_>],
     w: usize,
     h: usize,
-) -> Result<(), PngError> {
+) -> crate::error::Result<()> {
     if frames.is_empty() {
-        return Err(PngError::InvalidInput(
+        return Err(at!(PngError::InvalidInput(
             "APNG requires at least one frame".into(),
-        ));
+        )));
     }
     let expected_len = w * h * 4;
     for (i, frame) in frames.iter().enumerate() {
         if frame.pixels.len() < expected_len {
-            return Err(PngError::InvalidInput(alloc::format!(
+            return Err(at!(PngError::InvalidInput(alloc::format!(
                 "frame {i}: pixel buffer too small: need {expected_len}, got {}",
                 frame.pixels.len()
-            )));
+            ))));
         }
     }
     Ok(())
@@ -629,14 +631,14 @@ fn encode_apng_from_palette(
     metadata: Option<&MetadataView<'_>>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let effort = config.encode.compression.effort();
     let mut write_meta = crate::encoder::PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = config.encode.source_gamma;
     write_meta.srgb_intent = config.encode.srgb_intent;
     write_meta.chromaticities = config.encode.chromaticities;
 
-    crate::encoder::apng::encode_apng_indexed_from_indices(
+    Ok(crate::encoder::apng::encode_apng_indexed_from_indices(
         frames,
         palette_rgba,
         all_indices,
@@ -647,7 +649,7 @@ fn encode_apng_from_palette(
         effort,
         cancel,
         deadline,
-    )
+    )?)
 }
 
 /// Convert sRGB u8 to OKLab [L, a, b].

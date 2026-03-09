@@ -20,7 +20,7 @@
 //! // Encode
 //! let pixels = ImgVec::new(vec![Rgb { r: 0u8, g: 0, b: 0 }; 64], 8, 8);
 //! let encoded = encode_rgb8(pixels.as_ref(), None, &EncodeConfig::default(), &Unstoppable, &Unstoppable)?;
-//! # Ok::<(), zenpng::PngError>(())
+//! # Ok::<(), whereat::At<zenpng::PngError>>(())
 //! ```
 //!
 //! # zencodec-types traits
@@ -32,6 +32,8 @@
 
 extern crate alloc;
 extern crate std;
+
+whereat::define_at_crate_info!();
 
 mod chunk;
 mod decode;

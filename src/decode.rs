@@ -257,8 +257,8 @@ impl Default for PngDecodeConfig {
 pub type PngLimits = PngDecodeConfig;
 
 /// Probe PNG metadata without decoding pixels.
-pub fn probe(data: &[u8]) -> Result<PngInfo, PngError> {
-    crate::decoder::probe_png(data)
+pub fn probe(data: &[u8]) -> crate::error::Result<PngInfo> {
+    Ok(crate::decoder::probe_png(data)?)
 }
 
 /// Decode PNG to pixels.
@@ -272,8 +272,8 @@ pub fn decode(
     data: &[u8],
     config: &PngDecodeConfig,
     cancel: &dyn Stop,
-) -> Result<PngDecodeOutput, PngError> {
-    crate::decoder::decode_png(data, config, cancel)
+) -> crate::error::Result<PngDecodeOutput> {
+    Ok(crate::decoder::decode_png(data, config, cancel)?)
 }
 
 // ── APNG decode ──────────────────────────────────────────────────────
@@ -323,7 +323,7 @@ pub fn decode_apng(
     data: &[u8],
     config: &PngDecodeConfig,
     cancel: &dyn Stop,
-) -> Result<ApngDecodeOutput, PngError> {
+) -> crate::error::Result<ApngDecodeOutput> {
     // Check if this is actually an APNG
     let probe_info = crate::decoder::probe_png(data)?;
     if !probe_info.has_animation {
@@ -452,7 +452,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(err, PngError::LimitExceeded(_)),
+            matches!(err.error(), PngError::LimitExceeded(_)),
             "expected LimitExceeded, got: {err:?}"
         );
     }
@@ -464,7 +464,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            !matches!(err, PngError::LimitExceeded(_)),
+            !matches!(err.error(), PngError::LimitExceeded(_)),
             "expected non-limits error, got: {err:?}"
         );
     }
@@ -475,7 +475,10 @@ mod tests {
         let config = PngDecodeConfig::none().with_max_pixels(5_000);
         let result = decode(&png, &config, &enough::Unstoppable);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), PngError::LimitExceeded(_)));
+        assert!(matches!(
+            result.unwrap_err().error(),
+            PngError::LimitExceeded(_)
+        ));
     }
 
     #[test]
@@ -484,7 +487,10 @@ mod tests {
         let config = PngDecodeConfig::none().with_max_memory(20_000);
         let result = decode(&png, &config, &enough::Unstoppable);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), PngError::LimitExceeded(_)));
+        assert!(matches!(
+            result.unwrap_err().error(),
+            PngError::LimitExceeded(_)
+        ));
     }
 
     #[test]

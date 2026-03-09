@@ -70,7 +70,11 @@ fn main() {
     };
 
     let raw_size = img.width() * img.height() * 4;
-    eprintln!("Raw: {} bytes ({:.1} MiB)", raw_size, raw_size as f64 / 1048576.0);
+    eprintln!(
+        "Raw: {} bytes ({:.1} MiB)",
+        raw_size,
+        raw_size as f64 / 1048576.0
+    );
 
     match mode {
         "stream0" => {
