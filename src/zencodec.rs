@@ -9,7 +9,7 @@ extern crate std;
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
-use whereat::{At, ErrorAtExt};
+use whereat::{At, at};
 use zc::decode::{DecodeCapabilities, DecodeOutput, FullFrame, OutputInfo};
 use zc::encode::{EncodeCapabilities, EncodeOutput};
 use zc::{ImageFormat, ImageInfo, MetadataView, ResourceLimits};
@@ -636,7 +636,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
     type Error = At<PngError>;
 
     fn reject(op: zc::UnsupportedOperation) -> At<PngError> {
-        PngError::from(op).start_at()
+        at!(PngError::from(op))
     }
 
     fn preferred_strip_height(&self) -> u32 {
@@ -784,7 +784,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                     .collect();
                 self.do_encode(&rgba, w, h, crate::encode::ColorType::Rgba)
             }
-            _ => Err(PngError::from(zc::UnsupportedOperation::PixelFormat).start_at()),
+            _ => Err(at!(PngError::from(zc::UnsupportedOperation::PixelFormat))),
         }
     }
 
@@ -802,7 +802,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
         // Initialize streaming state on first call.
         if self.streaming.is_none() {
             let (color_type, bit_depth) = pixel_format_to_png(rows.descriptor().pixel_format())
-                .ok_or_else(|| PngError::from(zc::UnsupportedOperation::PixelFormat).start_at())?;
+                .ok_or_else(|| at!(PngError::from(zc::UnsupportedOperation::PixelFormat)))?;
 
             // Infer width from first push if not set via with_canvas_size
             if self.canvas_width == 0 {
@@ -867,12 +867,11 @@ impl zc::encode::Encoder for PngEncoder<'_> {
 
         // Width must be consistent across calls.
         if w != self.canvas_width && self.canvas_width > 0 {
-            return Err(PngError::InvalidInput(alloc::format!(
+            return Err(at!(PngError::InvalidInput(alloc::format!(
                 "push_rows: width {} does not match canvas width {}",
                 w,
                 self.canvas_width
-            ))
-            .start_at());
+            ))));
         }
 
         let format = rows.descriptor().pixel_format();
@@ -882,13 +881,12 @@ impl zc::encode::Encoder for PngEncoder<'_> {
             StreamingMode::Buffered(state) => {
                 // Check for overflow
                 if self.canvas_height > 0 && state.rows_pushed + h > self.canvas_height {
-                    return Err(PngError::InvalidInput(alloc::format!(
+                    return Err(at!(PngError::InvalidInput(alloc::format!(
                         "push_rows: would exceed canvas height {} (already pushed {}, pushing {})",
                         self.canvas_height,
                         state.rows_pushed,
                         h
-                    ))
-                    .start_at());
+                    ))));
                 }
 
                 // Reserve all needed capacity in one shot — no per-row reallocs.
@@ -926,9 +924,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                             }
                         }
                         _ => {
-                            return Err(
-                                PngError::from(zc::UnsupportedOperation::PixelFormat).start_at()
-                            );
+                            return Err(at!(PngError::from(zc::UnsupportedOperation::PixelFormat)));
                         }
                     }
                 }
@@ -937,13 +933,12 @@ impl zc::encode::Encoder for PngEncoder<'_> {
             StreamingMode::TrueStreaming(state) => {
                 // Check for overflow
                 if state.rows_pushed + h > self.canvas_height {
-                    return Err(PngError::InvalidInput(alloc::format!(
+                    return Err(at!(PngError::InvalidInput(alloc::format!(
                         "push_rows: would exceed canvas height {} (already pushed {}, pushing {})",
                         self.canvas_height,
                         state.rows_pushed,
                         h
-                    ))
-                    .start_at());
+                    ))));
                 }
 
                 for y in 0..h {
@@ -983,9 +978,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                             state.push_converted_row();
                         }
                         _ => {
-                            return Err(
-                                PngError::from(zc::UnsupportedOperation::PixelFormat).start_at()
-                            );
+                            return Err(at!(PngError::from(zc::UnsupportedOperation::PixelFormat)));
                         }
                     }
                 }
@@ -993,13 +986,12 @@ impl zc::encode::Encoder for PngEncoder<'_> {
             StreamingMode::PreFiltered(state) => {
                 // Check for overflow
                 if state.rows_pushed + h > self.canvas_height {
-                    return Err(PngError::InvalidInput(alloc::format!(
+                    return Err(at!(PngError::InvalidInput(alloc::format!(
                         "push_rows: would exceed canvas height {} (already pushed {}, pushing {})",
                         self.canvas_height,
                         state.rows_pushed,
                         h
-                    ))
-                    .start_at());
+                    ))));
                 }
 
                 for y in 0..h {
@@ -1037,9 +1029,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                             state.push_converted_row();
                         }
                         _ => {
-                            return Err(
-                                PngError::from(zc::UnsupportedOperation::PixelFormat).start_at()
-                            );
+                            return Err(at!(PngError::from(zc::UnsupportedOperation::PixelFormat)));
                         }
                     }
                 }
@@ -1050,8 +1040,9 @@ impl zc::encode::Encoder for PngEncoder<'_> {
 
     fn finish(mut self) -> Result<EncodeOutput, At<PngError>> {
         let mode = self.streaming.take().ok_or_else(|| {
-            PngError::InvalidInput("finish() called without any push_rows() calls".into())
-                .start_at()
+            at!(PngError::InvalidInput(
+                "finish() called without any push_rows() calls".into()
+            ))
         })?;
 
         match mode {
@@ -1060,20 +1051,19 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                 let w = self.canvas_width;
 
                 if w == 0 || h == 0 {
-                    return Err(PngError::InvalidInput("no pixel data pushed".into()).start_at());
+                    return Err(at!(PngError::InvalidInput("no pixel data pushed".into())));
                 }
 
                 // Validate total data size
                 let expected = state.row_bytes * h as usize;
                 if state.pixel_data.len() != expected {
-                    return Err(PngError::InvalidInput(alloc::format!(
+                    return Err(at!(PngError::InvalidInput(alloc::format!(
                         "finish: pixel data size {} does not match expected {} ({}×{} rows)",
                         state.pixel_data.len(),
                         expected,
                         state.row_bytes,
                         h
-                    ))
-                    .start_at());
+                    ))));
                 }
 
                 self.do_encode_with_depth(
@@ -1086,7 +1076,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
             }
             StreamingMode::TrueStreaming(state) => {
                 if state.rows_pushed == 0 {
-                    return Err(PngError::InvalidInput("no pixel data pushed".into()).start_at());
+                    return Err(at!(PngError::InvalidInput("no pixel data pushed".into())));
                 }
                 let data = state.finish();
                 if let Some(ref limits) = self.limits {
@@ -1098,7 +1088,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
             }
             StreamingMode::PreFiltered(state) => {
                 if state.rows_pushed == 0 {
-                    return Err(PngError::InvalidInput("no pixel data pushed".into()).start_at());
+                    return Err(at!(PngError::InvalidInput("no pixel data pushed".into())));
                 }
                 let cancel: &dyn enough::Stop = self.stop.unwrap_or(&enough::Unstoppable);
                 let data = state.finish(cancel)?;
@@ -1242,7 +1232,7 @@ impl zc::encode::FullFrameEncoder for PngFullFrameEncoder {
     type Error = At<PngError>;
 
     fn reject(op: zc::UnsupportedOperation) -> At<PngError> {
-        PngError::from(op).start_at()
+        at!(PngError::from(op))
     }
 
     fn push_frame(
@@ -1273,7 +1263,7 @@ impl zc::encode::FullFrameEncoder for PngFullFrameEncoder {
     }
 
     fn finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, At<PngError>> {
-        self.do_finish(stop).map_err(ErrorAtExt::start_at)
+        self.do_finish(stop).map_err(|e| at!(e))
     }
 }
 
@@ -1321,7 +1311,8 @@ impl PngFullFrameEncoder {
             metadata_ref,
             cancel,
             &deadline,
-        )?;
+        )
+        .map_err(|e| e.into_inner())?;
 
         Ok(EncodeOutput::new(data, ImageFormat::Png))
     }
@@ -1593,7 +1584,7 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
             preferred,
             self.start_frame_index,
         )
-        .map_err(ErrorAtExt::start_at)
+        .map_err(|e| at!(e))
     }
 
     fn push_decoder(
@@ -1698,7 +1689,7 @@ fn push_decoder_native<'a>(
     use crate::decoder::row::RowDecoder;
 
     let wrap_sink = |e: zc::decode::SinkError| -> At<PngError> {
-        PngError::InvalidInput(alloc::format!("sink error: {e}")).start_at()
+        at!(PngError::InvalidInput(alloc::format!("sink error: {e}")))
     };
 
     // Check input size limit
@@ -1710,7 +1701,7 @@ fn push_decoder_native<'a>(
     // Check for interlacing — fall back to full decode for Adam7
     if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
         return zc::decode::push_decoder_via_full_decode(job, data, sink, preferred, |e| {
-            PngError::InvalidInput(alloc::format!("sink error: {e}")).start_at()
+            at!(PngError::InvalidInput(alloc::format!("sink error: {e}")))
         });
     }
 
@@ -1757,11 +1748,11 @@ fn push_decoder_native<'a>(
             let row_slice = dst.row_mut(0);
             match reader.next_raw_row_direct(&mut row_slice[..raw_row_bytes], &zeros) {
                 Some(Ok(())) => {}
-                Some(Err(e)) => return Err(e.start_at()),
+                Some(Err(e)) => return Err(at!(e)),
                 None => {
-                    return Err(
-                        PngError::Decode("unexpected end of image data at row 0".into()).start_at(),
-                    );
+                    return Err(at!(PngError::Decode(
+                        "unexpected end of image data at row 0".into()
+                    )));
                 }
             }
             cancel.check().map_err(PngError::from)?;
@@ -1777,12 +1768,11 @@ fn push_decoder_native<'a>(
             let row_slice = dst.row_mut(y);
             match reader.next_raw_row_direct(&mut row_slice[..raw_row_bytes], &prev_buf) {
                 Some(Ok(())) => {}
-                Some(Err(e)) => return Err(e.start_at()),
+                Some(Err(e)) => return Err(at!(e)),
                 None => {
-                    return Err(PngError::Decode(alloc::format!(
+                    return Err(at!(PngError::Decode(alloc::format!(
                         "unexpected end of image data at row {y}"
-                    ))
-                    .start_at());
+                    ))));
                 }
             }
             cancel.check().map_err(PngError::from)?;
@@ -1865,7 +1855,9 @@ impl<'a> PngStreamingDecoder<'a> {
     ) -> Result<Self, At<PngError>> {
         // Reject interlaced PNGs — Adam7 requires full-canvas buffering
         if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
-            return Err(PngError::from(zc::UnsupportedOperation::RowLevelDecode).start_at());
+            return Err(at!(PngError::from(
+                zc::UnsupportedOperation::RowLevelDecode
+            )));
         }
 
         let cancel: &dyn enough::Stop = stop.unwrap_or(&enough::Unstoppable);
@@ -1891,15 +1883,14 @@ impl<'a> PngStreamingDecoder<'a> {
         let data_ref: &'a [u8] = match data {
             Cow::Borrowed(b) => b,
             Cow::Owned(_) => {
-                return Err(PngError::InvalidInput(
+                return Err(at!(PngError::InvalidInput(
                     "streaming decoder requires borrowed data".into(),
-                )
-                .start_at());
+                )));
             }
         };
 
-        let reader = crate::decoder::row::RowDecoder::new(data_ref, &png_config)
-            .map_err(ErrorAtExt::start_at)?;
+        let reader =
+            crate::decoder::row::RowDecoder::new(data_ref, &png_config).map_err(|e| at!(e))?;
         let ihdr = *reader.ihdr();
         let has_trns = reader.ancillary().trns.is_some();
 
@@ -1907,13 +1898,13 @@ impl<'a> PngStreamingDecoder<'a> {
         let h = ihdr.height;
         let descriptor = native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns);
 
-        let probe_info = crate::decode::probe(data_ref).map_err(ErrorAtExt::start_at)?;
+        let probe_info = crate::decode::probe(data_ref)?;
         let info = convert_info(&probe_info);
 
         let is_passthrough =
             !has_trns && ihdr.bit_depth == 8 && (ihdr.color_type == 6 || ihdr.color_type == 2);
 
-        let raw_row_bytes = ihdr.raw_row_bytes().map_err(ErrorAtExt::start_at)?;
+        let raw_row_bytes = ihdr.raw_row_bytes().map_err(|e| at!(e))?;
         let out_row_bytes = w as usize * descriptor.bytes_per_pixel();
 
         Ok(Self {
@@ -1942,7 +1933,7 @@ impl zc::decode::StreamingDecode for PngStreamingDecoder<'_> {
 
         let raw = match self.reader.next_raw_row() {
             Some(Ok(row)) => row,
-            Some(Err(e)) => return Err(e.start_at()),
+            Some(Err(e)) => return Err(at!(e)),
             None => return Ok(None),
         };
 
@@ -1956,11 +1947,7 @@ impl zc::decode::StreamingDecode for PngStreamingDecoder<'_> {
         } else {
             // Need post-processing: copy raw to release borrow on reader
             self.raw_copy[..raw.len()].copy_from_slice(raw);
-            let raw_len = self
-                .reader
-                .ihdr()
-                .raw_row_bytes()
-                .map_err(ErrorAtExt::start_at)?;
+            let raw_len = self.reader.ihdr().raw_row_bytes().map_err(|e| at!(e))?;
 
             // Post-process expands/converts the raw row into row_buf
             let mut tmp = core::mem::take(&mut self.row_buf);
@@ -1981,7 +1968,7 @@ impl zc::decode::StreamingDecode for PngStreamingDecoder<'_> {
             stride,
             self.descriptor,
         )
-        .map_err(|e| PngError::InvalidInput(alloc::format!("pixel slice: {e}")).start_at())?;
+        .map_err(|e| at!(PngError::InvalidInput(alloc::format!("pixel slice: {e}"))))?;
 
         Ok(Some((y, slice)))
     }
@@ -2024,7 +2011,7 @@ impl PngFullFrameDecoder {
         preferred: &[PixelDescriptor],
         start_frame_index: u32,
     ) -> Result<Self, PngError> {
-        let probe_info = crate::decode::probe(data)?;
+        let probe_info = crate::decode::probe(data).map_err(|e| e.into_inner())?;
         let image_info = convert_info(&probe_info);
 
         let decode_config = PngDecodeConfig {
@@ -2054,7 +2041,7 @@ impl zc::decode::FullFrameDecoder for PngFullFrameDecoder {
     type Error = At<PngError>;
 
     fn wrap_sink_error(err: zc::decode::SinkError) -> At<PngError> {
-        PngError::InvalidInput(alloc::format!("sink error: {err}")).start_at()
+        at!(PngError::InvalidInput(alloc::format!("sink error: {err}")))
     }
 
     fn info(&self) -> &ImageInfo {
@@ -2363,10 +2350,9 @@ impl TrueStreamingState {
 
         // PNG chunk lengths are u32. Reject images whose stored IDAT exceeds this.
         if idat_data_len > u32::MAX as usize {
-            return Err(PngError::LimitExceeded(
+            return Err(at!(PngError::LimitExceeded(
                 "image too large for single IDAT chunk at effort 0".into(),
-            )
-            .start_at());
+            )));
         }
 
         // Build metadata
@@ -4874,7 +4860,7 @@ mod tests {
         // Now try to decode with immediate cancel
         let result = crate::decode::decode(&encoded, &PngDecodeConfig::none(), &AlreadyCancelled);
         assert!(result.is_err());
-        match result.unwrap_err() {
+        match result.unwrap_err().into_inner() {
             PngError::Stopped(reason) => {
                 assert_eq!(reason, StopReason::Cancelled);
             }

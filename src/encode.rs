@@ -10,6 +10,8 @@ use enough::Stop;
 
 use crate::decode::PngChromaticities;
 use crate::encoder::PngWriteMetadata;
+use whereat::at;
+
 use crate::error::PngError;
 use crate::types::{Compression, Filter};
 
@@ -181,7 +183,7 @@ pub fn encode_rgb8(
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let width = img.width() as u32;
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
@@ -206,7 +208,7 @@ pub fn encode_rgba8(
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let width = img.width() as u32;
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
@@ -231,7 +233,7 @@ pub fn encode_gray8(
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let width = img.width() as u32;
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
@@ -259,7 +261,7 @@ pub fn encode_rgb16(
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let width = img.width() as u32;
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
@@ -288,7 +290,7 @@ pub fn encode_rgba16(
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let width = img.width() as u32;
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
@@ -317,7 +319,7 @@ pub fn encode_gray16(
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let width = img.width() as u32;
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
@@ -354,7 +356,7 @@ pub(crate) fn encode_raw(
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let effort = config.compression.effort();
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
@@ -398,7 +400,7 @@ pub(crate) fn encode_raw(
             indices,
         } => {
             let opts = config.compress_options(cancel, deadline, None);
-            crate::encoder::write_indexed_png(
+            Ok(crate::encoder::write_indexed_png(
                 &indices,
                 width,
                 height,
@@ -407,7 +409,7 @@ pub(crate) fn encode_raw(
                 &write_meta,
                 effort,
                 opts,
-            )
+            )?)
         }
         crate::optimize::OptimalEncoding::Truecolor {
             bytes: opt_bytes,
@@ -416,7 +418,7 @@ pub(crate) fn encode_raw(
             trns,
         } => {
             let opts = config.compress_options(cancel, deadline, None);
-            crate::encoder::write_truecolor_png(
+            Ok(crate::encoder::write_truecolor_png(
                 &opt_bytes,
                 width,
                 height,
@@ -426,11 +428,11 @@ pub(crate) fn encode_raw(
                 &write_meta,
                 effort,
                 opts,
-            )
+            )?)
         }
         crate::optimize::OptimalEncoding::Original => {
             let opts = config.compress_options(cancel, deadline, None);
-            crate::encoder::write_truecolor_png(
+            Ok(crate::encoder::write_truecolor_png(
                 bytes,
                 width,
                 height,
@@ -440,7 +442,7 @@ pub(crate) fn encode_raw(
                 &write_meta,
                 effort,
                 opts,
-            )
+            )?)
         }
     }
 }
@@ -453,7 +455,7 @@ pub fn encode_rgb8_with_stats(
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<(Vec<u8>, crate::encoder::PhaseStats), PngError> {
+) -> crate::error::Result<(Vec<u8>, crate::encoder::PhaseStats)> {
     let width = img.width() as u32;
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
@@ -479,7 +481,7 @@ pub fn encode_rgba8_with_stats(
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<(Vec<u8>, crate::encoder::PhaseStats), PngError> {
+) -> crate::error::Result<(Vec<u8>, crate::encoder::PhaseStats)> {
     let width = img.width() as u32;
     let height = img.height() as u32;
     let (buf, _, _) = img.to_contiguous_buf();
@@ -513,7 +515,7 @@ fn encode_raw_with_stats(
     config: &EncodeConfig,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<(Vec<u8>, crate::encoder::PhaseStats), PngError> {
+) -> crate::error::Result<(Vec<u8>, crate::encoder::PhaseStats)> {
     let effort = config.compression.effort();
 
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
@@ -705,20 +707,20 @@ pub fn encode_apng(
     metadata: Option<&MetadataView<'_>>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     // Validation
     if frames.is_empty() {
-        return Err(PngError::InvalidInput(
+        return Err(at!(PngError::InvalidInput(
             "APNG requires at least one frame".into(),
-        ));
+        )));
     }
     let expected_len = canvas_width as usize * canvas_height as usize * 4;
     for (i, frame) in frames.iter().enumerate() {
         if frame.pixels.len() < expected_len {
-            return Err(PngError::InvalidInput(alloc::format!(
+            return Err(at!(PngError::InvalidInput(alloc::format!(
                 "frame {i}: pixel buffer too small: need {expected_len}, got {}",
                 frame.pixels.len()
-            )));
+            ))));
         }
     }
 
@@ -728,7 +730,7 @@ pub fn encode_apng(
     write_meta.srgb_intent = config.encode.srgb_intent;
     write_meta.chromaticities = config.encode.chromaticities;
 
-    crate::encoder::apng::encode_apng_truecolor(
+    Ok(crate::encoder::apng::encode_apng_truecolor(
         frames,
         canvas_width,
         canvas_height,
@@ -737,7 +739,7 @@ pub fn encode_apng(
         effort,
         cancel,
         deadline,
-    )
+    )?)
 }
 
 #[cfg(test)]

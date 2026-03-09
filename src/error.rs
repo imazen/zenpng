@@ -1,4 +1,9 @@
-//! PNG error types.
+//! PNG error types with `whereat` location tracking.
+
+use whereat::At;
+
+/// Result type alias using `At<PngError>` for automatic location tracking.
+pub type Result<T> = core::result::Result<T, At<PngError>>;
 
 /// Errors from PNG encode/decode operations.
 #[derive(Debug, thiserror::Error)]
@@ -41,6 +46,7 @@ impl From<zc::UnsupportedOperation> for PngError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use whereat::at;
 
     #[test]
     fn error_display_decode() {
@@ -72,5 +78,20 @@ mod tests {
         let op = zc::UnsupportedOperation::RowLevelEncode;
         let e: PngError = op.into();
         assert!(e.to_string().contains("unsupported operation"));
+    }
+
+    #[test]
+    fn error_with_whereat() {
+        fn inner() -> Result<()> {
+            Err(at!(PngError::Decode("test".into())))
+        }
+
+        fn outer() -> Result<()> {
+            inner().map_err(|e| e.at())?;
+            Ok(())
+        }
+
+        let err = outer().unwrap_err();
+        assert!(err.frame_count() >= 1);
     }
 }

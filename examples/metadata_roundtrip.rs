@@ -162,7 +162,7 @@ fn reencode(
     pixels: &PixelBuffer,
     meta: Option<&MetadataView<'_>>,
     config: &EncodeConfig,
-) -> Result<Vec<u8>, zenpng::PngError> {
+) -> Result<Vec<u8>, whereat::At<zenpng::PngError>> {
     let u = &enough::Unstoppable;
     let desc = pixels.descriptor();
     match (desc.layout(), desc.channel_type()) {
@@ -190,13 +190,14 @@ fn reencode(
             let imgref = pixels.try_as_imgref::<rgb::Gray<u16>>().unwrap();
             zenpng::encode_gray16(imgref, meta, config, u, u)
         }
-        (ChannelLayout::GrayAlpha, _) => Err(zenpng::PngError::InvalidInput(
-            "GrayAlpha not supported".into(),
-        )),
+        (ChannelLayout::GrayAlpha, _) => {
+            Err(zenpng::PngError::InvalidInput("GrayAlpha not supported".into()).into())
+        }
         _ => Err(zenpng::PngError::InvalidInput(format!(
             "unsupported pixel format for re-encode: {:?}",
             desc
-        ))),
+        ))
+        .into()),
     }
 }
 
