@@ -25,8 +25,8 @@
 //!
 //! # zencodec traits
 //!
-//! [`PngEncoderConfig`] implements [`zc::EncoderConfig`] and [`PngDecoderConfig`]
-//! implements [`zc::DecoderConfig`] for use with multi-codec dispatchers.
+//! [`PngEncoderConfig`] implements [`zencodec::EncoderConfig`] and [`PngDecoderConfig`]
+//! implements [`zencodec::DecoderConfig`] for use with multi-codec dispatchers.
 
 #![forbid(unsafe_code)]
 
@@ -49,7 +49,7 @@ mod optimize;
 mod quantize;
 mod simd;
 mod types;
-mod zencodec;
+mod codec;
 
 #[allow(deprecated)]
 pub use decode::PngLimits;
@@ -78,7 +78,7 @@ pub use quantize::default_quantizer;
 pub use quantize::{
     MultiFrameOutput, QuantizeOutput, Quantizer, available_backends, quantizer_by_name,
 };
-pub use zencodec::{
+pub use codec::{
     PngDecodeJob, PngDecoder, PngDecoderConfig, PngEncodeJob, PngEncoder, PngEncoderConfig,
     PngFullFrameDecoder, PngFullFrameEncoder,
 };

@@ -400,7 +400,7 @@ impl PngProbe {
     }
 }
 
-impl zc::SourceEncodingDetails for PngProbe {
+impl zencodec::SourceEncodingDetails for PngProbe {
     fn source_generic_quality(&self) -> Option<f32> {
         None
     }

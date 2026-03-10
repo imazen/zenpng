@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use imgref::ImgRef;
 use rgb::{Gray, Rgb, Rgba};
 
-use zc::MetadataView;
+use zencodec::MetadataView;
 
 use enough::Stop;
 
@@ -64,7 +64,7 @@ pub struct EncodeConfig {
     ///
     /// When set to 1, both the screening/refinement phases and the
     /// recompression phase run sequentially. This is derived from
-    /// [`ThreadingPolicy`](zc::ThreadingPolicy) when using the zencodec adapter.
+    /// [`ThreadingPolicy`](zencodec::ThreadingPolicy) when using the zencodec adapter.
     ///
     /// Default: 0 (no limit).
     pub max_threads: usize,

@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 use enough::Stop;
 use imgref::ImgVec;
-use zc::{Cicp, ContentLightLevel, MasteringDisplay};
+use zencodec::{Cicp, ContentLightLevel, MasteringDisplay};
 use zenpixels::PixelBuffer;
 
 use crate::chunk::ancillary::PngAncillary;
