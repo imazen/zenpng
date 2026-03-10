@@ -28,8 +28,15 @@ use self::row::RowDecoder;
 /// Build `PngInfo` from parsed IHDR and ancillary metadata.
 pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &PngAncillary) -> PngInfo {
     let has_alpha = ihdr.has_alpha() || ancillary.trns.is_some();
-    let has_animation = ancillary.actl.is_some();
-    let frame_count = ancillary.actl.map_or(1, |(n, _)| n);
+    let sequence = if let Some((n, _)) = ancillary.actl {
+        zencodec::ImageSequence::Animation {
+            frame_count: Some(n),
+            loop_count: None,
+            random_access: false,
+        }
+    } else {
+        zencodec::ImageSequence::Single
+    };
 
     let source_gamma = ancillary.gamma;
     let srgb_intent = ancillary.srgb_intent;
@@ -86,8 +93,7 @@ pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &PngAncillary) -> PngInfo {
         width: ihdr.width,
         height: ihdr.height,
         has_alpha,
-        has_animation,
-        frame_count,
+        sequence,
         bit_depth: ihdr.bit_depth,
         color_type: ihdr.color_type,
         icc_profile: ancillary.icc_profile.clone(),
@@ -1083,8 +1089,7 @@ mod tests {
             width: w as u32,
             height: h as u32,
             has_alpha: false,
-            has_animation: false,
-            frame_count: 1,
+            sequence: zencodec::ImageSequence::Single,
             bit_depth: src_bit_depth,
             color_type: src_color_type,
             icc_profile: None,
@@ -2782,8 +2787,7 @@ mod tests {
         assert_eq!(info.width, 4);
         assert_eq!(info.height, 4);
         assert!(info.has_alpha);
-        assert!(!info.has_animation);
-        assert_eq!(info.frame_count, 1);
+        assert_eq!(info.sequence, zencodec::ImageSequence::Single);
         assert!(info.icc_profile.is_none());
         assert!(info.exif.is_none());
         assert!(info.xmp.is_none());

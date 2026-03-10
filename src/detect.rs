@@ -49,10 +49,8 @@ pub struct PngProbe {
     pub has_alpha: bool,
     /// Whether the image uses Adam7 interlacing.
     pub interlaced: bool,
-    /// Whether the image is animated (APNG).
-    pub has_animation: bool,
-    /// Number of frames (1 for static PNG).
-    pub frame_count: u32,
+    /// What kind of image sequence the file contains.
+    pub sequence: zencodec::ImageSequence,
     /// Number of palette entries (0 if not indexed).
     pub palette_size: u16,
     /// Software/tool that created this PNG, if detectable.
@@ -202,8 +200,7 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
     let mut idat_total: u64 = 0;
     let mut has_trns = false;
     let mut palette_size: u16 = 0;
-    let mut has_animation = false;
-    let mut frame_count = 1u32;
+    let mut sequence = zencodec::ImageSequence::Single;
 
     let mut pos = 8; // skip PNG signature
     while pos + 12 <= data.len() {
@@ -223,14 +220,20 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
                 has_trns = true;
             }
             b"acTL" => {
-                has_animation = true;
-                if chunk_data_end - chunk_data_start >= 4 {
-                    frame_count = u32::from_be_bytes(
+                let frame_count = if chunk_data_end - chunk_data_start >= 4 {
+                    Some(u32::from_be_bytes(
                         data[chunk_data_start..chunk_data_start + 4]
                             .try_into()
                             .unwrap(),
-                    );
-                }
+                    ))
+                } else {
+                    None
+                };
+                sequence = zencodec::ImageSequence::Animation {
+                    frame_count,
+                    loop_count: None,
+                    random_access: false,
+                };
             }
             b"tEXt" => {
                 // Parse tEXt: keyword\0value
@@ -355,8 +358,7 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
         bit_depth,
         has_alpha,
         interlaced,
-        has_animation,
-        frame_count,
+        sequence,
         palette_size,
         creating_tool,
         compressed_data_size: idat_total,
