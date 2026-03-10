@@ -67,15 +67,18 @@ pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &PngAncillary) -> PngInfo {
         let read_u16 = |off: usize| u16::from_be_bytes(m[off..off + 2].try_into().unwrap());
         let read_u32 = |off: usize| u32::from_be_bytes(m[off..off + 4].try_into().unwrap());
 
+        // mDCV u16 chromaticities are in units of 0.00002; luminance u32 in units of 0.0001 cd/m²
+        let xy = |off: usize| read_u16(off) as f32 * 0.00002;
+        let lum = |off: usize| read_u32(off) as f32 * 0.0001;
         Some(MasteringDisplay::new(
             [
-                [read_u16(0), read_u16(2)],  // Red
-                [read_u16(4), read_u16(6)],  // Green
-                [read_u16(8), read_u16(10)], // Blue
+                [xy(0), xy(2)],   // Red
+                [xy(4), xy(6)],   // Green
+                [xy(8), xy(10)],  // Blue
             ],
-            [read_u16(12), read_u16(14)], // White point
-            read_u32(16),                 // max_luminance
-            read_u32(20),                 // min_luminance
+            [xy(12), xy(14)],     // White point
+            lum(16),              // max_luminance
+            lum(20),              // min_luminance
         ))
     });
 

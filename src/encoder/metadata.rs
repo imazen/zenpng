@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use zencodec::{Cicp, ContentLightLevel, MasteringDisplay, MetadataView};
+use zencodec::{Cicp, ContentLightLevel, MasteringDisplay, Metadata};
 use zenflate::{CompressionLevel, Compressor, Unstoppable};
 
 use crate::chunk::write::write_chunk;
@@ -11,11 +11,11 @@ use crate::error::PngError;
 
 /// All metadata to embed when writing a PNG file.
 ///
-/// Aggregates both codec-generic metadata (`MetadataView`) and PNG-specific
+/// Aggregates both codec-generic metadata (`Metadata`) and PNG-specific
 /// color chunks (gAMA, sRGB, cHRM). Constructed by the encode functions.
 pub(crate) struct PngWriteMetadata<'a> {
-    /// ICC profile, EXIF, XMP from MetadataView.
-    pub generic: Option<&'a MetadataView<'a>>,
+    /// ICC profile, EXIF, XMP from Metadata.
+    pub generic: Option<&'a Metadata>,
     /// gAMA chunk value (scaled by 100000, e.g. 45455 = 1/2.2).
     pub source_gamma: Option<u32>,
     /// sRGB rendering intent (0-3).
@@ -31,8 +31,8 @@ pub(crate) struct PngWriteMetadata<'a> {
 }
 
 impl<'a> PngWriteMetadata<'a> {
-    /// Build from MetadataView, inheriting cICP/cLLi/mDCV from it.
-    pub fn from_metadata(meta: Option<&'a MetadataView<'a>>) -> Self {
+    /// Build from Metadata, inheriting cICP/cLLi/mDCV from it.
+    pub fn from_metadata(meta: Option<&'a Metadata>) -> Self {
         let (cicp, content_light_level, mastering_display) = meta
             .map(|m| (m.cicp, m.content_light_level, m.mastering_display))
             .unwrap_or((None, None, None));
@@ -68,7 +68,7 @@ pub(crate) fn write_all_metadata(
     meta: &PngWriteMetadata<'_>,
 ) -> Result<(), PngError> {
     let has_cicp = meta.cicp.is_some();
-    let has_iccp = meta.generic.and_then(|g| g.icc_profile).is_some();
+    let has_iccp = meta.generic.map_or(false, |g| g.icc_profile.is_some());
     let has_srgb = meta.srgb_intent.is_some();
 
     // PNGv3 precedence: cICP > iCCP > sRGB > gAMA/cHRM
@@ -97,7 +97,7 @@ pub(crate) fn write_all_metadata(
 
     // iCCP (ICC profile) — written when present, even alongside cICP (as fallback)
     if let Some(generic) = meta.generic
-        && let Some(icc) = generic.icc_profile
+        && let Some(icc) = &generic.icc_profile
     {
         write_iccp_chunk(out, icc)?;
     }
@@ -119,14 +119,14 @@ pub(crate) fn write_all_metadata(
 
     // eXIf — always written
     if let Some(generic) = meta.generic
-        && let Some(exif) = generic.exif
+        && let Some(exif) = &generic.exif
     {
         write_exif_chunk(out, exif);
     }
 
     // iTXt for XMP — always written
     if let Some(generic) = meta.generic
-        && let Some(xmp) = generic.xmp
+        && let Some(xmp) = &generic.xmp
     {
         let xmp_str = core::str::from_utf8(xmp).unwrap_or_default();
         if !xmp_str.is_empty() {
@@ -175,19 +175,21 @@ fn write_cicp_chunk(out: &mut Vec<u8>, cicp: &Cicp) {
 fn write_mdcv_chunk(out: &mut Vec<u8>, mdcv: &MasteringDisplay) {
     // mDCV: 6×u16 chromaticities (R, G, B primaries as xy pairs) + 2×u16 white point
     //       + u32 max_luminance + u32 min_luminance = 24 bytes
-    // PNG mDCV uses u16 in units of 0.00002 (same as zencodec MasteringDisplay)
+    // PNG mDCV uses u16 in units of 0.00002; luminance u32 in units of 0.0001 cd/m²
     let mut data = [0u8; 24];
+    let to_u16 = |v: f32| (v / 0.00002).round() as u16;
+    let to_u32 = |v: f32| (v / 0.0001).round() as u32;
     // Chromaticities: Rx, Ry, Gx, Gy, Bx, By (6 u16 values)
-    for (i, &[x, y]) in mdcv.primaries.iter().enumerate() {
-        data[i * 4..i * 4 + 2].copy_from_slice(&x.to_be_bytes());
-        data[i * 4 + 2..i * 4 + 4].copy_from_slice(&y.to_be_bytes());
+    for (i, &[x, y]) in mdcv.primaries_xy.iter().enumerate() {
+        data[i * 4..i * 4 + 2].copy_from_slice(&to_u16(x).to_be_bytes());
+        data[i * 4 + 2..i * 4 + 4].copy_from_slice(&to_u16(y).to_be_bytes());
     }
     // White point: Wx, Wy
-    data[12..14].copy_from_slice(&mdcv.white_point[0].to_be_bytes());
-    data[14..16].copy_from_slice(&mdcv.white_point[1].to_be_bytes());
+    data[12..14].copy_from_slice(&to_u16(mdcv.white_point_xy[0]).to_be_bytes());
+    data[14..16].copy_from_slice(&to_u16(mdcv.white_point_xy[1]).to_be_bytes());
     // Luminances (u32, 0.0001 cd/m²)
-    data[16..20].copy_from_slice(&mdcv.max_luminance.to_be_bytes());
-    data[20..24].copy_from_slice(&mdcv.min_luminance.to_be_bytes());
+    data[16..20].copy_from_slice(&to_u32(mdcv.max_luminance).to_be_bytes());
+    data[20..24].copy_from_slice(&to_u32(mdcv.min_luminance).to_be_bytes());
     write_chunk(out, b"mDCV", &data);
 }
 
@@ -247,17 +249,17 @@ fn write_itxt_chunk(out: &mut Vec<u8>, keyword: &str, text: &str) {
 pub(crate) fn metadata_size_estimate(meta: &PngWriteMetadata<'_>) -> usize {
     let mut size = 0;
     let has_cicp = meta.cicp.is_some();
-    let has_iccp = meta.generic.and_then(|g| g.icc_profile).is_some();
+    let has_iccp = meta.generic.map_or(false, |g| g.icc_profile.is_some());
     let has_srgb = meta.srgb_intent.is_some();
 
     if let Some(generic) = meta.generic {
-        if let Some(icc) = generic.icc_profile {
+        if let Some(ref icc) = generic.icc_profile {
             size += 12 + 13 + icc.len() / 2;
         }
-        if let Some(exif) = generic.exif {
+        if let Some(ref exif) = generic.exif {
             size += 12 + exif.len();
         }
-        if let Some(xmp) = generic.xmp {
+        if let Some(ref xmp) = generic.xmp {
             size += 12 + 25 + xmp.len();
         }
     }
