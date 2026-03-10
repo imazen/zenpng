@@ -8,7 +8,7 @@ use imgref::ImgRef;
 use rgb::Rgba;
 use std::collections::HashMap;
 
-use zencodec::MetadataView;
+use zencodec::Metadata;
 
 use enough::Stop;
 
@@ -164,7 +164,7 @@ pub fn encode_indexed(
     img: ImgRef<Rgba<u8>>,
     encode_config: &EncodeConfig,
     quantizer: &dyn Quantizer,
-    metadata: Option<&MetadataView<'_>>,
+    metadata: Option<&Metadata>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> crate::error::Result<Vec<u8>> {
@@ -207,7 +207,7 @@ pub fn encode_auto(
     encode_config: &EncodeConfig,
     quantizer: &dyn Quantizer,
     gate: QualityGate,
-    metadata: Option<&MetadataView<'_>>,
+    metadata: Option<&Metadata>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> crate::error::Result<AutoEncodeResult> {
@@ -288,7 +288,7 @@ fn encode_from_quantize_output(
     width: u32,
     height: u32,
     encode_config: &EncodeConfig,
-    metadata: Option<&MetadataView<'_>>,
+    metadata: Option<&Metadata>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> crate::error::Result<Vec<u8>> {
@@ -327,7 +327,7 @@ fn encode_exact_palette_result(
     width: u32,
     height: u32,
     encode_config: &EncodeConfig,
-    metadata: Option<&MetadataView<'_>>,
+    metadata: Option<&Metadata>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> crate::error::Result<AutoEncodeResult> {
@@ -382,7 +382,7 @@ pub struct ApngEncodeParams<'a> {
     /// Quantizer backend.
     pub quantizer: &'a dyn Quantizer,
     /// Optional PNG metadata (gAMA, sRGB, cHRM, iCCP, etc.).
-    pub metadata: Option<&'a MetadataView<'a>>,
+    pub metadata: Option<&'a Metadata>,
     /// Cancellation token.
     pub cancel: &'a dyn Stop,
     /// Deadline/timeout token.
@@ -628,7 +628,7 @@ fn encode_apng_from_palette(
     canvas_width: u32,
     canvas_height: u32,
     config: &crate::encode::ApngEncodeConfig,
-    metadata: Option<&MetadataView<'_>>,
+    metadata: Option<&Metadata>,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> crate::error::Result<Vec<u8>> {
@@ -914,10 +914,10 @@ mod tests {
         let exif_data = b"Exif\0\0test_exif";
         let xmp_data = b"<x:xmpmeta>test</x:xmpmeta>";
 
-        let meta = MetadataView::none()
-            .with_icc(&fake_icc)
-            .with_exif(exif_data)
-            .with_xmp(xmp_data);
+        let meta = Metadata::none()
+            .with_icc(fake_icc.as_slice())
+            .with_exif(exif_data.as_slice())
+            .with_xmp(xmp_data.as_slice());
 
         let encoded = encode_indexed(
             img.as_ref(),
@@ -1368,7 +1368,7 @@ mod tests {
 
     #[test]
     fn exact_palette_pixel_perfect_roundtrip() {
-        use zenpixels_convert::PixelBufferConvertExt;
+        use zenpixels_convert::{PixelBufferConvertExt, PixelBufferConvertTypedExt};
 
         let mut pixels = Vec::with_capacity(64);
         for y in 0..8u8 {

@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use whereat::{At, at};
 use zencodec::decode::{DecodeCapabilities, DecodeOutput, FullFrame, OutputInfo};
 use zencodec::encode::{EncodeCapabilities, EncodeOutput};
-use zencodec::{ImageFormat, ImageInfo, MetadataView, ResourceLimits};
+use zencodec::{ImageFormat, ImageInfo, Metadata, ResourceLimits};
 use zenpixels::{Pixel, PixelDescriptor, PixelSlice, PixelSliceMut};
 
 use crate::decode::PngDecodeConfig;
@@ -300,14 +300,14 @@ static PNG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_exif(true)
     .with_xmp(true)
     .with_cicp(true)
-    .with_cancel(true)
+    .with_stop(true)
     .with_animation(true)
     .with_lossless(true)
     .with_lossy(true)
     .with_native_gray(true)
     .with_native_16bit(true)
     .with_native_alpha(true)
-    .with_row_level(true)
+    .with_push_rows(true)
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
     .with_effort_range(0, 12)
@@ -381,7 +381,7 @@ impl zencodec::encode::EncoderConfig for PngEncoderConfig {
 pub struct PngEncodeJob<'a> {
     config: &'a PngEncoderConfig,
     stop: Option<&'a dyn enough::Stop>,
-    metadata: Option<&'a MetadataView<'a>>,
+    metadata: Option<Metadata>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::encode::EncodePolicy>,
     canvas_width: u32,
@@ -399,8 +399,8 @@ impl<'a> zencodec::encode::EncodeJob<'a> for PngEncodeJob<'a> {
         self
     }
 
-    fn with_metadata(mut self, meta: &'a MetadataView<'a>) -> Self {
-        self.metadata = Some(meta);
+    fn with_metadata(mut self, meta: &Metadata) -> Self {
+        self.metadata = Some(meta.clone());
         self
     }
 
@@ -439,8 +439,7 @@ impl<'a> zencodec::encode::EncodeJob<'a> for PngEncodeJob<'a> {
     }
 
     fn full_frame_encoder(self) -> Result<PngFullFrameEncoder, At<PngError>> {
-        let effective_meta = apply_encode_policy(self.metadata, self.policy.as_ref());
-        let owned_meta = effective_meta.as_ref().map(OwnedMetadata::from_metadata);
+        let effective_meta = apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref());
         // Apply threading policy from limits to the config.
         let mut config = self.config.config.clone();
         if let Some(ref limits) = self.limits {
@@ -451,7 +450,7 @@ impl<'a> zencodec::encode::EncodeJob<'a> for PngEncodeJob<'a> {
             }
         }
         let mut enc =
-            PngFullFrameEncoder::new(config, self.canvas_width, self.canvas_height, owned_meta);
+            PngFullFrameEncoder::new(config, self.canvas_width, self.canvas_height, effective_meta);
         enc.loop_count = self.loop_count.unwrap_or(0);
         enc.limits = self.limits;
         Ok(enc)
@@ -464,7 +463,7 @@ impl<'a> zencodec::encode::EncodeJob<'a> for PngEncodeJob<'a> {
 pub struct PngEncoder<'a> {
     config: &'a PngEncoderConfig,
     stop: Option<&'a dyn enough::Stop>,
-    metadata: Option<&'a MetadataView<'a>>,
+    metadata: Option<Metadata>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::encode::EncodePolicy>,
     /// Canvas dimensions for push_rows mode (set via `with_canvas_size`).
@@ -617,7 +616,7 @@ impl<'a> PngEncoder<'a> {
         let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
         let deadline = almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
         // Apply encode policy to filter metadata
-        let effective_meta = apply_encode_policy(self.metadata, self.policy.as_ref());
+        let effective_meta = apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref());
         let meta_ref = effective_meta.as_ref();
         let data = crate::encode::encode_raw(
             bytes, w, h, color_type, bit_depth, meta_ref, &config, cancel, &deadline,
@@ -650,7 +649,7 @@ impl zencodec::encode::Encoder for PngEncoder<'_> {
         let w = pixels.width();
         let h = pixels.rows();
         // Policy-filtered metadata for auto-indexed paths
-        let effective_meta = apply_encode_policy(self.metadata, self.policy.as_ref());
+        let effective_meta = apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref());
         let meta_ref = effective_meta.as_ref();
 
         match pixels.descriptor().pixel_format() {
@@ -831,7 +830,7 @@ impl zencodec::encode::Encoder for PngEncoder<'_> {
                     color_type,
                     bit_depth,
                     row_bytes,
-                    self.metadata,
+                    self.metadata.as_ref(),
                     self.policy.as_ref(),
                     &self.config.config,
                 )?));
@@ -844,7 +843,7 @@ impl zencodec::encode::Encoder for PngEncoder<'_> {
                     bit_depth,
                     row_bytes,
                     bpp,
-                    self.metadata,
+                    self.metadata.as_ref(),
                     self.policy.as_ref(),
                     &self.config.config,
                 )?));
@@ -1111,40 +1110,6 @@ struct AccumulatedFrame {
     duration_ms: u32,
 }
 
-/// Owned copy of image metadata for frame encoder (avoids lifetime issues).
-struct OwnedMetadata {
-    icc_profile: Option<Vec<u8>>,
-    exif: Option<Vec<u8>>,
-    xmp: Option<Vec<u8>>,
-    cicp: Option<zencodec::Cicp>,
-    content_light_level: Option<zencodec::ContentLightLevel>,
-    mastering_display: Option<zencodec::MasteringDisplay>,
-}
-
-impl OwnedMetadata {
-    fn from_metadata(meta: &MetadataView<'_>) -> Self {
-        Self {
-            icc_profile: meta.icc_profile.map(|s| s.to_vec()),
-            exif: meta.exif.map(|s| s.to_vec()),
-            xmp: meta.xmp.map(|s| s.to_vec()),
-            cicp: meta.cicp,
-            content_light_level: meta.content_light_level,
-            mastering_display: meta.mastering_display,
-        }
-    }
-
-    fn as_metadata(&self) -> MetadataView<'_> {
-        let mut meta = MetadataView::none();
-        meta.icc_profile = self.icc_profile.as_deref();
-        meta.exif = self.exif.as_deref();
-        meta.xmp = self.xmp.as_deref();
-        meta.cicp = self.cicp;
-        meta.content_light_level = self.content_light_level;
-        meta.mastering_display = self.mastering_display;
-        meta
-    }
-}
-
 /// APNG frame-by-frame encoder implementing [`FullFrameEncoder`](zencodec::encode::FullFrameEncoder).
 ///
 /// Accumulates canvas-sized RGBA8 frames, then encodes them all on [`finish()`](PngFullFrameEncoder::do_finish).
@@ -1153,7 +1118,7 @@ pub struct PngFullFrameEncoder {
     canvas_width: u32,
     canvas_height: u32,
     config: crate::encode::EncodeConfig,
-    metadata: Option<OwnedMetadata>,
+    metadata: Option<Metadata>,
     loop_count: u32,
     /// In-progress frame being built row-by-row.
     building_frame: Option<BuildingFrame>,
@@ -1175,7 +1140,7 @@ impl PngFullFrameEncoder {
         config: crate::encode::EncodeConfig,
         canvas_width: u32,
         canvas_height: u32,
-        metadata: Option<OwnedMetadata>,
+        metadata: Option<Metadata>,
     ) -> Self {
         Self {
             frames: Vec::new(),
@@ -1298,8 +1263,6 @@ impl PngFullFrameEncoder {
             num_plays: self.loop_count,
         };
 
-        let meta_tmp = self.metadata.as_ref().map(|m| m.as_metadata());
-        let metadata_ref = meta_tmp.as_ref();
         let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
         let deadline = almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
 
@@ -1308,7 +1271,7 @@ impl PngFullFrameEncoder {
             self.canvas_width,
             self.canvas_height,
             &apng_config,
-            metadata_ref,
+            self.metadata.as_ref(),
             cancel,
             &deadline,
         )
@@ -1439,7 +1402,7 @@ static PNG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_exif(true)
     .with_xmp(true)
     .with_cicp(true)
-    .with_cancel(true)
+    .with_stop(true)
     .with_animation(true)
     .with_cheap_probe(true)
     .with_native_gray(true)
@@ -1447,8 +1410,7 @@ static PNG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_native_alpha(true)
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
-    .with_enforces_max_input_bytes(true)
-    .with_row_level(true);
+    .with_enforces_max_input_bytes(true);
 
 impl zencodec::decode::DecoderConfig for PngDecoderConfig {
     type Error = At<PngError>;
@@ -1700,7 +1662,7 @@ fn push_decoder_native<'a>(
 
     // Check for interlacing — fall back to full decode for Adam7
     if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
-        return zencodec::decode::push_decoder_via_full_decode(job, data, sink, preferred, |e| {
+        return zencodec::helpers::copy_decode_to_sink(job, data, sink, preferred, |e| {
             at!(PngError::InvalidInput(alloc::format!("sink error: {e}")))
         });
     }
@@ -2061,7 +2023,7 @@ impl zencodec::decode::FullFrameDecoder for PngFullFrameDecoder {
         stop: Option<&dyn enough::Stop>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
     ) -> Result<Option<OutputInfo>, At<PngError>> {
-        zencodec::decode::render_frame_to_sink_via_copy(self, stop, sink)
+        zencodec::helpers::copy_frame_to_sink(self, stop, sink)
     }
 
     fn render_next_frame(
@@ -2118,7 +2080,7 @@ impl zencodec::decode::FullFrameDecoder for PngFullFrameDecoder {
 
 use rgb::{Gray, Rgb, Rgba};
 use zenpixels::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer};
-use zenpixels_convert::PixelBufferConvertExt as _;
+use zenpixels_convert::{PixelBufferConvertExt as _, PixelBufferConvertTypedExt as _};
 
 /// Negotiate output format from the caller's preference list and convert.
 ///
@@ -2149,6 +2111,8 @@ fn negotiate_and_convert(pixels: PixelBuffer, preferred: &[PixelDescriptor]) -> 
 // GrayAlpha16. These helpers convert to any requested target format.
 
 /// Convert native PNG pixel data to Rgb8. Delegates to `PixelBuffer::to_rgb8()`.
+#[allow(unused_imports)]
+use zenpixels_convert::PixelBufferConvertTypedExt as _;
 fn to_rgb8(pixels: PixelBuffer) -> imgref::ImgVec<Rgb<u8>> {
     let converted = pixels.to_rgb8();
     let w = converted.width() as usize;
@@ -2222,12 +2186,12 @@ fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
 
 /// Apply encode policy to filter metadata fields.
 ///
-/// Returns a new `MetadataView` with fields stripped according to the policy,
+/// Returns a new `Metadata` with fields stripped according to the policy,
 /// or `None` if no metadata was provided.
-fn apply_encode_policy<'a>(
-    metadata: Option<&'a MetadataView<'a>>,
+fn apply_encode_policy(
+    metadata: Option<&Metadata>,
     policy: Option<&zencodec::encode::EncodePolicy>,
-) -> Option<MetadataView<'a>> {
+) -> Option<Metadata> {
     let meta = metadata?;
     let Some(policy) = policy else {
         return Some(meta.clone());
@@ -2332,7 +2296,7 @@ impl TrueStreamingState {
         color_type: crate::encode::ColorType,
         bit_depth: crate::encode::BitDepth,
         row_bytes: usize,
-        metadata: Option<&MetadataView<'_>>,
+        metadata: Option<&Metadata>,
         policy: Option<&zencodec::encode::EncodePolicy>,
         config: &EncodeConfig,
     ) -> Result<Self, At<PngError>> {
@@ -2517,7 +2481,7 @@ impl PreFilteredState {
         bit_depth: crate::encode::BitDepth,
         row_bytes: usize,
         bpp: usize,
-        metadata: Option<&MetadataView<'_>>,
+        metadata: Option<&Metadata>,
         policy: Option<&zencodec::encode::EncodePolicy>,
         config: &EncodeConfig,
     ) -> Result<Self, At<PngError>> {
@@ -3705,10 +3669,10 @@ mod tests {
         let fake_icc = vec![0x42u8; 200];
         let exif_data = b"Exif\0\0test_exif";
         let xmp_data = b"<x:xmpmeta>test</x:xmpmeta>";
-        let meta = MetadataView::none()
-            .with_icc(&fake_icc)
-            .with_exif(exif_data)
-            .with_xmp(xmp_data);
+        let meta = Metadata::none()
+            .with_icc(fake_icc.as_slice())
+            .with_exif(exif_data.as_slice())
+            .with_xmp(xmp_data.as_slice());
 
         let encoded = crate::encode::encode_rgb16(
             img.as_ref(),
@@ -4170,7 +4134,7 @@ mod tests {
     fn cicp_suppresses_srgb_gama_chrm() {
         // PNGv3 precedence: cICP suppresses sRGB, gAMA, cHRM
         use crate::decode::PngChromaticities;
-        use zencodec::{Cicp, MetadataView};
+        use zencodec::{Cicp, Metadata};
 
         let pixels = vec![
             Rgb::<u8> {
@@ -4183,7 +4147,7 @@ mod tests {
         let img = imgref::ImgVec::new(pixels, 2, 2);
 
         let cicp = Cicp::new(9, 16, 0, true);
-        let meta = MetadataView::none().with_cicp(cicp);
+        let meta = Metadata::none().with_cicp(cicp);
 
         let chrm = PngChromaticities {
             white_x: 31270,
@@ -4226,7 +4190,7 @@ mod tests {
     fn iccp_suppresses_srgb_gama_chrm() {
         // PNGv3 precedence: iCCP suppresses sRGB, gAMA, cHRM
         use crate::decode::PngChromaticities;
-        use zencodec::MetadataView;
+        use zencodec::Metadata;
 
         let pixels = vec![
             Rgb::<u8> {
@@ -4242,7 +4206,7 @@ mod tests {
         // Use a real sRGB profile header so iCCP decompression works
         // Minimal byte sequence — just needs to survive zlib round-trip
         let srgb_icc: &[u8] = &[0u8; 128];
-        let meta = MetadataView::none().with_icc(srgb_icc);
+        let meta = Metadata::none().with_icc(srgb_icc);
 
         let chrm = PngChromaticities {
             white_x: 31270,
@@ -4284,7 +4248,7 @@ mod tests {
     #[test]
     fn cicp_with_iccp_fallback() {
         // PNGv3: cICP + iCCP both written (iCCP as fallback for limited cICP support)
-        use zencodec::{Cicp, MetadataView};
+        use zencodec::{Cicp, Metadata};
 
         let pixels = vec![
             Rgb::<u8> {
@@ -4299,7 +4263,7 @@ mod tests {
         let cicp = Cicp::new(1, 13, 0, true);
         // Minimal byte sequence — just needs to survive zlib round-trip
         let srgb_icc: &[u8] = &[0u8; 128];
-        let meta = MetadataView::none().with_cicp(cicp).with_icc(srgb_icc);
+        let meta = Metadata::none().with_cicp(cicp).with_icc(srgb_icc);
 
         let config = crate::encode::EncodeConfig::default();
 
@@ -4327,7 +4291,7 @@ mod tests {
     #[test]
     fn hdr_metadata_always_written_with_cicp() {
         // mDCV and cLLi always written alongside cICP
-        use zencodec::{Cicp, ContentLightLevel, MasteringDisplay, MetadataView};
+        use zencodec::{Cicp, ContentLightLevel, MasteringDisplay, Metadata};
 
         let pixels = vec![
             Rgb::<u8> {
@@ -4347,7 +4311,7 @@ mod tests {
             10000000,
             50,
         );
-        let meta = MetadataView::none()
+        let meta = Metadata::none()
             .with_cicp(cicp)
             .with_content_light_level(clli)
             .with_mastering_display(mdcv);
@@ -4432,7 +4396,7 @@ mod tests {
 
     #[test]
     fn cicp_roundtrip() {
-        use zencodec::{Cicp, MetadataView};
+        use zencodec::{Cicp, Metadata};
 
         let pixels = vec![
             Rgb::<u8> {
@@ -4445,7 +4409,7 @@ mod tests {
         let img = imgref::ImgVec::new(pixels, 2, 2);
 
         let cicp = Cicp::new(9, 16, 0, true); // BT.2020 primaries, PQ transfer, Identity matrix (PNG requirement)
-        let meta = MetadataView::none().with_cicp(cicp);
+        let meta = Metadata::none().with_cicp(cicp);
         let config = crate::encode::EncodeConfig::default();
 
         let encoded = crate::encode::encode_rgb8(
@@ -4469,7 +4433,7 @@ mod tests {
 
     #[test]
     fn clli_mdcv_roundtrip() {
-        use zencodec::{ContentLightLevel, MasteringDisplay, MetadataView};
+        use zencodec::{ContentLightLevel, MasteringDisplay, Metadata};
 
         let pixels = vec![
             Rgb::<u8> {
@@ -4488,7 +4452,7 @@ mod tests {
             10000000,                                      // 1000 cd/m²
             50,                                            // 0.005 cd/m²
         );
-        let meta = MetadataView::none()
+        let meta = Metadata::none()
             .with_content_light_level(clli)
             .with_mastering_display(mdcv);
         let config = crate::encode::EncodeConfig::default();
@@ -4642,7 +4606,7 @@ mod tests {
         assert!(!icc.is_empty());
 
         // Re-encode with ICC profile
-        let meta = zencodec::MetadataView::none().with_icc(icc);
+        let meta = zencodec::Metadata::none().with_icc(icc);
         let config = crate::encode::EncodeConfig::default();
         let pixels = orig
             .pixels
@@ -5162,7 +5126,7 @@ mod tests {
     #[test]
     fn encode_job_with_metadata() {
         let enc = PngEncoderConfig::new();
-        let meta = MetadataView::default();
+        let meta = Metadata::default();
         let job = enc.job().with_metadata(&meta);
         let encoder = job.encoder().unwrap();
         let pixels = vec![Rgb { r: 0u8, g: 0, b: 0 }; 4];
