@@ -7,10 +7,10 @@
 use std::path::{Path, PathBuf};
 
 use enough::Unstoppable;
-use zencodec::MetadataView;
+use zencodec::Metadata;
 use zenpixels::PixelBuffer;
 use zenpixels::descriptor::{ChannelLayout, ChannelType};
-use zenpixels_convert::PixelBufferConvertExt;
+use zenpixels_convert::PixelBufferConvertTypedExt;
 use zenpng::{EncodeConfig, PngInfo};
 
 fn main() {
@@ -133,7 +133,7 @@ fn main() {
     }
 }
 
-fn build_metadata(info: &PngInfo) -> Option<MetadataView<'_>> {
+fn build_metadata(info: &PngInfo) -> Option<Metadata> {
     let has_anything = info.icc_profile.is_some()
         || info.cicp.is_some()
         || info.content_light_level.is_some()
@@ -142,9 +142,9 @@ fn build_metadata(info: &PngInfo) -> Option<MetadataView<'_>> {
         return None;
     }
 
-    let mut meta = MetadataView::none();
+    let mut meta = Metadata::none();
     if let Some(ref icc) = info.icc_profile {
-        meta = meta.with_icc(icc);
+        meta = meta.with_icc(icc.as_slice());
     }
     if let Some(cicp) = info.cicp {
         meta = meta.with_cicp(cicp);
@@ -160,7 +160,7 @@ fn build_metadata(info: &PngInfo) -> Option<MetadataView<'_>> {
 
 fn reencode(
     pixels: &PixelBuffer,
-    meta: Option<&MetadataView<'_>>,
+    meta: Option<&Metadata>,
     config: &EncodeConfig,
 ) -> Result<Vec<u8>, whereat::At<zenpng::PngError>> {
     let u = &enough::Unstoppable;

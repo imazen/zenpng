@@ -1539,7 +1539,7 @@ pub(crate) fn encode_apng_indexed_from_indices(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zenpixels_convert::PixelBufferConvertExt;
+    use zenpixels_convert::PixelBufferConvertTypedExt;
 
     // ── Delta region tests ──────────────────────────────────────────
 

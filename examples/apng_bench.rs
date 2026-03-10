@@ -5,7 +5,7 @@ use enough::Unstoppable;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use zenpixels_convert::PixelBufferConvertExt;
+use zenpixels_convert::PixelBufferConvertTypedExt;
 
 fn main() {
     let dir = std::env::args().nth(1).unwrap_or_else(|| {

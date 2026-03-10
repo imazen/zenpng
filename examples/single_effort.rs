@@ -4,7 +4,7 @@
 use enough::Unstoppable;
 use std::path::{Path, PathBuf};
 use zenpixels::descriptor::{ChannelLayout, ChannelType};
-use zenpixels_convert::PixelBufferConvertExt;
+use zenpixels_convert::PixelBufferConvertTypedExt;
 
 fn main() {
     let effort: u32 = std::env::args()
