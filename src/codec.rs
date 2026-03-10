@@ -2159,10 +2159,7 @@ fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
     if info.has_alpha {
         zi = zi.with_alpha(true);
     }
-    if info.has_animation {
-        zi = zi.with_animation(true);
-    }
-    zi = zi.with_frame_count(info.frame_count);
+    zi = zi.with_sequence(info.sequence.clone());
     if let Some(ref icc) = info.icc_profile {
         zi = zi.with_icc_profile(icc.clone());
     }

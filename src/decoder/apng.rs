@@ -1072,7 +1072,7 @@ mod tests {
         assert_eq!(result.frames.len(), 1);
         assert_eq!(result.info.width, 2);
         assert_eq!(result.info.height, 2);
-        assert!(!result.info.has_animation);
+        assert!(!result.info.sequence.is_animation());
         assert_eq!(result.num_plays, 0);
     }
 
@@ -1115,11 +1115,11 @@ mod tests {
                 Err(_) => continue,
             };
 
-            if !probe.has_animation {
+            if !probe.sequence.is_animation() {
                 continue;
             }
 
-            let expected_frames = probe.frame_count;
+            let expected_frames = probe.sequence.count().unwrap_or(0);
 
             // Decode via decode_apng
             match crate::decode::decode_apng(&data, &PngDecodeConfig::none(), &Unstoppable) {
@@ -1201,7 +1201,7 @@ mod tests {
                 Ok(p) => p,
                 Err(_) => continue,
             };
-            if !probe.has_animation {
+            if !probe.sequence.is_animation() {
                 continue;
             }
 

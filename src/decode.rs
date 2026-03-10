@@ -44,10 +44,8 @@ pub struct PngInfo {
     pub height: u32,
     /// Whether the image has an alpha channel.
     pub has_alpha: bool,
-    /// Whether the image contains animation (APNG).
-    pub has_animation: bool,
-    /// Number of frames.
-    pub frame_count: u32,
+    /// What kind of image sequence the file contains.
+    pub sequence: zencodec::ImageSequence,
     /// Source bit depth per channel (before any transformations).
     pub bit_depth: u8,
     /// PNG color type from IHDR (0=Grayscale, 2=RGB, 3=Indexed, 4=GrayAlpha, 6=RGBA).
@@ -326,7 +324,7 @@ pub fn decode_apng(
 ) -> crate::error::Result<ApngDecodeOutput> {
     // Check if this is actually an APNG
     let probe_info = crate::decoder::probe_png(data)?;
-    if !probe_info.has_animation {
+    if !probe_info.sequence.is_animation() {
         // Non-animated PNG: decode normally, wrap as single frame
         let output = crate::decoder::decode_png(data, config, cancel)?;
         let frame = ApngFrame {
