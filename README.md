@@ -204,7 +204,7 @@ via `PngWarning` variants.
 | `quantette` | no | quantette quantizer backend (fast k-means, RGB only) |
 | `zopfli` | no | Zenzop recompression for Crush/Maniac and effort 31+ (enhanced zopfli fork) |
 | `joint` | no | Joint quantization (requires `quantize`) |
-| `zencodec` | no | zencodec-types trait integration |
+| `zencodec` | no | zencodec trait integration |
 
 ## Performance
 

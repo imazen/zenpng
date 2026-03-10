@@ -1,7 +1,7 @@
-//! zencodec-types trait implementations for PNG.
+//! zencodec trait implementations for PNG.
 //!
 //! Provides [`PngEncoderConfig`] and [`PngDecoderConfig`] types that implement the
-//! [`EncoderConfig`] / [`DecoderConfig`] traits from zencodec-types.
+//! [`EncoderConfig`] / [`DecoderConfig`] traits from zencodec.
 #![allow(dead_code)]
 
 extern crate std;

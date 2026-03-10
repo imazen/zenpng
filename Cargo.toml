@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
 license = "AGPL-3.0-or-later"
-description = "PNG encoding and decoding with zencodec-types trait integration"
+description = "PNG encoding and decoding with zencodec trait integration"
 categories = ["multimedia::images", "multimedia::encoding"]
 keywords = ["png", "image", "encoder", "decoder", "codec"]
 repository = "https://github.com/imazen/zenpng"
@@ -15,7 +15,7 @@ rgb = { version = "0.8", default-features = false, features = ["as-bytes"] }
 imgref = "1.12"
 bytemuck = { version = "1.25", default-features = false, features = ["extern_crate_alloc"] }
 enough = "0.4"
-zencodec-types = { version = "0.1", path = "../zencodec-types" }
+zc = { version = "0.1", path = "../zencodec", package = "zencodec" }
 zenpixels = { version = "0.1", path = "../zenpixels/zenpixels", default-features = false, features = ["buffer"] }
 zenpixels-convert = { version = "0.1", path = "../zenpixels/zenpixels-convert", features = ["buffer"] }
 zenquant = { version = "0.1", path = "../zenquant", optional = true }

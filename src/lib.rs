@@ -1,4 +1,4 @@
-//! PNG encoding and decoding with zencodec-types trait integration.
+//! PNG encoding and decoding with zencodec trait integration.
 //!
 //! Uses `zenflate` for both compression and decompression, typed pixel buffers
 //! (`imgref` + `rgb`), metadata roundtrip (ICC/EXIF/XMP), and optional palette
@@ -23,7 +23,7 @@
 //! # Ok::<(), whereat::At<zenpng::PngError>>(())
 //! ```
 //!
-//! # zencodec-types traits
+//! # zencodec traits
 //!
 //! [`PngEncoderConfig`] implements [`zc::EncoderConfig`] and [`PngDecoderConfig`]
 //! implements [`zc::DecoderConfig`] for use with multi-codec dispatchers.
