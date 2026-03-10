@@ -23,7 +23,7 @@ PNG encoder/decoder with SIMD-accelerated unfiltering and zenflate decompression
 - `src/decode.rs` — Public decode API facade
 - `src/encode.rs` — Public encode API facade
 - `src/error.rs` — Error types
-- `src/zencodec.rs` — zencodec-types trait integration
+- `src/zencodec.rs` — zencodec trait integration
 
 ### Dependencies
 

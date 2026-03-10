@@ -46,4 +46,4 @@ bench = false
 zenpixels = { path = "../../zenpixels/zenpixels" }
 zenpixels-convert = { path = "../../zenpixels/zenpixels-convert" }
 zenflate = { path = "../../zenflate" }
-zencodec-types = { path = "../../zencodec-types" }
+zencodec = { path = "../../zencodec" }
