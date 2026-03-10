@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use enough::Unstoppable;
-use zc::MetadataView;
+use zencodec::MetadataView;
 use zenpixels::PixelBuffer;
 use zenpixels::descriptor::{ChannelLayout, ChannelType};
 use zenpixels_convert::PixelBufferConvertExt;

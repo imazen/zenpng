@@ -37,8 +37,8 @@ impl From<enough::StopReason> for PngError {
     }
 }
 
-impl From<zc::UnsupportedOperation> for PngError {
-    fn from(op: zc::UnsupportedOperation) -> Self {
+impl From<zencodec::UnsupportedOperation> for PngError {
+    fn from(op: zencodec::UnsupportedOperation) -> Self {
         PngError::InvalidInput(alloc::format!("unsupported operation: {op}"))
     }
 }
@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn error_from_unsupported_operation() {
-        let op = zc::UnsupportedOperation::RowLevelEncode;
+        let op = zencodec::UnsupportedOperation::RowLevelEncode;
         let e: PngError = op.into();
         assert!(e.to_string().contains("unsupported operation"));
     }

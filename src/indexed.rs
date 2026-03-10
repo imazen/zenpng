@@ -8,7 +8,7 @@ use imgref::ImgRef;
 use rgb::Rgba;
 use std::collections::HashMap;
 
-use zc::MetadataView;
+use zencodec::MetadataView;
 
 use enough::Stop;
 

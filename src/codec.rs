@@ -10,9 +10,9 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use whereat::{At, at};
-use zc::decode::{DecodeCapabilities, DecodeOutput, FullFrame, OutputInfo};
-use zc::encode::{EncodeCapabilities, EncodeOutput};
-use zc::{ImageFormat, ImageInfo, MetadataView, ResourceLimits};
+use zencodec::decode::{DecodeCapabilities, DecodeOutput, FullFrame, OutputInfo};
+use zencodec::encode::{EncodeCapabilities, EncodeOutput};
+use zencodec::{ImageFormat, ImageInfo, MetadataView, ResourceLimits};
 use zenpixels::{Pixel, PixelDescriptor, PixelSlice, PixelSliceMut};
 
 use crate::decode::PngDecodeConfig;
@@ -52,7 +52,7 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
 
 // ── PngEncoderConfig ─────────────────────────────────────────────────
 
-/// PNG encoder configuration implementing [`EncoderConfig`](zc::EncoderConfig).
+/// PNG encoder configuration implementing [`EncoderConfig`](zencodec::EncoderConfig).
 ///
 /// Use [`with_compression`](PngEncoderConfig::with_compression) to control compression level.
 /// When the `quantize` feature is enabled, setting quality < 100 enables
@@ -97,7 +97,7 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Rgb<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
@@ -106,7 +106,7 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Rgba<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
@@ -115,7 +115,7 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Gray<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
@@ -124,7 +124,7 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Rgb<u16>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
@@ -133,7 +133,7 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Rgba<u16>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
@@ -142,7 +142,7 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Gray<u16>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
@@ -151,7 +151,7 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Rgb<f32>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
@@ -160,7 +160,7 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Rgba<f32>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
@@ -169,7 +169,7 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Gray<f32>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
@@ -178,7 +178,7 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, rgb::alt::BGRA<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
         self.job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 }
@@ -276,21 +276,21 @@ fn quality_to_mpe(quality: f32) -> f32 {
     TABLE[last].1
 }
 
-/// Convert a [`ThreadingPolicy`](zc::ThreadingPolicy) to a concrete thread count.
+/// Convert a [`ThreadingPolicy`](zencodec::ThreadingPolicy) to a concrete thread count.
 ///
 /// Returns 0 for "no limit" (use as many threads as beneficial),
 /// 1 for single-threaded, or N for a specific cap.
-fn threading_to_count(policy: zc::ThreadingPolicy) -> usize {
+fn threading_to_count(policy: zencodec::ThreadingPolicy) -> usize {
     match policy {
-        zc::ThreadingPolicy::SingleThread => 1,
-        zc::ThreadingPolicy::LimitOrSingle { max_threads } => max_threads as usize,
-        zc::ThreadingPolicy::LimitOrAny {
+        zencodec::ThreadingPolicy::SingleThread => 1,
+        zencodec::ThreadingPolicy::LimitOrSingle { max_threads } => max_threads as usize,
+        zencodec::ThreadingPolicy::LimitOrAny {
             preferred_max_threads,
         } => preferred_max_threads as usize,
-        zc::ThreadingPolicy::Balanced => {
+        zencodec::ThreadingPolicy::Balanced => {
             std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1))
         }
-        zc::ThreadingPolicy::Unlimited => 0, // 0 = no limit
+        zencodec::ThreadingPolicy::Unlimited => 0, // 0 = no limit
         _ => 0,                              // future variants: default to no limit
     }
 }
@@ -313,7 +313,7 @@ static PNG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_effort_range(0, 12)
     .with_quality_range(0.0, 100.0);
 
-impl zc::encode::EncoderConfig for PngEncoderConfig {
+impl zencodec::encode::EncoderConfig for PngEncoderConfig {
     type Error = At<PngError>;
     type Job<'a> = PngEncodeJob<'a>;
 
@@ -383,13 +383,13 @@ pub struct PngEncodeJob<'a> {
     stop: Option<&'a dyn enough::Stop>,
     metadata: Option<&'a MetadataView<'a>>,
     limits: Option<ResourceLimits>,
-    policy: Option<zc::encode::EncodePolicy>,
+    policy: Option<zencodec::encode::EncodePolicy>,
     canvas_width: u32,
     canvas_height: u32,
     loop_count: Option<u32>,
 }
 
-impl<'a> zc::encode::EncodeJob<'a> for PngEncodeJob<'a> {
+impl<'a> zencodec::encode::EncodeJob<'a> for PngEncodeJob<'a> {
     type Error = At<PngError>;
     type Enc = PngEncoder<'a>;
     type FullFrameEnc = PngFullFrameEncoder;
@@ -409,7 +409,7 @@ impl<'a> zc::encode::EncodeJob<'a> for PngEncodeJob<'a> {
         self
     }
 
-    fn with_policy(mut self, policy: zc::encode::EncodePolicy) -> Self {
+    fn with_policy(mut self, policy: zencodec::encode::EncodePolicy) -> Self {
         self.policy = Some(policy);
         self
     }
@@ -466,7 +466,7 @@ pub struct PngEncoder<'a> {
     stop: Option<&'a dyn enough::Stop>,
     metadata: Option<&'a MetadataView<'a>>,
     limits: Option<ResourceLimits>,
-    policy: Option<zc::encode::EncodePolicy>,
+    policy: Option<zencodec::encode::EncodePolicy>,
     /// Canvas dimensions for push_rows mode (set via `with_canvas_size`).
     canvas_width: u32,
     canvas_height: u32,
@@ -632,10 +632,10 @@ impl<'a> PngEncoder<'a> {
     }
 }
 
-impl zc::encode::Encoder for PngEncoder<'_> {
+impl zencodec::encode::Encoder for PngEncoder<'_> {
     type Error = At<PngError>;
 
-    fn reject(op: zc::UnsupportedOperation) -> At<PngError> {
+    fn reject(op: zencodec::UnsupportedOperation) -> At<PngError> {
         at!(PngError::from(op))
     }
 
@@ -784,7 +784,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                     .collect();
                 self.do_encode(&rgba, w, h, crate::encode::ColorType::Rgba)
             }
-            _ => Err(at!(PngError::from(zc::UnsupportedOperation::PixelFormat))),
+            _ => Err(at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat))),
         }
     }
 
@@ -802,7 +802,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
         // Initialize streaming state on first call.
         if self.streaming.is_none() {
             let (color_type, bit_depth) = pixel_format_to_png(rows.descriptor().pixel_format())
-                .ok_or_else(|| at!(PngError::from(zc::UnsupportedOperation::PixelFormat)))?;
+                .ok_or_else(|| at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat)))?;
 
             // Infer width from first push if not set via with_canvas_size
             if self.canvas_width == 0 {
@@ -924,7 +924,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                             }
                         }
                         _ => {
-                            return Err(at!(PngError::from(zc::UnsupportedOperation::PixelFormat)));
+                            return Err(at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat)));
                         }
                     }
                 }
@@ -978,7 +978,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                             state.push_converted_row();
                         }
                         _ => {
-                            return Err(at!(PngError::from(zc::UnsupportedOperation::PixelFormat)));
+                            return Err(at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat)));
                         }
                     }
                 }
@@ -1029,7 +1029,7 @@ impl zc::encode::Encoder for PngEncoder<'_> {
                             state.push_converted_row();
                         }
                         _ => {
-                            return Err(at!(PngError::from(zc::UnsupportedOperation::PixelFormat)));
+                            return Err(at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat)));
                         }
                     }
                 }
@@ -1116,9 +1116,9 @@ struct OwnedMetadata {
     icc_profile: Option<Vec<u8>>,
     exif: Option<Vec<u8>>,
     xmp: Option<Vec<u8>>,
-    cicp: Option<zc::Cicp>,
-    content_light_level: Option<zc::ContentLightLevel>,
-    mastering_display: Option<zc::MasteringDisplay>,
+    cicp: Option<zencodec::Cicp>,
+    content_light_level: Option<zencodec::ContentLightLevel>,
+    mastering_display: Option<zencodec::MasteringDisplay>,
 }
 
 impl OwnedMetadata {
@@ -1145,7 +1145,7 @@ impl OwnedMetadata {
     }
 }
 
-/// APNG frame-by-frame encoder implementing [`FullFrameEncoder`](zc::encode::FullFrameEncoder).
+/// APNG frame-by-frame encoder implementing [`FullFrameEncoder`](zencodec::encode::FullFrameEncoder).
 ///
 /// Accumulates canvas-sized RGBA8 frames, then encodes them all on [`finish()`](PngFullFrameEncoder::do_finish).
 pub struct PngFullFrameEncoder {
@@ -1228,10 +1228,10 @@ impl PngFullFrameEncoder {
     }
 }
 
-impl zc::encode::FullFrameEncoder for PngFullFrameEncoder {
+impl zencodec::encode::FullFrameEncoder for PngFullFrameEncoder {
     type Error = At<PngError>;
 
-    fn reject(op: zc::UnsupportedOperation) -> At<PngError> {
+    fn reject(op: zencodec::UnsupportedOperation) -> At<PngError> {
         at!(PngError::from(op))
     }
 
@@ -1320,7 +1320,7 @@ impl PngFullFrameEncoder {
 
 // ── PngDecoderConfig ─────────────────────────────────────────────────
 
-/// PNG decoder configuration implementing [`DecoderConfig`](zc::DecoderConfig).
+/// PNG decoder configuration implementing [`DecoderConfig`](zencodec::DecoderConfig).
 #[derive(Clone, Debug)]
 pub struct PngDecoderConfig {
     limits: ResourceLimits,
@@ -1341,13 +1341,13 @@ impl PngDecoderConfig {
 impl PngDecoderConfig {
     /// Convenience: decode in one call (native format).
     pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, At<PngError>> {
-        use zc::decode::{Decode, DecodeJob, DecoderConfig};
+        use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
         self.job().decoder(Cow::Borrowed(data), &[])?.decode()
     }
 
     /// Convenience: probe image header.
     pub fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<PngError>> {
-        use zc::decode::{DecodeJob, DecoderConfig};
+        use zencodec::decode::{DecodeJob, DecoderConfig};
         self.job().probe(data)
     }
 
@@ -1450,7 +1450,7 @@ static PNG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_enforces_max_input_bytes(true)
     .with_row_level(true);
 
-impl zc::decode::DecoderConfig for PngDecoderConfig {
+impl zencodec::decode::DecoderConfig for PngDecoderConfig {
     type Error = At<PngError>;
     type Job<'a> = PngDecodeJob<'a>;
 
@@ -1484,11 +1484,11 @@ pub struct PngDecodeJob<'a> {
     config: &'a PngDecoderConfig,
     stop: Option<&'a dyn enough::Stop>,
     limits: Option<ResourceLimits>,
-    policy: Option<zc::decode::DecodePolicy>,
+    policy: Option<zencodec::decode::DecodePolicy>,
     start_frame_index: u32,
 }
 
-impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
+impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob<'a> {
     type Error = At<PngError>;
     type Dec = PngDecoder<'a>;
     type StreamDec = PngStreamingDecoder<'a>;
@@ -1504,7 +1504,7 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
         self
     }
 
-    fn with_policy(mut self, policy: zc::decode::DecodePolicy) -> Self {
+    fn with_policy(mut self, policy: zencodec::decode::DecodePolicy) -> Self {
         self.policy = Some(policy);
         self
     }
@@ -1590,7 +1590,7 @@ impl<'a> zc::decode::DecodeJob<'a> for PngDecodeJob<'a> {
     fn push_decoder(
         self,
         data: Cow<'a, [u8]>,
-        sink: &mut dyn zc::decode::DecodeRowSink,
+        sink: &mut dyn zencodec::decode::DecodeRowSink,
         preferred: &[PixelDescriptor],
     ) -> Result<OutputInfo, At<PngError>> {
         push_decoder_native(self, data, sink, preferred)
@@ -1604,7 +1604,7 @@ pub struct PngDecoder<'a> {
     config: &'a PngDecoderConfig,
     stop: Option<&'a dyn enough::Stop>,
     limits: Option<ResourceLimits>,
-    policy: Option<zc::decode::DecodePolicy>,
+    policy: Option<zencodec::decode::DecodePolicy>,
     data: Cow<'a, [u8]>,
     preferred: Vec<PixelDescriptor>,
 }
@@ -1622,7 +1622,7 @@ impl PngDecoder<'_> {
     }
 }
 
-impl zc::decode::Decode for PngDecoder<'_> {
+impl zencodec::decode::Decode for PngDecoder<'_> {
     type Error = At<PngError>;
 
     fn decode(self) -> Result<DecodeOutput, At<PngError>> {
@@ -1682,13 +1682,13 @@ fn native_output_descriptor(color_type: u8, bit_depth: u8, has_trns: bool) -> Pi
 fn push_decoder_native<'a>(
     job: PngDecodeJob<'a>,
     data: Cow<'a, [u8]>,
-    sink: &mut dyn zc::decode::DecodeRowSink,
+    sink: &mut dyn zencodec::decode::DecodeRowSink,
     preferred: &[PixelDescriptor],
 ) -> Result<OutputInfo, At<PngError>> {
     use crate::decoder::postprocess::post_process_row;
     use crate::decoder::row::RowDecoder;
 
-    let wrap_sink = |e: zc::decode::SinkError| -> At<PngError> {
+    let wrap_sink = |e: zencodec::decode::SinkError| -> At<PngError> {
         at!(PngError::InvalidInput(alloc::format!("sink error: {e}")))
     };
 
@@ -1700,7 +1700,7 @@ fn push_decoder_native<'a>(
 
     // Check for interlacing — fall back to full decode for Adam7
     if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
-        return zc::decode::push_decoder_via_full_decode(job, data, sink, preferred, |e| {
+        return zencodec::decode::push_decoder_via_full_decode(job, data, sink, preferred, |e| {
             at!(PngError::InvalidInput(alloc::format!("sink error: {e}")))
         });
     }
@@ -1822,7 +1822,7 @@ fn push_decoder_native<'a>(
 
 // ── PngStreamingDecoder ──────────────────────────────────────────────
 
-/// Pull-based streaming PNG decoder implementing [`StreamingDecode`](zc::decode::StreamingDecode).
+/// Pull-based streaming PNG decoder implementing [`StreamingDecode`](zencodec::decode::StreamingDecode).
 ///
 /// Yields one post-processed row per `next_batch()` call, backed by
 /// [`RowDecoder`](crate::decoder::row::RowDecoder). Only non-interlaced
@@ -1850,13 +1850,13 @@ impl<'a> PngStreamingDecoder<'a> {
         config: &PngDecoderConfig,
         stop: Option<&'a dyn enough::Stop>,
         limits: Option<&ResourceLimits>,
-        policy: Option<&zc::decode::DecodePolicy>,
+        policy: Option<&zencodec::decode::DecodePolicy>,
         _preferred: &[PixelDescriptor],
     ) -> Result<Self, At<PngError>> {
         // Reject interlaced PNGs — Adam7 requires full-canvas buffering
         if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
             return Err(at!(PngError::from(
-                zc::UnsupportedOperation::RowLevelDecode
+                zencodec::UnsupportedOperation::RowLevelDecode
             )));
         }
 
@@ -1921,7 +1921,7 @@ impl<'a> PngStreamingDecoder<'a> {
     }
 }
 
-impl zc::decode::StreamingDecode for PngStreamingDecoder<'_> {
+impl zencodec::decode::StreamingDecode for PngStreamingDecoder<'_> {
     type Error = At<PngError>;
 
     fn next_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, At<PngError>> {
@@ -1980,7 +1980,7 @@ impl zc::decode::StreamingDecode for PngStreamingDecoder<'_> {
 
 // ── PngFullFrameDecoder ──────────────────────────────────────────────
 
-/// APNG frame-by-frame decoder implementing [`FullFrameDecoder`](zc::decode::FullFrameDecoder).
+/// APNG frame-by-frame decoder implementing [`FullFrameDecoder`](zencodec::decode::FullFrameDecoder).
 ///
 /// Yields composited full-canvas frames. The returned [`FullFrame`] borrows
 /// the decoder's internal canvas buffer; calling `render_next_frame()` again
@@ -2037,10 +2037,10 @@ impl PngFullFrameDecoder {
     }
 }
 
-impl zc::decode::FullFrameDecoder for PngFullFrameDecoder {
+impl zencodec::decode::FullFrameDecoder for PngFullFrameDecoder {
     type Error = At<PngError>;
 
-    fn wrap_sink_error(err: zc::decode::SinkError) -> At<PngError> {
+    fn wrap_sink_error(err: zencodec::decode::SinkError) -> At<PngError> {
         at!(PngError::InvalidInput(alloc::format!("sink error: {err}")))
     }
 
@@ -2059,9 +2059,9 @@ impl zc::decode::FullFrameDecoder for PngFullFrameDecoder {
     fn render_next_frame_to_sink(
         &mut self,
         stop: Option<&dyn enough::Stop>,
-        sink: &mut dyn zc::decode::DecodeRowSink,
+        sink: &mut dyn zencodec::decode::DecodeRowSink,
     ) -> Result<Option<OutputInfo>, At<PngError>> {
-        zc::decode::render_frame_to_sink_via_copy(self, stop, sink)
+        zencodec::decode::render_frame_to_sink_via_copy(self, stop, sink)
     }
 
     fn render_next_frame(
@@ -2126,7 +2126,7 @@ use zenpixels_convert::PixelBufferConvertExt as _;
 /// if the native format doesn't already match.
 fn negotiate_and_convert(pixels: PixelBuffer, preferred: &[PixelDescriptor]) -> PixelBuffer {
     let native_desc = pixels.descriptor();
-    let target = zc::decode::negotiate_pixel_format(preferred, DECODE_DESCRIPTORS);
+    let target = zencodec::decode::negotiate_pixel_format(preferred, DECODE_DESCRIPTORS);
 
     // Already in the target format — no conversion needed
     let Some(target) = target else {
@@ -2226,7 +2226,7 @@ fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
 /// or `None` if no metadata was provided.
 fn apply_encode_policy<'a>(
     metadata: Option<&'a MetadataView<'a>>,
-    policy: Option<&zc::encode::EncodePolicy>,
+    policy: Option<&zencodec::encode::EncodePolicy>,
 ) -> Option<MetadataView<'a>> {
     let meta = metadata?;
     let Some(policy) = policy else {
@@ -2250,7 +2250,7 @@ fn apply_encode_policy<'a>(
 /// Returns adjusted `PngDecodeConfig` based on the policy.
 fn apply_decode_policy(
     mut config: PngDecodeConfig,
-    policy: Option<&zc::decode::DecodePolicy>,
+    policy: Option<&zencodec::decode::DecodePolicy>,
 ) -> PngDecodeConfig {
     let Some(policy) = policy else {
         return config;
@@ -2333,7 +2333,7 @@ impl TrueStreamingState {
         bit_depth: crate::encode::BitDepth,
         row_bytes: usize,
         metadata: Option<&MetadataView<'_>>,
-        policy: Option<&zc::encode::EncodePolicy>,
+        policy: Option<&zencodec::encode::EncodePolicy>,
         config: &EncodeConfig,
     ) -> Result<Self, At<PngError>> {
         use crate::chunk::{PNG_SIGNATURE, write::write_chunk};
@@ -2518,7 +2518,7 @@ impl PreFilteredState {
         row_bytes: usize,
         bpp: usize,
         metadata: Option<&MetadataView<'_>>,
-        policy: Option<&zc::encode::EncodePolicy>,
+        policy: Option<&zencodec::encode::EncodePolicy>,
         config: &EncodeConfig,
     ) -> Result<Self, At<PngError>> {
         use crate::chunk::{PNG_SIGNATURE, write::write_chunk};
@@ -3021,8 +3021,8 @@ mod tests {
     use alloc::vec;
     use imgref::Img;
     use rgb::{Gray, Rgb, Rgba};
-    use zc::decode::{Decode, DecodeJob, DecoderConfig};
-    use zc::encode::{EncodeJob, EncoderConfig};
+    use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
+    use zencodec::encode::{EncodeJob, EncoderConfig};
 
     #[test]
     fn encoding_rgb8() {
@@ -3493,7 +3493,7 @@ mod tests {
         let img = imgref::ImgVec::new(pixels, 2, 2);
         let config = PngEncoderConfig::new();
 
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         let slice = PixelSlice::from(img.as_ref());
         let output = config
             .job()
@@ -4045,7 +4045,7 @@ mod tests {
 
         let enc = PngEncoderConfig::new();
         let slice = PixelSlice::from(img.as_ref());
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         let output = enc.job().encoder().unwrap().encode(slice.erase()).unwrap();
         assert_eq!(output.format(), ImageFormat::Png);
 
@@ -4170,7 +4170,7 @@ mod tests {
     fn cicp_suppresses_srgb_gama_chrm() {
         // PNGv3 precedence: cICP suppresses sRGB, gAMA, cHRM
         use crate::decode::PngChromaticities;
-        use zc::{Cicp, MetadataView};
+        use zencodec::{Cicp, MetadataView};
 
         let pixels = vec![
             Rgb::<u8> {
@@ -4226,7 +4226,7 @@ mod tests {
     fn iccp_suppresses_srgb_gama_chrm() {
         // PNGv3 precedence: iCCP suppresses sRGB, gAMA, cHRM
         use crate::decode::PngChromaticities;
-        use zc::MetadataView;
+        use zencodec::MetadataView;
 
         let pixels = vec![
             Rgb::<u8> {
@@ -4284,7 +4284,7 @@ mod tests {
     #[test]
     fn cicp_with_iccp_fallback() {
         // PNGv3: cICP + iCCP both written (iCCP as fallback for limited cICP support)
-        use zc::{Cicp, MetadataView};
+        use zencodec::{Cicp, MetadataView};
 
         let pixels = vec![
             Rgb::<u8> {
@@ -4327,7 +4327,7 @@ mod tests {
     #[test]
     fn hdr_metadata_always_written_with_cicp() {
         // mDCV and cLLi always written alongside cICP
-        use zc::{Cicp, ContentLightLevel, MasteringDisplay, MetadataView};
+        use zencodec::{Cicp, ContentLightLevel, MasteringDisplay, MetadataView};
 
         let pixels = vec![
             Rgb::<u8> {
@@ -4432,7 +4432,7 @@ mod tests {
 
     #[test]
     fn cicp_roundtrip() {
-        use zc::{Cicp, MetadataView};
+        use zencodec::{Cicp, MetadataView};
 
         let pixels = vec![
             Rgb::<u8> {
@@ -4469,7 +4469,7 @@ mod tests {
 
     #[test]
     fn clli_mdcv_roundtrip() {
-        use zc::{ContentLightLevel, MasteringDisplay, MetadataView};
+        use zencodec::{ContentLightLevel, MasteringDisplay, MetadataView};
 
         let pixels = vec![
             Rgb::<u8> {
@@ -4642,7 +4642,7 @@ mod tests {
         assert!(!icc.is_empty());
 
         // Re-encode with ICC profile
-        let meta = zc::MetadataView::none().with_icc(icc);
+        let meta = zencodec::MetadataView::none().with_icc(icc);
         let config = crate::encode::EncodeConfig::default();
         let pixels = orig
             .pixels
@@ -4778,7 +4778,7 @@ mod tests {
         let img = Img::new(pixels, 2, 2);
         let slice = PixelSlice::from(img.as_ref());
 
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         let result = encoder.encode(slice.erase());
         assert!(result.is_err());
         match result.unwrap_err().into_inner() {
@@ -5206,7 +5206,7 @@ mod tests {
 
     #[test]
     fn encoder_trait_rgb8() {
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         let pixels: Vec<Rgb<u8>> = (0..16 * 16)
             .map(|i| Rgb {
                 r: (i % 256) as u8,
@@ -5226,7 +5226,7 @@ mod tests {
 
     #[test]
     fn encoder_trait_rgba8() {
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         let pixels: Vec<Rgba<u8>> = (0..16 * 16)
             .map(|i| Rgba {
                 r: (i % 256) as u8,
@@ -5247,7 +5247,7 @@ mod tests {
 
     #[test]
     fn encoder_trait_gray8() {
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         let pixels: Vec<Gray<u8>> = (0..16 * 16).map(|i| Gray((i % 256) as u8)).collect();
         let img = imgref::ImgVec::new(pixels, 16, 16);
         let config = PngEncoderConfig::new();
@@ -5261,7 +5261,7 @@ mod tests {
 
     #[test]
     fn encoder_trait_rgb16() {
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         let pixels: Vec<Rgb<u16>> = (0..16 * 16)
             .map(|i| Rgb {
                 r: (i * 256) as u16,
@@ -5281,7 +5281,7 @@ mod tests {
 
     #[test]
     fn encoder_trait_rgba16() {
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         let pixels: Vec<Rgba<u16>> = (0..16 * 16)
             .map(|i| Rgba {
                 r: (i * 256) as u16,
@@ -5302,7 +5302,7 @@ mod tests {
 
     #[test]
     fn encoder_trait_gray16() {
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         let pixels: Vec<Gray<u16>> = (0..16 * 16).map(|i| Gray((i * 256) as u16)).collect();
         let img = imgref::ImgVec::new(pixels, 16, 16);
         let config = PngEncoderConfig::new();
@@ -5316,7 +5316,7 @@ mod tests {
 
     #[test]
     fn encoder_trait_rgb_f32() {
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         let pixels: Vec<Rgb<f32>> = (0..16 * 16)
             .map(|i| Rgb {
                 r: (i % 256) as f32 / 255.0,
@@ -5336,7 +5336,7 @@ mod tests {
 
     #[test]
     fn encoder_trait_rgba_f32() {
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         let pixels: Vec<Rgba<f32>> = (0..16 * 16)
             .map(|i| Rgba {
                 r: (i % 256) as f32 / 255.0,
@@ -5357,7 +5357,7 @@ mod tests {
 
     #[test]
     fn encoder_trait_gray_f32() {
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         let pixels: Vec<Gray<f32>> = (0..16 * 16)
             .map(|i| Gray((i % 256) as f32 / 255.0))
             .collect();
@@ -5373,7 +5373,7 @@ mod tests {
 
     #[test]
     fn encoder_trait_bgra8() {
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         let pixels: Vec<rgb::alt::BGRA<u8>> = (0..16 * 16)
             .map(|i| rgb::alt::BGRA {
                 b: (i % 256) as u8,
@@ -5396,7 +5396,7 @@ mod tests {
 
     #[test]
     fn encode_max_output_bytes_rejects_large_output() {
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         // Encode a 32x32 RGB image — output will be well over 100 bytes.
         let pixels: Vec<Rgb<u8>> = (0..32 * 32)
             .map(|i| Rgb {
@@ -5420,7 +5420,7 @@ mod tests {
 
     #[test]
     fn encode_max_output_bytes_allows_small_output() {
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         // 2x2 tiny image — output will be small but still a valid PNG
         let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 0, g: 0, b: 0 }; 4];
         let img = imgref::ImgVec::new(pixels, 2, 2);
@@ -5434,7 +5434,7 @@ mod tests {
 
     #[test]
     fn apng_push_frame_rejects_over_max_frames() {
-        use zc::encode::FullFrameEncoder;
+        use zencodec::encode::FullFrameEncoder;
         let config = PngEncoderConfig::new();
         let limits = ResourceLimits::none().with_max_frames(2);
         let job = config
@@ -5478,7 +5478,7 @@ mod tests {
 
     #[test]
     fn apng_push_frame_rejects_over_max_memory() {
-        use zc::encode::FullFrameEncoder;
+        use zencodec::encode::FullFrameEncoder;
         let config = PngEncoderConfig::new();
         // 4x4 RGBA8 = 64 bytes per frame. Limit to 100 bytes total.
         let limits = ResourceLimits::none().with_max_memory(100);
@@ -5520,7 +5520,7 @@ mod tests {
 
     #[test]
     fn decode_max_input_bytes_rejects_large_input() {
-        use zc::decode::{Decode, DecodeJob, DecoderConfig};
+        use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
         // First, encode a valid PNG
         let pixels: Vec<Rgb<u8>> = vec![
             Rgb {
@@ -5554,7 +5554,7 @@ mod tests {
 
     #[test]
     fn decode_max_input_bytes_allows_small_input() {
-        use zc::decode::{Decode, DecodeJob, DecoderConfig};
+        use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
         // Encode a tiny PNG
         let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 0, g: 0, b: 0 }; 4];
         let img = imgref::ImgVec::new(pixels, 2, 2);
@@ -5578,8 +5578,8 @@ mod tests {
 
     #[test]
     fn encode_single_thread_produces_valid_png() {
-        use zc::ThreadingPolicy;
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::ThreadingPolicy;
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let pixels: Vec<Rgb<u8>> = (0..32 * 32)
             .map(|i| Rgb {
@@ -5604,7 +5604,7 @@ mod tests {
         );
 
         // Roundtrip: decode it back
-        use zc::decode::{Decode, DecodeJob, DecoderConfig};
+        use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
         let dec = PngDecoderConfig::new();
         let result = dec
             .job()
@@ -5620,8 +5620,8 @@ mod tests {
 
     #[test]
     fn encode_single_thread_matches_default_threading() {
-        use zc::ThreadingPolicy;
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::ThreadingPolicy;
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let pixels: Vec<Rgb<u8>> = vec![
             Rgb {
@@ -5686,7 +5686,7 @@ mod tests {
 
     #[test]
     fn push_rows_rgb8_roundtrip() {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 4u32;
         let h = 6u32;
@@ -5742,7 +5742,7 @@ mod tests {
 
     #[test]
     fn push_rows_rgba8_single_row_at_a_time() {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 3u32;
         let h = 4u32;
@@ -5776,7 +5776,7 @@ mod tests {
 
     #[test]
     fn push_rows_all_at_once() {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 8u32;
         let h = 8u32;
@@ -5809,7 +5809,7 @@ mod tests {
 
     #[test]
     fn push_rows_gray8() {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 5u32;
         let h = 3u32;
@@ -5835,7 +5835,7 @@ mod tests {
 
     #[test]
     fn push_rows_finish_without_push_errors() {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let config = PngEncoderConfig::new();
         let encoder = config.job().with_canvas_size(4, 4).encoder().unwrap();
@@ -5844,7 +5844,7 @@ mod tests {
 
     #[test]
     fn push_rows_overflow_errors() {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 2u32;
         let h = 2u32;
@@ -5861,7 +5861,7 @@ mod tests {
     #[test]
     fn push_rows_matches_encode_output() {
         // Verify push_rows produces byte-identical output to encode()
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 16u32;
         let h = 16u32;
@@ -5912,16 +5912,16 @@ mod tests {
 
     #[test]
     fn push_rows_caps_advertised() {
-        use zc::encode::EncoderConfig;
+        use zencodec::encode::EncoderConfig;
 
         let caps = PngEncoderConfig::capabilities();
-        assert!(caps.supports(zc::UnsupportedOperation::RowLevelEncode));
+        assert!(caps.supports(zencodec::UnsupportedOperation::RowLevelEncode));
     }
 
     #[test]
     fn push_rows_infer_canvas_width() {
         // If canvas_size not set, width inferred from first push
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 4u32;
         let h = 2u32;
@@ -5956,7 +5956,7 @@ mod tests {
 
     #[test]
     fn streaming_effort0_rgb8_roundtrip() {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 4u32;
         let h = 6u32;
@@ -6009,7 +6009,7 @@ mod tests {
 
     #[test]
     fn streaming_effort0_rgba8_single_row() {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 3u32;
         let h = 4u32;
@@ -6043,7 +6043,7 @@ mod tests {
 
     #[test]
     fn streaming_effort0_gray8() {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 8u32;
         let h = 4u32;
@@ -6071,7 +6071,7 @@ mod tests {
     fn streaming_effort0_matches_oneshot_effort0() {
         // True streaming at effort 0 should produce byte-identical output
         // to one-shot encode at effort 0 (both use stored DEFLATE + None filter).
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 16u32;
         let h = 12u32;
@@ -6111,7 +6111,7 @@ mod tests {
     fn streaming_effort0_large_row() {
         // Test rows that exceed 65535 bytes (stored block boundary).
         // 16384 × 4 = 65536 bytes per row → must split across blocks.
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 16384u32;
         let h = 2u32;
@@ -6157,7 +6157,7 @@ mod tests {
     fn streaming_effort0_fallback_without_canvas_height() {
         // Without canvas_height, effort 0 should fall back to buffered mode
         // (can't pre-compute IDAT size), but still produce valid output.
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 4u32;
         let h = 3u32;
@@ -6193,7 +6193,7 @@ mod tests {
 
     #[test]
     fn streaming_effort1_rgb8_roundtrip() {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 8u32;
         let h = 6u32;
@@ -6246,7 +6246,7 @@ mod tests {
     fn streaming_effort1_matches_oneshot_bytes() {
         // Pre-filtered streaming at effort 1 should produce byte-identical
         // output to one-shot encode at effort 1 (both use Paeth + Turbo).
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 12u32;
         let h = 8u32;
@@ -6283,7 +6283,7 @@ mod tests {
     #[test]
     fn streaming_effort1_smaller_than_effort0() {
         // Effort 1 (Paeth + Turbo) should compress better than effort 0 (None + Store).
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 64u32;
         let h = 64u32;
@@ -6325,7 +6325,7 @@ mod tests {
 
     #[test]
     fn streaming_effort1_rgba8_single_row() {
-        use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 5u32;
         let h = 4u32;
@@ -6453,7 +6453,7 @@ mod tests {
     #[test]
     fn apng_finish_respects_stop_token() {
         use enough::{Stop, StopReason};
-        use zc::encode::FullFrameEncoder;
+        use zencodec::encode::FullFrameEncoder;
 
         /// A Stop that always says "stop now".
         struct AlreadyCancelled;
@@ -6494,7 +6494,7 @@ mod tests {
 
     #[test]
     fn apng_finish_succeeds_without_stop_token() {
-        use zc::encode::FullFrameEncoder;
+        use zencodec::encode::FullFrameEncoder;
 
         let config = PngEncoderConfig::new();
         let job = config.job().with_canvas_size(4, 4).with_loop_count(Some(0));
@@ -6524,7 +6524,7 @@ mod tests {
 
     #[test]
     fn apng_pixels_to_rgba8_rejects_unsupported_format() {
-        use zc::encode::FullFrameEncoder;
+        use zencodec::encode::FullFrameEncoder;
 
         let config = PngEncoderConfig::new();
         let job = config.job().with_canvas_size(4, 4).with_loop_count(Some(0));
@@ -6556,7 +6556,7 @@ mod tests {
 
     #[test]
     fn apng_pixels_to_rgba8_handles_gray8() {
-        use zc::encode::FullFrameEncoder;
+        use zencodec::encode::FullFrameEncoder;
 
         let config = PngEncoderConfig::new();
         let job = config.job().with_canvas_size(4, 4).with_loop_count(Some(0));

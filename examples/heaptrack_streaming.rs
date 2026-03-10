@@ -8,7 +8,7 @@
 use enough::Unstoppable;
 use imgref::Img;
 use rgb::Rgba;
-use zc::encode::{EncodeJob, Encoder, EncoderConfig};
+use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 use zenpng::{Compression, PngEncoderConfig};
 
 fn make_test_image(w: u32, h: u32) -> imgref::ImgVec<Rgba<u8>> {
