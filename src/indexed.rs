@@ -1368,7 +1368,7 @@ mod tests {
 
     #[test]
     fn exact_palette_pixel_perfect_roundtrip() {
-        use zenpixels_convert::{PixelBufferConvertExt, PixelBufferConvertTypedExt};
+        use zenpixels_convert::PixelBufferConvertTypedExt;
 
         let mut pixels = Vec::with_capacity(64);
         for y in 0..8u8 {

@@ -7,7 +7,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use rgb::Rgba;
-use zenpixels_convert::PixelBufferConvertExt;
+use zenpixels_convert::PixelBufferConvertTypedExt;
 
 use zenpng::{
     ApngEncodeConfig, ApngEncodeParams, ApngFrameInput, QualityGate, ZenquantQuantizer,

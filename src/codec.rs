@@ -4306,10 +4306,10 @@ mod tests {
         let cicp = Cicp::new(9, 16, 0, true);
         let clli = ContentLightLevel::new(1000, 400);
         let mdcv = MasteringDisplay::new(
-            [[35400, 14600], [8500, 39850], [6550, 2300]],
-            [15635, 16450],
-            10000000,
-            50,
+            [[0.708, 0.292], [0.170, 0.797], [0.131, 0.046]],
+            [0.3127, 0.3290],
+            1000.0,
+            0.005,
         );
         let meta = Metadata::none()
             .with_cicp(cicp)
@@ -4447,10 +4447,10 @@ mod tests {
 
         let clli = ContentLightLevel::new(1000, 400);
         let mdcv = MasteringDisplay::new(
-            [[35400, 14600], [8500, 39850], [6550, 2300]], // R, G, B primaries
-            [15635, 16450],                                // white point
-            10000000,                                      // 1000 cd/m²
-            50,                                            // 0.005 cd/m²
+            [[0.708, 0.292], [0.170, 0.797], [0.131, 0.046]], // R, G, B primaries (CIE xy)
+            [0.3127, 0.3290],                                  // white point (CIE xy)
+            1000.0,                                            // max luminance (cd/m²)
+            0.005,                                             // min luminance (cd/m²)
         );
         let meta = Metadata::none()
             .with_content_light_level(clli)
@@ -4474,10 +4474,11 @@ mod tests {
         assert_eq!(dc.max_frame_average_light_level, 400);
 
         let dm = decoded.info.mastering_display.expect("mDCV missing");
-        assert_eq!(dm.primaries, [[35400, 14600], [8500, 39850], [6550, 2300]]);
-        assert_eq!(dm.white_point, [15635, 16450]);
-        assert_eq!(dm.max_luminance, 10000000);
-        assert_eq!(dm.min_luminance, 50);
+        // Values roundtrip through PNG u16 (0.00002 units) and u32 (0.0001 cd/m² units)
+        assert_eq!(dm.primaries_xy, [[0.708, 0.292], [0.170, 0.797], [0.131, 0.046]]);
+        assert_eq!(dm.white_point_xy, [0.3127, 0.3290]);
+        assert_eq!(dm.max_luminance, 1000.0);
+        assert_eq!(dm.min_luminance, 0.005);
     }
 
     // ── Real-file roundtrip tests ────────────────────────────────────
@@ -4606,7 +4607,7 @@ mod tests {
         assert!(!icc.is_empty());
 
         // Re-encode with ICC profile
-        let meta = zencodec::Metadata::none().with_icc(icc);
+        let meta = zencodec::Metadata::none().with_icc(icc.as_slice());
         let config = crate::encode::EncodeConfig::default();
         let pixels = orig
             .pixels

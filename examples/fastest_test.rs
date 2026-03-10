@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use enough::Unstoppable;
 use zenpixels::descriptor::{ChannelLayout, ChannelType};
-use zenpixels_convert::PixelBufferConvertExt;
+use zenpixels_convert::PixelBufferConvertTypedExt;
 
 fn bench_ms<F: FnMut()>(warmup: u32, iters: u32, mut f: F) -> f64 {
     for _ in 0..warmup {
