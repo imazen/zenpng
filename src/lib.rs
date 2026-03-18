@@ -36,6 +36,7 @@ extern crate std;
 whereat::define_at_crate_info!();
 
 mod chunk;
+mod codec;
 mod decode;
 mod decoder;
 /// PNG source analysis, compression assessment, and re-encoding recommendations.
@@ -49,8 +50,11 @@ mod optimize;
 mod quantize;
 mod simd;
 mod types;
-mod codec;
 
+pub use codec::{
+    PngDecodeJob, PngDecoder, PngDecoderConfig, PngEncodeJob, PngEncoder, PngEncoderConfig,
+    PngFullFrameDecoder, PngFullFrameEncoder,
+};
 #[allow(deprecated)]
 pub use decode::PngLimits;
 pub use decode::{
@@ -77,10 +81,6 @@ pub use quantize::ZenquantQuantizer;
 pub use quantize::default_quantizer;
 pub use quantize::{
     MultiFrameOutput, QuantizeOutput, Quantizer, available_backends, quantizer_by_name,
-};
-pub use codec::{
-    PngDecodeJob, PngDecoder, PngDecoderConfig, PngEncodeJob, PngEncoder, PngEncoderConfig,
-    PngFullFrameDecoder, PngFullFrameEncoder,
 };
 
 pub use types::{Compression, Filter};

@@ -79,13 +79,13 @@ pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &PngAncillary) -> PngInfo {
         let lum = |off: usize| read_u32(off) as f32 * 0.0001;
         Some(MasteringDisplay::new(
             [
-                [xy(0), xy(2)],   // Red
-                [xy(4), xy(6)],   // Green
-                [xy(8), xy(10)],  // Blue
+                [xy(0), xy(2)],  // Red
+                [xy(4), xy(6)],  // Green
+                [xy(8), xy(10)], // Blue
             ],
-            [xy(12), xy(14)],     // White point
-            lum(16),              // max_luminance
-            lum(20),              // min_luminance
+            [xy(12), xy(14)], // White point
+            lum(16),          // max_luminance
+            lum(20),          // min_luminance
         ))
     });
 

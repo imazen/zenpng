@@ -291,7 +291,7 @@ fn threading_to_count(policy: zencodec::ThreadingPolicy) -> usize {
             std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1))
         }
         zencodec::ThreadingPolicy::Unlimited => 0, // 0 = no limit
-        _ => 0,                              // future variants: default to no limit
+        _ => 0,                                    // future variants: default to no limit
     }
 }
 
@@ -449,8 +449,12 @@ impl<'a> zencodec::encode::EncodeJob<'a> for PngEncodeJob<'a> {
                 config.parallel = false;
             }
         }
-        let mut enc =
-            PngFullFrameEncoder::new(config, self.canvas_width, self.canvas_height, effective_meta);
+        let mut enc = PngFullFrameEncoder::new(
+            config,
+            self.canvas_width,
+            self.canvas_height,
+            effective_meta,
+        );
         enc.loop_count = self.loop_count.unwrap_or(0);
         enc.limits = self.limits;
         Ok(enc)
@@ -783,7 +787,9 @@ impl zencodec::encode::Encoder for PngEncoder<'_> {
                     .collect();
                 self.do_encode(&rgba, w, h, crate::encode::ColorType::Rgba)
             }
-            _ => Err(at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat))),
+            _ => Err(at!(PngError::from(
+                zencodec::UnsupportedOperation::PixelFormat
+            ))),
         }
     }
 
@@ -923,7 +929,9 @@ impl zencodec::encode::Encoder for PngEncoder<'_> {
                             }
                         }
                         _ => {
-                            return Err(at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat)));
+                            return Err(at!(PngError::from(
+                                zencodec::UnsupportedOperation::PixelFormat
+                            )));
                         }
                     }
                 }
@@ -977,7 +985,9 @@ impl zencodec::encode::Encoder for PngEncoder<'_> {
                             state.push_converted_row();
                         }
                         _ => {
-                            return Err(at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat)));
+                            return Err(at!(PngError::from(
+                                zencodec::UnsupportedOperation::PixelFormat
+                            )));
                         }
                     }
                 }
@@ -1028,7 +1038,9 @@ impl zencodec::encode::Encoder for PngEncoder<'_> {
                             state.push_converted_row();
                         }
                         _ => {
-                            return Err(at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat)));
+                            return Err(at!(PngError::from(
+                                zencodec::UnsupportedOperation::PixelFormat
+                            )));
                         }
                     }
                 }
@@ -4445,9 +4457,9 @@ mod tests {
         let clli = ContentLightLevel::new(1000, 400);
         let mdcv = MasteringDisplay::new(
             [[0.708, 0.292], [0.170, 0.797], [0.131, 0.046]], // R, G, B primaries (CIE xy)
-            [0.3127, 0.3290],                                  // white point (CIE xy)
-            1000.0,                                            // max luminance (cd/m²)
-            0.005,                                             // min luminance (cd/m²)
+            [0.3127, 0.3290],                                 // white point (CIE xy)
+            1000.0,                                           // max luminance (cd/m²)
+            0.005,                                            // min luminance (cd/m²)
         );
         let meta = Metadata::none()
             .with_content_light_level(clli)
@@ -4472,7 +4484,10 @@ mod tests {
 
         let dm = decoded.info.mastering_display.expect("mDCV missing");
         // Values roundtrip through PNG u16 (0.00002 units) and u32 (0.0001 cd/m² units)
-        assert_eq!(dm.primaries_xy, [[0.708, 0.292], [0.170, 0.797], [0.131, 0.046]]);
+        assert_eq!(
+            dm.primaries_xy,
+            [[0.708, 0.292], [0.170, 0.797], [0.131, 0.046]]
+        );
         assert_eq!(dm.white_point_xy, [0.3127, 0.3290]);
         assert_eq!(dm.max_luminance, 1000.0);
         assert_eq!(dm.min_luminance, 0.005);
