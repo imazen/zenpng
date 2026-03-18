@@ -1,5 +1,6 @@
 //! PNG encoding.
 
+use alloc::string::String;
 use alloc::vec::Vec;
 use imgref::ImgRef;
 use rgb::{Gray, Rgb, Rgba};
@@ -8,7 +9,7 @@ use zencodec::Metadata;
 
 use enough::Stop;
 
-use crate::decode::PngChromaticities;
+use crate::decode::{PhysUnit, PngChromaticities, PngTime, TextChunk};
 use crate::encoder::PngWriteMetadata;
 use whereat::at;
 
@@ -68,6 +69,16 @@ pub struct EncodeConfig {
     ///
     /// Default: 0 (no limit).
     pub max_threads: usize,
+    /// Physical pixel dimensions X for pHYs chunk.
+    pub pixels_per_unit_x: Option<u32>,
+    /// Physical pixel dimensions Y for pHYs chunk.
+    pub pixels_per_unit_y: Option<u32>,
+    /// Unit for physical pixel dimensions (pHYs chunk).
+    pub phys_unit: Option<PhysUnit>,
+    /// Text chunks to embed (tEXt).
+    pub text_chunks: Vec<TextChunk>,
+    /// Last modification time for tIME chunk.
+    pub last_modified: Option<PngTime>,
 }
 
 impl EncodeConfig {
@@ -117,6 +128,35 @@ impl EncodeConfig {
     #[must_use]
     pub fn with_near_lossless_bits(mut self, bits: u8) -> Self {
         self.near_lossless_bits = bits;
+        self
+    }
+
+    /// Set physical pixel dimensions (pHYs chunk).
+    ///
+    /// Both X and Y must be set for the chunk to be written.
+    #[must_use]
+    pub fn with_phys(mut self, ppux: u32, ppuy: u32, unit: PhysUnit) -> Self {
+        self.pixels_per_unit_x = Some(ppux);
+        self.pixels_per_unit_y = Some(ppuy);
+        self.phys_unit = Some(unit);
+        self
+    }
+
+    /// Add a text chunk (tEXt). Can be called multiple times.
+    #[must_use]
+    pub fn with_text(mut self, keyword: impl Into<String>, text: impl Into<String>) -> Self {
+        self.text_chunks.push(TextChunk {
+            keyword: keyword.into(),
+            text: text.into(),
+            compressed: false,
+        });
+        self
+    }
+
+    /// Set last modification time (tIME chunk).
+    #[must_use]
+    pub fn with_last_modified(mut self, time: PngTime) -> Self {
+        self.last_modified = Some(time);
         self
     }
 
@@ -363,6 +403,11 @@ pub(crate) fn encode_raw(
     write_meta.source_gamma = config.source_gamma;
     write_meta.srgb_intent = config.srgb_intent;
     write_meta.chromaticities = config.chromaticities;
+    write_meta.pixels_per_unit_x = config.pixels_per_unit_x;
+    write_meta.pixels_per_unit_y = config.pixels_per_unit_y;
+    write_meta.phys_unit = config.phys_unit;
+    write_meta.text_chunks.clone_from(&config.text_chunks);
+    write_meta.last_modified = config.last_modified;
 
     let w = width as usize;
     let h = height as usize;
@@ -522,6 +567,11 @@ fn encode_raw_with_stats(
     write_meta.source_gamma = config.source_gamma;
     write_meta.srgb_intent = config.srgb_intent;
     write_meta.chromaticities = config.chromaticities;
+    write_meta.pixels_per_unit_x = config.pixels_per_unit_x;
+    write_meta.pixels_per_unit_y = config.pixels_per_unit_y;
+    write_meta.phys_unit = config.phys_unit;
+    write_meta.text_chunks.clone_from(&config.text_chunks);
+    write_meta.last_modified = config.last_modified;
 
     let w = width as usize;
     let h = height as usize;
@@ -729,6 +779,13 @@ pub fn encode_apng(
     write_meta.source_gamma = config.encode.source_gamma;
     write_meta.srgb_intent = config.encode.srgb_intent;
     write_meta.chromaticities = config.encode.chromaticities;
+    write_meta.pixels_per_unit_x = config.encode.pixels_per_unit_x;
+    write_meta.pixels_per_unit_y = config.encode.pixels_per_unit_y;
+    write_meta.phys_unit = config.encode.phys_unit;
+    write_meta
+        .text_chunks
+        .clone_from(&config.encode.text_chunks);
+    write_meta.last_modified = config.encode.last_modified;
 
     Ok(crate::encoder::apng::encode_apng_truecolor(
         frames,

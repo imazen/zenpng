@@ -1,11 +1,13 @@
 //! Ancillary PNG chunk metadata collection.
 
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
 use zenflate::Unstoppable;
 
 use super::ChunkRef;
+use crate::decode::{PngBackground, PngTime, SignificantBits, TextChunk};
 use crate::error::PngError;
 
 // ── fcTL frame control ──────────────────────────────────────────────
@@ -126,6 +128,16 @@ pub(crate) struct PngAncillary {
     pub xmp: Option<Vec<u8>>,
     /// acTL animation control (num_frames, num_plays).
     pub actl: Option<(u32, u32)>,
+    /// pHYs: pixels per unit X, pixels per unit Y, unit specifier.
+    pub phys: Option<(u32, u32, u8)>,
+    /// tEXt and zTXt text chunks (non-XMP).
+    pub text_chunks: Vec<TextChunk>,
+    /// bKGD background color.
+    pub background: Option<PngBackground>,
+    /// tIME last modification time.
+    pub last_modified: Option<PngTime>,
+    /// sBIT significant bits per channel.
+    pub significant_bits: Option<SignificantBits>,
 }
 
 impl PngAncillary {
@@ -218,6 +230,39 @@ impl PngAncillary {
                     }
                     self.actl = Some((num_frames, num_plays));
                 }
+            }
+            b"pHYs" => {
+                if chunk.data.len() == 9 {
+                    let ppux = u32::from_be_bytes(chunk.data[0..4].try_into().unwrap());
+                    let ppuy = u32::from_be_bytes(chunk.data[4..8].try_into().unwrap());
+                    let unit = chunk.data[8];
+                    self.phys = Some((ppux, ppuy, unit));
+                }
+            }
+            b"tEXt" => {
+                self.parse_text(chunk.data, false);
+            }
+            b"zTXt" => {
+                self.parse_ztxt(chunk.data);
+            }
+            b"bKGD" => {
+                self.parse_bkgd(chunk.data);
+            }
+            b"tIME" => {
+                if chunk.data.len() == 7 {
+                    let year = u16::from_be_bytes(chunk.data[0..2].try_into().unwrap());
+                    self.last_modified = Some(PngTime {
+                        year,
+                        month: chunk.data[2],
+                        day: chunk.data[3],
+                        hour: chunk.data[4],
+                        minute: chunk.data[5],
+                        second: chunk.data[6],
+                    });
+                }
+            }
+            b"sBIT" => {
+                self.parse_sbit(chunk.data);
             }
             _ => {} // ignore unknown chunks
         }
@@ -318,6 +363,106 @@ impl PngAncillary {
         }
     }
 
+    /// Parse tEXt chunk: keyword\0text (Latin-1).
+    fn parse_text(&mut self, data: &[u8], compressed: bool) {
+        if let Some(null_pos) = data.iter().position(|&b| b == 0) {
+            let keyword = &data[..null_pos];
+            let text = &data[null_pos + 1..];
+            if !keyword.is_empty() && keyword.len() <= 79 {
+                // Latin-1 → UTF-8 (lossy for non-ASCII but preserves valid text)
+                let kw: String = keyword.iter().map(|&b| b as char).collect();
+                let val: String = text.iter().map(|&b| b as char).collect();
+                self.text_chunks.push(TextChunk {
+                    keyword: kw,
+                    text: val,
+                    compressed,
+                });
+            }
+        }
+    }
+
+    /// Parse zTXt chunk: keyword\0compression_method + compressed_text.
+    fn parse_ztxt(&mut self, data: &[u8]) {
+        let Some(null_pos) = data.iter().position(|&b| b == 0) else {
+            return;
+        };
+        let keyword = &data[..null_pos];
+        if keyword.is_empty() || keyword.len() > 79 {
+            return;
+        }
+        // Byte after null is compression method (must be 0 = zlib)
+        if null_pos + 1 >= data.len() {
+            return;
+        }
+        let compression_method = data[null_pos + 1];
+        if compression_method != 0 {
+            return;
+        }
+        let compressed = &data[null_pos + 2..];
+        if compressed.is_empty() {
+            return;
+        }
+
+        // Decompress
+        let max_output = 1024 * 1024; // 1 MB limit for text
+        let mut output = vec![0u8; max_output];
+        let mut decompressor = zenflate::Decompressor::new();
+        if let Ok(outcome) = decompressor.zlib_decompress(compressed, &mut output, Unstoppable) {
+            output.truncate(outcome.output_written);
+            let kw: String = keyword.iter().map(|&b| b as char).collect();
+            let val: String = output.iter().map(|&b| b as char).collect();
+            self.text_chunks.push(TextChunk {
+                keyword: kw,
+                text: val,
+                compressed: true,
+            });
+        }
+    }
+
+    /// Parse bKGD chunk. Interpretation depends on color type (from PLTE presence).
+    fn parse_bkgd(&mut self, data: &[u8]) {
+        if self.palette.is_some() {
+            // Indexed: 1 byte palette index
+            if data.len() == 1 {
+                self.background = Some(PngBackground::Indexed(data[0]));
+            }
+        } else if data.len() == 2 {
+            // Grayscale: 2 bytes (u16)
+            let val = u16::from_be_bytes(data[0..2].try_into().unwrap());
+            self.background = Some(PngBackground::Gray(val));
+        } else if data.len() == 6 {
+            // RGB: 6 bytes (3 × u16)
+            let r = u16::from_be_bytes(data[0..2].try_into().unwrap());
+            let g = u16::from_be_bytes(data[2..4].try_into().unwrap());
+            let b = u16::from_be_bytes(data[4..6].try_into().unwrap());
+            self.background = Some(PngBackground::Rgb(r, g, b));
+        }
+    }
+
+    /// Parse sBIT chunk. Length depends on color type.
+    fn parse_sbit(&mut self, data: &[u8]) {
+        // sBIT length determines color type:
+        // 1 byte = grayscale, 2 bytes = grayscale+alpha, 3 bytes = RGB or indexed, 4 bytes = RGBA
+        // We determine which based on whether palette is present and data length.
+        match data.len() {
+            1 => {
+                self.significant_bits = Some(SignificantBits::Gray(data[0]));
+            }
+            2 => {
+                self.significant_bits = Some(SignificantBits::GrayAlpha(data[0], data[1]));
+            }
+            3 => {
+                // RGB (or indexed, which also uses 3 bytes for sBIT)
+                self.significant_bits = Some(SignificantBits::Rgb(data[0], data[1], data[2]));
+            }
+            4 => {
+                self.significant_bits =
+                    Some(SignificantBits::Rgba(data[0], data[1], data[2], data[3]));
+            }
+            _ => {} // ignore invalid lengths
+        }
+    }
+
     /// Collect late metadata from post-IDAT chunks (eXIf, iTXt that some
     /// encoders place after IDAT).
     pub fn collect_late(&mut self, chunk: &ChunkRef<'_>) {
@@ -330,6 +475,25 @@ impl PngAncillary {
             b"iTXt" => {
                 if self.xmp.is_none() {
                     self.try_parse_xmp(chunk.data);
+                }
+            }
+            b"tEXt" => {
+                self.parse_text(chunk.data, false);
+            }
+            b"zTXt" => {
+                self.parse_ztxt(chunk.data);
+            }
+            b"tIME" => {
+                if self.last_modified.is_none() && chunk.data.len() == 7 {
+                    let year = u16::from_be_bytes(chunk.data[0..2].try_into().unwrap());
+                    self.last_modified = Some(PngTime {
+                        year,
+                        month: chunk.data[2],
+                        day: chunk.data[3],
+                        hour: chunk.data[4],
+                        minute: chunk.data[5],
+                        second: chunk.data[6],
+                    });
                 }
             }
             _ => {}
@@ -645,5 +809,278 @@ mod tests {
 
         let fctl = FrameControl::parse(&data, 100, 100).unwrap();
         assert_eq!(fctl.delay_ms(), 50); // 5/100 * 1000 = 50ms
+    }
+
+    // ---- pHYs parsing ----
+
+    #[test]
+    fn collect_phys_meter() {
+        let mut anc = PngAncillary::default();
+        let mut data = [0u8; 9];
+        data[0..4].copy_from_slice(&3780u32.to_be_bytes()); // ~96 DPI
+        data[4..8].copy_from_slice(&3780u32.to_be_bytes());
+        data[8] = 1; // meter
+        anc.collect(&make_chunk(b"pHYs", &data)).unwrap();
+        assert_eq!(anc.phys, Some((3780, 3780, 1)));
+    }
+
+    #[test]
+    fn collect_phys_unknown_unit() {
+        let mut anc = PngAncillary::default();
+        let mut data = [0u8; 9];
+        data[0..4].copy_from_slice(&1u32.to_be_bytes());
+        data[4..8].copy_from_slice(&2u32.to_be_bytes());
+        data[8] = 0; // unknown
+        anc.collect(&make_chunk(b"pHYs", &data)).unwrap();
+        assert_eq!(anc.phys, Some((1, 2, 0)));
+    }
+
+    #[test]
+    fn collect_phys_wrong_size_ignored() {
+        let mut anc = PngAncillary::default();
+        anc.collect(&make_chunk(b"pHYs", &[0; 5])).unwrap();
+        assert!(anc.phys.is_none());
+    }
+
+    // ---- tEXt parsing ----
+
+    #[test]
+    fn collect_text_basic() {
+        let mut anc = PngAncillary::default();
+        let mut data = Vec::new();
+        data.extend_from_slice(b"Comment");
+        data.push(0);
+        data.extend_from_slice(b"hello world");
+        anc.collect(&make_chunk(b"tEXt", &data)).unwrap();
+        assert_eq!(anc.text_chunks.len(), 1);
+        assert_eq!(anc.text_chunks[0].keyword, "Comment");
+        assert_eq!(anc.text_chunks[0].text, "hello world");
+        assert!(!anc.text_chunks[0].compressed);
+    }
+
+    #[test]
+    fn collect_text_empty_value() {
+        let mut anc = PngAncillary::default();
+        let mut data = Vec::new();
+        data.extend_from_slice(b"Title");
+        data.push(0);
+        // empty value
+        anc.collect(&make_chunk(b"tEXt", &data)).unwrap();
+        assert_eq!(anc.text_chunks.len(), 1);
+        assert_eq!(anc.text_chunks[0].keyword, "Title");
+        assert_eq!(anc.text_chunks[0].text, "");
+    }
+
+    #[test]
+    fn collect_text_no_null_ignored() {
+        let mut anc = PngAncillary::default();
+        // No null separator — should be ignored
+        anc.collect(&make_chunk(b"tEXt", b"nodivider")).unwrap();
+        assert!(anc.text_chunks.is_empty());
+    }
+
+    #[test]
+    fn collect_text_keyword_too_long_ignored() {
+        let mut anc = PngAncillary::default();
+        let mut data = Vec::new();
+        data.extend_from_slice(&[b'A'; 80]); // 80 bytes > 79 limit
+        data.push(0);
+        data.extend_from_slice(b"value");
+        anc.collect(&make_chunk(b"tEXt", &data)).unwrap();
+        assert!(anc.text_chunks.is_empty());
+    }
+
+    #[test]
+    fn collect_text_multiple_chunks() {
+        let mut anc = PngAncillary::default();
+        let mut d1 = Vec::new();
+        d1.extend_from_slice(b"Author");
+        d1.push(0);
+        d1.extend_from_slice(b"Alice");
+        let mut d2 = Vec::new();
+        d2.extend_from_slice(b"Comment");
+        d2.push(0);
+        d2.extend_from_slice(b"test image");
+        anc.collect(&make_chunk(b"tEXt", &d1)).unwrap();
+        anc.collect(&make_chunk(b"tEXt", &d2)).unwrap();
+        assert_eq!(anc.text_chunks.len(), 2);
+        assert_eq!(anc.text_chunks[0].keyword, "Author");
+        assert_eq!(anc.text_chunks[1].keyword, "Comment");
+    }
+
+    // ---- zTXt parsing ----
+
+    #[test]
+    fn collect_ztxt_basic() {
+        let mut anc = PngAncillary::default();
+        let mut data = Vec::new();
+        data.extend_from_slice(b"Comment");
+        data.push(0);
+        data.push(0); // compression method = zlib
+
+        let text = b"compressed text data";
+        let mut compressor = zenflate::Compressor::new(zenflate::CompressionLevel::new(1));
+        let bound = zenflate::Compressor::zlib_compress_bound(text.len());
+        let mut compressed = vec![0u8; bound];
+        let len = compressor
+            .zlib_compress(text, &mut compressed, Unstoppable)
+            .unwrap();
+        data.extend_from_slice(&compressed[..len]);
+
+        anc.collect(&make_chunk(b"zTXt", &data)).unwrap();
+        assert_eq!(anc.text_chunks.len(), 1);
+        assert_eq!(anc.text_chunks[0].keyword, "Comment");
+        assert_eq!(anc.text_chunks[0].text, "compressed text data");
+        assert!(anc.text_chunks[0].compressed);
+    }
+
+    #[test]
+    fn collect_ztxt_bad_compression_method_ignored() {
+        let mut anc = PngAncillary::default();
+        let mut data = Vec::new();
+        data.extend_from_slice(b"Comment");
+        data.push(0);
+        data.push(1); // bad compression method
+        data.extend_from_slice(&[0; 10]);
+        anc.collect(&make_chunk(b"zTXt", &data)).unwrap();
+        assert!(anc.text_chunks.is_empty());
+    }
+
+    // ---- bKGD parsing ----
+
+    #[test]
+    fn collect_bkgd_indexed() {
+        let mut anc = PngAncillary::default();
+        // Set palette so bKGD interprets as indexed
+        anc.collect(&make_chunk(b"PLTE", &[0, 0, 0, 255, 255, 255]))
+            .unwrap();
+        anc.collect(&make_chunk(b"bKGD", &[1])).unwrap();
+        assert_eq!(anc.background, Some(PngBackground::Indexed(1)));
+    }
+
+    #[test]
+    fn collect_bkgd_gray() {
+        let mut anc = PngAncillary::default();
+        let data = 128u16.to_be_bytes();
+        anc.collect(&make_chunk(b"bKGD", &data)).unwrap();
+        assert_eq!(anc.background, Some(PngBackground::Gray(128)));
+    }
+
+    #[test]
+    fn collect_bkgd_rgb() {
+        let mut anc = PngAncillary::default();
+        let mut data = [0u8; 6];
+        data[0..2].copy_from_slice(&100u16.to_be_bytes());
+        data[2..4].copy_from_slice(&200u16.to_be_bytes());
+        data[4..6].copy_from_slice(&300u16.to_be_bytes());
+        anc.collect(&make_chunk(b"bKGD", &data)).unwrap();
+        assert_eq!(anc.background, Some(PngBackground::Rgb(100, 200, 300)));
+    }
+
+    #[test]
+    fn collect_bkgd_wrong_size_ignored() {
+        let mut anc = PngAncillary::default();
+        anc.collect(&make_chunk(b"bKGD", &[0; 4])).unwrap();
+        assert!(anc.background.is_none());
+    }
+
+    // ---- tIME parsing ----
+
+    #[test]
+    fn collect_time_valid() {
+        let mut anc = PngAncillary::default();
+        let mut data = [0u8; 7];
+        data[0..2].copy_from_slice(&2026u16.to_be_bytes());
+        data[2] = 3; // month
+        data[3] = 18; // day
+        data[4] = 14; // hour
+        data[5] = 30; // minute
+        data[6] = 0; // second
+        anc.collect(&make_chunk(b"tIME", &data)).unwrap();
+        let t = anc.last_modified.unwrap();
+        assert_eq!(t.year, 2026);
+        assert_eq!(t.month, 3);
+        assert_eq!(t.day, 18);
+        assert_eq!(t.hour, 14);
+        assert_eq!(t.minute, 30);
+        assert_eq!(t.second, 0);
+    }
+
+    #[test]
+    fn collect_time_wrong_size_ignored() {
+        let mut anc = PngAncillary::default();
+        anc.collect(&make_chunk(b"tIME", &[0; 5])).unwrap();
+        assert!(anc.last_modified.is_none());
+    }
+
+    #[test]
+    fn collect_late_time() {
+        let mut anc = PngAncillary::default();
+        let mut data = [0u8; 7];
+        data[0..2].copy_from_slice(&2025u16.to_be_bytes());
+        data[2] = 12;
+        data[3] = 25;
+        data[4] = 0;
+        data[5] = 0;
+        data[6] = 0;
+        anc.collect_late(&make_chunk(b"tIME", &data));
+        let t = anc.last_modified.unwrap();
+        assert_eq!(t.year, 2025);
+        assert_eq!(t.month, 12);
+        assert_eq!(t.day, 25);
+    }
+
+    // ---- sBIT parsing ----
+
+    #[test]
+    fn collect_sbit_gray() {
+        let mut anc = PngAncillary::default();
+        anc.collect(&make_chunk(b"sBIT", &[5])).unwrap();
+        assert_eq!(anc.significant_bits, Some(SignificantBits::Gray(5)));
+    }
+
+    #[test]
+    fn collect_sbit_gray_alpha() {
+        let mut anc = PngAncillary::default();
+        anc.collect(&make_chunk(b"sBIT", &[5, 8])).unwrap();
+        assert_eq!(anc.significant_bits, Some(SignificantBits::GrayAlpha(5, 8)));
+    }
+
+    #[test]
+    fn collect_sbit_rgb() {
+        let mut anc = PngAncillary::default();
+        anc.collect(&make_chunk(b"sBIT", &[5, 6, 5])).unwrap();
+        assert_eq!(anc.significant_bits, Some(SignificantBits::Rgb(5, 6, 5)));
+    }
+
+    #[test]
+    fn collect_sbit_rgba() {
+        let mut anc = PngAncillary::default();
+        anc.collect(&make_chunk(b"sBIT", &[5, 6, 5, 8])).unwrap();
+        assert_eq!(
+            anc.significant_bits,
+            Some(SignificantBits::Rgba(5, 6, 5, 8))
+        );
+    }
+
+    #[test]
+    fn collect_sbit_wrong_size_ignored() {
+        let mut anc = PngAncillary::default();
+        anc.collect(&make_chunk(b"sBIT", &[5, 6, 5, 8, 1])).unwrap();
+        assert!(anc.significant_bits.is_none());
+    }
+
+    // ---- collect_late text chunks ----
+
+    #[test]
+    fn collect_late_text() {
+        let mut anc = PngAncillary::default();
+        let mut data = Vec::new();
+        data.extend_from_slice(b"Comment");
+        data.push(0);
+        data.extend_from_slice(b"post-IDAT text");
+        anc.collect_late(&make_chunk(b"tEXt", &data));
+        assert_eq!(anc.text_chunks.len(), 1);
+        assert_eq!(anc.text_chunks[0].text, "post-IDAT text");
     }
 }

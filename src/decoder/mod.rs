@@ -16,7 +16,7 @@ use zenpixels::PixelBuffer;
 use crate::chunk::ancillary::PngAncillary;
 use crate::chunk::ihdr::Ihdr;
 use crate::chunk::{ChunkIter, PNG_SIGNATURE};
-use crate::decode::{PngChromaticities, PngDecodeOutput, PngInfo};
+use crate::decode::{PhysUnit, PngChromaticities, PngDecodeOutput, PngInfo};
 use crate::error::PngError;
 
 use self::interlace::decode_interlaced;
@@ -89,6 +89,17 @@ pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &PngAncillary) -> PngInfo {
         ))
     });
 
+    let (pixels_per_unit_x, pixels_per_unit_y, phys_unit) =
+        if let Some((ppux, ppuy, unit)) = ancillary.phys {
+            let pu = match unit {
+                1 => PhysUnit::Meter,
+                _ => PhysUnit::Unknown,
+            };
+            (Some(ppux), Some(ppuy), Some(pu))
+        } else {
+            (None, None, None)
+        };
+
     PngInfo {
         width: ihdr.width,
         height: ihdr.height,
@@ -105,6 +116,13 @@ pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &PngAncillary) -> PngInfo {
         cicp,
         content_light_level,
         mastering_display,
+        pixels_per_unit_x,
+        pixels_per_unit_y,
+        phys_unit,
+        text_chunks: ancillary.text_chunks.clone(),
+        background: ancillary.background,
+        last_modified: ancillary.last_modified,
+        significant_bits: ancillary.significant_bits,
     }
 }
 
@@ -1101,6 +1119,13 @@ mod tests {
             cicp: None,
             content_light_level: None,
             mastering_display: None,
+            pixels_per_unit_x: None,
+            pixels_per_unit_y: None,
+            phys_unit: None,
+            text_chunks: Vec::new(),
+            background: None,
+            last_modified: None,
+            significant_bits: None,
         };
 
         Ok(PngDecodeOutput {

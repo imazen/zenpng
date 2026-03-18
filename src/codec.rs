@@ -2334,6 +2334,11 @@ impl TrueStreamingState {
         write_meta.source_gamma = config.source_gamma;
         write_meta.srgb_intent = config.srgb_intent;
         write_meta.chromaticities = config.chromaticities;
+        write_meta.pixels_per_unit_x = config.pixels_per_unit_x;
+        write_meta.pixels_per_unit_y = config.pixels_per_unit_y;
+        write_meta.phys_unit = config.phys_unit;
+        write_meta.text_chunks.clone_from(&config.text_chunks);
+        write_meta.last_modified = config.last_modified;
 
         let est = 8 + 25 + (12 + idat_data_len) + 12 + metadata_size_estimate(&write_meta);
         let mut output = Vec::with_capacity(est);
@@ -2502,6 +2507,11 @@ impl PreFilteredState {
         write_meta.source_gamma = config.source_gamma;
         write_meta.srgb_intent = config.srgb_intent;
         write_meta.chromaticities = config.chromaticities;
+        write_meta.pixels_per_unit_x = config.pixels_per_unit_x;
+        write_meta.pixels_per_unit_y = config.pixels_per_unit_y;
+        write_meta.phys_unit = config.phys_unit;
+        write_meta.text_chunks.clone_from(&config.text_chunks);
+        write_meta.last_modified = config.last_modified;
 
         // Build preamble: PNG signature + IHDR + metadata
         let est = 8 + 25 + metadata_size_estimate(&write_meta);

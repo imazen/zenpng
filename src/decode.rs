@@ -1,11 +1,79 @@
 //! PNG decoding and probing.
 
+use alloc::string::String;
 use alloc::vec::Vec;
 use enough::Stop;
 use zencodec::{Cicp, ContentLightLevel, MasteringDisplay};
 use zenpixels::PixelBuffer;
 
 use crate::error::PngError;
+
+/// Physical pixel dimensions unit (pHYs chunk).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PhysUnit {
+    /// Unit is unknown (aspect ratio only).
+    Unknown,
+    /// Pixels per meter.
+    Meter,
+}
+
+/// A text chunk from tEXt or zTXt.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TextChunk {
+    /// Latin-1 keyword (1-79 bytes). Standard keywords include "Title",
+    /// "Author", "Description", "Copyright", "Creation Time", "Software",
+    /// "Disclaimer", "Warning", "Source", "Comment".
+    pub keyword: String,
+    /// Text value (Latin-1 for tEXt/zTXt, decoded to UTF-8 on best-effort).
+    pub text: String,
+    /// Whether this chunk was zTXt (compressed) rather than tEXt.
+    pub compressed: bool,
+}
+
+/// Background color from bKGD chunk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PngBackground {
+    /// Palette index (color type 3).
+    Indexed(u8),
+    /// Grayscale value (color types 0, 4). 16-bit range.
+    Gray(u16),
+    /// RGB value (color types 2, 6). 16-bit range per channel.
+    Rgb(u16, u16, u16),
+}
+
+/// Last modification time from tIME chunk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PngTime {
+    /// Year (e.g. 2026). Full four-digit year.
+    pub year: u16,
+    /// Month (1-12).
+    pub month: u8,
+    /// Day (1-31).
+    pub day: u8,
+    /// Hour (0-23).
+    pub hour: u8,
+    /// Minute (0-59).
+    pub minute: u8,
+    /// Second (0-60, 60 for leap second).
+    pub second: u8,
+}
+
+/// Significant bits per channel from sBIT chunk.
+///
+/// Indicates the original precision of the image data before it was
+/// scaled to the PNG bit depth. For example, a 5-bit-per-channel image
+/// stored in 8-bit PNG channels would have `sBIT` values of 5.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SignificantBits {
+    /// Grayscale: significant bits in the gray channel.
+    Gray(u8),
+    /// RGB: significant bits per channel (r, g, b).
+    Rgb(u8, u8, u8),
+    /// Grayscale + alpha: significant bits in gray and alpha channels.
+    GrayAlpha(u8, u8),
+    /// RGBA: significant bits per channel (r, g, b, a).
+    Rgba(u8, u8, u8, u8),
+}
 
 /// PNG chromaticity values (cHRM chunk).
 ///
@@ -69,6 +137,20 @@ pub struct PngInfo {
     pub content_light_level: Option<ContentLightLevel>,
     /// Mastering display color volume from mDCV chunk (HDR).
     pub mastering_display: Option<MasteringDisplay>,
+    /// Physical pixel dimensions X (pHYs chunk).
+    pub pixels_per_unit_x: Option<u32>,
+    /// Physical pixel dimensions Y (pHYs chunk).
+    pub pixels_per_unit_y: Option<u32>,
+    /// Unit for physical pixel dimensions.
+    pub phys_unit: Option<PhysUnit>,
+    /// Text chunks (tEXt and zTXt). Excludes XMP (extracted separately).
+    pub text_chunks: Vec<TextChunk>,
+    /// Background color from bKGD chunk.
+    pub background: Option<PngBackground>,
+    /// Last modification time from tIME chunk.
+    pub last_modified: Option<PngTime>,
+    /// Significant bits per channel from sBIT chunk.
+    pub significant_bits: Option<SignificantBits>,
 }
 
 /// Non-fatal issues detected during PNG decoding.
@@ -589,5 +671,250 @@ mod tests {
         assert!(config.skip_critical_chunk_crc);
         let config2 = PngDecodeConfig::none().with_skip_critical_chunk_crc(false);
         assert!(!config2.skip_critical_chunk_crc);
+    }
+
+    // ── Ancillary chunk integration tests via probe() ──────────────
+
+    /// Helper: build a PNG with IHDR + arbitrary ancillary chunks + IDAT + IEND.
+    fn craft_png_with_chunks(
+        width: u32,
+        height: u32,
+        color_type: u8,
+        bit_depth: u8,
+        chunks: &[(&[u8; 4], &[u8])],
+    ) -> Vec<u8> {
+        let mut buf = Vec::new();
+        // PNG signature
+        buf.extend_from_slice(&[137, 80, 78, 71, 13, 10, 26, 10]);
+        // IHDR
+        let ihdr_start = buf.len();
+        buf.extend_from_slice(&13u32.to_be_bytes());
+        buf.extend_from_slice(b"IHDR");
+        buf.extend_from_slice(&width.to_be_bytes());
+        buf.extend_from_slice(&height.to_be_bytes());
+        buf.push(bit_depth);
+        buf.push(color_type);
+        buf.push(0);
+        buf.push(0);
+        buf.push(0); // compression, filter, interlace
+        let crc = zenflate::crc32(
+            zenflate::crc32(0, b"IHDR"),
+            &buf[ihdr_start + 8..ihdr_start + 8 + 13],
+        );
+        buf.extend_from_slice(&crc.to_be_bytes());
+        // Ancillary chunks
+        for &(ctype, cdata) in chunks {
+            buf.extend_from_slice(&(cdata.len() as u32).to_be_bytes());
+            buf.extend_from_slice(ctype);
+            buf.extend_from_slice(cdata);
+            let crc = zenflate::crc32(zenflate::crc32(0, ctype), cdata);
+            buf.extend_from_slice(&crc.to_be_bytes());
+        }
+        // Empty IDAT
+        buf.extend_from_slice(&0u32.to_be_bytes());
+        buf.extend_from_slice(b"IDAT");
+        let crc = zenflate::crc32(zenflate::crc32(0, b"IDAT"), &[]);
+        buf.extend_from_slice(&crc.to_be_bytes());
+        // IEND
+        buf.extend_from_slice(&0u32.to_be_bytes());
+        buf.extend_from_slice(b"IEND");
+        let crc = zenflate::crc32(0, b"IEND");
+        buf.extend_from_slice(&crc.to_be_bytes());
+        buf
+    }
+
+    #[test]
+    fn probe_phys_meter() {
+        let mut phys_data = [0u8; 9];
+        phys_data[0..4].copy_from_slice(&3780u32.to_be_bytes());
+        phys_data[4..8].copy_from_slice(&3780u32.to_be_bytes());
+        phys_data[8] = 1;
+        let png = craft_png_with_chunks(4, 4, 2, 8, &[(b"pHYs", &phys_data)]);
+        let info = probe(&png).unwrap();
+        assert_eq!(info.pixels_per_unit_x, Some(3780));
+        assert_eq!(info.pixels_per_unit_y, Some(3780));
+        assert_eq!(info.phys_unit, Some(PhysUnit::Meter));
+    }
+
+    #[test]
+    fn probe_phys_unknown() {
+        let mut phys_data = [0u8; 9];
+        phys_data[0..4].copy_from_slice(&1u32.to_be_bytes());
+        phys_data[4..8].copy_from_slice(&2u32.to_be_bytes());
+        phys_data[8] = 0;
+        let png = craft_png_with_chunks(4, 4, 2, 8, &[(b"pHYs", &phys_data)]);
+        let info = probe(&png).unwrap();
+        assert_eq!(info.pixels_per_unit_x, Some(1));
+        assert_eq!(info.pixels_per_unit_y, Some(2));
+        assert_eq!(info.phys_unit, Some(PhysUnit::Unknown));
+    }
+
+    #[test]
+    fn probe_text_chunks() {
+        let mut text1 = Vec::new();
+        text1.extend_from_slice(b"Author");
+        text1.push(0);
+        text1.extend_from_slice(b"Alice");
+        let mut text2 = Vec::new();
+        text2.extend_from_slice(b"Comment");
+        text2.push(0);
+        text2.extend_from_slice(b"test");
+        let png = craft_png_with_chunks(4, 4, 2, 8, &[(b"tEXt", &text1), (b"tEXt", &text2)]);
+        let info = probe(&png).unwrap();
+        assert_eq!(info.text_chunks.len(), 2);
+        assert_eq!(info.text_chunks[0].keyword, "Author");
+        assert_eq!(info.text_chunks[0].text, "Alice");
+        assert!(!info.text_chunks[0].compressed);
+        assert_eq!(info.text_chunks[1].keyword, "Comment");
+        assert_eq!(info.text_chunks[1].text, "test");
+    }
+
+    #[test]
+    fn probe_bkgd_rgb() {
+        let mut bkgd = [0u8; 6];
+        bkgd[0..2].copy_from_slice(&255u16.to_be_bytes());
+        bkgd[2..4].copy_from_slice(&128u16.to_be_bytes());
+        bkgd[4..6].copy_from_slice(&0u16.to_be_bytes());
+        let png = craft_png_with_chunks(4, 4, 2, 8, &[(b"bKGD", &bkgd)]);
+        let info = probe(&png).unwrap();
+        assert_eq!(info.background, Some(PngBackground::Rgb(255, 128, 0)));
+    }
+
+    #[test]
+    fn probe_bkgd_gray() {
+        let bkgd = 42u16.to_be_bytes();
+        let png = craft_png_with_chunks(4, 4, 0, 8, &[(b"bKGD", &bkgd)]);
+        let info = probe(&png).unwrap();
+        assert_eq!(info.background, Some(PngBackground::Gray(42)));
+    }
+
+    #[test]
+    fn probe_time() {
+        let mut time_data = [0u8; 7];
+        time_data[0..2].copy_from_slice(&2026u16.to_be_bytes());
+        time_data[2] = 3;
+        time_data[3] = 18;
+        time_data[4] = 14;
+        time_data[5] = 30;
+        time_data[6] = 45;
+        let png = craft_png_with_chunks(4, 4, 2, 8, &[(b"tIME", &time_data)]);
+        let info = probe(&png).unwrap();
+        let t = info.last_modified.unwrap();
+        assert_eq!(t.year, 2026);
+        assert_eq!(t.month, 3);
+        assert_eq!(t.day, 18);
+        assert_eq!(t.hour, 14);
+        assert_eq!(t.minute, 30);
+        assert_eq!(t.second, 45);
+    }
+
+    #[test]
+    fn probe_sbit_rgb() {
+        let png = craft_png_with_chunks(4, 4, 2, 8, &[(b"sBIT", &[5, 6, 5])]);
+        let info = probe(&png).unwrap();
+        assert_eq!(info.significant_bits, Some(SignificantBits::Rgb(5, 6, 5)));
+    }
+
+    #[test]
+    fn probe_sbit_rgba() {
+        let png = craft_png_with_chunks(4, 4, 6, 8, &[(b"sBIT", &[5, 6, 5, 8])]);
+        let info = probe(&png).unwrap();
+        assert_eq!(
+            info.significant_bits,
+            Some(SignificantBits::Rgba(5, 6, 5, 8))
+        );
+    }
+
+    #[test]
+    fn probe_no_ancillary_defaults() {
+        let png = craft_png_with_chunks(4, 4, 2, 8, &[]);
+        let info = probe(&png).unwrap();
+        assert!(info.pixels_per_unit_x.is_none());
+        assert!(info.pixels_per_unit_y.is_none());
+        assert!(info.phys_unit.is_none());
+        assert!(info.text_chunks.is_empty());
+        assert!(info.background.is_none());
+        assert!(info.last_modified.is_none());
+        assert!(info.significant_bits.is_none());
+    }
+
+    // ── Encode→decode roundtrip tests for new ancillary chunks ──
+
+    #[test]
+    fn roundtrip_phys_text_time() {
+        use imgref::ImgVec;
+        use rgb::Rgb;
+
+        let pixels = ImgVec::new(
+            vec![
+                Rgb {
+                    r: 128u8,
+                    g: 64,
+                    b: 32
+                };
+                16
+            ],
+            4,
+            4,
+        );
+        let config = crate::EncodeConfig::default()
+            .with_phys(3780, 3780, PhysUnit::Meter)
+            .with_text("Author", "zenpng test")
+            .with_text("Comment", "roundtrip")
+            .with_last_modified(PngTime {
+                year: 2026,
+                month: 3,
+                day: 18,
+                hour: 15,
+                minute: 0,
+                second: 0,
+            });
+        let encoded = crate::encode_rgb8(
+            pixels.as_ref(),
+            None,
+            &config,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+
+        let info = probe(&encoded).unwrap();
+        assert_eq!(info.pixels_per_unit_x, Some(3780));
+        assert_eq!(info.pixels_per_unit_y, Some(3780));
+        assert_eq!(info.phys_unit, Some(PhysUnit::Meter));
+        assert_eq!(info.text_chunks.len(), 2);
+        assert_eq!(info.text_chunks[0].keyword, "Author");
+        assert_eq!(info.text_chunks[0].text, "zenpng test");
+        assert_eq!(info.text_chunks[1].keyword, "Comment");
+        assert_eq!(info.text_chunks[1].text, "roundtrip");
+        let t = info.last_modified.unwrap();
+        assert_eq!(t.year, 2026);
+        assert_eq!(t.month, 3);
+        assert_eq!(t.day, 18);
+        assert_eq!(t.hour, 15);
+        assert_eq!(t.minute, 0);
+        assert_eq!(t.second, 0);
+    }
+
+    #[test]
+    fn roundtrip_phys_unknown_unit() {
+        use imgref::ImgVec;
+        use rgb::Rgb;
+
+        let pixels = ImgVec::new(vec![Rgb { r: 0u8, g: 0, b: 0 }; 4], 2, 2);
+        let config = crate::EncodeConfig::default().with_phys(1, 2, PhysUnit::Unknown);
+        let encoded = crate::encode_rgb8(
+            pixels.as_ref(),
+            None,
+            &config,
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+
+        let info = probe(&encoded).unwrap();
+        assert_eq!(info.pixels_per_unit_x, Some(1));
+        assert_eq!(info.pixels_per_unit_y, Some(2));
+        assert_eq!(info.phys_unit, Some(PhysUnit::Unknown));
     }
 }

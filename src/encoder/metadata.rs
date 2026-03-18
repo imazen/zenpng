@@ -6,7 +6,7 @@ use zencodec::{Cicp, ContentLightLevel, MasteringDisplay, Metadata};
 use zenflate::{CompressionLevel, Compressor, Unstoppable};
 
 use crate::chunk::write::write_chunk;
-use crate::decode::PngChromaticities;
+use crate::decode::{PhysUnit, PngChromaticities, PngTime, TextChunk};
 use crate::error::PngError;
 
 /// All metadata to embed when writing a PNG file.
@@ -28,6 +28,16 @@ pub(crate) struct PngWriteMetadata<'a> {
     pub content_light_level: Option<ContentLightLevel>,
     /// Mastering Display Color Volume (HDR).
     pub mastering_display: Option<MasteringDisplay>,
+    /// Physical pixel dimensions (pHYs).
+    pub pixels_per_unit_x: Option<u32>,
+    /// Physical pixel dimensions Y (pHYs).
+    pub pixels_per_unit_y: Option<u32>,
+    /// Unit for physical pixel dimensions.
+    pub phys_unit: Option<PhysUnit>,
+    /// Text chunks to write (tEXt).
+    pub text_chunks: Vec<TextChunk>,
+    /// Last modification time (tIME).
+    pub last_modified: Option<PngTime>,
 }
 
 impl<'a> PngWriteMetadata<'a> {
@@ -44,6 +54,11 @@ impl<'a> PngWriteMetadata<'a> {
             cicp,
             content_light_level,
             mastering_display,
+            pixels_per_unit_x: None,
+            pixels_per_unit_y: None,
+            phys_unit: None,
+            text_chunks: Vec::new(),
+            last_modified: None,
         }
     }
 }
@@ -132,6 +147,25 @@ pub(crate) fn write_all_metadata(
         if !xmp_str.is_empty() {
             write_itxt_chunk(out, "XML:com.adobe.xmp", xmp_str);
         }
+    }
+
+    // pHYs (physical pixel dimensions) — must come before IDAT
+    if let (Some(ppux), Some(ppuy)) = (meta.pixels_per_unit_x, meta.pixels_per_unit_y) {
+        let unit_byte = match meta.phys_unit {
+            Some(PhysUnit::Meter) => 1u8,
+            _ => 0u8,
+        };
+        write_phys_chunk(out, ppux, ppuy, unit_byte);
+    }
+
+    // tEXt chunks — written before IDAT
+    for tc in &meta.text_chunks {
+        write_text_chunk(out, &tc.keyword, &tc.text);
+    }
+
+    // tIME (last modification time) — can appear anywhere, we put it before IDAT
+    if let Some(ref t) = meta.last_modified {
+        write_time_chunk(out, t);
     }
 
     Ok(())
@@ -231,6 +265,35 @@ fn write_exif_chunk(out: &mut Vec<u8>, exif: &[u8]) {
     write_chunk(out, b"eXIf", exif);
 }
 
+fn write_phys_chunk(out: &mut Vec<u8>, ppux: u32, ppuy: u32, unit: u8) {
+    let mut data = [0u8; 9];
+    data[0..4].copy_from_slice(&ppux.to_be_bytes());
+    data[4..8].copy_from_slice(&ppuy.to_be_bytes());
+    data[8] = unit;
+    write_chunk(out, b"pHYs", &data);
+}
+
+fn write_text_chunk(out: &mut Vec<u8>, keyword: &str, text: &str) {
+    // tEXt: keyword + NUL + text (Latin-1, but we write UTF-8 which is
+    // compatible for ASCII and close enough for Latin-1 keywords)
+    let mut chunk_data = Vec::with_capacity(keyword.len() + 1 + text.len());
+    chunk_data.extend_from_slice(keyword.as_bytes());
+    chunk_data.push(0);
+    chunk_data.extend_from_slice(text.as_bytes());
+    write_chunk(out, b"tEXt", &chunk_data);
+}
+
+fn write_time_chunk(out: &mut Vec<u8>, t: &PngTime) {
+    let mut data = [0u8; 7];
+    data[0..2].copy_from_slice(&t.year.to_be_bytes());
+    data[2] = t.month;
+    data[3] = t.day;
+    data[4] = t.hour;
+    data[5] = t.minute;
+    data[6] = t.second;
+    write_chunk(out, b"tIME", &data);
+}
+
 fn write_itxt_chunk(out: &mut Vec<u8>, keyword: &str, text: &str) {
     // iTXt: keyword + NUL + compression_flag(0) + compression_method(0)
     //       + language_tag("") + NUL + translated_keyword("") + NUL + text
@@ -283,6 +346,15 @@ pub(crate) fn metadata_size_estimate(meta: &PngWriteMetadata<'_>) -> usize {
     }
     if meta.content_light_level.is_some() {
         size += 20;
+    }
+    if meta.pixels_per_unit_x.is_some() && meta.pixels_per_unit_y.is_some() {
+        size += 12 + 9; // pHYs
+    }
+    for tc in &meta.text_chunks {
+        size += 12 + tc.keyword.len() + 1 + tc.text.len();
+    }
+    if meta.last_modified.is_some() {
+        size += 12 + 7; // tIME
     }
     size
 }

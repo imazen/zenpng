@@ -303,6 +303,13 @@ fn encode_from_quantize_output(
     write_meta.source_gamma = encode_config.source_gamma;
     write_meta.srgb_intent = encode_config.srgb_intent;
     write_meta.chromaticities = encode_config.chromaticities;
+    write_meta.pixels_per_unit_x = encode_config.pixels_per_unit_x;
+    write_meta.pixels_per_unit_y = encode_config.pixels_per_unit_y;
+    write_meta.phys_unit = encode_config.phys_unit;
+    write_meta
+        .text_chunks
+        .clone_from(&encode_config.text_chunks);
+    write_meta.last_modified = encode_config.last_modified;
 
     let effort = encode_config.compression.effort();
     let opts = encode_config.compress_options(cancel, deadline, None);
@@ -342,6 +349,13 @@ fn encode_exact_palette_result(
     write_meta.source_gamma = encode_config.source_gamma;
     write_meta.srgb_intent = encode_config.srgb_intent;
     write_meta.chromaticities = encode_config.chromaticities;
+    write_meta.pixels_per_unit_x = encode_config.pixels_per_unit_x;
+    write_meta.pixels_per_unit_y = encode_config.pixels_per_unit_y;
+    write_meta.phys_unit = encode_config.phys_unit;
+    write_meta
+        .text_chunks
+        .clone_from(&encode_config.text_chunks);
+    write_meta.last_modified = encode_config.last_modified;
 
     let effort = encode_config.compression.effort();
     let opts = encode_config.compress_options(cancel, deadline, None);
@@ -637,6 +651,13 @@ fn encode_apng_from_palette(
     write_meta.source_gamma = config.encode.source_gamma;
     write_meta.srgb_intent = config.encode.srgb_intent;
     write_meta.chromaticities = config.encode.chromaticities;
+    write_meta.pixels_per_unit_x = config.encode.pixels_per_unit_x;
+    write_meta.pixels_per_unit_y = config.encode.pixels_per_unit_y;
+    write_meta.phys_unit = config.encode.phys_unit;
+    write_meta
+        .text_chunks
+        .clone_from(&config.encode.text_chunks);
+    write_meta.last_modified = config.encode.last_modified;
 
     Ok(crate::encoder::apng::encode_apng_indexed_from_indices(
         frames,

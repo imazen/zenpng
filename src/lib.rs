@@ -58,8 +58,9 @@ pub use codec::{
 #[allow(deprecated)]
 pub use decode::PngLimits;
 pub use decode::{
-    ApngDecodeOutput, ApngFrame, ApngFrameInfo, PngChromaticities, PngDecodeConfig,
-    PngDecodeOutput, PngInfo, PngWarning, decode, decode_apng, probe,
+    ApngDecodeOutput, ApngFrame, ApngFrameInfo, PhysUnit, PngBackground, PngChromaticities,
+    PngDecodeConfig, PngDecodeOutput, PngInfo, PngTime, PngWarning, SignificantBits, TextChunk,
+    decode, decode_apng, probe,
 };
 pub use encode::{
     ApngEncodeConfig, ApngFrameInput, EncodeConfig, encode_apng, encode_gray8, encode_gray16,
