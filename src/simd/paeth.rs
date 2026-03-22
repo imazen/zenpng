@@ -181,8 +181,12 @@ fn unfilter_paeth_bpp4_impl_neon(token: NeonToken, row: &mut [u8], prev: &[u8]) 
         let b_wide = vget_low_u16(vmovl_u8(b_raw));
 
         // Branchless Paeth predictor in i16
-        let pred_wide =
-            paeth_simd_neon(token, vreinterpret_s16_u16(a_wide), vreinterpret_s16_u16(b_wide), vreinterpret_s16_u16(c_wide));
+        let pred_wide = paeth_simd_neon(
+            token,
+            vreinterpret_s16_u16(a_wide),
+            vreinterpret_s16_u16(b_wide),
+            vreinterpret_s16_u16(c_wide),
+        );
 
         // Narrow predictor to u8 (values are 0-255)
         let pred_u16 = vreinterpret_u16_s16(pred_wide);
@@ -210,12 +214,7 @@ fn unfilter_paeth_bpp4_impl_neon(token: NeonToken, row: &mut [u8], prev: &[u8]) 
 /// Uses `int16x4_t` (64-bit NEON registers) since we only need 4 lanes.
 #[cfg(target_arch = "aarch64")]
 #[rite]
-fn paeth_simd_neon(
-    _token: NeonToken,
-    a: int16x4_t,
-    b: int16x4_t,
-    c: int16x4_t,
-) -> int16x4_t {
+fn paeth_simd_neon(_token: NeonToken, a: int16x4_t, b: int16x4_t, c: int16x4_t) -> int16x4_t {
     // p = a + b - c
     let p = vsub_s16(vadd_s16(a, b), c);
 
@@ -257,8 +256,12 @@ fn unfilter_paeth_bpp3_impl_neon(token: NeonToken, row: &mut [u8], prev: &[u8]) 
         let b_raw = vcreate_u8(b_bytes as u64);
         let b_wide = vget_low_u16(vmovl_u8(b_raw));
 
-        let pred_wide =
-            paeth_simd_neon(token, vreinterpret_s16_u16(a_wide), vreinterpret_s16_u16(b_wide), vreinterpret_s16_u16(c_wide));
+        let pred_wide = paeth_simd_neon(
+            token,
+            vreinterpret_s16_u16(a_wide),
+            vreinterpret_s16_u16(b_wide),
+            vreinterpret_s16_u16(c_wide),
+        );
 
         let pred_u16 = vreinterpret_u16_s16(pred_wide);
         let pred_narrow = vmovn_u16(vcombine_u16(pred_u16, vdup_n_u16(0)));

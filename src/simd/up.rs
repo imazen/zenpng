@@ -4,12 +4,12 @@
 //! or 16 bytes (SSE2) at a time.
 
 use archmage::prelude::*;
+#[cfg(target_arch = "aarch64")]
+use safe_unaligned_simd::aarch64::{vld1q_u8, vst1q_u8};
 #[cfg(target_arch = "x86_64")]
 use safe_unaligned_simd::x86_64::{
     _mm_loadu_si128, _mm_storeu_si128, _mm256_loadu_si256, _mm256_storeu_si256,
 };
-#[cfg(target_arch = "aarch64")]
-use safe_unaligned_simd::aarch64::{vld1q_u8, vst1q_u8};
 
 pub(crate) fn unfilter_up(row: &mut [u8], prev: &[u8]) {
     incant!(unfilter_up_impl(row, prev), [v3, v1, neon])
