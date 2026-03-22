@@ -1290,7 +1290,7 @@ mod tests {
     #[test]
     fn joint_compression_comparison() {
         use crate::quantize::ZenquantQuantizer;
-        use zenpixels_convert::PixelBufferConvertExt;
+        use zenpixels_convert::PixelBufferConvertTypedExt;
 
         fn compare(name: &str, img: ImgRef<'_, Rgba<u8>>, tolerance: f32) {
             let config = EncodeConfig::default();
