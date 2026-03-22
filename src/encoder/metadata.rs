@@ -83,7 +83,7 @@ pub(crate) fn write_all_metadata(
     meta: &PngWriteMetadata<'_>,
 ) -> Result<(), PngError> {
     let has_cicp = meta.cicp.is_some();
-    let has_iccp = meta.generic.map_or(false, |g| g.icc_profile.is_some());
+    let has_iccp = meta.generic.is_some_and(|g| g.icc_profile.is_some());
     let has_srgb = meta.srgb_intent.is_some();
 
     // PNGv3 precedence: cICP > iCCP > sRGB > gAMA/cHRM
@@ -312,7 +312,7 @@ fn write_itxt_chunk(out: &mut Vec<u8>, keyword: &str, text: &str) {
 pub(crate) fn metadata_size_estimate(meta: &PngWriteMetadata<'_>) -> usize {
     let mut size = 0;
     let has_cicp = meta.cicp.is_some();
-    let has_iccp = meta.generic.map_or(false, |g| g.icc_profile.is_some());
+    let has_iccp = meta.generic.is_some_and(|g| g.icc_profile.is_some());
     let has_srgb = meta.srgb_intent.is_some();
 
     if let Some(generic) = meta.generic {

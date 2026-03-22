@@ -1702,8 +1702,8 @@ mod tests {
         let h = 4u32;
         let sz = (w * h * 4) as usize;
         // Only 2 unique colors
-        let frame0 = vec![255u8, 0, 0, 255].repeat(w as usize * h as usize);
-        let frame1 = vec![0u8, 255, 0, 255].repeat(w as usize * h as usize);
+        let frame0 = [255u8, 0, 0, 255].repeat(w as usize * h as usize);
+        let frame1 = [0u8, 255, 0, 255].repeat(w as usize * h as usize);
         assert!(frame0.len() >= sz);
         assert!(frame1.len() >= sz);
 

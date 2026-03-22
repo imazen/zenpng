@@ -101,7 +101,7 @@ fn main() {
             let size = oneshot_encode(&img.as_ref(), 7);
             eprintln!("oneshot e7 (fast):       {} bytes", size);
         }
-        "all" | _ => {
+        _ => {
             eprintln!("\n=== Streaming ===");
             eprintln!("  e0: {} bytes", streaming_encode(&img, 0));
             eprintln!("  e1: {} bytes", streaming_encode(&img, 1));

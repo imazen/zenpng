@@ -244,12 +244,11 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
                         let value_bytes = &chunk_bytes[null_pos + 1..];
                         let value = core::str::from_utf8(value_bytes).ok();
 
-                        if let (Some(kw), Some(val)) = (keyword, value) {
-                            if (kw == "Software" || kw == "Creator" || kw == "Comment")
-                                && creating_tool.is_none()
-                            {
-                                creating_tool = Some(String::from(val));
-                            }
+                        if let (Some(kw), Some(val)) = (keyword, value)
+                            && (kw == "Software" || kw == "Creator" || kw == "Comment")
+                            && creating_tool.is_none()
+                        {
+                            creating_tool = Some(String::from(val));
                         }
                     }
                 }
@@ -260,21 +259,22 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
                     let chunk_bytes = &data[chunk_data_start..chunk_data_end];
                     if let Some(null_pos) = chunk_bytes.iter().position(|&b| b == 0) {
                         let keyword = core::str::from_utf8(&chunk_bytes[..null_pos]).ok();
-                        if let Some(kw) = keyword {
-                            if (kw == "Software" || kw == "Creator") && creating_tool.is_none() {
-                                // Skip compression_flag, method, lang_tag\0, translated_kw\0
-                                let rest = &chunk_bytes[null_pos + 1..];
-                                if rest.len() >= 2 {
-                                    let after_method = &rest[2..];
-                                    // Skip lang_tag\0
-                                    if let Some(p1) = after_method.iter().position(|&b| b == 0) {
-                                        let after_lang = &after_method[p1 + 1..];
-                                        // Skip translated_keyword\0
-                                        if let Some(p2) = after_lang.iter().position(|&b| b == 0) {
-                                            let text = &after_lang[p2 + 1..];
-                                            if let Ok(s) = core::str::from_utf8(text) {
-                                                creating_tool = Some(String::from(s));
-                                            }
+                        if let Some(kw) = keyword
+                            && (kw == "Software" || kw == "Creator")
+                            && creating_tool.is_none()
+                        {
+                            // Skip compression_flag, method, lang_tag\0, translated_kw\0
+                            let rest = &chunk_bytes[null_pos + 1..];
+                            if rest.len() >= 2 {
+                                let after_method = &rest[2..];
+                                // Skip lang_tag\0
+                                if let Some(p1) = after_method.iter().position(|&b| b == 0) {
+                                    let after_lang = &after_method[p1 + 1..];
+                                    // Skip translated_keyword\0
+                                    if let Some(p2) = after_lang.iter().position(|&b| b == 0) {
+                                        let text = &after_lang[p2 + 1..];
+                                        if let Ok(s) = core::str::from_utf8(text) {
+                                            creating_tool = Some(String::from(s));
                                         }
                                     }
                                 }
@@ -345,10 +345,10 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
         recommendations.push(Recommendation::ReduceBitDepth);
     }
 
-    if recommendations.is_empty() {
-        if matches!(compression_assessment, CompressionAssessment::Optimal) {
-            recommendations.push(Recommendation::AlreadyOptimal);
-        }
+    if recommendations.is_empty()
+        && matches!(compression_assessment, CompressionAssessment::Optimal)
+    {
+        recommendations.push(Recommendation::AlreadyOptimal);
     }
 
     Ok(PngProbe {

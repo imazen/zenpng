@@ -2798,8 +2798,10 @@ mod tests {
     #[test]
     fn build_png_info_with_cicp() {
         let ihdr = Ihdr::parse(&make_ihdr(8, 8, 8, 2, 0)).unwrap();
-        let mut ancillary = crate::chunk::ancillary::PngAncillary::default();
-        ancillary.cicp = Some([1, 13, 0, 1]);
+        let ancillary = crate::chunk::ancillary::PngAncillary {
+            cicp: Some([1, 13, 0, 1]),
+            ..Default::default()
+        };
         let info = build_png_info(&ihdr, &ancillary);
         assert!(info.cicp.is_some());
     }
