@@ -9,8 +9,8 @@ use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_sub(row: &mut [u8], bpp: usize) {
     match bpp {
-        3 => incant!(unfilter_sub_bpp3_impl(row), [v1]),
-        4 => incant!(unfilter_sub_bpp4_impl(row), [v1]),
+        3 => incant!(unfilter_sub_bpp3_impl(row), [v1, neon]),
+        4 => incant!(unfilter_sub_bpp4_impl(row), [v1, neon]),
         _ => unfilter_sub_scalar_any(row, bpp),
     }
 }
@@ -80,6 +80,68 @@ fn unfilter_sub_bpp3_impl_v1(_token: Sse2Token, row: &mut [u8]) {
     }
 
     // Scalar tail for last pixel if 4-byte load would overrun
+    for j in i..len {
+        row[j] = row[j].wrapping_add(row[j - 3]);
+    }
+}
+
+// ── NEON bpp=4 (aarch64) ─────────────────────────────────────────────
+
+#[cfg(target_arch = "aarch64")]
+#[arcane]
+fn unfilter_sub_bpp4_impl_neon(_token: NeonToken, row: &mut [u8]) {
+    let len = row.len();
+    if len < 8 {
+        unfilter_sub_scalar_any(row, 4);
+        return;
+    }
+
+    // First 4 bytes are unchanged (left neighbor is implicitly 0).
+    // Initialize `a` with the first pixel as a u32.
+    let mut a = u32::from_le_bytes(<[u8; 4]>::try_from(&row[0..4]).unwrap());
+
+    let mut i = 4;
+    while i + 4 <= len {
+        let filt = u32::from_le_bytes(<[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
+        // Wrapping byte-wise add via NEON: load both into uint8x8_t, add, extract
+        let a_v = vcreate_u8(a as u64);
+        let f_v = vcreate_u8(filt as u64);
+        let result_v = vadd_u8(a_v, f_v);
+        let result = vget_lane_u32::<0>(vreinterpret_u32_u8(result_v));
+        row[i..i + 4].copy_from_slice(&result.to_le_bytes());
+        a = result;
+        i += 4;
+    }
+}
+
+// ── NEON bpp=3 (aarch64) ─────────────────────────────────────────────
+
+#[cfg(target_arch = "aarch64")]
+#[arcane]
+fn unfilter_sub_bpp3_impl_neon(_token: NeonToken, row: &mut [u8]) {
+    let len = row.len();
+    if len < 6 {
+        unfilter_sub_scalar_any(row, 3);
+        return;
+    }
+
+    // First 3 bytes unchanged. Load first 4 bytes (3 pixel + 1 overlap) into a.
+    let mut a = u32::from_le_bytes(<[u8; 4]>::try_from(&row[0..4]).unwrap());
+
+    let mut i = 3;
+    while i + 4 <= len {
+        let filt = u32::from_le_bytes(<[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
+        let a_v = vcreate_u8(a as u64);
+        let f_v = vcreate_u8(filt as u64);
+        let result_v = vadd_u8(a_v, f_v);
+        let result = vget_lane_u32::<0>(vreinterpret_u32_u8(result_v));
+        // Store only 3 bytes (byte 3 is garbage from the 4-byte load)
+        row[i..i + 3].copy_from_slice(&result.to_le_bytes()[..3]);
+        a = result;
+        i += 3;
+    }
+
+    // Scalar tail
     for j in i..len {
         row[j] = row[j].wrapping_add(row[j - 3]);
     }

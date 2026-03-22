@@ -9,8 +9,8 @@ use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_paeth(row: &mut [u8], prev: &[u8], bpp: usize) {
     match bpp {
-        3 => incant!(unfilter_paeth_bpp3_impl(row, prev), [v2]),
-        4 => incant!(unfilter_paeth_bpp4_impl(row, prev), [v2]),
+        3 => incant!(unfilter_paeth_bpp3_impl(row, prev), [v2, neon]),
+        4 => incant!(unfilter_paeth_bpp4_impl(row, prev), [v2, neon]),
         _ => unfilter_paeth_scalar_any(row, prev, bpp),
     }
 }
@@ -146,6 +146,132 @@ fn unfilter_paeth_bpp3_impl_v2(token: X64V2Token, row: &mut [u8], prev: &[u8]) {
         row[i..i + 3].copy_from_slice(&val[..3]);
 
         a_wide = _mm_unpacklo_epi8(result, zero);
+        c_wide = b_wide;
+        i += 3;
+    }
+
+    // Scalar tail
+    for j in i..len {
+        let left = if j >= 3 { row[j - 3] } else { 0 };
+        let above = prev[j];
+        let upper_left = if j >= 3 { prev[j - 3] } else { 0 };
+        row[j] = row[j].wrapping_add(paeth_predictor(left, above, upper_left));
+    }
+}
+
+// ── NEON bpp=4 (aarch64) ─────────────────────────────────────────────
+
+#[cfg(target_arch = "aarch64")]
+#[arcane]
+fn unfilter_paeth_bpp4_impl_neon(token: NeonToken, row: &mut [u8], prev: &[u8]) {
+    let len = row.len();
+    if len < 4 {
+        return;
+    }
+
+    let zero = vdup_n_u16(0);
+    let mut a_wide = zero; // left pixel, widened to u16 (i16 values)
+    let mut c_wide = zero; // upper-left pixel, widened to u16 (i16 values)
+
+    let mut i = 0;
+    while i + 4 <= len {
+        // b = above pixel, widened to i16
+        let b_bytes = u32::from_le_bytes(<[u8; 4]>::try_from(&prev[i..i + 4]).unwrap());
+        let b_raw = vcreate_u8(b_bytes as u64);
+        let b_wide = vget_low_u16(vmovl_u8(b_raw));
+
+        // Branchless Paeth predictor in i16
+        let pred_wide =
+            paeth_simd_neon(token, vreinterpret_s16_u16(a_wide), vreinterpret_s16_u16(b_wide), vreinterpret_s16_u16(c_wide));
+
+        // Narrow predictor to u8 (values are 0-255)
+        let pred_u16 = vreinterpret_u16_s16(pred_wide);
+        let pred_narrow = vmovn_u16(vcombine_u16(pred_u16, vdup_n_u16(0)));
+
+        // Load filtered bytes and add predictor (wrapping u8 add)
+        let filt_bytes = u32::from_le_bytes(<[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
+        let filt = vcreate_u8(filt_bytes as u64);
+        let result = vadd_u8(filt, pred_narrow);
+
+        // Store 4-byte result
+        let result_u32 = vget_lane_u32::<0>(vreinterpret_u32_u8(result));
+        row[i..i + 4].copy_from_slice(&result_u32.to_le_bytes());
+
+        // Feedback: a = result widened, c = b
+        a_wide = vget_low_u16(vmovl_u8(result));
+        c_wide = b_wide;
+
+        i += 4;
+    }
+}
+
+/// Branchless Paeth predictor for 4 channels in parallel (i16 lanes) on NEON.
+///
+/// Uses `int16x4_t` (64-bit NEON registers) since we only need 4 lanes.
+#[cfg(target_arch = "aarch64")]
+#[rite]
+fn paeth_simd_neon(
+    _token: NeonToken,
+    a: int16x4_t,
+    b: int16x4_t,
+    c: int16x4_t,
+) -> int16x4_t {
+    // p = a + b - c
+    let p = vsub_s16(vadd_s16(a, b), c);
+
+    // Absolute differences
+    let pa = vabd_s16(p, a); // |p - a|
+    let pb = vabd_s16(p, b); // |p - b|
+    let pc = vabd_s16(p, c); // |p - c|
+
+    // Branchless select: PNG spec tie-breaking is pa <= pb && pa <= pc -> a; pb <= pc -> b; else c
+    // NEON vcle returns all-1s mask where condition holds
+    let mask_ab = vcle_s16(pa, pb); // pa <= pb
+    let mask_ac = vcle_s16(pa, pc); // pa <= pc
+    let mask_bc = vcle_s16(pb, pc); // pb <= pc
+
+    // Start with c, blend in b where pb <= pc, then a where pa <= pb AND pa <= pc
+    // vbsl: for each bit, selects from first operand if mask bit is 1, second if 0
+    let result = vbsl_s16(mask_bc, b, c); // pb <= pc ? b : c
+    let mask_a = vand_u16(mask_ab, mask_ac); // pa <= pb AND pa <= pc
+    vbsl_s16(mask_a, a, result) // select a where both conditions hold
+}
+
+// ── NEON bpp=3 (aarch64) ─────────────────────────────────────────────
+
+#[cfg(target_arch = "aarch64")]
+#[arcane]
+fn unfilter_paeth_bpp3_impl_neon(token: NeonToken, row: &mut [u8], prev: &[u8]) {
+    let len = row.len();
+    if len < 3 {
+        return;
+    }
+
+    let zero = vdup_n_u16(0);
+    let mut a_wide = zero;
+    let mut c_wide = zero;
+
+    let mut i = 0;
+    while i + 4 <= len {
+        let b_bytes = u32::from_le_bytes(<[u8; 4]>::try_from(&prev[i..i + 4]).unwrap());
+        let b_raw = vcreate_u8(b_bytes as u64);
+        let b_wide = vget_low_u16(vmovl_u8(b_raw));
+
+        let pred_wide =
+            paeth_simd_neon(token, vreinterpret_s16_u16(a_wide), vreinterpret_s16_u16(b_wide), vreinterpret_s16_u16(c_wide));
+
+        let pred_u16 = vreinterpret_u16_s16(pred_wide);
+        let pred_narrow = vmovn_u16(vcombine_u16(pred_u16, vdup_n_u16(0)));
+
+        let filt_bytes = u32::from_le_bytes(<[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
+        let filt = vcreate_u8(filt_bytes as u64);
+        let result = vadd_u8(filt, pred_narrow);
+
+        // Store only 3 bytes (lane 3 is garbage from the 4-byte load)
+        let result_u32 = vget_lane_u32::<0>(vreinterpret_u32_u8(result));
+        row[i..i + 3].copy_from_slice(&result_u32.to_le_bytes()[..3]);
+
+        a_wide = vget_low_u16(vmovl_u8(result));
         c_wide = b_wide;
         i += 3;
     }

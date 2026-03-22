@@ -54,6 +54,15 @@ jobs:
       - name: Test (zopfli feature)
         run: cargo test --features zopfli
 
+      - name: Test (unchecked feature)
+        run: cargo test --features unchecked
+
+      - name: Test (quantette feature)
+        run: cargo test --features quantette
+
+      - name: Test (imagequant feature)
+        run: cargo test --features imagequant
+
   i686:
     name: Test (i686)
     runs-on: ubuntu-latest

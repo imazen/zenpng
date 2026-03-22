@@ -2526,7 +2526,7 @@ mod zopfli_tests {
         let mut current_best = None;
 
         let result =
-            zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best).unwrap();
+            zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best, 1).unwrap();
 
         assert!(result.is_some(), "should find a result");
         verify_zlib(result.as_ref().unwrap(), &data);
@@ -2555,6 +2555,7 @@ mod zopfli_tests {
             &deadline,
             Some(&remaining_fn),
             &mut current_best,
+            1,
         )
         .unwrap();
 
@@ -2576,7 +2577,7 @@ mod zopfli_tests {
         let deadline = enough::Unstoppable;
         let mut current_best = None;
 
-        let result = zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best);
+        let result = zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best, 1);
         assert!(
             matches!(
                 result,
@@ -2614,7 +2615,7 @@ mod zopfli_tests {
         let mut current_best = Some(zenflate_result.clone());
 
         let result =
-            zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best).unwrap();
+            zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best, 1).unwrap();
 
         if let Some(ref better) = result {
             assert!(
@@ -2662,7 +2663,7 @@ mod zopfli_tests {
         let mut current_best = Some(zenflate_best.clone());
 
         let result =
-            zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best).unwrap();
+            zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best, 1).unwrap();
 
         if let Some(ref better) = result {
             assert!(

@@ -9,7 +9,7 @@ use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_avg(row: &mut [u8], prev: &[u8], bpp: usize) {
     match bpp {
-        4 => incant!(unfilter_avg_bpp4_impl(row, prev), [v1]),
+        4 => incant!(unfilter_avg_bpp4_impl(row, prev), [v1, neon]),
         _ => unfilter_avg_scalar_any(row, prev, bpp),
     }
 }
@@ -65,6 +65,49 @@ fn unfilter_avg_bpp4_impl_v1(_token: Sse2Token, row: &mut [u8], prev: &[u8]) {
 
         // Feedback: a = result widened
         a_wide = _mm_unpacklo_epi8(result, zero);
+
+        i += 4;
+    }
+}
+
+// ── NEON bpp=4 (aarch64) ─────────────────────────────────────────────
+
+#[cfg(target_arch = "aarch64")]
+#[arcane]
+fn unfilter_avg_bpp4_impl_neon(_token: NeonToken, row: &mut [u8], prev: &[u8]) {
+    let len = row.len();
+    if len < 4 {
+        return;
+    }
+
+    // a_wide = left pixel widened to u16 (starts as zero)
+    let mut a_wide = vdup_n_u16(0);
+
+    let mut i = 0;
+    while i + 4 <= len {
+        // b = above pixel, widened to u16
+        let b_bytes = u32::from_le_bytes(<[u8; 4]>::try_from(&prev[i..i + 4]).unwrap());
+        let b_raw = vcreate_u8(b_bytes as u64);
+        let b_wide = vget_low_u16(vmovl_u8(b_raw));
+
+        // avg = (a + b) >> 1  (u16 arithmetic, no overflow: max 255+255=510)
+        let sum = vadd_u16(a_wide, b_wide);
+        let avg_wide = vshr_n_u16::<1>(sum);
+
+        // Narrow avg to u8 (values 0-254, vmovn won't saturate)
+        let avg_narrow = vmovn_u16(vcombine_u16(avg_wide, vdup_n_u16(0)));
+
+        // Load filtered bytes and add average (wrapping u8 add)
+        let filt_bytes = u32::from_le_bytes(<[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
+        let filt = vcreate_u8(filt_bytes as u64);
+        let result = vadd_u8(filt, avg_narrow);
+
+        // Store 4-byte result
+        let result_u32 = vget_lane_u32::<0>(vreinterpret_u32_u8(result));
+        row[i..i + 4].copy_from_slice(&result_u32.to_le_bytes());
+
+        // Feedback: a = result widened
+        a_wide = vget_low_u16(vmovl_u8(result));
 
         i += 4;
     }

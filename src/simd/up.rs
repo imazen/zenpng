@@ -8,9 +8,11 @@ use archmage::prelude::*;
 use safe_unaligned_simd::x86_64::{
     _mm_loadu_si128, _mm_storeu_si128, _mm256_loadu_si256, _mm256_storeu_si256,
 };
+#[cfg(target_arch = "aarch64")]
+use safe_unaligned_simd::aarch64::{vld1q_u8, vst1q_u8};
 
 pub(crate) fn unfilter_up(row: &mut [u8], prev: &[u8]) {
-    incant!(unfilter_up_impl(row, prev), [v3, v1])
+    incant!(unfilter_up_impl(row, prev), [v3, v1, neon])
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -53,6 +55,28 @@ fn unfilter_up_impl_v1(_token: Sse2Token, row: &mut [u8], prev: &[u8]) {
         let vp = _mm_loadu_si128(<&[u8; 16]>::try_from(&prev[i..i + 16]).unwrap());
         let sum = _mm_add_epi8(vr, vp);
         _mm_storeu_si128(<&mut [u8; 16]>::try_from(&mut row[i..i + 16]).unwrap(), sum);
+        i += 16;
+    }
+
+    while i < len {
+        row[i] = row[i].wrapping_add(prev[i]);
+        i += 1;
+    }
+}
+
+// ── NEON (aarch64) ──────────────────────────────────────────────────
+
+#[cfg(target_arch = "aarch64")]
+#[arcane]
+fn unfilter_up_impl_neon(_token: NeonToken, row: &mut [u8], prev: &[u8]) {
+    let len = row.len().min(prev.len());
+    let mut i = 0;
+
+    while i + 16 <= len {
+        let vr = vld1q_u8(<&[u8; 16]>::try_from(&row[i..i + 16]).unwrap());
+        let vp = vld1q_u8(<&[u8; 16]>::try_from(&prev[i..i + 16]).unwrap());
+        let sum = vaddq_u8(vr, vp);
+        vst1q_u8(<&mut [u8; 16]>::try_from(&mut row[i..i + 16]).unwrap(), sum);
         i += 16;
     }
 
