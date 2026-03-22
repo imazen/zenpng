@@ -50,6 +50,8 @@ mod optimize;
 mod quantize;
 mod simd;
 mod types;
+#[cfg(feature = "zennode")]
+pub mod zenode_defs;
 
 pub use codec::{
     PngDecodeJob, PngDecoder, PngDecoderConfig, PngEncodeJob, PngEncoder, PngEncoderConfig,
