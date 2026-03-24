@@ -1468,7 +1468,7 @@ impl zencodec::decode::DecoderConfig for PngDecoderConfig {
 /// Per-operation PNG decode job.
 pub struct PngDecodeJob<'a> {
     config: &'a PngDecoderConfig,
-    stop: Option<&'a dyn enough::Stop>,
+    stop: Option<zencodec::StopToken>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::decode::DecodePolicy>,
     start_frame_index: u32,
@@ -1480,7 +1480,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob<'a> {
     type StreamDec = PngStreamingDecoder<'a>;
     type FullFrameDec = PngFullFrameDecoder;
 
-    fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
+    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
         self.stop = Some(stop);
         self
     }
@@ -1588,7 +1588,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob<'a> {
 /// Single-image PNG decoder.
 pub struct PngDecoder<'a> {
     config: &'a PngDecoderConfig,
-    stop: Option<&'a dyn enough::Stop>,
+    stop: Option<zencodec::StopToken>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::decode::DecodePolicy>,
     data: Cow<'a, [u8]>,
@@ -1704,7 +1704,7 @@ fn push_decoder_native<'a>(
     };
     let png_config = apply_decode_policy(png_config, job.policy.as_ref());
 
-    let cancel: &dyn enough::Stop = job.stop.unwrap_or(&enough::Unstoppable);
+    let cancel: &dyn enough::Stop = match &job.stop { Some(s) => s, None => &enough::Unstoppable };
     cancel.check().map_err(PngError::from)?;
 
     let mut reader = RowDecoder::new(&data, &png_config)?;
@@ -1837,7 +1837,7 @@ impl<'a> PngStreamingDecoder<'a> {
     fn new(
         data: Cow<'a, [u8]>,
         config: &PngDecoderConfig,
-        stop: Option<&'a dyn enough::Stop>,
+        stop: Option<zencodec::StopToken>,
         limits: Option<&ResourceLimits>,
         policy: Option<&zencodec::decode::DecodePolicy>,
         _preferred: &[PixelDescriptor],
@@ -1849,7 +1849,7 @@ impl<'a> PngStreamingDecoder<'a> {
             )));
         }
 
-        let cancel: &dyn enough::Stop = stop.unwrap_or(&enough::Unstoppable);
+        let cancel: &dyn enough::Stop = match &stop { Some(s) => s, None => &enough::Unstoppable };
         cancel.check().map_err(PngError::from)?;
 
         let effective_limits = limits.unwrap_or(&config.limits);
@@ -1996,7 +1996,7 @@ impl PngFullFrameDecoder {
     fn new(
         data: &[u8],
         config: &PngDecoderConfig,
-        _stop: Option<&dyn enough::Stop>,
+        _stop: Option<zencodec::StopToken>,
         preferred: &[PixelDescriptor],
         start_frame_index: u32,
     ) -> Result<Self, PngError> {
