@@ -98,7 +98,7 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Rgb<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode RGBA8 pixels in one call.
@@ -107,7 +107,7 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Rgba<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode Gray8 pixels in one call.
@@ -116,7 +116,7 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Gray<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode RGB16 pixels in one call.
@@ -125,7 +125,7 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Rgb<u16>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode RGBA16 pixels in one call.
@@ -134,7 +134,7 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Rgba<u16>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode Gray16 pixels in one call.
@@ -143,7 +143,7 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Gray<u16>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode RGB F32 pixels in one call.
@@ -152,7 +152,7 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Rgb<f32>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode RGBA F32 pixels in one call.
@@ -161,7 +161,7 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Rgba<f32>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode Gray F32 pixels in one call.
@@ -170,7 +170,7 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Gray<f32>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode BGRA8 pixels (swizzles to RGBA) in one call.
@@ -179,7 +179,7 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, rgb::alt::BGRA<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
     }
 }
 
@@ -315,7 +315,7 @@ static PNG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
 
 impl zencodec::encode::EncoderConfig for PngEncoderConfig {
     type Error = At<PngError>;
-    type Job<'a> = PngEncodeJob<'a>;
+    type Job = PngEncodeJob;
 
     fn format() -> ImageFormat {
         ImageFormat::Png
@@ -361,7 +361,7 @@ impl zencodec::encode::EncoderConfig for PngEncoderConfig {
         Some(self.lossless)
     }
 
-    fn job(&self) -> PngEncodeJob<'_> {
+    fn job(self) -> PngEncodeJob {
         PngEncodeJob {
             config: self,
             stop: None,
@@ -378,9 +378,9 @@ impl zencodec::encode::EncoderConfig for PngEncoderConfig {
 // ── PngEncodeJob ─────────────────────────────────────────────────────
 
 /// Per-operation PNG encode job.
-pub struct PngEncodeJob<'a> {
-    config: &'a PngEncoderConfig,
-    stop: Option<&'a dyn enough::Stop>,
+pub struct PngEncodeJob {
+    config: PngEncoderConfig,
+    stop: Option<zencodec::StopToken>,
     metadata: Option<Metadata>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::encode::EncodePolicy>,
@@ -389,12 +389,12 @@ pub struct PngEncodeJob<'a> {
     loop_count: Option<u32>,
 }
 
-impl<'a> zencodec::encode::EncodeJob<'a> for PngEncodeJob<'a> {
+impl zencodec::encode::EncodeJob for PngEncodeJob {
     type Error = At<PngError>;
-    type Enc = PngEncoder<'a>;
+    type Enc = PngEncoder;
     type FullFrameEnc = PngFullFrameEncoder;
 
-    fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
+    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
         self.stop = Some(stop);
         self
     }
@@ -425,7 +425,7 @@ impl<'a> zencodec::encode::EncodeJob<'a> for PngEncodeJob<'a> {
         self
     }
 
-    fn encoder(self) -> Result<PngEncoder<'a>, At<PngError>> {
+    fn encoder(self) -> Result<PngEncoder, At<PngError>> {
         Ok(PngEncoder {
             config: self.config,
             stop: self.stop,
@@ -464,9 +464,9 @@ impl<'a> zencodec::encode::EncodeJob<'a> for PngEncodeJob<'a> {
 // ── PngEncoder ───────────────────────────────────────────────────────
 
 /// Single-image PNG encoder.
-pub struct PngEncoder<'a> {
-    config: &'a PngEncoderConfig,
-    stop: Option<&'a dyn enough::Stop>,
+pub struct PngEncoder {
+    config: PngEncoderConfig,
+    stop: Option<zencodec::StopToken>,
     metadata: Option<Metadata>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::encode::EncodePolicy>,
@@ -560,7 +560,7 @@ struct PreFilteredState {
     zenflate_effort: u32,
 }
 
-impl<'a> PngEncoder<'a> {
+impl PngEncoder {
     /// Build an `EncodeConfig` with threading policy applied from resource limits.
     fn config_with_threading(&self) -> EncodeConfig {
         let mut config = self.config.config.clone();
@@ -592,7 +592,10 @@ impl<'a> PngEncoder<'a> {
         color_type: crate::encode::ColorType,
         bit_depth: crate::encode::BitDepth,
     ) -> Result<EncodeOutput, At<PngError>> {
-        let cancel: &dyn enough::Stop = self.stop.unwrap_or(&enough::Unstoppable);
+        let cancel: &dyn enough::Stop = match self.stop {
+                Some(ref s) => s as &dyn enough::Stop,
+                None => &enough::Unstoppable,
+            };
         // Pre-flight stop check
         cancel.check().map_err(PngError::from)?;
         // Pre-flight limit checks
@@ -635,7 +638,7 @@ impl<'a> PngEncoder<'a> {
     }
 }
 
-impl zencodec::encode::Encoder for PngEncoder<'_> {
+impl zencodec::encode::Encoder for PngEncoder {
     type Error = At<PngError>;
 
     fn reject(op: zencodec::UnsupportedOperation) -> At<PngError> {
@@ -672,7 +675,10 @@ impl zencodec::encode::Encoder for PngEncoder<'_> {
                     let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&bytes);
                     let img = imgref::Img::new(rgba, w as usize, h as usize);
                     let mpe = quality_to_mpe(q);
-                    let cancel: &dyn enough::Stop = self.stop.unwrap_or(&enough::Unstoppable);
+                    let cancel: &dyn enough::Stop = match self.stop {
+                Some(ref s) => s as &dyn enough::Stop,
+                None => &enough::Unstoppable,
+            };
                     let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
                     let deadline =
                         almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
@@ -752,7 +758,10 @@ impl zencodec::encode::Encoder for PngEncoder<'_> {
                     let rgba: &[Rgba<u8>] = bytemuck::cast_slice(&srgb);
                     let img = imgref::Img::new(rgba, w as usize, h as usize);
                     let mpe = quality_to_mpe(q);
-                    let cancel: &dyn enough::Stop = self.stop.unwrap_or(&enough::Unstoppable);
+                    let cancel: &dyn enough::Stop = match self.stop {
+                Some(ref s) => s as &dyn enough::Stop,
+                None => &enough::Unstoppable,
+            };
                     let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
                     let deadline =
                         almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
@@ -1101,7 +1110,10 @@ impl zencodec::encode::Encoder for PngEncoder<'_> {
                 if state.rows_pushed == 0 {
                     return Err(at!(PngError::InvalidInput("no pixel data pushed".into())));
                 }
-                let cancel: &dyn enough::Stop = self.stop.unwrap_or(&enough::Unstoppable);
+                let cancel: &dyn enough::Stop = match self.stop {
+                Some(ref s) => s as &dyn enough::Stop,
+                None => &enough::Unstoppable,
+            };
                 let data = state.finish(cancel)?;
                 if let Some(ref limits) = self.limits {
                     limits
@@ -1600,7 +1612,10 @@ impl zencodec::decode::Decode for PngDecoder<'_> {
     type Error = At<PngError>;
 
     fn decode(self) -> Result<DecodeOutput, At<PngError>> {
-        let cancel: &dyn enough::Stop = self.stop.unwrap_or(&enough::Unstoppable);
+        let cancel: &dyn enough::Stop = match self.stop {
+                Some(ref s) => s as &dyn enough::Stop,
+                None => &enough::Unstoppable,
+            };
         cancel.check().map_err(PngError::from)?;
         // Check input size limit
         let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
