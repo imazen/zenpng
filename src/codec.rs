@@ -4771,9 +4771,9 @@ mod tests {
         }
 
         let config = PngEncoderConfig::new();
-        let job = EncoderConfig::job(&config);
-        let job = EncodeJob::with_stop(job, &AlreadyCancelled);
-        let encoder = EncodeJob::encoder(job).unwrap();
+        let stop = zencodec::StopToken::new(AlreadyCancelled);
+        let job = config.clone().job().with_stop(stop);
+        let encoder = job.encoder().unwrap();
 
         // Create a small 2x2 RGB8 image
         let pixels = vec![Rgb { r: 0u8, g: 0, b: 0 }; 4];
@@ -5130,8 +5130,8 @@ mod tests {
     #[test]
     fn encode_job_with_stop() {
         let enc = PngEncoderConfig::new();
-        let stop = enough::Unstoppable;
-        let job = enc.job().with_stop(&stop);
+        let stop = zencodec::StopToken::new(enough::Unstoppable);
+        let job = enc.job().with_stop(stop);
         let encoder = job.encoder().unwrap();
         let pixels = vec![Rgb { r: 0u8, g: 0, b: 0 }; 4];
         let img = Img::new(pixels, 2, 2);
@@ -5218,7 +5218,7 @@ mod tests {
             .collect();
         let img = imgref::ImgVec::new(pixels, 16, 16);
         let config = PngEncoderConfig::new();
-        let encoder = config.job().encoder().unwrap();
+        let encoder = config.clone().job().encoder().unwrap();
         let output = encoder
             .encode(PixelSlice::from(img.as_ref()).into())
             .unwrap();
@@ -5239,7 +5239,7 @@ mod tests {
             .collect();
         let img = imgref::ImgVec::new(pixels, 16, 16);
         let config = PngEncoderConfig::new();
-        let encoder = config.job().encoder().unwrap();
+        let encoder = config.clone().job().encoder().unwrap();
         let output = encoder
             .encode(PixelSlice::from(img.as_ref()).into())
             .unwrap();
@@ -5253,7 +5253,7 @@ mod tests {
         let pixels: Vec<Gray<u8>> = (0..16 * 16).map(|i| Gray((i % 256) as u8)).collect();
         let img = imgref::ImgVec::new(pixels, 16, 16);
         let config = PngEncoderConfig::new();
-        let encoder = config.job().encoder().unwrap();
+        let encoder = config.clone().job().encoder().unwrap();
         let output = encoder
             .encode(PixelSlice::from(img.as_ref()).into())
             .unwrap();
@@ -5273,7 +5273,7 @@ mod tests {
             .collect();
         let img = imgref::ImgVec::new(pixels, 16, 16);
         let config = PngEncoderConfig::new();
-        let encoder = config.job().encoder().unwrap();
+        let encoder = config.clone().job().encoder().unwrap();
         let output = encoder
             .encode(PixelSlice::from(img.as_ref()).into())
             .unwrap();
@@ -5294,7 +5294,7 @@ mod tests {
             .collect();
         let img = imgref::ImgVec::new(pixels, 16, 16);
         let config = PngEncoderConfig::new();
-        let encoder = config.job().encoder().unwrap();
+        let encoder = config.clone().job().encoder().unwrap();
         let output = encoder
             .encode(PixelSlice::from(img.as_ref()).into())
             .unwrap();
@@ -5308,7 +5308,7 @@ mod tests {
         let pixels: Vec<Gray<u16>> = (0..16 * 16).map(|i| Gray((i * 256) as u16)).collect();
         let img = imgref::ImgVec::new(pixels, 16, 16);
         let config = PngEncoderConfig::new();
-        let encoder = config.job().encoder().unwrap();
+        let encoder = config.clone().job().encoder().unwrap();
         let output = encoder
             .encode(PixelSlice::from(img.as_ref()).into())
             .unwrap();
@@ -5328,7 +5328,7 @@ mod tests {
             .collect();
         let img = imgref::ImgVec::new(pixels, 16, 16);
         let config = PngEncoderConfig::new();
-        let encoder = config.job().encoder().unwrap();
+        let encoder = config.clone().job().encoder().unwrap();
         let output = encoder
             .encode(PixelSlice::from(img.as_ref()).into())
             .unwrap();
@@ -5349,7 +5349,7 @@ mod tests {
             .collect();
         let img = imgref::ImgVec::new(pixels, 16, 16);
         let config = PngEncoderConfig::new();
-        let encoder = config.job().encoder().unwrap();
+        let encoder = config.clone().job().encoder().unwrap();
         let output = encoder
             .encode(PixelSlice::from(img.as_ref()).into())
             .unwrap();
@@ -5365,7 +5365,7 @@ mod tests {
             .collect();
         let img = imgref::ImgVec::new(pixels, 16, 16);
         let config = PngEncoderConfig::new();
-        let encoder = config.job().encoder().unwrap();
+        let encoder = config.clone().job().encoder().unwrap();
         let output = encoder
             .encode(PixelSlice::from(img.as_ref()).into())
             .unwrap();
@@ -5386,7 +5386,7 @@ mod tests {
             .collect();
         let img = imgref::ImgVec::new(pixels, 16, 16);
         let config = PngEncoderConfig::new();
-        let encoder = config.job().encoder().unwrap();
+        let encoder = config.clone().job().encoder().unwrap();
         let output = encoder
             .encode(PixelSlice::from(img.as_ref()).into())
             .unwrap();
@@ -5410,7 +5410,7 @@ mod tests {
         let img = imgref::ImgVec::new(pixels, 32, 32);
         let config = PngEncoderConfig::new();
         let limits = ResourceLimits::none().with_max_output(100);
-        let encoder = config.job().with_limits(limits).encoder().unwrap();
+        let encoder = config.clone().job().with_limits(limits).encoder().unwrap();
         let result = encoder.encode(PixelSlice::from(img.as_ref()).erase());
         let err = result.unwrap_err();
         let msg = alloc::format!("{}", err);
@@ -5429,7 +5429,7 @@ mod tests {
         let config = PngEncoderConfig::new();
         // Allow up to 10 KB — should be plenty for a 2x2 PNG
         let limits = ResourceLimits::none().with_max_output(10_000);
-        let encoder = config.job().with_limits(limits).encoder().unwrap();
+        let encoder = config.clone().job().with_limits(limits).encoder().unwrap();
         let result = encoder.encode(PixelSlice::from(img.as_ref()).erase());
         assert!(result.is_ok(), "expected success, got: {:?}", result.err());
     }
@@ -5594,7 +5594,7 @@ mod tests {
 
         let config = PngEncoderConfig::new();
         let limits = ResourceLimits::none().with_threading(ThreadingPolicy::SingleThread);
-        let encoder = config.job().with_limits(limits).encoder().unwrap();
+        let encoder = config.clone().job().with_limits(limits).encoder().unwrap();
         let output = encoder
             .encode(PixelSlice::from(img.as_ref()).erase())
             .unwrap();
@@ -5676,7 +5676,7 @@ mod tests {
     //     ];
     //     let img = imgref::ImgVec::new(pixels, 32, 32);
     //     let config = PngEncoderConfig::new();
-    //     let dyn_enc = config.job().dyn_encoder().unwrap();
+    //     let dyn_enc = config.clone().job().dyn_encoder().unwrap();
     //     let output = dyn_enc
     //         .encode(PixelSlice::from(img.as_ref()).into())
     //         .unwrap();
@@ -5703,7 +5703,7 @@ mod tests {
 
         // Encode via push_rows (2 rows at a time)
         let config = PngEncoderConfig::new();
-        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
         for strip_y in (0..h).step_by(2) {
             let strip = img.sub_image(0, strip_y as usize, w as usize, 2);
             let slice = PixelSlice::from(strip).erase();
@@ -5759,7 +5759,7 @@ mod tests {
         let img = Img::new(pixels, w as usize, h as usize);
 
         let config = PngEncoderConfig::new();
-        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
         for y in 0..h {
             let strip = img.sub_image(0, y as usize, w as usize, 1);
             encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
@@ -5793,7 +5793,7 @@ mod tests {
         let img = Img::new(pixels, w as usize, h as usize);
 
         let config = PngEncoderConfig::new();
-        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
         encoder
             .push_rows(PixelSlice::from(img.as_ref()).erase())
             .unwrap();
@@ -5819,7 +5819,7 @@ mod tests {
         let img = Img::new(pixels, w as usize, h as usize);
 
         let config = PngEncoderConfig::new();
-        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
         encoder
             .push_rows(PixelSlice::from(img.as_ref()).erase())
             .unwrap();
@@ -5840,7 +5840,7 @@ mod tests {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let config = PngEncoderConfig::new();
-        let encoder = config.job().with_canvas_size(4, 4).encoder().unwrap();
+        let encoder = config.clone().job().with_canvas_size(4, 4).encoder().unwrap();
         assert!(encoder.finish().is_err());
     }
 
@@ -5854,7 +5854,7 @@ mod tests {
         let img = Img::new(pixels, w as usize, 3);
 
         let config = PngEncoderConfig::new();
-        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
         // Pushing 3 rows when canvas is 2 tall should error
         let result = encoder.push_rows(PixelSlice::from(img.as_ref()).erase());
         assert!(result.is_err());
@@ -5879,7 +5879,7 @@ mod tests {
 
         // push_rows path
         let config = PngEncoderConfig::new().with_generic_effort(3);
-        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
         for y in (0..h).step_by(4) {
             let rows = (h - y).min(4);
             let strip = img.sub_image(0, y as usize, w as usize, rows as usize);
@@ -5888,7 +5888,7 @@ mod tests {
         let push_out = encoder.finish().unwrap();
 
         // encode() path
-        let one_enc = config.job().encoder().unwrap();
+        let one_enc = config.clone().job().encoder().unwrap();
         let one_out = one_enc
             .encode(PixelSlice::from(img.as_ref()).erase())
             .unwrap();
@@ -5938,7 +5938,7 @@ mod tests {
         let img = Img::new(pixels, w as usize, h as usize);
 
         let config = PngEncoderConfig::new();
-        let mut encoder = config.job().encoder().unwrap(); // no with_canvas_size
+        let mut encoder = config.clone().job().encoder().unwrap(); // no with_canvas_size
         encoder
             .push_rows(PixelSlice::from(img.as_ref()).erase())
             .unwrap();
@@ -5973,7 +5973,7 @@ mod tests {
 
         // Effort 0 → true streaming path
         let config = PngEncoderConfig::new().with_compression(crate::Compression::None);
-        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
         for strip_y in (0..h).step_by(2) {
             let strip = img.sub_image(0, strip_y as usize, w as usize, 2);
             encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
@@ -6026,7 +6026,7 @@ mod tests {
         let img = Img::new(pixels, w as usize, h as usize);
 
         let config = PngEncoderConfig::new().with_compression(crate::Compression::None);
-        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
         for y in 0..h {
             let strip = img.sub_image(0, y as usize, w as usize, 1);
             encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
@@ -6053,7 +6053,7 @@ mod tests {
         let img = Img::new(pixels, w as usize, h as usize);
 
         let config = PngEncoderConfig::new().with_compression(crate::Compression::None);
-        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
         encoder
             .push_rows(PixelSlice::from(img.as_ref()).erase())
             .unwrap();
@@ -6090,6 +6090,7 @@ mod tests {
 
         // One-shot encode
         let oneshot = config
+            .clone()
             .job()
             .encoder()
             .unwrap()
@@ -6129,7 +6130,7 @@ mod tests {
         let img = Img::new(pixels, w as usize, h as usize);
 
         let config = PngEncoderConfig::new().with_compression(crate::Compression::None);
-        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
         for y in 0..h {
             let strip = img.sub_image(0, y as usize, w as usize, 1);
             encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
@@ -6175,7 +6176,7 @@ mod tests {
 
         // Only set width, not height → falls back to buffered
         let config = PngEncoderConfig::new().with_compression(crate::Compression::None);
-        let mut encoder = config.job().encoder().unwrap(); // no with_canvas_size
+        let mut encoder = config.clone().job().encoder().unwrap(); // no with_canvas_size
         encoder
             .push_rows(PixelSlice::from(img.as_ref()).erase())
             .unwrap();
@@ -6209,7 +6210,7 @@ mod tests {
         let img = Img::new(pixels.clone(), w as usize, h as usize);
 
         let config = PngEncoderConfig::new().with_compression(crate::Compression::Fastest);
-        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
         for strip_y in (0..h).step_by(2) {
             let strip = img.sub_image(0, strip_y as usize, w as usize, 2);
             encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
@@ -6264,6 +6265,7 @@ mod tests {
         let config = PngEncoderConfig::new().with_compression(crate::Compression::Fastest);
 
         let oneshot = config
+            .clone()
             .job()
             .encoder()
             .unwrap()
@@ -6342,7 +6344,7 @@ mod tests {
         let img = Img::new(pixels, w as usize, h as usize);
 
         let config = PngEncoderConfig::new().with_compression(crate::Compression::Fastest);
-        let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
         for y in 0..h {
             let strip = img.sub_image(0, y as usize, w as usize, 1);
             encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
@@ -6466,7 +6468,7 @@ mod tests {
         }
 
         let config = PngEncoderConfig::new();
-        let job = config.job().with_canvas_size(4, 4).with_loop_count(Some(0));
+        let job = config.clone().job().with_canvas_size(4, 4).with_loop_count(Some(0));
         let mut enc = job.full_frame_encoder().unwrap();
 
         // Push one frame
@@ -6499,7 +6501,7 @@ mod tests {
         use zencodec::encode::FullFrameEncoder;
 
         let config = PngEncoderConfig::new();
-        let job = config.job().with_canvas_size(4, 4).with_loop_count(Some(0));
+        let job = config.clone().job().with_canvas_size(4, 4).with_loop_count(Some(0));
         let mut enc = job.full_frame_encoder().unwrap();
 
         let pixels: Vec<Rgba<u8>> = vec![
@@ -6529,7 +6531,7 @@ mod tests {
         use zencodec::encode::FullFrameEncoder;
 
         let config = PngEncoderConfig::new();
-        let job = config.job().with_canvas_size(4, 4).with_loop_count(Some(0));
+        let job = config.clone().job().with_canvas_size(4, 4).with_loop_count(Some(0));
         let mut enc = job.full_frame_encoder().unwrap();
 
         // Try pushing a 16-bit frame, which is not supported by the APNG encoder
@@ -6561,7 +6563,7 @@ mod tests {
         use zencodec::encode::FullFrameEncoder;
 
         let config = PngEncoderConfig::new();
-        let job = config.job().with_canvas_size(4, 4).with_loop_count(Some(0));
+        let job = config.clone().job().with_canvas_size(4, 4).with_loop_count(Some(0));
         let mut enc = job.full_frame_encoder().unwrap();
 
         // Push a Gray8 frame — should be accepted and converted to RGBA8
