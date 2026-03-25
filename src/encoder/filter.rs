@@ -1757,6 +1757,35 @@ mod tests {
         assert_eq!(out.len(), 3 * (1 + row_bytes));
     }
 
+    /// Beam search with NearOptimal eval_level (10+) clones the compressor,
+    /// which contains a ~9MB NearOptimalState with `unchecked`. This must not
+    /// overflow the default 8MB thread stack.
+    #[test]
+    fn filter_image_beam_near_optimal_does_not_overflow_stack() {
+        let result = std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let (data, row_bytes) = make_test_image(4, 3, 3);
+                let mut out = Vec::new();
+                filter_image(
+                    &data,
+                    row_bytes,
+                    3,
+                    3,
+                    Strategy::BruteForceBeam {
+                        eval_level: 10, // NearOptimal threshold
+                        beam_width: 2,
+                    },
+                    &Unstoppable,
+                    &mut out,
+                );
+                assert_eq!(out.len(), 3 * (1 + row_bytes));
+            })
+            .unwrap()
+            .join();
+        assert!(result.is_ok(), "beam search with NearOptimal compressor overflowed the stack");
+    }
+
     // ---- precompute_all_filters ----
 
     #[test]
