@@ -12,7 +12,7 @@ use safe_unaligned_simd::x86_64::{
 };
 
 pub(crate) fn unfilter_up(row: &mut [u8], prev: &[u8]) {
-    incant!(unfilter_up_impl(row, prev), [v3, v1, neon])
+    incant!(unfilter_up_impl(row, prev), [v3, v1, neon, scalar])
 }
 
 #[cfg(target_arch = "x86_64")]

@@ -2,19 +2,20 @@
 name = "zenpng"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.93"
 license = "AGPL-3.0-or-later"
 description = "PNG encoding and decoding with zencodec trait integration"
 categories = ["multimedia::images", "multimedia::encoding"]
 keywords = ["png", "image", "encoder", "decoder", "codec"]
 repository = "https://github.com/imazen/zenpng"
+exclude = ["CLAUDE.md", "FEEDBACK.md", "justfile", "specs/", "heaptrack.*", ".plan", "benchmarks/", "TUNING.md", "2-26-26-tables.md", "analyze_zopfli.py", ".github/"]
 
 [dependencies]
 thiserror = { version = "2.0", default-features = false }
 rgb = { version = "0.8", default-features = false, features = ["as-bytes"] }
 imgref = "1.12"
 bytemuck = { version = "1.25", default-features = false, features = ["extern_crate_alloc"] }
-enough = "0.4"
+enough = "0.4.2"
 zencodec = { version = "0.1.1" }
 zenpixels = { version = "0.2.0", default-features = false, features = ["imgref"] }
 zenpixels-convert = { version = "0.2.0", features = ["imgref"] }
@@ -27,7 +28,7 @@ archmage = { version = "0.9.12", default-features = false, features = ["macros",
 safe_unaligned_simd = { version = "0.2.5", default-features = false }
 linear-srgb = "0.6.4"
 zenzop = { version = "0.4.1", optional = true, default-features = false, features = ["zlib", "std"] }
-almost-enough = { version = "0.4", features = ["std"] }
+almost-enough = { version = "0.4.2", features = ["std"] }
 
 [dev-dependencies]
 png = "0.18"

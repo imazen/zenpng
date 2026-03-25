@@ -9,7 +9,7 @@ use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_avg(row: &mut [u8], prev: &[u8], bpp: usize) {
     match bpp {
-        4 => incant!(unfilter_avg_bpp4_impl(row, prev), [v1, neon]),
+        4 => incant!(unfilter_avg_bpp4_impl(row, prev), [v1, neon, scalar]),
         _ => unfilter_avg_scalar_any(row, prev, bpp),
     }
 }

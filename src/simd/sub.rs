@@ -9,8 +9,8 @@ use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_sub(row: &mut [u8], bpp: usize) {
     match bpp {
-        3 => incant!(unfilter_sub_bpp3_impl(row), [v1, neon]),
-        4 => incant!(unfilter_sub_bpp4_impl(row), [v1, neon]),
+        3 => incant!(unfilter_sub_bpp3_impl(row), [v1, neon, scalar]),
+        4 => incant!(unfilter_sub_bpp4_impl(row), [v1, neon, scalar]),
         _ => unfilter_sub_scalar_any(row, bpp),
     }
 }
