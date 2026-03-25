@@ -548,8 +548,14 @@ pub(crate) fn decode_apng_composed(
 /// Build PixelBuffer directly from canvas bytes (single allocation).
 fn canvas_to_pixel_data(canvas: &[u8], w: usize, h: usize, is_16bit: bool) -> PixelBuffer {
     if is_16bit {
-        let rgba: &[rgb::Rgba<u16>] = bytemuck::cast_slice(canvas);
-        PixelBuffer::from_imgvec(imgref::ImgVec::new(rgba.to_vec(), w, h)).into()
+        let rgba: Vec<rgb::Rgba<u16>> = match bytemuck::try_cast_slice(canvas) {
+            Ok(v) => v.to_vec(),
+            Err(bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned) => {
+                super::postprocess::bytes_to_rgba16_vec(canvas)
+            }
+            Err(e) => panic!("unexpected cast error: {e:?}"),
+        };
+        PixelBuffer::from_imgvec(imgref::ImgVec::new(rgba, w, h)).into()
     } else {
         let rgba: &[rgb::Rgba<u8>] = bytemuck::cast_slice(canvas);
         PixelBuffer::from_imgvec(imgref::ImgVec::new(rgba.to_vec(), w, h)).into()

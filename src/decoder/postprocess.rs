@@ -10,6 +10,31 @@ use imgref::ImgVec;
 use rgb::{Gray, Rgb, Rgba};
 use zenpixels::{GrayAlpha16, Pixel, PixelBuffer};
 
+/// Reinterpret `Vec<u8>` as `Vec<T>` without copying when possible.
+/// Falls back to per-element construction only if alignment prevents zero-copy.
+pub(crate) fn bytes_to_rgba16_vec(bytes: &[u8]) -> Vec<Rgba<u16>> {
+    bytes
+        .chunks_exact(8)
+        .map(|c| Rgba {
+            r: u16::from_ne_bytes([c[0], c[1]]),
+            g: u16::from_ne_bytes([c[2], c[3]]),
+            b: u16::from_ne_bytes([c[4], c[5]]),
+            a: u16::from_ne_bytes([c[6], c[7]]),
+        })
+        .collect()
+}
+
+fn try_cast_vec_or<T: bytemuck::AnyBitPattern + bytemuck::NoUninit>(
+    pixels: Vec<u8>,
+    fallback: fn(&[u8]) -> Vec<T>,
+) -> Vec<T> {
+    match bytemuck::try_cast_vec(pixels) {
+        Ok(v) => v,
+        Err((bytemuck::PodCastError::AlignmentMismatch, bytes)) => fallback(&bytes),
+        Err((e, _)) => panic!("unexpected cast error: {e:?}"),
+    }
+}
+
 // ── Post-processing ─────────────────────────────────────────────────
 
 /// Compute output bytes per pixel after post-processing (for limits checks).
@@ -420,8 +445,12 @@ pub(crate) fn build_pixel_data(
     match (ihdr.color_type, ihdr.bit_depth, ancillary.trns.is_some()) {
         // Grayscale
         (0, 16, false) => {
-            let gray: &[Gray<u16>] = bytemuck::cast_slice(&pixels);
-            Ok(PixelBuffer::from_imgvec(ImgVec::new(gray.to_vec(), w, h)).into())
+            let gray = try_cast_vec_or(pixels, |b| {
+                b.chunks_exact(2)
+                    .map(|c| Gray(u16::from_ne_bytes([c[0], c[1]])))
+                    .collect()
+            });
+            Ok(PixelBuffer::from_imgvec(ImgVec::new(gray, w, h)).into())
         }
         (0, 16, true) => {
             // Gray16 + tRNS → GrayAlpha16 (already processed to native u16 pairs)
@@ -442,12 +471,20 @@ pub(crate) fn build_pixel_data(
         }
         // RGB
         (2, 16, false) => {
-            let rgb: &[Rgb<u16>] = bytemuck::cast_slice(&pixels);
-            Ok(PixelBuffer::from_imgvec(ImgVec::new(rgb.to_vec(), w, h)).into())
+            let rgb = try_cast_vec_or(pixels, |b| {
+                b.chunks_exact(6)
+                    .map(|c| Rgb {
+                        r: u16::from_ne_bytes([c[0], c[1]]),
+                        g: u16::from_ne_bytes([c[2], c[3]]),
+                        b: u16::from_ne_bytes([c[4], c[5]]),
+                    })
+                    .collect()
+            });
+            Ok(PixelBuffer::from_imgvec(ImgVec::new(rgb, w, h)).into())
         }
         (2, 16, true) => {
-            let rgba: &[Rgba<u16>] = bytemuck::cast_slice(&pixels);
-            Ok(PixelBuffer::from_imgvec(ImgVec::new(rgba.to_vec(), w, h)).into())
+            let rgba = try_cast_vec_or(pixels, bytes_to_rgba16_vec);
+            Ok(PixelBuffer::from_imgvec(ImgVec::new(rgba, w, h)).into())
         }
         (2, 8, false) => {
             let rgb: Vec<Rgb<u8>> = bytemuck::cast_vec(pixels);
@@ -485,8 +522,8 @@ pub(crate) fn build_pixel_data(
         }
         // RGBA
         (6, 16, _) => {
-            let rgba: &[Rgba<u16>] = bytemuck::cast_slice(&pixels);
-            Ok(PixelBuffer::from_imgvec(ImgVec::new(rgba.to_vec(), w, h)).into())
+            let rgba = try_cast_vec_or(pixels, bytes_to_rgba16_vec);
+            Ok(PixelBuffer::from_imgvec(ImgVec::new(rgba, w, h)).into())
         }
         (6, 8, _) => {
             let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);

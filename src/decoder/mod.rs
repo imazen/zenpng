@@ -1135,15 +1135,11 @@ mod tests {
         })
     }
 
-    fn be_to_native_16_ref(bytes: &[u8]) -> Vec<u8> {
-        if cfg!(target_endian = "big") {
-            return bytes.to_vec();
-        }
-        let mut out = bytes.to_vec();
-        for chunk in out.chunks_exact_mut(2) {
-            chunk.swap(0, 1);
-        }
-        out
+    fn be_to_native_16_ref(bytes: &[u8]) -> Vec<u16> {
+        bytes
+            .chunks_exact(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect()
     }
 
     fn pixel_data_to_bytes(pixels: &PixelBuffer) -> Vec<u8> {
