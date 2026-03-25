@@ -43,7 +43,4 @@ doc = false
 bench = false
 
 [patch.crates-io]
-zenpixels = { path = "../../zenpixels/zenpixels" }
-zenpixels-convert = { path = "../../zenpixels/zenpixels-convert" }
 zenflate = { path = "../../zenflate" }
-zencodec = { path = "../../zencodec" }

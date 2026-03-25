@@ -15,17 +15,17 @@ rgb = { version = "0.8", default-features = false, features = ["as-bytes"] }
 imgref = "1.12"
 bytemuck = { version = "1.25", default-features = false, features = ["extern_crate_alloc"] }
 enough = "0.4"
-zencodec = { version = "0.1", path = "../zencodec" }
-zenpixels = { version = "0.2.0", path = "../zenpixels/zenpixels", default-features = false, features = ["imgref"] }
-zenpixels-convert = { version = "0.2.0", path = "../zenpixels/zenpixels-convert", features = ["imgref"] }
+zencodec = { version = "0.1.0" }
+zenpixels = { version = "0.2.0", default-features = false, features = ["imgref"] }
+zenpixels-convert = { version = "0.2.0", features = ["imgref"] }
 zenquant = { version = "0.1", path = "../zenquant", optional = true }
 imagequant = { version = "4", optional = true }
 quantette = { version = "0.5", optional = true, default-features = false, features = ["kmeans", "std"] }
-whereat = "0.1.3"
+whereat = "0.1.4"
 zenflate = { version = "0.3", path = "../zenflate" }
-archmage = { version = "0.9.4", default-features = false, features = ["macros", "std"] }
+archmage = { version = "0.9.12", default-features = false, features = ["macros", "std"] }
 safe_unaligned_simd = { version = "0.2.5", default-features = false }
-linear-srgb = "0.6.3"
+linear-srgb = "0.6.4"
 zenzop = { version = "0.4", path = "../zenzop", optional = true, default-features = false, features = ["zlib", "std"] }
 almost-enough = { version = "0.4", features = ["std"] }
 
@@ -59,9 +59,6 @@ required-features = ["_dev"]
 [[example]]
 name = "decode_bench"
 required-features = ["_dev"]
-
-[patch.crates-io]
-zenpixels = { path = "../zenpixels/zenpixels" }
 
 [[example]]
 name = "strategy_explorer"
