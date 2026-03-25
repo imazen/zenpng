@@ -82,6 +82,52 @@ impl Default for EncodePng {
     }
 }
 
+impl EncodePng {
+    /// Apply this node's explicitly-set params on top of an existing config.
+    ///
+    /// Fields at their default/sentinel value are skipped:
+    /// - `quality` and `png_quality`: `-1` means not set
+    /// - `min_quality`: `0` means not set
+    /// - `lossless`: `true` is the default (PNG is lossless by default)
+    /// - `max_deflate`: `false` means not set
+    ///
+    /// Codec-specific `png_quality` is applied AFTER generic `quality`,
+    /// so it takes precedence when both are set.
+    pub fn apply(
+        &self,
+        mut config: crate::codec::PngEncoderConfig,
+    ) -> crate::codec::PngEncoderConfig {
+        use zencodec::encode::EncoderConfig as _;
+
+        // Generic quality first
+        if self.quality >= 0 {
+            config = config.with_generic_quality(self.quality as f32);
+        }
+        // Codec-specific quality override
+        if self.png_quality >= 0 {
+            config = config.with_generic_quality(self.png_quality as f32);
+        }
+        // Lossless mode (PNG default is true; only apply when explicitly false)
+        if !self.lossless {
+            config = config.with_lossless(false);
+        }
+        // Max deflate -> Crush compression
+        if self.max_deflate {
+            config = config.with_compression(crate::Compression::Crush);
+        }
+        // min_quality is stored on the node for pipeline use but does not
+        // map to a PngEncoderConfig setter — it is used at execution time
+        // to decide whether to fall back to lossless when quantization
+        // quality would be too low.
+        config
+    }
+
+    /// Build a config from scratch using only this node's params.
+    pub fn to_encoder_config(&self) -> crate::codec::PngEncoderConfig {
+        self.apply(crate::codec::PngEncoderConfig::new())
+    }
+}
+
 /// Registration function for aggregating crates.
 pub fn register(registry: &mut NodeRegistry) {
     registry.register(&ENCODE_PNG_NODE);
@@ -212,6 +258,58 @@ mod tests {
         assert!(enc.lossless);
         assert!(!enc.max_deflate);
         assert_eq!(enc.min_quality, 0);
+    }
+
+    #[test]
+    fn to_encoder_config_defaults() {
+        let node = EncodePng::default();
+        let _config = node.to_encoder_config();
+    }
+
+    #[test]
+    fn apply_generic_quality_only() {
+        let mut node = EncodePng::default();
+        node.quality = 80;
+        node.lossless = false;
+        let config = node.to_encoder_config();
+        let q = zencodec::encode::EncoderConfig::generic_quality(&config);
+        assert!(q.is_some());
+    }
+
+    #[test]
+    fn apply_codec_specific_overrides_generic() {
+        let mut node = EncodePng::default();
+        node.quality = 50;
+        node.png_quality = 90;
+        node.lossless = false;
+        let config = node.to_encoder_config();
+        let q = zencodec::encode::EncoderConfig::generic_quality(&config);
+        assert_eq!(q, Some(90.0));
+    }
+
+    #[test]
+    fn apply_preserves_existing_config() {
+        let base = crate::codec::PngEncoderConfig::new()
+            .with_compression(crate::Compression::Fast);
+        let node = EncodePng::default();
+        let _config = node.apply(base);
+    }
+
+    #[test]
+    fn apply_max_deflate() {
+        let mut node = EncodePng::default();
+        node.max_deflate = true;
+        let _config = node.to_encoder_config();
+    }
+
+    #[test]
+    fn apply_lossy_mode() {
+        let mut node = EncodePng::default();
+        node.lossless = false;
+        node.quality = 85;
+        let config = node.to_encoder_config();
+        let lossless = zencodec::encode::EncoderConfig::is_lossless(&config);
+        assert_eq!(lossless, Some(false));
     }
 
     #[test]
