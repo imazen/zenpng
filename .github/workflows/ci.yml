@@ -62,6 +62,40 @@ jobs:
       - name: Test (i686)
         run: cross test --target i686-unknown-linux-gnu
 
+  feature-permutations:
+    name: Feature permutations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: feature-perms
+
+      - name: Test (no default features)
+        run: cargo test --no-default-features
+
+      - name: Test (zencodec)
+        run: cargo test --no-default-features --features zencodec
+
+      - name: Test (quantize + zencodec)
+        run: cargo test --features "quantize,zencodec"
+
+      - name: Test (zopfli)
+        run: cargo test --features zopfli
+
+      - name: Test (joint)
+        run: cargo test --features joint
+
+      - name: Test (imagequant)
+        run: cargo test --features imagequant
+
+      - name: Test (quantette)
+        run: cargo test --features quantette
+
+      - name: Test (all features except _dev)
+        run: cargo test --features "quantize,imagequant,quantette,joint,unchecked,zopfli,zencodec"
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -72,8 +106,11 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
 
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+      - name: Clippy (all features)
+        run: cargo clippy --all-targets --features "quantize,imagequant,quantette,joint,unchecked,zopfli,zencodec" -- -D warnings
+
+      - name: Clippy (zencodec only)
+        run: cargo clippy --all-targets --no-default-features --features zencodec -- -D warnings
 
   fmt:
     name: Format

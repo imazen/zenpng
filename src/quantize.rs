@@ -618,6 +618,7 @@ mod tests {
     // ── available_backends / quantizer_by_name ──────────────────────
 
     #[test]
+    #[cfg(feature = "quantize")]
     fn available_backends_includes_zenquant() {
         let backends = available_backends();
         assert!(
@@ -627,6 +628,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "quantize")]
     fn quantizer_by_name_zenquant() {
         let q = quantizer_by_name("zenquant").unwrap();
         assert_eq!(q.name(), "zenquant");

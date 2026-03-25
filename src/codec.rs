@@ -687,8 +687,10 @@ impl zencodec::encode::Encoder for PngEncoder {
 
         let w = pixels.width();
         let h = pixels.rows();
-        // Policy-filtered metadata for auto-indexed paths
+        // Policy-filtered metadata for auto-indexed paths (used by auto-quantize paths)
+        #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
         let effective_meta = apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref());
+        #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
         let meta_ref = effective_meta.as_ref();
 
         match pixels.descriptor().pixel_format() {

@@ -2726,24 +2726,36 @@ mod tests {
 
     #[test]
     fn roundtrip_gray8_effort_30_maniac() {
-        let pixels: Vec<Gray<u8>> = (0..64).map(|i| Gray((i * 4) as u8)).collect();
-        let img = imgref::Img::new(pixels, 8, 8);
-        let encoded = crate::encode::encode_gray8(
-            img.as_ref(),
-            None,
-            &crate::encode::EncodeConfig::default()
-                .with_compression(crate::types::Compression::Maniac),
-            &Unstoppable,
-            &Unstoppable,
-        )
-        .unwrap();
-        let decoded = decode_png(
-            &encoded,
-            &crate::decode::PngDecodeConfig::strict(),
-            &Unstoppable,
-        )
-        .unwrap();
-        assert_eq!(decoded.info.width, 8);
+        // Run in a thread with an explicit 16 MiB stack to avoid stack
+        // overflow on platforms where the default test-thread stack is
+        // small (observed on macOS Intel with the `unchecked` feature).
+        let result = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let pixels: Vec<Gray<u8>> = (0..64).map(|i| Gray((i * 4) as u8)).collect();
+                let img = imgref::Img::new(pixels, 8, 8);
+                let encoded = crate::encode::encode_gray8(
+                    img.as_ref(),
+                    None,
+                    &crate::encode::EncodeConfig::default()
+                        .with_compression(crate::types::Compression::Maniac),
+                    &Unstoppable,
+                    &Unstoppable,
+                )
+                .unwrap();
+                let decoded = decode_png(
+                    &encoded,
+                    &crate::decode::PngDecodeConfig::strict(),
+                    &Unstoppable,
+                )
+                .unwrap();
+                assert_eq!(decoded.info.width, 8);
+            })
+            .expect("failed to spawn thread")
+            .join();
+        if let Err(e) = result {
+            std::panic::resume_unwind(e);
+        }
     }
 
     #[test]

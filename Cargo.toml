@@ -62,4 +62,12 @@ name = "decode_bench"
 required-features = ["_dev"]
 
 [[example]]
+name = "joint_bench"
+required-features = ["joint"]
+
+[[example]]
+name = "bench_delta"
+required-features = ["quantize", "_dev"]
+
+[[example]]
 name = "strategy_explorer"

@@ -435,7 +435,8 @@ mod tests {
     }
 
     #[test]
-    fn raw_row_bytes_uses_checked_arithmetic() {
+    #[cfg(target_pointer_width = "64")]
+    fn raw_row_bytes_uses_checked_arithmetic_64bit() {
         // Verify that raw_row_bytes uses checked arithmetic internally.
         // Construct an Ihdr that passed parse validation (valid on 64-bit),
         // and verify the computation doesn't silently wrap.
@@ -446,12 +447,22 @@ mod tests {
             color_type: 6, // RGBA
             interlace: 0,
         };
-        // On 64-bit: row_bytes = (2^31-1)*4*16/8 = 17,179,869,176 — fits in usize.
-        // On 32-bit this returns Err (overflow detected).
-        if cfg!(target_pointer_width = "64") {
-            assert_eq!(ihdr.raw_row_bytes().unwrap(), 17_179_869_176);
-        } else {
-            assert!(ihdr.raw_row_bytes().is_err());
-        }
+        // row_bytes = (2^31-1)*4*16/8 = 17,179,869,176 — fits in 64-bit usize.
+        assert_eq!(ihdr.raw_row_bytes().unwrap(), 17_179_869_176);
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "32")]
+    fn raw_row_bytes_uses_checked_arithmetic_32bit() {
+        // Same Ihdr as the 64-bit variant, but on 32-bit the row bytes
+        // overflow usize so raw_row_bytes must return Err.
+        let ihdr = Ihdr {
+            width: 0x7FFF_FFFF,
+            height: 1,
+            bit_depth: 16,
+            color_type: 6, // RGBA
+            interlace: 0,
+        };
+        assert!(ihdr.raw_row_bytes().is_err());
     }
 }
