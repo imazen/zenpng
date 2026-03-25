@@ -4,12 +4,14 @@
 //! average, narrow back, add. One pixel (4 bytes) per SIMD iteration.
 
 use archmage::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use safe_unaligned_simd::wasm32::v128_load32_zero;
 #[cfg(target_arch = "x86_64")]
 use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_avg(row: &mut [u8], prev: &[u8], bpp: usize) {
     match bpp {
-        4 => incant!(unfilter_avg_bpp4_impl(row, prev), [v1, neon, scalar]),
+        4 => incant!(unfilter_avg_bpp4_impl(row, prev), [v1, neon, wasm128, scalar]),
         _ => unfilter_avg_scalar_any(row, prev, bpp),
     }
 }
@@ -108,6 +110,47 @@ fn unfilter_avg_bpp4_impl_neon(_token: NeonToken, row: &mut [u8], prev: &[u8]) {
 
         // Feedback: a = result widened
         a_wide = vget_low_u16(vmovl_u8(result));
+
+        i += 4;
+    }
+}
+
+// ── WASM SIMD128 bpp=4 ──────────────────────────────────────────────
+
+#[cfg(target_arch = "wasm32")]
+#[arcane]
+fn unfilter_avg_bpp4_impl_wasm128(_token: Wasm128Token, row: &mut [u8], prev: &[u8]) {
+    let len = row.len();
+    if len < 4 {
+        return;
+    }
+
+    let zero = i16x8_splat(0);
+    let mut a_wide = zero; // left pixel widened to u16
+
+    let mut i = 0;
+    while i + 4 <= len {
+        // b = above pixel, widened to u16
+        let b_raw = v128_load32_zero(<&[u8; 4]>::try_from(&prev[i..i + 4]).unwrap());
+        let b_wide = i16x8_extend_low_u8x16(b_raw);
+
+        // avg = (a + b) >> 1  (u16 arithmetic, no overflow: max 255+255=510)
+        let sum = i16x8_add(a_wide, b_wide);
+        let avg_wide = u16x8_shr(sum, 1);
+
+        // Narrow avg to u8 (values 0-254, saturating narrow won't clamp)
+        let avg_narrow = u8x16_narrow_i16x8(avg_wide, zero);
+
+        // Load filtered bytes and add average (wrapping u8 add)
+        let filt = v128_load32_zero(<&[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
+        let result = i8x16_add(filt, avg_narrow);
+
+        // Store 4-byte result
+        let val = (i32x4_extract_lane::<0>(result) as u32).to_le_bytes();
+        row[i..i + 4].copy_from_slice(&val);
+
+        // Feedback: a = result widened
+        a_wide = i16x8_extend_low_u8x16(result);
 
         i += 4;
     }

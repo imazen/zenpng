@@ -6,13 +6,15 @@
 use archmage::prelude::*;
 #[cfg(target_arch = "aarch64")]
 use safe_unaligned_simd::aarch64::{vld1q_u8, vst1q_u8};
+#[cfg(target_arch = "wasm32")]
+use safe_unaligned_simd::wasm32::{v128_load, v128_store};
 #[cfg(target_arch = "x86_64")]
 use safe_unaligned_simd::x86_64::{
     _mm_loadu_si128, _mm_storeu_si128, _mm256_loadu_si256, _mm256_storeu_si256,
 };
 
 pub(crate) fn unfilter_up(row: &mut [u8], prev: &[u8]) {
-    incant!(unfilter_up_impl(row, prev), [v3, v1, neon, scalar])
+    incant!(unfilter_up_impl(row, prev), [v3, v1, neon, wasm128, scalar])
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -77,6 +79,28 @@ fn unfilter_up_impl_neon(_token: NeonToken, row: &mut [u8], prev: &[u8]) {
         let vp = vld1q_u8(<&[u8; 16]>::try_from(&prev[i..i + 16]).unwrap());
         let sum = vaddq_u8(vr, vp);
         vst1q_u8(<&mut [u8; 16]>::try_from(&mut row[i..i + 16]).unwrap(), sum);
+        i += 16;
+    }
+
+    while i < len {
+        row[i] = row[i].wrapping_add(prev[i]);
+        i += 1;
+    }
+}
+
+// ── WASM SIMD128 ───────────────────────────────────────────────────
+
+#[cfg(target_arch = "wasm32")]
+#[arcane]
+fn unfilter_up_impl_wasm128(_token: Wasm128Token, row: &mut [u8], prev: &[u8]) {
+    let len = row.len().min(prev.len());
+    let mut i = 0;
+
+    while i + 16 <= len {
+        let vr = v128_load(<&[u8; 16]>::try_from(&row[i..i + 16]).unwrap());
+        let vp = v128_load(<&[u8; 16]>::try_from(&prev[i..i + 16]).unwrap());
+        let sum = i8x16_add(vr, vp);
+        v128_store(<&mut [u8; 16]>::try_from(&mut row[i..i + 16]).unwrap(), sum);
         i += 16;
     }
 

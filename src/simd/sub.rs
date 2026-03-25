@@ -4,13 +4,15 @@
 //! For bpp=4, process one 4-byte pixel per iteration using 128-bit registers.
 
 use archmage::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use safe_unaligned_simd::wasm32::v128_load32_zero;
 #[cfg(target_arch = "x86_64")]
 use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_sub(row: &mut [u8], bpp: usize) {
     match bpp {
-        3 => incant!(unfilter_sub_bpp3_impl(row), [v1, neon, scalar]),
-        4 => incant!(unfilter_sub_bpp4_impl(row), [v1, neon, scalar]),
+        3 => incant!(unfilter_sub_bpp3_impl(row), [v1, neon, wasm128, scalar]),
+        4 => incant!(unfilter_sub_bpp4_impl(row), [v1, neon, wasm128, scalar]),
         _ => unfilter_sub_scalar_any(row, bpp),
     }
 }
@@ -142,6 +144,63 @@ fn unfilter_sub_bpp3_impl_neon(_token: NeonToken, row: &mut [u8]) {
     }
 
     // Scalar tail
+    for j in i..len {
+        row[j] = row[j].wrapping_add(row[j - 3]);
+    }
+}
+
+// ── WASM SIMD128 bpp=4 ──────────────────────────────────────────────
+
+#[cfg(target_arch = "wasm32")]
+#[arcane]
+fn unfilter_sub_bpp4_impl_wasm128(_token: Wasm128Token, row: &mut [u8]) {
+    let len = row.len();
+    if len < 8 {
+        unfilter_sub_scalar_any(row, 4);
+        return;
+    }
+
+    // First 4 bytes are unchanged (left neighbor is implicitly 0).
+    // Initialize `a` with the first pixel loaded into a v128.
+    let mut a = v128_load32_zero(<&[u8; 4]>::try_from(&row[0..4]).unwrap());
+
+    let mut i = 4;
+    while i + 4 <= len {
+        let filt = v128_load32_zero(<&[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
+        let result = i8x16_add(filt, a);
+        let val = (i32x4_extract_lane::<0>(result) as u32).to_le_bytes();
+        row[i..i + 4].copy_from_slice(&val);
+        a = result;
+        i += 4;
+    }
+}
+
+// ── WASM SIMD128 bpp=3 ──────────────────────────────────────────────
+
+#[cfg(target_arch = "wasm32")]
+#[arcane]
+fn unfilter_sub_bpp3_impl_wasm128(_token: Wasm128Token, row: &mut [u8]) {
+    let len = row.len();
+    if len < 6 {
+        unfilter_sub_scalar_any(row, 3);
+        return;
+    }
+
+    // First 3 bytes unchanged. Load first 4 bytes (3 pixel + 1 overlap).
+    let mut a = v128_load32_zero(<&[u8; 4]>::try_from(&row[0..4]).unwrap());
+
+    let mut i = 3;
+    while i + 4 <= len {
+        let filt = v128_load32_zero(<&[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
+        let result = i8x16_add(filt, a);
+        // Store only 3 bytes (lane 3 is garbage from the 4-byte load)
+        let val = (i32x4_extract_lane::<0>(result) as u32).to_le_bytes();
+        row[i..i + 3].copy_from_slice(&val[..3]);
+        a = result;
+        i += 3;
+    }
+
+    // Scalar tail for last pixel if 4-byte load would overrun
     for j in i..len {
         row[j] = row[j].wrapping_add(row[j - 3]);
     }

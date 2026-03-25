@@ -4,13 +4,15 @@
 //! of a bpp=4 pixel in parallel using a branchless i16 predictor.
 
 use archmage::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use safe_unaligned_simd::wasm32::v128_load32_zero;
 #[cfg(target_arch = "x86_64")]
 use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_paeth(row: &mut [u8], prev: &[u8], bpp: usize) {
     match bpp {
-        3 => incant!(unfilter_paeth_bpp3_impl(row, prev), [v2, neon, scalar]),
-        4 => incant!(unfilter_paeth_bpp4_impl(row, prev), [v2, neon, scalar]),
+        3 => incant!(unfilter_paeth_bpp3_impl(row, prev), [v2, neon, wasm128, scalar]),
+        4 => incant!(unfilter_paeth_bpp4_impl(row, prev), [v2, neon, wasm128, scalar]),
         _ => unfilter_paeth_scalar_any(row, prev, bpp),
     }
 }
@@ -275,6 +277,119 @@ fn unfilter_paeth_bpp3_impl_neon(token: NeonToken, row: &mut [u8], prev: &[u8]) 
         row[i..i + 3].copy_from_slice(&result_u32.to_le_bytes()[..3]);
 
         a_wide = vget_low_u16(vmovl_u8(result));
+        c_wide = b_wide;
+        i += 3;
+    }
+
+    // Scalar tail
+    for j in i..len {
+        let left = if j >= 3 { row[j - 3] } else { 0 };
+        let above = prev[j];
+        let upper_left = if j >= 3 { prev[j - 3] } else { 0 };
+        row[j] = row[j].wrapping_add(paeth_predictor(left, above, upper_left));
+    }
+}
+
+// ── WASM SIMD128 bpp=4 ──────────────────────────────────────────────
+
+#[cfg(target_arch = "wasm32")]
+#[arcane]
+fn unfilter_paeth_bpp4_impl_wasm128(token: Wasm128Token, row: &mut [u8], prev: &[u8]) {
+    let len = row.len();
+    if len < 4 {
+        return;
+    }
+
+    let zero = i16x8_splat(0);
+    let mut a_wide = zero; // left pixel, widened to i16
+    let mut c_wide = zero; // upper-left pixel, widened to i16
+
+    let mut i = 0;
+    while i + 4 <= len {
+        // b = above pixel, widened to i16
+        let b_raw = v128_load32_zero(<&[u8; 4]>::try_from(&prev[i..i + 4]).unwrap());
+        let b_wide = i16x8_extend_low_u8x16(b_raw);
+
+        // Branchless Paeth predictor in i16
+        let pred_wide = paeth_simd_wasm128(token, a_wide, b_wide, c_wide);
+
+        // Narrow predictor to u8 (values are 0-255, saturating narrow won't clamp)
+        let pred_narrow = u8x16_narrow_i16x8(pred_wide, zero);
+
+        // Load filtered bytes and add predictor (wrapping u8 add)
+        let filt = v128_load32_zero(<&[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
+        let result = i8x16_add(filt, pred_narrow);
+
+        // Store 4-byte result
+        let val = (i32x4_extract_lane::<0>(result) as u32).to_le_bytes();
+        row[i..i + 4].copy_from_slice(&val);
+
+        // Feedback: a = result widened, c = b
+        a_wide = i16x8_extend_low_u8x16(result);
+        c_wide = b_wide;
+
+        i += 4;
+    }
+}
+
+/// Branchless Paeth predictor for 4 channels in parallel (i16 lanes) on WASM SIMD128.
+///
+/// Uses `v128` (128-bit WASM SIMD registers) with i16x8 operations.
+/// Only the low 4 lanes are meaningful.
+#[cfg(target_arch = "wasm32")]
+#[rite]
+fn paeth_simd_wasm128(_token: Wasm128Token, a: v128, b: v128, c: v128) -> v128 {
+    // p = a + b - c
+    let p = i16x8_sub(i16x8_add(a, b), c);
+
+    // Absolute differences
+    let pa = i16x8_abs(i16x8_sub(p, a)); // |p - a| = |b - c|
+    let pb = i16x8_abs(i16x8_sub(p, b)); // |p - b| = |a - c|
+    let pc = i16x8_abs(i16x8_sub(p, c)); // |p - c| = |a + b - 2c|
+
+    // Branchless select: PNG spec tie-breaking is pa <= pb && pa <= pc -> a; pb <= pc -> b; else c
+    // i16x8_max + i16x8_eq emulates <= for non-negative values:
+    // pa <= pb iff max(pa, pb) == pb iff eq(max(pa,pb), pb)
+    let mask_ab = i16x8_eq(i16x8_max(pa, pb), pb); // pa <= pb
+    let mask_ac = i16x8_eq(i16x8_max(pa, pc), pc); // pa <= pc
+    let mask_bc = i16x8_eq(i16x8_max(pb, pc), pc); // pb <= pc
+
+    // Start with c, blend in b where pb <= pc, then a where pa <= pb AND pa <= pc
+    // v128_bitselect(a, b, mask) = (a & mask) | (b & ~mask)
+    let result = v128_bitselect(b, c, mask_bc);
+    v128_bitselect(a, result, v128_and(mask_ab, mask_ac))
+}
+
+// ── WASM SIMD128 bpp=3 ──────────────────────────────────────────────
+
+#[cfg(target_arch = "wasm32")]
+#[arcane]
+fn unfilter_paeth_bpp3_impl_wasm128(token: Wasm128Token, row: &mut [u8], prev: &[u8]) {
+    let len = row.len();
+    if len < 3 {
+        return;
+    }
+
+    let zero = i16x8_splat(0);
+    let mut a_wide = zero;
+    let mut c_wide = zero;
+
+    let mut i = 0;
+    while i + 4 <= len {
+        let b_raw = v128_load32_zero(<&[u8; 4]>::try_from(&prev[i..i + 4]).unwrap());
+        let b_wide = i16x8_extend_low_u8x16(b_raw);
+
+        let pred_wide = paeth_simd_wasm128(token, a_wide, b_wide, c_wide);
+        let pred_narrow = u8x16_narrow_i16x8(pred_wide, zero);
+
+        let filt = v128_load32_zero(<&[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
+        let result = i8x16_add(filt, pred_narrow);
+
+        // Store only 3 bytes (lane 3 is garbage from the 4-byte load)
+        let val = (i32x4_extract_lane::<0>(result) as u32).to_le_bytes();
+        row[i..i + 3].copy_from_slice(&val[..3]);
+
+        a_wide = i16x8_extend_low_u8x16(result);
         c_wide = b_wide;
         i += 3;
     }
