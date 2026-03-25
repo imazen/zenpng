@@ -1,3 +1,5 @@
+> **Historical.** The preset names and effort values below are from an earlier pipeline version. Presets have been renamed and effort mappings changed. Current presets: Fastest(1), Turbo(2), Fast(7), Balanced(13), Thorough(17), High(19), Aggressive(22), Intense(24).
+
 # Compression Level Tuning Analysis
 
 Empirical analysis of zenpng's compression pipeline to find where time goes
