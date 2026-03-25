@@ -1,3 +1,5 @@
+> **Snapshot from 2026-02-26.** Preset names and effort assignments have changed since this snapshot. See current source for accurate values.
+
 # zenpng vs ECT Algorithm Comparison Tables — 2026-02-26 Snapshot
 
 ## zenpng Effort Table (0-61+)
