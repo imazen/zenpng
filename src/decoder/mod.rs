@@ -198,7 +198,9 @@ pub(crate) fn decode_png(
 
     if is_passthrough {
         let raw_row_bytes = ihdr.raw_row_bytes()?;
-        let total = raw_row_bytes * h;
+        let total = raw_row_bytes
+            .checked_mul(h)
+            .ok_or_else(|| PngError::InvalidInput("image too large for this platform".into()))?;
         let stride = ihdr.stride()?; // raw_row_bytes + 1 (filter byte)
         let bpp = ihdr.filter_bpp();
 
