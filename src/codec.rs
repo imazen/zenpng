@@ -399,8 +399,8 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         self
     }
 
-    fn with_metadata(mut self, meta: &Metadata) -> Self {
-        self.metadata = Some(meta.clone());
+    fn with_metadata(mut self, meta: Metadata) -> Self {
+        self.metadata = Some(meta);
         self
     }
 
@@ -5165,7 +5165,7 @@ mod tests {
     fn encode_job_with_metadata() {
         let enc = PngEncoderConfig::new();
         let meta = Metadata::default();
-        let job = enc.job().with_metadata(&meta);
+        let job = enc.job().with_metadata(meta);
         let encoder = job.encoder().unwrap();
         let pixels = vec![Rgb { r: 0u8, g: 0, b: 0 }; 4];
         let img = Img::new(pixels, 2, 2);
