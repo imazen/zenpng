@@ -336,12 +336,14 @@ static PNG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_lossy(true)
     .with_native_gray(true)
     .with_native_16bit(true)
+    .with_native_f32(true)
     .with_native_alpha(true)
     .with_push_rows(true)
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
     .with_effort_range(0, 12)
-    .with_quality_range(0.0, 100.0);
+    .with_quality_range(0.0, 100.0)
+    .with_threads_supported_range(1, 16);
 
 impl zencodec::encode::EncoderConfig for PngEncoderConfig {
     type Error = At<PngError>;
@@ -1462,6 +1464,8 @@ static PNG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_native_gray(true)
     .with_native_16bit(true)
     .with_native_alpha(true)
+    .with_streaming(true)
+    .with_decode_into(true)
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
     .with_enforces_max_input_bytes(true);
@@ -2021,6 +2025,8 @@ pub struct PngAnimationFrameDecoder {
     preferred: Vec<PixelDescriptor>,
     /// Internal canvas buffer holding the last rendered frame's pixels.
     canvas: Option<PixelBuffer>,
+    /// Cooperative cancellation token from the decode job.
+    stop: Option<zencodec::StopToken>,
     /// First frame index to yield (skip earlier frames, but still decode them
     /// because APNG compositing depends on prior frames).
     start_frame_index: u32,
@@ -2032,7 +2038,7 @@ impl PngAnimationFrameDecoder {
     fn new(
         data: &[u8],
         config: &PngDecoderConfig,
-        _stop: Option<zencodec::StopToken>,
+        stop: Option<zencodec::StopToken>,
         preferred: &[PixelDescriptor],
         start_frame_index: u32,
     ) -> Result<Self, PngError> {
@@ -2056,6 +2062,7 @@ impl PngAnimationFrameDecoder {
             decoder_state,
             preferred: preferred.to_vec(),
             canvas: None,
+            stop,
             start_frame_index,
             frames_decoded: 0,
         })
@@ -2091,8 +2098,16 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
 
     fn render_next_frame(
         &mut self,
-        _stop: Option<&dyn enough::Stop>,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<Option<AnimationFrame<'_>>, At<PngError>> {
+        // Use per-call stop token, fall back to stored job-level token, then unstoppable.
+        let cancel: &dyn enough::Stop = if let Some(s) = stop {
+            s
+        } else if let Some(ref s) = self.stop {
+            s as &dyn enough::Stop
+        } else {
+            &enough::Unstoppable
+        };
         loop {
             // Restore decoder from saved state (O(1), no re-scanning)
             let mut decoder = crate::decoder::apng::ApngDecoder::from_state(
@@ -2100,7 +2115,7 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
                 self.decoder_state.clone(),
             );
 
-            let raw = match decoder.next_frame(&enough::Unstoppable)? {
+            let raw = match decoder.next_frame(cancel)? {
                 Some(f) => f,
                 None => return Ok(None),
             };
@@ -2223,6 +2238,29 @@ fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
         zi = zi.with_alpha(true);
     }
     zi = zi.with_sequence(info.sequence.clone());
+    zi = zi.with_bit_depth(info.bit_depth);
+    // PNG color_type → channel count: 0=gray→1, 2=rgb→3, 3=indexed→1, 4=gray+alpha→2, 6=rgba→4
+    let channel_count = match info.color_type {
+        0 => 1,
+        2 => 3,
+        3 => 1,
+        4 => 2,
+        6 => 4,
+        _ => 1,
+    };
+    zi = zi.with_channel_count(channel_count);
+    // Map pHYs data to resolution
+    if let (Some(ppx), Some(ppy)) = (info.pixels_per_unit_x, info.pixels_per_unit_y) {
+        let unit = match info.phys_unit {
+            Some(crate::decode::PhysUnit::Meter) => zencodec::ResolutionUnit::Meter,
+            _ => zencodec::ResolutionUnit::Unknown,
+        };
+        zi = zi.with_resolution(zencodec::Resolution {
+            x: ppx as f64,
+            y: ppy as f64,
+            unit,
+        });
+    }
     if let Some(ref icc) = info.icc_profile {
         zi = zi.with_icc_profile(icc.clone());
     }
