@@ -92,6 +92,16 @@ impl PngEncoderConfig {
         self
     }
 
+    /// Set near-lossless bit rounding (0-4).
+    ///
+    /// Rounds least-significant bits of each 8-bit sample to improve
+    /// compression without palette quantization.
+    #[must_use]
+    pub fn with_near_lossless_bits(mut self, bits: u8) -> Self {
+        self.config.near_lossless_bits = bits;
+        self
+    }
+
     /// Convenience: encode RGB8 pixels in one call.
     pub fn encode_rgb8(
         &self,

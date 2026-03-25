@@ -50,6 +50,8 @@ mod optimize;
 mod quantize;
 mod simd;
 mod types;
+#[cfg(feature = "zennode")]
+pub mod zennode_defs;
 
 pub use codec::{
     PngAnimationFrameDecoder, PngAnimationFrameEncoder, PngDecodeJob, PngDecoder, PngDecoderConfig,
