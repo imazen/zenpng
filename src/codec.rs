@@ -1670,6 +1670,11 @@ impl zencodec::decode::Decode for PngDecoder<'_> {
         effective_limits
             .check_input_size(self.data.len() as u64)
             .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+        // Check max_width / max_height before decoding
+        let probe_info = crate::decode::probe(&self.data)?;
+        effective_limits
+            .check_dimensions(probe_info.width, probe_info.height)
+            .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
         let png_config = self.effective_config();
         let result = crate::decode::decode(&self.data, &png_config, cancel)?;
         let mut info = convert_info(&result.info);
@@ -1768,6 +1773,12 @@ fn push_decoder_native<'a>(
 
     let w = ihdr.width;
     let h = ihdr.height;
+
+    // Check max_width / max_height before allocating pixel buffers
+    limits
+        .check_dimensions(w, h)
+        .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+
     let descriptor = native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns);
 
     sink.begin(w, h, descriptor).map_err(wrap_sink)?;
@@ -1886,6 +1897,8 @@ pub struct PngStreamingDecoder<'a> {
     height: u32,
     /// True when the raw format is passthrough (no post-processing needed).
     is_passthrough: bool,
+    /// Cooperative cancellation token, checked per-row in `next_batch()`.
+    stop: Option<zencodec::StopToken>,
 }
 
 impl<'a> PngStreamingDecoder<'a> {
@@ -1946,6 +1959,12 @@ impl<'a> PngStreamingDecoder<'a> {
 
         let w = ihdr.width;
         let h = ihdr.height;
+
+        // Check max_width / max_height before allocating pixel buffers
+        effective_limits
+            .check_dimensions(w, h)
+            .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+
         let descriptor = native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns);
 
         let probe_info = crate::decode::probe(data_ref)?;
@@ -1968,6 +1987,7 @@ impl<'a> PngStreamingDecoder<'a> {
             width: w,
             height: h,
             is_passthrough,
+            stop,
         })
     }
 }
@@ -1980,6 +2000,12 @@ impl zencodec::decode::StreamingDecode for PngStreamingDecoder<'_> {
 
         if self.y >= self.height {
             return Ok(None);
+        }
+
+        // Check cooperative cancellation per-row
+        if let Some(ref stop) = self.stop {
+            let cancel: &dyn enough::Stop = stop;
+            cancel.check().map_err(PngError::from)?;
         }
 
         let raw = match self.reader.next_raw_row() {
