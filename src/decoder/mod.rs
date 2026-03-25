@@ -123,6 +123,7 @@ pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &PngAncillary) -> PngInfo {
         background: ancillary.background,
         last_modified: ancillary.last_modified,
         significant_bits: ancillary.significant_bits,
+        interlaced: ihdr.interlace == 1,
     }
 }
 
@@ -1128,6 +1129,7 @@ mod tests {
             background: None,
             last_modified: None,
             significant_bits: None,
+            interlaced: reader.info().interlaced,
         };
 
         Ok(PngDecodeOutput {

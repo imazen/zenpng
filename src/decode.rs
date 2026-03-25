@@ -151,6 +151,8 @@ pub struct PngInfo {
     pub last_modified: Option<PngTime>,
     /// Significant bits per channel from sBIT chunk.
     pub significant_bits: Option<SignificantBits>,
+    /// Whether the image uses Adam7 interlacing.
+    pub interlaced: bool,
 }
 
 /// Non-fatal issues detected during PNG decoding.

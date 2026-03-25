@@ -2339,6 +2339,7 @@ fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
     if let Some(mdcv) = info.mastering_display {
         zi = zi.with_mastering_display(mdcv);
     }
+    zi = zi.with_progressive(info.interlaced);
     zi
 }
 
