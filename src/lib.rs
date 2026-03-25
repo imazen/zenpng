@@ -52,8 +52,8 @@ mod simd;
 mod types;
 
 pub use codec::{
-    PngDecodeJob, PngDecoder, PngDecoderConfig, PngEncodeJob, PngEncoder, PngEncoderConfig,
-    PngFullFrameDecoder, PngFullFrameEncoder,
+    PngAnimationFrameDecoder, PngAnimationFrameEncoder, PngDecodeJob, PngDecoder, PngDecoderConfig,
+    PngEncodeJob, PngEncoder, PngEncoderConfig,
 };
 #[allow(deprecated)]
 pub use decode::PngLimits;

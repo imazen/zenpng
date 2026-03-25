@@ -46,7 +46,7 @@ fn read_chunk_header(data: &[u8], pos: usize) -> Option<(usize, [u8; 4], usize, 
 /// Captured state of an [`ApngDecoder`] for O(1) resumption.
 ///
 /// Stores all immutable metadata parsed during `new()` plus the mutable scan
-/// position. Used by [`PngFullFrameDecoder`] to avoid re-scanning from the
+/// position. Used by [`PngAnimationFrameDecoder`] to avoid re-scanning from the
 /// beginning of the file for each frame.
 #[derive(Clone)]
 pub(crate) struct ApngDecoderState {

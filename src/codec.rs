@@ -10,7 +10,7 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use whereat::{At, at};
-use zencodec::decode::{DecodeCapabilities, DecodeOutput, FullFrame, OutputInfo};
+use zencodec::decode::{AnimationFrame, DecodeCapabilities, DecodeOutput, OutputInfo};
 use zencodec::encode::{EncodeCapabilities, EncodeOutput};
 use zencodec::{ImageFormat, ImageInfo, Metadata, ResourceLimits};
 use zenpixels::{Pixel, PixelDescriptor, PixelSlice, PixelSliceMut};
@@ -98,7 +98,10 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Rgb<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone()
+            .job()
+            .encoder()?
+            .encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode RGBA8 pixels in one call.
@@ -107,7 +110,10 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Rgba<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone()
+            .job()
+            .encoder()?
+            .encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode Gray8 pixels in one call.
@@ -116,7 +122,10 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Gray<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone()
+            .job()
+            .encoder()?
+            .encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode RGB16 pixels in one call.
@@ -125,7 +134,10 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Rgb<u16>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone()
+            .job()
+            .encoder()?
+            .encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode RGBA16 pixels in one call.
@@ -134,7 +146,10 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Rgba<u16>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone()
+            .job()
+            .encoder()?
+            .encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode Gray16 pixels in one call.
@@ -143,7 +158,10 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Gray<u16>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone()
+            .job()
+            .encoder()?
+            .encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode RGB F32 pixels in one call.
@@ -152,7 +170,10 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Rgb<f32>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone()
+            .job()
+            .encoder()?
+            .encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode RGBA F32 pixels in one call.
@@ -161,7 +182,10 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Rgba<f32>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone()
+            .job()
+            .encoder()?
+            .encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode Gray F32 pixels in one call.
@@ -170,7 +194,10 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, Gray<f32>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone()
+            .job()
+            .encoder()?
+            .encode(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode BGRA8 pixels (swizzles to RGBA) in one call.
@@ -179,7 +206,10 @@ impl PngEncoderConfig {
         img: imgref::ImgRef<'_, rgb::alt::BGRA<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        self.clone().job().encoder()?.encode(PixelSlice::from(img).erase())
+        self.clone()
+            .job()
+            .encoder()?
+            .encode(PixelSlice::from(img).erase())
     }
 }
 
@@ -392,7 +422,7 @@ pub struct PngEncodeJob {
 impl zencodec::encode::EncodeJob for PngEncodeJob {
     type Error = At<PngError>;
     type Enc = PngEncoder;
-    type FullFrameEnc = PngFullFrameEncoder;
+    type AnimationFrameEnc = PngAnimationFrameEncoder;
 
     fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
         self.stop = Some(stop);
@@ -438,7 +468,7 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         })
     }
 
-    fn full_frame_encoder(self) -> Result<PngFullFrameEncoder, At<PngError>> {
+    fn animation_frame_encoder(self) -> Result<PngAnimationFrameEncoder, At<PngError>> {
         let effective_meta = apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref());
         // Apply threading policy from limits to the config.
         let mut config = self.config.config.clone();
@@ -449,7 +479,7 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
                 config.parallel = false;
             }
         }
-        let mut enc = PngFullFrameEncoder::new(
+        let mut enc = PngAnimationFrameEncoder::new(
             config,
             self.canvas_width,
             self.canvas_height,
@@ -593,9 +623,9 @@ impl PngEncoder {
         bit_depth: crate::encode::BitDepth,
     ) -> Result<EncodeOutput, At<PngError>> {
         let cancel: &dyn enough::Stop = match self.stop {
-                Some(ref s) => s as &dyn enough::Stop,
-                None => &enough::Unstoppable,
-            };
+            Some(ref s) => s as &dyn enough::Stop,
+            None => &enough::Unstoppable,
+        };
         // Pre-flight stop check
         cancel.check().map_err(PngError::from)?;
         // Pre-flight limit checks
@@ -676,9 +706,9 @@ impl zencodec::encode::Encoder for PngEncoder {
                     let img = imgref::Img::new(rgba, w as usize, h as usize);
                     let mpe = quality_to_mpe(q);
                     let cancel: &dyn enough::Stop = match self.stop {
-                Some(ref s) => s as &dyn enough::Stop,
-                None => &enough::Unstoppable,
-            };
+                        Some(ref s) => s as &dyn enough::Stop,
+                        None => &enough::Unstoppable,
+                    };
                     let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
                     let deadline =
                         almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
@@ -759,9 +789,9 @@ impl zencodec::encode::Encoder for PngEncoder {
                     let img = imgref::Img::new(rgba, w as usize, h as usize);
                     let mpe = quality_to_mpe(q);
                     let cancel: &dyn enough::Stop = match self.stop {
-                Some(ref s) => s as &dyn enough::Stop,
-                None => &enough::Unstoppable,
-            };
+                        Some(ref s) => s as &dyn enough::Stop,
+                        None => &enough::Unstoppable,
+                    };
                     let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
                     let deadline =
                         almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
@@ -1111,9 +1141,9 @@ impl zencodec::encode::Encoder for PngEncoder {
                     return Err(at!(PngError::InvalidInput("no pixel data pushed".into())));
                 }
                 let cancel: &dyn enough::Stop = match self.stop {
-                Some(ref s) => s as &dyn enough::Stop,
-                None => &enough::Unstoppable,
-            };
+                    Some(ref s) => s as &dyn enough::Stop,
+                    None => &enough::Unstoppable,
+                };
                 let data = state.finish(cancel)?;
                 if let Some(ref limits) = self.limits {
                     limits
@@ -1126,7 +1156,7 @@ impl zencodec::encode::Encoder for PngEncoder {
     }
 }
 
-// ── PngFullFrameEncoder ──────────────────────────────────────────────
+// ── PngAnimationFrameEncoder ──────────────────────────────────────────────
 
 /// Accumulated frame data for APNG encoding.
 struct AccumulatedFrame {
@@ -1134,10 +1164,10 @@ struct AccumulatedFrame {
     duration_ms: u32,
 }
 
-/// APNG frame-by-frame encoder implementing [`FullFrameEncoder`](zencodec::encode::FullFrameEncoder).
+/// APNG frame-by-frame encoder implementing [`AnimationFrameEncoder`](zencodec::encode::AnimationFrameEncoder).
 ///
-/// Accumulates canvas-sized RGBA8 frames, then encodes them all on [`finish()`](PngFullFrameEncoder::do_finish).
-pub struct PngFullFrameEncoder {
+/// Accumulates canvas-sized RGBA8 frames, then encodes them all on [`finish()`](PngAnimationFrameEncoder::do_finish).
+pub struct PngAnimationFrameEncoder {
     frames: Vec<AccumulatedFrame>,
     canvas_width: u32,
     canvas_height: u32,
@@ -1159,7 +1189,7 @@ struct BuildingFrame {
     rows_pushed: u32,
 }
 
-impl PngFullFrameEncoder {
+impl PngAnimationFrameEncoder {
     fn new(
         config: crate::encode::EncodeConfig,
         canvas_width: u32,
@@ -1217,7 +1247,7 @@ impl PngFullFrameEncoder {
     }
 }
 
-impl zencodec::encode::FullFrameEncoder for PngFullFrameEncoder {
+impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
     type Error = At<PngError>;
 
     fn reject(op: zencodec::UnsupportedOperation) -> At<PngError> {
@@ -1256,7 +1286,7 @@ impl zencodec::encode::FullFrameEncoder for PngFullFrameEncoder {
     }
 }
 
-impl PngFullFrameEncoder {
+impl PngAnimationFrameEncoder {
     fn do_finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, PngError> {
         let cancel: &dyn enough::Stop = stop.unwrap_or(&enough::Unstoppable);
         cancel.check().map_err(PngError::from)?;
@@ -1478,7 +1508,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob<'a> {
     type Error = At<PngError>;
     type Dec = PngDecoder<'a>;
     type StreamDec = PngStreamingDecoder<'a>;
-    type FullFrameDec = PngFullFrameDecoder;
+    type AnimationFrameDec = PngAnimationFrameDecoder;
 
     fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
         self.stop = Some(stop);
@@ -1553,17 +1583,17 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob<'a> {
         )
     }
 
-    fn full_frame_decoder(
+    fn animation_frame_decoder(
         self,
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
-    ) -> Result<PngFullFrameDecoder, At<PngError>> {
+    ) -> Result<PngAnimationFrameDecoder, At<PngError>> {
         // Check input size limit
         let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
         effective_limits
             .check_input_size(data.len() as u64)
             .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
-        PngFullFrameDecoder::new(
+        PngAnimationFrameDecoder::new(
             &data,
             self.config,
             self.stop,
@@ -1613,9 +1643,9 @@ impl zencodec::decode::Decode for PngDecoder<'_> {
 
     fn decode(self) -> Result<DecodeOutput, At<PngError>> {
         let cancel: &dyn enough::Stop = match self.stop {
-                Some(ref s) => s as &dyn enough::Stop,
-                None => &enough::Unstoppable,
-            };
+            Some(ref s) => s as &dyn enough::Stop,
+            None => &enough::Unstoppable,
+        };
         cancel.check().map_err(PngError::from)?;
         // Check input size limit
         let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
@@ -1666,7 +1696,7 @@ fn native_output_descriptor(color_type: u8, bit_depth: u8, has_trns: bool) -> Pi
 /// directly into the sink buffer, avoiding the 2x peak memory of the
 /// full-decode-then-copy fallback.
 ///
-/// Falls back to `push_decoder_via_full_decode` for interlaced PNGs
+/// Falls back to `helpers::copy_decode_to_sink` for interlaced PNGs
 /// (Adam7 scatters pixels across 7 passes and requires a full canvas).
 fn push_decoder_native<'a>(
     job: PngDecodeJob<'a>,
@@ -1704,7 +1734,10 @@ fn push_decoder_native<'a>(
     };
     let png_config = apply_decode_policy(png_config, job.policy.as_ref());
 
-    let cancel: &dyn enough::Stop = match &job.stop { Some(s) => s, None => &enough::Unstoppable };
+    let cancel: &dyn enough::Stop = match &job.stop {
+        Some(s) => s,
+        None => &enough::Unstoppable,
+    };
     cancel.check().map_err(PngError::from)?;
 
     let mut reader = RowDecoder::new(&data, &png_config)?;
@@ -1849,7 +1882,10 @@ impl<'a> PngStreamingDecoder<'a> {
             )));
         }
 
-        let cancel: &dyn enough::Stop = match &stop { Some(s) => s, None => &enough::Unstoppable };
+        let cancel: &dyn enough::Stop = match &stop {
+            Some(s) => s,
+            None => &enough::Unstoppable,
+        };
         cancel.check().map_err(PngError::from)?;
 
         let effective_limits = limits.unwrap_or(&config.limits);
@@ -1967,14 +2003,14 @@ impl zencodec::decode::StreamingDecode for PngStreamingDecoder<'_> {
     }
 }
 
-// ── PngFullFrameDecoder ──────────────────────────────────────────────
+// ── PngAnimationFrameDecoder ──────────────────────────────────────────────
 
-/// APNG frame-by-frame decoder implementing [`FullFrameDecoder`](zencodec::decode::FullFrameDecoder).
+/// APNG frame-by-frame decoder implementing [`AnimationFrameDecoder`](zencodec::decode::AnimationFrameDecoder).
 ///
-/// Yields composited full-canvas frames. The returned [`FullFrame`] borrows
+/// Yields composited full-canvas frames. The returned [`AnimationFrame`] borrows
 /// the decoder's internal canvas buffer; calling `render_next_frame()` again
 /// invalidates the previous borrow.
-pub struct PngFullFrameDecoder {
+pub struct PngAnimationFrameDecoder {
     /// Owned copy of the PNG file data.
     file_data: Vec<u8>,
     /// Image info for all frames.
@@ -1992,7 +2028,7 @@ pub struct PngFullFrameDecoder {
     frames_decoded: u32,
 }
 
-impl PngFullFrameDecoder {
+impl PngAnimationFrameDecoder {
     fn new(
         data: &[u8],
         config: &PngDecoderConfig,
@@ -2026,7 +2062,7 @@ impl PngFullFrameDecoder {
     }
 }
 
-impl zencodec::decode::FullFrameDecoder for PngFullFrameDecoder {
+impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
     type Error = At<PngError>;
 
     fn wrap_sink_error(err: zencodec::decode::SinkError) -> At<PngError> {
@@ -2056,7 +2092,7 @@ impl zencodec::decode::FullFrameDecoder for PngFullFrameDecoder {
     fn render_next_frame(
         &mut self,
         _stop: Option<&dyn enough::Stop>,
-    ) -> Result<Option<FullFrame<'_>>, At<PngError>> {
+    ) -> Result<Option<AnimationFrame<'_>>, At<PngError>> {
         loop {
             // Restore decoder from saved state (O(1), no re-scanning)
             let mut decoder = crate::decoder::apng::ApngDecoder::from_state(
@@ -2096,7 +2132,7 @@ impl zencodec::decode::FullFrameDecoder for PngFullFrameDecoder {
             // Borrow from the canvas we just stored
             let canvas = self.canvas.as_ref().unwrap();
             let pixel_slice = canvas.as_slice();
-            let frame = FullFrame::new(pixel_slice, delay_ms, idx);
+            let frame = AnimationFrame::new(pixel_slice, delay_ms, idx);
 
             return Ok(Some(frame));
         }
@@ -5179,10 +5215,10 @@ mod tests {
     }
 
     #[test]
-    fn encode_job_full_frame_encoder() {
+    fn encode_job_animation_frame_encoder() {
         let enc = PngEncoderConfig::new();
         let job = enc.job().with_canvas_size(8, 8).with_loop_count(Some(0));
-        let frame_enc = job.full_frame_encoder();
+        let frame_enc = job.animation_frame_encoder();
         assert!(frame_enc.is_ok());
     }
 
@@ -5436,7 +5472,7 @@ mod tests {
 
     #[test]
     fn apng_push_frame_rejects_over_max_frames() {
-        use zencodec::encode::FullFrameEncoder;
+        use zencodec::encode::AnimationFrameEncoder;
         let config = PngEncoderConfig::new();
         let limits = ResourceLimits::none().with_max_frames(2);
         let job = config
@@ -5444,7 +5480,7 @@ mod tests {
             .with_canvas_size(4, 4)
             .with_loop_count(Some(0))
             .with_limits(limits);
-        let mut enc = job.full_frame_encoder().unwrap();
+        let mut enc = job.animation_frame_encoder().unwrap();
 
         let make_frame = || {
             let pixels: Vec<Rgba<u8>> = vec![
@@ -5480,7 +5516,7 @@ mod tests {
 
     #[test]
     fn apng_push_frame_rejects_over_max_memory() {
-        use zencodec::encode::FullFrameEncoder;
+        use zencodec::encode::AnimationFrameEncoder;
         let config = PngEncoderConfig::new();
         // 4x4 RGBA8 = 64 bytes per frame. Limit to 100 bytes total.
         let limits = ResourceLimits::none().with_max_memory(100);
@@ -5489,7 +5525,7 @@ mod tests {
             .with_canvas_size(4, 4)
             .with_loop_count(Some(0))
             .with_limits(limits);
-        let mut enc = job.full_frame_encoder().unwrap();
+        let mut enc = job.animation_frame_encoder().unwrap();
 
         let make_frame = || {
             let pixels: Vec<Rgba<u8>> = vec![
@@ -5703,7 +5739,12 @@ mod tests {
 
         // Encode via push_rows (2 rows at a time)
         let config = PngEncoderConfig::new();
-        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config
+            .clone()
+            .job()
+            .with_canvas_size(w, h)
+            .encoder()
+            .unwrap();
         for strip_y in (0..h).step_by(2) {
             let strip = img.sub_image(0, strip_y as usize, w as usize, 2);
             let slice = PixelSlice::from(strip).erase();
@@ -5759,7 +5800,12 @@ mod tests {
         let img = Img::new(pixels, w as usize, h as usize);
 
         let config = PngEncoderConfig::new();
-        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config
+            .clone()
+            .job()
+            .with_canvas_size(w, h)
+            .encoder()
+            .unwrap();
         for y in 0..h {
             let strip = img.sub_image(0, y as usize, w as usize, 1);
             encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
@@ -5793,7 +5839,12 @@ mod tests {
         let img = Img::new(pixels, w as usize, h as usize);
 
         let config = PngEncoderConfig::new();
-        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config
+            .clone()
+            .job()
+            .with_canvas_size(w, h)
+            .encoder()
+            .unwrap();
         encoder
             .push_rows(PixelSlice::from(img.as_ref()).erase())
             .unwrap();
@@ -5819,7 +5870,12 @@ mod tests {
         let img = Img::new(pixels, w as usize, h as usize);
 
         let config = PngEncoderConfig::new();
-        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config
+            .clone()
+            .job()
+            .with_canvas_size(w, h)
+            .encoder()
+            .unwrap();
         encoder
             .push_rows(PixelSlice::from(img.as_ref()).erase())
             .unwrap();
@@ -5840,7 +5896,12 @@ mod tests {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let config = PngEncoderConfig::new();
-        let encoder = config.clone().job().with_canvas_size(4, 4).encoder().unwrap();
+        let encoder = config
+            .clone()
+            .job()
+            .with_canvas_size(4, 4)
+            .encoder()
+            .unwrap();
         assert!(encoder.finish().is_err());
     }
 
@@ -5854,7 +5915,12 @@ mod tests {
         let img = Img::new(pixels, w as usize, 3);
 
         let config = PngEncoderConfig::new();
-        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config
+            .clone()
+            .job()
+            .with_canvas_size(w, h)
+            .encoder()
+            .unwrap();
         // Pushing 3 rows when canvas is 2 tall should error
         let result = encoder.push_rows(PixelSlice::from(img.as_ref()).erase());
         assert!(result.is_err());
@@ -5879,7 +5945,12 @@ mod tests {
 
         // push_rows path
         let config = PngEncoderConfig::new().with_generic_effort(3);
-        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config
+            .clone()
+            .job()
+            .with_canvas_size(w, h)
+            .encoder()
+            .unwrap();
         for y in (0..h).step_by(4) {
             let rows = (h - y).min(4);
             let strip = img.sub_image(0, y as usize, w as usize, rows as usize);
@@ -5973,7 +6044,12 @@ mod tests {
 
         // Effort 0 → true streaming path
         let config = PngEncoderConfig::new().with_compression(crate::Compression::None);
-        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config
+            .clone()
+            .job()
+            .with_canvas_size(w, h)
+            .encoder()
+            .unwrap();
         for strip_y in (0..h).step_by(2) {
             let strip = img.sub_image(0, strip_y as usize, w as usize, 2);
             encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
@@ -6026,7 +6102,12 @@ mod tests {
         let img = Img::new(pixels, w as usize, h as usize);
 
         let config = PngEncoderConfig::new().with_compression(crate::Compression::None);
-        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config
+            .clone()
+            .job()
+            .with_canvas_size(w, h)
+            .encoder()
+            .unwrap();
         for y in 0..h {
             let strip = img.sub_image(0, y as usize, w as usize, 1);
             encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
@@ -6053,7 +6134,12 @@ mod tests {
         let img = Img::new(pixels, w as usize, h as usize);
 
         let config = PngEncoderConfig::new().with_compression(crate::Compression::None);
-        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config
+            .clone()
+            .job()
+            .with_canvas_size(w, h)
+            .encoder()
+            .unwrap();
         encoder
             .push_rows(PixelSlice::from(img.as_ref()).erase())
             .unwrap();
@@ -6130,7 +6216,12 @@ mod tests {
         let img = Img::new(pixels, w as usize, h as usize);
 
         let config = PngEncoderConfig::new().with_compression(crate::Compression::None);
-        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config
+            .clone()
+            .job()
+            .with_canvas_size(w, h)
+            .encoder()
+            .unwrap();
         for y in 0..h {
             let strip = img.sub_image(0, y as usize, w as usize, 1);
             encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
@@ -6210,7 +6301,12 @@ mod tests {
         let img = Img::new(pixels.clone(), w as usize, h as usize);
 
         let config = PngEncoderConfig::new().with_compression(crate::Compression::Fastest);
-        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config
+            .clone()
+            .job()
+            .with_canvas_size(w, h)
+            .encoder()
+            .unwrap();
         for strip_y in (0..h).step_by(2) {
             let strip = img.sub_image(0, strip_y as usize, w as usize, 2);
             encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
@@ -6344,7 +6440,12 @@ mod tests {
         let img = Img::new(pixels, w as usize, h as usize);
 
         let config = PngEncoderConfig::new().with_compression(crate::Compression::Fastest);
-        let mut encoder = config.clone().job().with_canvas_size(w, h).encoder().unwrap();
+        let mut encoder = config
+            .clone()
+            .job()
+            .with_canvas_size(w, h)
+            .encoder()
+            .unwrap();
         for y in 0..h {
             let strip = img.sub_image(0, y as usize, w as usize, 1);
             encoder.push_rows(PixelSlice::from(strip).erase()).unwrap();
@@ -6457,7 +6558,7 @@ mod tests {
     #[test]
     fn apng_finish_respects_stop_token() {
         use enough::{Stop, StopReason};
-        use zencodec::encode::FullFrameEncoder;
+        use zencodec::encode::AnimationFrameEncoder;
 
         /// A Stop that always says "stop now".
         struct AlreadyCancelled;
@@ -6468,8 +6569,12 @@ mod tests {
         }
 
         let config = PngEncoderConfig::new();
-        let job = config.clone().job().with_canvas_size(4, 4).with_loop_count(Some(0));
-        let mut enc = job.full_frame_encoder().unwrap();
+        let job = config
+            .clone()
+            .job()
+            .with_canvas_size(4, 4)
+            .with_loop_count(Some(0));
+        let mut enc = job.animation_frame_encoder().unwrap();
 
         // Push one frame
         let pixels: Vec<Rgba<u8>> = vec![
@@ -6498,11 +6603,15 @@ mod tests {
 
     #[test]
     fn apng_finish_succeeds_without_stop_token() {
-        use zencodec::encode::FullFrameEncoder;
+        use zencodec::encode::AnimationFrameEncoder;
 
         let config = PngEncoderConfig::new();
-        let job = config.clone().job().with_canvas_size(4, 4).with_loop_count(Some(0));
-        let mut enc = job.full_frame_encoder().unwrap();
+        let job = config
+            .clone()
+            .job()
+            .with_canvas_size(4, 4)
+            .with_loop_count(Some(0));
+        let mut enc = job.animation_frame_encoder().unwrap();
 
         let pixels: Vec<Rgba<u8>> = vec![
             Rgba {
@@ -6528,11 +6637,15 @@ mod tests {
 
     #[test]
     fn apng_pixels_to_rgba8_rejects_unsupported_format() {
-        use zencodec::encode::FullFrameEncoder;
+        use zencodec::encode::AnimationFrameEncoder;
 
         let config = PngEncoderConfig::new();
-        let job = config.clone().job().with_canvas_size(4, 4).with_loop_count(Some(0));
-        let mut enc = job.full_frame_encoder().unwrap();
+        let job = config
+            .clone()
+            .job()
+            .with_canvas_size(4, 4)
+            .with_loop_count(Some(0));
+        let mut enc = job.animation_frame_encoder().unwrap();
 
         // Try pushing a 16-bit frame, which is not supported by the APNG encoder
         let pixels: Vec<Rgba<u16>> = vec![
@@ -6560,11 +6673,15 @@ mod tests {
 
     #[test]
     fn apng_pixels_to_rgba8_handles_gray8() {
-        use zencodec::encode::FullFrameEncoder;
+        use zencodec::encode::AnimationFrameEncoder;
 
         let config = PngEncoderConfig::new();
-        let job = config.clone().job().with_canvas_size(4, 4).with_loop_count(Some(0));
-        let mut enc = job.full_frame_encoder().unwrap();
+        let job = config
+            .clone()
+            .job()
+            .with_canvas_size(4, 4)
+            .with_loop_count(Some(0));
+        let mut enc = job.animation_frame_encoder().unwrap();
 
         // Push a Gray8 frame — should be accepted and converted to RGBA8
         let pixels: Vec<Gray<u8>> = vec![Gray(128); 16];
