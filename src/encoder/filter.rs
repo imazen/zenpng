@@ -1759,31 +1759,51 @@ mod tests {
 
     /// Beam search with NearOptimal eval_level (10+) clones the compressor,
     /// which contains a ~9MB NearOptimalState with `unchecked`. This must not
-    /// overflow the default 8MB thread stack.
+    /// overflow the default 8MB thread stack, even from a deep call chain.
     #[test]
     fn filter_image_beam_near_optimal_does_not_overflow_stack() {
+        // Consume ~2MB of stack before calling beam search, simulating the
+        // real encode path (encode_rgb8 → write_truecolor_png →
+        // compress_filtered → filter_image → beam → clone).
+        #[inline(never)]
+        fn consume_stack_then_beam(depth: usize, data: &[u8], row_bytes: usize) -> Vec<u8> {
+            let mut buf = [0u8; 16 * 1024];
+            buf[0] = depth as u8;
+            buf[buf.len() - 1] = depth as u8;
+            std::hint::black_box(&buf);
+            if depth > 0 {
+                return consume_stack_then_beam(depth - 1, data, row_bytes);
+            }
+            let mut out = Vec::new();
+            filter_image(
+                data,
+                row_bytes,
+                3,
+                3,
+                Strategy::BruteForceBeam {
+                    eval_level: 10, // NearOptimal threshold
+                    beam_width: 2,
+                },
+                &Unstoppable,
+                &mut out,
+            );
+            out
+        }
+
         let result = std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let (data, row_bytes) = make_test_image(4, 3, 3);
-                let mut out = Vec::new();
-                filter_image(
-                    &data,
-                    row_bytes,
-                    3,
-                    3,
-                    Strategy::BruteForceBeam {
-                        eval_level: 10, // NearOptimal threshold
-                        beam_width: 2,
-                    },
-                    &Unstoppable,
-                    &mut out,
-                );
+                // 128 frames × 16KB = 2MB of stack consumed before beam search
+                let out = consume_stack_then_beam(128, &data, row_bytes);
                 assert_eq!(out.len(), 3 * (1 + row_bytes));
             })
             .unwrap()
             .join();
-        assert!(result.is_ok(), "beam search with NearOptimal compressor overflowed the stack");
+        assert!(
+            result.is_ok(),
+            "beam search with NearOptimal compressor overflowed the stack"
+        );
     }
 
     // ---- precompute_all_filters ----

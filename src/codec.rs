@@ -1542,6 +1542,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob<'a> {
         if let Ok(probe) = crate::detect::probe(data) {
             image_info = image_info.with_source_encoding_details(probe);
         }
+        apply_policy_to_info(&mut image_info, self.policy.as_ref());
         Ok(image_info)
     }
 
@@ -1594,6 +1595,14 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob<'a> {
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
     ) -> Result<PngAnimationFrameDecoder, At<PngError>> {
+        // Reject animation when policy forbids it
+        if let Some(ref policy) = self.policy
+            && !policy.resolve_animation(true)
+        {
+            return Err(at!(PngError::InvalidInput(
+                "animation rejected by decode policy".into()
+            )));
+        }
         // Check input size limit
         let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
         effective_limits
@@ -1603,6 +1612,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob<'a> {
             &data,
             self.config,
             self.stop,
+            self.policy.as_ref(),
             preferred,
             self.start_frame_index,
         )
@@ -1653,6 +1663,8 @@ impl zencodec::decode::Decode for PngDecoder<'_> {
             None => &enough::Unstoppable,
         };
         cancel.check().map_err(PngError::from)?;
+        // Check progressive policy before decoding
+        check_progressive_policy(&self.data, self.policy.as_ref())?;
         // Check input size limit
         let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
         effective_limits
@@ -1660,7 +1672,8 @@ impl zencodec::decode::Decode for PngDecoder<'_> {
             .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
         let png_config = self.effective_config();
         let result = crate::decode::decode(&self.data, &png_config, cancel)?;
-        let info = convert_info(&result.info);
+        let mut info = convert_info(&result.info);
+        apply_policy_to_info(&mut info, self.policy.as_ref());
         let pixels = if self.preferred.is_empty() {
             result.pixels
         } else {
@@ -1716,6 +1729,9 @@ fn push_decoder_native<'a>(
     let wrap_sink = |e: zencodec::decode::SinkError| -> At<PngError> {
         at!(PngError::InvalidInput(alloc::format!("sink error: {e}")))
     };
+
+    // Check progressive policy before decoding
+    check_progressive_policy(&data, job.policy.as_ref())?;
 
     // Check input size limit
     let effective_limits = job.limits.as_ref().unwrap_or(&job.config.limits);
@@ -1881,6 +1897,9 @@ impl<'a> PngStreamingDecoder<'a> {
         policy: Option<&zencodec::decode::DecodePolicy>,
         _preferred: &[PixelDescriptor],
     ) -> Result<Self, At<PngError>> {
+        // Check progressive policy before the structural interlace rejection
+        check_progressive_policy(&data, policy)?;
+
         // Reject interlaced PNGs — Adam7 requires full-canvas buffering
         if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
             return Err(at!(PngError::from(
@@ -1930,7 +1949,8 @@ impl<'a> PngStreamingDecoder<'a> {
         let descriptor = native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns);
 
         let probe_info = crate::decode::probe(data_ref)?;
-        let info = convert_info(&probe_info);
+        let mut info = convert_info(&probe_info);
+        apply_policy_to_info(&mut info, policy);
 
         let is_passthrough =
             !has_trns && ihdr.bit_depth == 8 && (ihdr.color_type == 6 || ihdr.color_type == 2);
@@ -2041,11 +2061,13 @@ impl PngAnimationFrameDecoder {
         data: &[u8],
         config: &PngDecoderConfig,
         stop: Option<zencodec::StopToken>,
+        policy: Option<&zencodec::decode::DecodePolicy>,
         preferred: &[PixelDescriptor],
         start_frame_index: u32,
     ) -> Result<Self, PngError> {
         let probe_info = crate::decode::probe(data).map_err(|e| e.decompose().0)?;
-        let image_info = convert_info(&probe_info);
+        let mut image_info = convert_info(&probe_info);
+        apply_policy_to_info(&mut image_info, policy);
 
         let decode_config = PngDecodeConfig {
             max_pixels: config.limits.max_pixels,
@@ -2325,6 +2347,48 @@ fn apply_decode_policy(
         config.skip_decompression_checksum = false;
     }
     config
+}
+
+/// Strip metadata fields from `ImageInfo` according to the decode policy.
+///
+/// Called after building `ImageInfo` from decoded data. When a policy flag
+/// suppresses a metadata category, the corresponding field is cleared.
+fn apply_policy_to_info(info: &mut ImageInfo, policy: Option<&zencodec::decode::DecodePolicy>) {
+    let Some(policy) = policy else {
+        return;
+    };
+    if !policy.resolve_icc(true) {
+        info.source_color.icc_profile = None;
+    }
+    if !policy.resolve_exif(true) {
+        info.embedded_metadata.exif = None;
+    }
+    if !policy.resolve_xmp(true) {
+        info.embedded_metadata.xmp = None;
+    }
+}
+
+/// Check whether an interlaced (progressive) PNG should be rejected by policy.
+///
+/// Returns `Err` if `data` contains an Adam7-interlaced PNG and policy
+/// forbids progressive images.
+fn check_progressive_policy(
+    data: &[u8],
+    policy: Option<&zencodec::decode::DecodePolicy>,
+) -> Result<(), At<PngError>> {
+    let Some(policy) = policy else {
+        return Ok(());
+    };
+    if policy.resolve_progressive(true) {
+        return Ok(());
+    }
+    // IHDR interlace byte is at offset 28 in a valid PNG file
+    if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
+        return Err(at!(PngError::InvalidInput(
+            "interlaced (progressive) PNG rejected by decode policy".into()
+        )));
+    }
+    Ok(())
 }
 
 /// Get contiguous pixel bytes from a PixelSlice, borrowing when possible.
