@@ -1499,7 +1499,7 @@ static PNG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
 
 impl zencodec::decode::DecoderConfig for PngDecoderConfig {
     type Error = At<PngError>;
-    type Job = PngDecodeJob;
+    type Job<'a> = PngDecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
         &[ImageFormat::Png]
@@ -1513,7 +1513,7 @@ impl zencodec::decode::DecoderConfig for PngDecoderConfig {
         &PNG_DECODE_CAPS
     }
 
-    fn job(self) -> PngDecodeJob {
+    fn job<'a>(self) -> Self::Job<'a> {
         PngDecodeJob {
             config: self,
             stop: None,
