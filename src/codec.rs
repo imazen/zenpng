@@ -1370,33 +1370,31 @@ impl PngDecoderConfig {
 }
 
 impl PngDecoderConfig {
-    /// Create a `'static` decode job by consuming (not borrowing) this config.
+    /// Create a decode job by consuming this config.
     ///
-    /// Unlike [`DecoderConfig::job(&self)`] which borrows the config and ties
-    /// the job lifetime to it, this method moves the config into the job.
-    /// Combined with `Cow::Owned` data, produces a `'static` streaming decoder.
+    /// This is an inherent convenience that avoids importing `DecoderConfig`.
+    /// Equivalent to `DecoderConfig::job(self)`.
     #[must_use]
-    pub fn job_static(self) -> PngDecodeJob<'static> {
+    pub fn job_static(self) -> PngDecodeJob {
         PngDecodeJob {
             config: self,
             stop: None,
             limits: None,
             policy: None,
             start_frame_index: 0,
-            _marker: core::marker::PhantomData,
         }
     }
 
     /// Convenience: decode in one call (native format).
     pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, At<PngError>> {
         use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
-        self.job().decoder(Cow::Borrowed(data), &[])?.decode()
+        self.clone().job().decoder(Cow::Borrowed(data), &[])?.decode()
     }
 
     /// Convenience: probe image header.
     pub fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<PngError>> {
         use zencodec::decode::{DecodeJob, DecoderConfig};
-        self.job().probe(data)
+        self.clone().job().probe(data)
     }
 
     /// Convenience: probe header (alias for backwards compatibility).
@@ -1501,7 +1499,7 @@ static PNG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
 
 impl zencodec::decode::DecoderConfig for PngDecoderConfig {
     type Error = At<PngError>;
-    type Job<'a> = PngDecodeJob<'a>;
+    type Job = PngDecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
         &[ImageFormat::Png]
@@ -1515,14 +1513,13 @@ impl zencodec::decode::DecoderConfig for PngDecoderConfig {
         &PNG_DECODE_CAPS
     }
 
-    fn job(&self) -> PngDecodeJob<'_> {
+    fn job(self) -> PngDecodeJob {
         PngDecodeJob {
-            config: self.clone(),
+            config: self,
             stop: None,
             limits: None,
             policy: None,
             start_frame_index: 0,
-            _marker: core::marker::PhantomData,
         }
     }
 }
@@ -1530,16 +1527,15 @@ impl zencodec::decode::DecoderConfig for PngDecoderConfig {
 // ── PngDecodeJob ─────────────────────────────────────────────────────
 
 /// Per-operation PNG decode job.
-pub struct PngDecodeJob<'a> {
+pub struct PngDecodeJob {
     config: PngDecoderConfig,
     stop: Option<zencodec::StopToken>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::decode::DecodePolicy>,
     start_frame_index: u32,
-    _marker: core::marker::PhantomData<&'a [u8]>,
 }
 
-impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob<'a> {
+impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
     type Error = At<PngError>;
     type Dec = PngDecoder<'a>;
     type StreamDec = PngStreamingDecoder<'a>;
@@ -1752,7 +1748,7 @@ fn native_output_descriptor(color_type: u8, bit_depth: u8, has_trns: bool) -> Pi
 /// Falls back to `helpers::copy_decode_to_sink` for interlaced PNGs
 /// (Adam7 scatters pixels across 7 passes and requires a full canvas).
 fn push_decoder_native<'a>(
-    job: PngDecodeJob<'a>,
+    job: PngDecodeJob,
     data: Cow<'a, [u8]>,
     sink: &mut dyn zencodec::decode::DecodeRowSink,
     preferred: &[PixelDescriptor],
@@ -3650,7 +3646,7 @@ mod tests {
         let output = enc.encode_rgb8(img.as_ref()).unwrap();
 
         let dec = PngDecoderConfig::new();
-        let info = dec.job().output_info(output.data()).unwrap();
+        let info = dec.clone().job().output_info(output.data()).unwrap();
         assert_eq!(info.width, 3);
         assert_eq!(info.height, 2);
 
