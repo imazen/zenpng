@@ -1777,7 +1777,7 @@ fn push_decoder_native<'a>(
     };
     cancel.check().map_err(PngError::from)?;
 
-    let mut reader = RowDecoder::new(&data, &png_config)?;
+    let mut reader = RowDecoder::new(data, &png_config)?;
     let ihdr = *reader.ihdr();
     let has_trns = reader.ancillary().trns.is_some();
 
@@ -1949,21 +1949,12 @@ impl<'a> PngStreamingDecoder<'a> {
         };
         let png_config = apply_decode_policy(png_config, policy);
 
-        // RowDecoder requires &'a [u8], but we have Cow<'a, [u8]>.
-        // Cow::Borrowed gives us &'a [u8] directly. Cow::Owned can't
-        // provide a borrow with lifetime 'a, but in practice streaming_decoder
-        // is always called with borrowed data.
-        let data_ref: &'a [u8] = match data {
-            Cow::Borrowed(b) => b,
-            Cow::Owned(_) => {
-                return Err(at!(PngError::InvalidInput(
-                    "streaming decoder requires borrowed data".into(),
-                )));
-            }
-        };
+        // Probe before moving data into RowDecoder (probe only needs &[u8])
+        let probe_info = crate::decode::probe(&data)?;
+        let mut info = convert_info(&probe_info);
+        apply_policy_to_info(&mut info, policy);
 
-        let reader =
-            crate::decoder::row::RowDecoder::new(data_ref, &png_config).map_err(|e| at!(e))?;
+        let reader = crate::decoder::row::RowDecoder::new(data, &png_config).map_err(|e| at!(e))?;
         let ihdr = *reader.ihdr();
         let has_trns = reader.ancillary().trns.is_some();
 
@@ -1976,10 +1967,6 @@ impl<'a> PngStreamingDecoder<'a> {
             .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
 
         let descriptor = native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns);
-
-        let probe_info = crate::decode::probe(data_ref)?;
-        let mut info = convert_info(&probe_info);
-        apply_policy_to_info(&mut info, policy);
 
         let is_passthrough =
             !has_trns && ihdr.bit_depth == 8 && (ihdr.color_type == 6 || ihdr.color_type == 2);

@@ -1,5 +1,6 @@
 //! APNG frame-by-frame decoding and compositing.
 
+use alloc::borrow::Cow;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -273,7 +274,7 @@ impl<'a> ApngDecoder<'a> {
         let bpp = frame_ihdr.filter_bpp();
 
         let source = IdatSource::new(
-            self.file_data,
+            Cow::Borrowed(self.file_data),
             self.first_idat_pos,
             self.config.skip_critical_chunk_crc,
         );

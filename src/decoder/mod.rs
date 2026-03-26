@@ -5,6 +5,7 @@ pub(crate) mod interlace;
 pub(crate) mod postprocess;
 pub(crate) mod row;
 
+use alloc::borrow::Cow;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -185,7 +186,7 @@ pub(crate) fn decode_png(
         }
     }
 
-    let mut reader = RowDecoder::new(data, limits)?;
+    let mut reader = RowDecoder::new(Cow::Borrowed(data), limits)?;
     let ihdr = *reader.ihdr();
     let has_trns = reader.ancillary().trns.is_some();
 

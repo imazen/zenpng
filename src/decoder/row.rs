@@ -1,5 +1,6 @@
 //! Streaming row decoder: IDAT source and row-by-row decompression + unfilter.
 
+use alloc::borrow::Cow;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -17,12 +18,12 @@ use super::postprocess::output_bytes_per_pixel;
 /// Streams raw IDAT chunk payload bytes to `StreamDecompressor`.
 /// Walks chunks in the file without collecting IDAT data into a Vec.
 pub(crate) struct IdatSource<'a> {
-    /// Full PNG file bytes.
-    data: &'a [u8],
+    /// Full PNG file bytes (borrowed or owned).
+    data: Cow<'a, [u8]>,
     /// Byte offset of the next chunk header to check.
     chunk_pos: usize,
-    /// Remaining bytes in the current IDAT chunk's data.
-    current_data: &'a [u8],
+    /// Range (start, end) into `data` for remaining bytes in the current IDAT chunk.
+    current_range: (usize, usize),
     /// True when we've seen a non-IDAT chunk after IDAT.
     done: bool,
     /// Position of the first post-IDAT chunk (for metadata collection).
@@ -32,10 +33,15 @@ pub(crate) struct IdatSource<'a> {
 }
 
 impl<'a> IdatSource<'a> {
+    /// Borrow the full PNG file data stored in this source.
+    pub fn file_data(&self) -> &[u8] {
+        &self.data
+    }
+
     /// Create a new IDAT source positioned at the first IDAT chunk.
     /// `first_idat_pos` is the byte offset of the first IDAT chunk header.
     /// When `skip_crc` is true, IDAT CRC mismatches are tolerated.
-    pub fn new(data: &'a [u8], first_idat_pos: usize, skip_crc: bool) -> Self {
+    pub fn new(data: Cow<'a, [u8]>, first_idat_pos: usize, skip_crc: bool) -> Self {
         // Parse the first IDAT chunk inline
         let length =
             u32::from_be_bytes(data[first_idat_pos..first_idat_pos + 4].try_into().unwrap())
@@ -47,7 +53,7 @@ impl<'a> IdatSource<'a> {
         Self {
             data,
             chunk_pos: next_pos,
-            current_data: &data[data_start..data_end],
+            current_range: (data_start, data_end),
             done: false,
             post_idat_pos: 0,
             skip_crc,
@@ -55,12 +61,13 @@ impl<'a> IdatSource<'a> {
     }
 }
 
-impl<'a> zenflate::InputSource for IdatSource<'a> {
+impl zenflate::InputSource for IdatSource<'_> {
     type Error = PngError;
 
     fn fill_buf(&mut self) -> Result<&[u8], PngError> {
-        if !self.current_data.is_empty() {
-            return Ok(self.current_data);
+        let (start, end) = self.current_range;
+        if start < end {
+            return Ok(&self.data[start..end]);
         }
         if self.done {
             return Ok(&[]);
@@ -111,18 +118,18 @@ impl<'a> zenflate::InputSource for IdatSource<'a> {
                 }
             }
 
-            self.current_data = &self.data[data_start..data_end];
+            self.current_range = (data_start, data_end);
             self.chunk_pos = crc_end;
 
-            if !self.current_data.is_empty() {
-                return Ok(self.current_data);
+            if data_start < data_end {
+                return Ok(&self.data[data_start..data_end]);
             }
             // Empty IDAT chunk — skip and try next
         }
     }
 
     fn consume(&mut self, n: usize) {
-        self.current_data = &self.current_data[n..];
+        self.current_range.0 += n;
     }
 }
 
@@ -278,8 +285,6 @@ pub(crate) struct RowDecoder<'a> {
     ihdr: Ihdr,
     ancillary: PngAncillary,
 
-    /// Full PNG file bytes (for post-IDAT metadata scanning).
-    file_data: &'a [u8],
     /// Byte offset of the first IDAT chunk header.
     first_idat_pos: usize,
 
@@ -295,13 +300,19 @@ pub(crate) struct RowDecoder<'a> {
 
 impl<'a> RowDecoder<'a> {
     /// Create a new RowDecoder from PNG file bytes.
-    pub fn new(data: &'a [u8], config: &crate::decode::PngDecodeConfig) -> Result<Self, PngError> {
+    ///
+    /// Accepts `Cow<'a, [u8]>` so that callers can donate owned data
+    /// (making the decoder `'static`) or pass borrowed data for zero-copy.
+    pub fn new(
+        data: Cow<'a, [u8]>,
+        config: &crate::decode::PngDecodeConfig,
+    ) -> Result<Self, PngError> {
         // Validate signature
         if data.len() < 8 || data[..8] != crate::chunk::PNG_SIGNATURE {
             return Err(PngError::Decode("not a PNG file".into()));
         }
 
-        let mut chunks = ChunkIter::new_with_config(data, config.skip_critical_chunk_crc);
+        let mut chunks = ChunkIter::new_with_config(&data, config.skip_critical_chunk_crc);
 
         // First chunk must be IHDR
         let ihdr_chunk = chunks
@@ -349,7 +360,7 @@ impl<'a> RowDecoder<'a> {
         let raw_row_bytes = ihdr.raw_row_bytes()?;
         let bpp = ihdr.filter_bpp();
 
-        // Create IDAT source and decompressor
+        // Create IDAT source and decompressor — data is moved into IdatSource
         let source = IdatSource::new(data, first_idat_pos, config.skip_critical_chunk_crc);
         let decompressor = zenflate::StreamDecompressor::zlib(source, stride * 2)
             .with_skip_checksum(config.skip_decompression_checksum);
@@ -358,7 +369,6 @@ impl<'a> RowDecoder<'a> {
             decompressor,
             ihdr,
             ancillary,
-            file_data: data,
             first_idat_pos,
             prev_row: vec![0u8; raw_row_bytes],
             current_row: vec![0u8; raw_row_bytes],
@@ -493,7 +503,7 @@ impl<'a> RowDecoder<'a> {
     pub fn finish_metadata(&mut self) {
         // Scan forward from first_idat_pos to skip all IDAT chunks,
         // then collect metadata from post-IDAT chunks.
-        let data = self.file_data;
+        let data: &[u8] = self.decompressor.source_ref().file_data();
         let mut pos = self.first_idat_pos;
 
         // Skip all IDAT chunks

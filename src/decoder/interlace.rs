@@ -1,5 +1,6 @@
 //! Adam7 interlacing support.
 
+use alloc::borrow::Cow;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -118,7 +119,11 @@ pub(crate) fn decode_interlaced(
     // Pass 7 (x_step=1) gives the widest rows: full image width.
     let max_pass_stride = ihdr.stride()?; // 1 + raw_row_bytes for full width
     let capacity = max_pass_stride * 2;
-    let source = IdatSource::new(data, first_idat_pos, config.skip_critical_chunk_crc);
+    let source = IdatSource::new(
+        Cow::Borrowed(data),
+        first_idat_pos,
+        config.skip_critical_chunk_crc,
+    );
     let mut decompressor = zenflate::StreamDecompressor::zlib(source, capacity)
         .with_skip_checksum(config.skip_decompression_checksum);
 
