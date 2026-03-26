@@ -12,84 +12,80 @@ use zennode::*;
 /// Matches imageflow's RIAPI keys: `png.quality`, `png.min_quality`,
 /// `png.lossless`, `png.max_deflate`.
 ///
+/// All fields are `Option<T>` so "unset" is distinct from "set to default."
+/// This enables correct overlay semantics: layering one node's params
+/// on top of another only overwrites fields the user explicitly set.
+///
 /// JSON API: `{ "quality": 85, "lossless": true, "max_deflate": false }`
 /// RIAPI: `?png.quality=85&png.lossless=true&png.max_deflate=true`
-#[derive(Node, Clone, Debug)]
+#[derive(Node, Clone, Debug, Default)]
 #[node(id = "zenpng.encode", group = Encode, role = Encode)]
 #[node(tags("codec", "png", "lossless", "encode"))]
 pub struct EncodePng {
-    /// Generic quality 0-100 (mapped via with_generic_quality at execution time).
+    /// Generic quality 0-100 (mapped via `with_generic_quality` at execution time).
     ///
-    /// When set (>= 0), this value is passed through zencodec's
+    /// When `Some`, this value is passed through zencodec's
     /// `with_generic_quality()` which maps it to the codec's native
     /// quality scale. Use this for uniform quality across all codecs.
-    #[param(range(0..=100), default = -1, step = 1)]
+    /// `None` means the caller did not specify a quality preference.
+    #[param(range(0..=100), default = 0, step = 1)]
     #[param(unit = "", section = "Main", label = "Quality")]
     #[kv("quality")]
-    pub quality: i32,
+    pub quality: Option<u32>,
 
     /// Codec-specific PNG quality override (0-100).
     ///
     /// Controls quantization quality when `lossless` is false.
     /// Higher values produce better quality but larger files.
-    /// When set (>= 0), takes precedence over the generic `quality` field.
+    /// When `Some`, takes precedence over the generic `quality` field.
     /// When `lossless` is true, this is ignored.
-    #[param(range(0..=100), default = -1, step = 1)]
+    /// `None` means the caller did not specify a codec-specific quality.
+    #[param(range(0..=100), default = 0, step = 1)]
     #[param(unit = "", section = "Main", label = "PNG Quality")]
     #[kv("png.quality")]
-    pub png_quality: i32,
+    pub png_quality: Option<u32>,
 
     /// Minimum acceptable quality for lossy encoding (0-100).
     ///
-    /// When non-zero, the encoder will not quantize below this
+    /// When `Some`, the encoder will not quantize below this
     /// quality level, falling back to lossless if the target
     /// quality would be too low. Used as a quality floor.
+    /// `None` means no minimum quality constraint.
     #[param(range(0..=100), default = 0, step = 1)]
     #[param(unit = "", section = "Main", label = "Min Quality")]
     #[kv("png.min_quality")]
-    pub min_quality: i32,
+    pub min_quality: Option<u32>,
 
     /// Use lossless PNG encoding (no quantization).
     ///
-    /// When true, pixels are encoded without any lossy
-    /// transformation. When false, palette quantization may
-    /// be applied to reduce file size.
+    /// When `Some(true)`, pixels are encoded without any lossy
+    /// transformation. When `Some(false)`, palette quantization may
+    /// be applied to reduce file size. `None` means the caller did
+    /// not express a preference (PNG defaults to lossless).
     #[param(default = true)]
     #[param(section = "Main")]
     #[kv("png.lossless")]
-    pub lossless: bool,
+    pub lossless: Option<bool>,
 
     /// Use maximum DEFLATE compression effort.
     ///
-    /// When true, uses the highest compression effort for
+    /// When `Some(true)`, uses the highest compression effort for
     /// smallest possible file size at the cost of much slower
     /// encoding. Maps to zenpng's `Compression::Crush` level.
+    /// `None` means the caller did not express a preference.
     #[param(default = false)]
     #[param(section = "Advanced")]
     #[kv("png.max_deflate")]
-    pub max_deflate: bool,
+    pub max_deflate: Option<bool>,
 }
 
-impl Default for EncodePng {
-    fn default() -> Self {
-        Self {
-            quality: -1,
-            png_quality: -1,
-            min_quality: 0,
-            lossless: true,
-            max_deflate: false,
-        }
-    }
-}
+// Default is derived — all Option fields are None.
 
 impl EncodePng {
     /// Apply this node's explicitly-set params on top of an existing config.
     ///
-    /// Fields at their default/sentinel value are skipped:
-    /// - `quality` and `png_quality`: `-1` means not set
-    /// - `min_quality`: `0` means not set
-    /// - `lossless`: `true` is the default (PNG is lossless by default)
-    /// - `max_deflate`: `false` means not set
+    /// Only `Some` fields are applied — `None` fields are skipped,
+    /// preserving whatever the base config already has.
     ///
     /// Codec-specific `png_quality` is applied AFTER generic `quality`,
     /// so it takes precedence when both are set.
@@ -100,19 +96,19 @@ impl EncodePng {
         use zencodec::encode::EncoderConfig as _;
 
         // Generic quality first
-        if self.quality >= 0 {
-            config = config.with_generic_quality(self.quality as f32);
+        if let Some(q) = self.quality {
+            config = config.with_generic_quality(q as f32);
         }
         // Codec-specific quality override
-        if self.png_quality >= 0 {
-            config = config.with_generic_quality(self.png_quality as f32);
+        if let Some(q) = self.png_quality {
+            config = config.with_generic_quality(q as f32);
         }
-        // Lossless mode (PNG default is true; only apply when explicitly false)
-        if !self.lossless {
-            config = config.with_lossless(false);
+        // Lossless mode
+        if let Some(lossless) = self.lossless {
+            config = config.with_lossless(lossless);
         }
         // Max deflate -> Crush compression
-        if self.max_deflate {
+        if let Some(true) = self.max_deflate {
             config = config.with_compression(crate::Compression::Crush);
         }
         // min_quality is stored on the node for pipeline use but does not
@@ -167,18 +163,18 @@ mod tests {
     #[test]
     fn defaults() {
         let node = ENCODE_PNG_NODE.create_default().unwrap();
-        assert_eq!(node.get_param("quality"), Some(ParamValue::I32(-1)));
-        assert_eq!(node.get_param("png_quality"), Some(ParamValue::I32(-1)));
-        assert_eq!(node.get_param("min_quality"), Some(ParamValue::I32(0)));
-        assert_eq!(node.get_param("lossless"), Some(ParamValue::Bool(true)));
-        assert_eq!(node.get_param("max_deflate"), Some(ParamValue::Bool(false)));
+        assert_eq!(node.get_param("quality"), Some(ParamValue::None));
+        assert_eq!(node.get_param("png_quality"), Some(ParamValue::None));
+        assert_eq!(node.get_param("min_quality"), Some(ParamValue::None));
+        assert_eq!(node.get_param("lossless"), Some(ParamValue::None));
+        assert_eq!(node.get_param("max_deflate"), Some(ParamValue::None));
     }
 
     #[test]
     fn from_kv_png_quality() {
         let mut kv = KvPairs::from_querystring("png.quality=92&png.lossless=false");
         let node = ENCODE_PNG_NODE.from_kv(&mut kv).unwrap().unwrap();
-        assert_eq!(node.get_param("png_quality"), Some(ParamValue::I32(92)));
+        assert_eq!(node.get_param("png_quality"), Some(ParamValue::U32(92)));
         assert_eq!(node.get_param("lossless"), Some(ParamValue::Bool(false)));
         assert_eq!(kv.unconsumed().count(), 0);
     }
@@ -188,9 +184,9 @@ mod tests {
         // "quality" sets the generic quality field
         let mut kv = KvPairs::from_querystring("quality=75");
         let node = ENCODE_PNG_NODE.from_kv(&mut kv).unwrap().unwrap();
-        assert_eq!(node.get_param("quality"), Some(ParamValue::I32(75)));
+        assert_eq!(node.get_param("quality"), Some(ParamValue::U32(75)));
         // png_quality remains unset
-        assert_eq!(node.get_param("png_quality"), Some(ParamValue::I32(-1)));
+        assert_eq!(node.get_param("png_quality"), Some(ParamValue::None));
     }
 
     #[test]
@@ -198,8 +194,8 @@ mod tests {
         // Both generic and codec-specific can be set independently
         let mut kv = KvPairs::from_querystring("quality=80&png.quality=92");
         let node = ENCODE_PNG_NODE.from_kv(&mut kv).unwrap().unwrap();
-        assert_eq!(node.get_param("quality"), Some(ParamValue::I32(80)));
-        assert_eq!(node.get_param("png_quality"), Some(ParamValue::I32(92)));
+        assert_eq!(node.get_param("quality"), Some(ParamValue::U32(80)));
+        assert_eq!(node.get_param("png_quality"), Some(ParamValue::U32(92)));
         assert_eq!(kv.unconsumed().count(), 0);
     }
 
@@ -207,7 +203,7 @@ mod tests {
     fn from_kv_min_quality() {
         let mut kv = KvPairs::from_querystring("png.quality=90&png.min_quality=40");
         let node = ENCODE_PNG_NODE.from_kv(&mut kv).unwrap().unwrap();
-        assert_eq!(node.get_param("min_quality"), Some(ParamValue::I32(40)));
+        assert_eq!(node.get_param("min_quality"), Some(ParamValue::U32(40)));
     }
 
     #[test]
@@ -228,24 +224,24 @@ mod tests {
     #[test]
     fn json_round_trip() {
         let mut params = ParamMap::new();
-        params.insert("quality".into(), ParamValue::I32(80));
-        params.insert("png_quality".into(), ParamValue::I32(92));
+        params.insert("quality".into(), ParamValue::U32(80));
+        params.insert("png_quality".into(), ParamValue::U32(92));
         params.insert("lossless".into(), ParamValue::Bool(false));
-        params.insert("min_quality".into(), ParamValue::I32(40));
+        params.insert("min_quality".into(), ParamValue::U32(40));
         params.insert("max_deflate".into(), ParamValue::Bool(true));
 
         let node = ENCODE_PNG_NODE.create(&params).unwrap();
-        assert_eq!(node.get_param("quality"), Some(ParamValue::I32(80)));
-        assert_eq!(node.get_param("png_quality"), Some(ParamValue::I32(92)));
+        assert_eq!(node.get_param("quality"), Some(ParamValue::U32(80)));
+        assert_eq!(node.get_param("png_quality"), Some(ParamValue::U32(92)));
         assert_eq!(node.get_param("lossless"), Some(ParamValue::Bool(false)));
-        assert_eq!(node.get_param("min_quality"), Some(ParamValue::I32(40)));
+        assert_eq!(node.get_param("min_quality"), Some(ParamValue::U32(40)));
         assert_eq!(node.get_param("max_deflate"), Some(ParamValue::Bool(true)));
 
         // Round-trip
         let exported = node.to_params();
         let node2 = ENCODE_PNG_NODE.create(&exported).unwrap();
-        assert_eq!(node2.get_param("quality"), Some(ParamValue::I32(80)));
-        assert_eq!(node2.get_param("png_quality"), Some(ParamValue::I32(92)));
+        assert_eq!(node2.get_param("quality"), Some(ParamValue::U32(80)));
+        assert_eq!(node2.get_param("png_quality"), Some(ParamValue::U32(92)));
         assert_eq!(node2.get_param("lossless"), Some(ParamValue::Bool(false)));
     }
 
@@ -253,11 +249,11 @@ mod tests {
     fn downcast_to_concrete() {
         let node = ENCODE_PNG_NODE.create_default().unwrap();
         let enc = node.as_any().downcast_ref::<EncodePng>().unwrap();
-        assert_eq!(enc.quality, -1);
-        assert_eq!(enc.png_quality, -1);
-        assert!(enc.lossless);
-        assert!(!enc.max_deflate);
-        assert_eq!(enc.min_quality, 0);
+        assert_eq!(enc.quality, None);
+        assert_eq!(enc.png_quality, None);
+        assert_eq!(enc.lossless, None);
+        assert_eq!(enc.max_deflate, None);
+        assert_eq!(enc.min_quality, None);
     }
 
     #[test]
@@ -269,8 +265,8 @@ mod tests {
     #[test]
     fn apply_generic_quality_only() {
         let mut node = EncodePng::default();
-        node.quality = 80;
-        node.lossless = false;
+        node.quality = Some(80);
+        node.lossless = Some(false);
         let config = node.to_encoder_config();
         let q = zencodec::encode::EncoderConfig::generic_quality(&config);
         assert!(q.is_some());
@@ -279,9 +275,9 @@ mod tests {
     #[test]
     fn apply_codec_specific_overrides_generic() {
         let mut node = EncodePng::default();
-        node.quality = 50;
-        node.png_quality = 90;
-        node.lossless = false;
+        node.quality = Some(50);
+        node.png_quality = Some(90);
+        node.lossless = Some(false);
         let config = node.to_encoder_config();
         let q = zencodec::encode::EncoderConfig::generic_quality(&config);
         assert_eq!(q, Some(90.0));
@@ -289,8 +285,7 @@ mod tests {
 
     #[test]
     fn apply_preserves_existing_config() {
-        let base = crate::codec::PngEncoderConfig::new()
-            .with_compression(crate::Compression::Fast);
+        let base = crate::codec::PngEncoderConfig::new().with_compression(crate::Compression::Fast);
         let node = EncodePng::default();
         let _config = node.apply(base);
     }
@@ -298,15 +293,15 @@ mod tests {
     #[test]
     fn apply_max_deflate() {
         let mut node = EncodePng::default();
-        node.max_deflate = true;
+        node.max_deflate = Some(true);
         let _config = node.to_encoder_config();
     }
 
     #[test]
     fn apply_lossy_mode() {
         let mut node = EncodePng::default();
-        node.lossless = false;
-        node.quality = 85;
+        node.lossless = Some(false);
+        node.quality = Some(85);
         let config = node.to_encoder_config();
         let lossless = zencodec::encode::EncoderConfig::is_lossless(&config);
         assert_eq!(lossless, Some(false));
