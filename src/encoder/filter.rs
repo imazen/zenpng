@@ -3,6 +3,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+use archmage::autoversion;
 use enough::Stop;
 use zenflate::{CompressionLevel, Compressor, CompressorSnapshot, Unstoppable};
 
@@ -1120,6 +1121,7 @@ fn score_candidates<'a>(
     }
 }
 
+#[autoversion]
 pub(crate) fn apply_filter(filter: u8, row: &[u8], prev_row: &[u8], bpp: usize, out: &mut [u8]) {
     let len = row.len();
     match filter {
@@ -1183,6 +1185,7 @@ fn sav_score(data: &[u8]) -> u64 {
         .sum()
 }
 
+#[autoversion]
 fn entropy_score(data: &[u8]) -> f64 {
     if data.is_empty() {
         return 0.0;
@@ -1202,6 +1205,7 @@ fn entropy_score(data: &[u8]) -> f64 {
     entropy
 }
 
+#[autoversion]
 fn bigrams_score(data: &[u8], seen: &mut [u64], touched: &mut Vec<u16>) -> usize {
     if data.len() < 2 {
         return 0;
@@ -1241,6 +1245,7 @@ fn bigrams_score(data: &[u8], seen: &mut [u64], touched: &mut Vec<u16>) -> usize
 /// to 0 during the computation. This avoids both the 256KB `fill(0)` and
 /// the 65536-entry iteration that made this function 30-170x slower than
 /// MinSum.
+#[autoversion]
 fn bigram_entropy_score(data: &[u8], counts: &mut [u32], nonzero: &mut Vec<u16>) -> f64 {
     if data.len() < 2 {
         return 0.0;
