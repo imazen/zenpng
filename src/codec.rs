@@ -1370,6 +1370,23 @@ impl PngDecoderConfig {
 }
 
 impl PngDecoderConfig {
+    /// Create a `'static` decode job by consuming (not borrowing) this config.
+    ///
+    /// Unlike [`DecoderConfig::job(&self)`] which borrows the config and ties
+    /// the job lifetime to it, this method moves the config into the job.
+    /// Combined with `Cow::Owned` data, produces a `'static` streaming decoder.
+    #[must_use]
+    pub fn job_static(self) -> PngDecodeJob<'static> {
+        PngDecodeJob {
+            config: self,
+            stop: None,
+            limits: None,
+            policy: None,
+            start_frame_index: 0,
+            _marker: core::marker::PhantomData,
+        }
+    }
+
     /// Convenience: decode in one call (native format).
     pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, At<PngError>> {
         use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
@@ -1500,11 +1517,12 @@ impl zencodec::decode::DecoderConfig for PngDecoderConfig {
 
     fn job(&self) -> PngDecodeJob<'_> {
         PngDecodeJob {
-            config: self,
+            config: self.clone(),
             stop: None,
             limits: None,
             policy: None,
             start_frame_index: 0,
+            _marker: core::marker::PhantomData,
         }
     }
 }
@@ -1513,11 +1531,12 @@ impl zencodec::decode::DecoderConfig for PngDecoderConfig {
 
 /// Per-operation PNG decode job.
 pub struct PngDecodeJob<'a> {
-    config: &'a PngDecoderConfig,
+    config: PngDecoderConfig,
     stop: Option<zencodec::StopToken>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::decode::DecodePolicy>,
     start_frame_index: u32,
+    _marker: core::marker::PhantomData<&'a [u8]>,
 }
 
 impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob<'a> {
@@ -1592,7 +1611,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob<'a> {
     ) -> Result<PngStreamingDecoder<'a>, At<PngError>> {
         PngStreamingDecoder::new(
             data,
-            self.config,
+            &self.config,
             self.stop,
             self.limits.as_ref(),
             self.policy.as_ref(),
@@ -1620,7 +1639,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob<'a> {
             .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
         PngAnimationFrameDecoder::new(
             &data,
-            self.config,
+            &self.config,
             self.stop,
             self.policy.as_ref(),
             preferred,
@@ -1643,7 +1662,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob<'a> {
 
 /// Single-image PNG decoder.
 pub struct PngDecoder<'a> {
-    config: &'a PngDecoderConfig,
+    config: PngDecoderConfig,
     stop: Option<zencodec::StopToken>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::decode::DecodePolicy>,
