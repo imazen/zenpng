@@ -353,8 +353,10 @@ fn filter_image_brute_fork(
         let mut best_size = usize::MAX;
         let mut best_snap = None;
 
-        // Snapshot before trying filters — cheaper than full clone
-        let snap = compressor.snapshot();
+        // Snapshot before trying filters — cheaper than full clone.
+        // Wrapped in Option so the last iteration can move instead of clone
+        // (~200KB of DEFLATE state saved per row).
+        let mut snap = Some(compressor.snapshot());
 
         for f in 0..5u8 {
             if cancel.check().is_err() {
@@ -368,8 +370,12 @@ fn filter_image_brute_fork(
 
             apply_filter(f, row, &prev_row, bpp, &mut candidate_data[f as usize]);
 
-            // Restore to pre-row state and try this filter
-            compressor.restore(snap.clone());
+            // Restore to pre-row state and try this filter.
+            if f < 4 {
+                compressor.restore(snap.as_ref().unwrap().clone());
+            } else {
+                compressor.restore(snap.take().unwrap());
+            }
 
             let new_start = out.len();
             out.push(f);
@@ -474,8 +480,9 @@ fn filter_image_adaptive_fork(
             apply_filter(f, row, &prev_row, bpp, &mut candidate_data[f as usize]);
         }
 
-        // Snapshot before estimation
-        let snap = compressor.snapshot();
+        // Snapshot before estimation. Wrapped in Option so the last Phase 2
+        // iteration can move instead of clone (~200KB of DEFLATE state saved per row).
+        let mut snap = Some(compressor.snapshot());
 
         // Phase 1: Estimate costs for active filters
         estimates.clear();
@@ -487,7 +494,7 @@ fn filter_image_adaptive_fork(
                 continue;
             }
 
-            compressor.restore(snap.clone());
+            compressor.restore(snap.as_ref().unwrap().clone());
 
             let new_start = out.len();
             out.push(f);
@@ -510,8 +517,13 @@ fn filter_image_adaptive_fork(
         let mut best_size = usize::MAX;
         let mut best_snap = None;
 
-        for &(_, f) in &estimates {
-            compressor.restore(snap.clone());
+        for (i, &(_, f)) in estimates.iter().enumerate() {
+            // Last iteration can move instead of clone.
+            if i < estimates.len() - 1 {
+                compressor.restore(snap.as_ref().unwrap().clone());
+            } else {
+                compressor.restore(snap.take().unwrap());
+            }
 
             let new_start = out.len();
             out.push(f);
@@ -620,8 +632,10 @@ fn filter_image_brute_beam(
         candidates.clear();
 
         for (b, entry) in beam.iter_mut().enumerate() {
-            // Snapshot before trying filters — cheaper than 5 full clones
-            let snap = entry.compressor.snapshot();
+            // Snapshot before trying filters — cheaper than 5 full clones.
+            // Wrapped in Option so the last iteration can move instead of clone
+            // (~200KB of DEFLATE state saved per row).
+            let mut snap = Some(entry.compressor.snapshot());
 
             for f in 0..5u8 {
                 if cancel.check().is_err() {
@@ -637,8 +651,12 @@ fn filter_image_brute_beam(
                     return;
                 }
 
-                // Restore to pre-row state and try this filter
-                entry.compressor.restore(snap.clone());
+                // Restore to pre-row state and try this filter.
+                if f < 4 {
+                    entry.compressor.restore(snap.as_ref().unwrap().clone());
+                } else {
+                    entry.compressor.restore(snap.take().unwrap());
+                }
 
                 let start = entry.filtered.len();
                 entry.filtered.push(f);
