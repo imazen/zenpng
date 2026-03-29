@@ -133,6 +133,7 @@ pub fn register(registry: &mut NodeRegistry) {
 pub static ALL: &[&dyn NodeDef] = &[&ENCODE_PNG_NODE];
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 

@@ -1388,7 +1388,10 @@ impl PngDecoderConfig {
     /// Convenience: decode in one call (native format).
     pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, At<PngError>> {
         use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
-        self.clone().job().decoder(Cow::Borrowed(data), &[])?.decode()
+        self.clone()
+            .job()
+            .decoder(Cow::Borrowed(data), &[])?
+            .decode()
     }
 
     /// Convenience: probe image header.

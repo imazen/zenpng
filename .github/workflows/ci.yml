@@ -93,8 +93,11 @@ jobs:
       - name: Test (quantette)
         run: cargo test --features quantette
 
+      - name: Test (zennode)
+        run: cargo test --features zennode
+
       - name: Test (all features except _dev)
-        run: cargo test --features "quantize,imagequant,quantette,joint,unchecked,zopfli,zencodec"
+        run: cargo test --features "quantize,imagequant,quantette,joint,unchecked,zopfli,zencodec,zennode"
 
   clippy:
     name: Clippy
@@ -107,7 +110,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy (all features)
-        run: cargo clippy --all-targets --features "quantize,imagequant,quantette,joint,unchecked,zopfli,zencodec" -- -D warnings
+        run: cargo clippy --all-targets --features "quantize,imagequant,quantette,joint,unchecked,zopfli,zencodec,zennode" -- -D warnings
 
       - name: Clippy (zencodec only)
         run: cargo clippy --all-targets --no-default-features --features zencodec -- -D warnings
