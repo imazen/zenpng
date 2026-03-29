@@ -1,4 +1,4 @@
-# zenpng ![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenpng/ci.yml?style=for-the-badge) ![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=for-the-badge) ![MSRV](https://img.shields.io/badge/MSRV-1.93-blue?style=for-the-badge)
+# zenpng [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenpng/ci.yml?style=for-the-badge)](https://github.com/imazen/zenpng/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=for-the-badge)](https://github.com/imazen/zenpng#license) [![MSRV](https://img.shields.io/badge/MSRV-1.93-blue?style=for-the-badge)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field)
 
 PNG encoder and decoder in safe Rust. SIMD-accelerated unfiltering, a progressive
 4-phase compression engine with 31 effort levels (and 170 more beyond that), APNG
