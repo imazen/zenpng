@@ -161,10 +161,11 @@ impl Ihdr {
                     self.bit_depth
                 )))
             })?;
-        let row_bytes = bits_per_row
-            .checked_add(7)
-            .map(|v| v / 8)
-            .ok_or_else(|| at!(PngError::LimitExceeded("row_bytes overflow during rounding".into())))?;
+        let row_bytes = bits_per_row.checked_add(7).map(|v| v / 8).ok_or_else(|| {
+            at!(PngError::LimitExceeded(
+                "row_bytes overflow during rounding".into()
+            ))
+        })?;
         usize::try_from(row_bytes).map_err(|_| {
             at!(PngError::LimitExceeded(alloc::format!(
                 "row_bytes {} exceeds platform address space",

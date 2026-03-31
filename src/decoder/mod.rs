@@ -202,9 +202,11 @@ pub(crate) fn decode_png(
 
     if is_passthrough {
         let raw_row_bytes = ihdr.raw_row_bytes()?;
-        let total = raw_row_bytes
-            .checked_mul(h)
-            .ok_or_else(|| at!(PngError::InvalidInput("image too large for this platform".into())))?;
+        let total = raw_row_bytes.checked_mul(h).ok_or_else(|| {
+            at!(PngError::InvalidInput(
+                "image too large for this platform".into()
+            ))
+        })?;
         let stride = ihdr.stride()?; // raw_row_bytes + 1 (filter byte)
         let bpp = ihdr.filter_bpp();
 
@@ -419,7 +421,9 @@ fn try_decode_stored(
                 &file_data[data_start..data_end],
             );
             if stored_crc != computed {
-                return Some(Err(at!(PngError::Decode("CRC mismatch in IDAT chunk".into()))));
+                return Some(Err(at!(PngError::Decode(
+                    "CRC mismatch in IDAT chunk".into()
+                ))));
             }
         }
         idat_slices.push(&file_data[data_start..data_end]);
@@ -492,7 +496,9 @@ fn try_decode_stored(
         }
         zpos += 4;
         if zpos + len > zlib_end {
-            return Some(Err(at!(PngError::Decode("truncated stored block data".into()))));
+            return Some(Err(at!(PngError::Decode(
+                "truncated stored block data".into()
+            ))));
         }
         if len > 0 {
             spans.push((zpos, len));
@@ -511,7 +517,9 @@ fn try_decode_stored(
             computed = zenflate::adler32(computed, &zlib[start..start + len]);
         }
         if stored_adler != computed {
-            return Some(Err(at!(PngError::Decode("Adler-32 checksum mismatch".into()))));
+            return Some(Err(at!(PngError::Decode(
+                "Adler-32 checksum mismatch".into()
+            ))));
         }
     }
 

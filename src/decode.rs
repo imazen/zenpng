@@ -310,7 +310,9 @@ impl PngDecodeConfig {
         if let Some(max_px) = self.max_pixels {
             let pixels = width as u64 * height as u64;
             if pixels > max_px {
-                return Err(at!(PngError::LimitExceeded("pixel count exceeds limit".into())));
+                return Err(at!(PngError::LimitExceeded(
+                    "pixel count exceeds limit".into()
+                )));
             }
         }
         if let Some(max_mem) = self.max_memory_bytes {

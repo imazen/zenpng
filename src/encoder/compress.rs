@@ -731,7 +731,9 @@ pub(crate) fn try_compress(
     for compressor in compressors.iter_mut() {
         let compressed_len = match compressor.zlib_compress(filtered, compress_buf, cancel) {
             Ok(len) => len,
-            Err(zenflate::CompressionError::Stopped(reason)) => return Err(at!(PngError::from(reason))),
+            Err(zenflate::CompressionError::Stopped(reason)) => {
+                return Err(at!(PngError::from(reason)));
+            }
             Err(e) => {
                 return Err(at!(PngError::InvalidInput(alloc::format!(
                     "compression failed: {e}"
@@ -1077,8 +1079,11 @@ pub(crate) fn compress_filtered(
 
     // Early return: screen-only modes don't need refinement, or deadline hit
     if params.screen_is_final || opts.deadline.should_stop() {
-        return best_compressed
-            .ok_or_else(|| at!(PngError::InvalidInput("no filter strategies tried".to_string())));
+        return best_compressed.ok_or_else(|| {
+            at!(PngError::InvalidInput(
+                "no filter strategies tried".to_string()
+            ))
+        });
     }
 
     // ---- Phase 2: Refine top-K at target effort(s) ----
@@ -1580,7 +1585,11 @@ pub(crate) fn compress_filtered(
         }
     }
 
-    best_compressed.ok_or_else(|| at!(PngError::InvalidInput("no filter strategies tried".to_string())))
+    best_compressed.ok_or_else(|| {
+        at!(PngError::InvalidInput(
+            "no filter strategies tried".to_string()
+        ))
+    })
 }
 
 /// Check if any RGBA8 pixel has alpha == 0.

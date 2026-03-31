@@ -252,7 +252,11 @@ fn write_iccp_chunk(out: &mut Vec<u8>, icc_profile: &[u8]) -> crate::error::Resu
     let mut compressed = vec![0u8; bound];
     let compressed_len = compressor
         .zlib_compress(icc_profile, &mut compressed, Unstoppable)
-        .map_err(|e| at!(PngError::InvalidInput(alloc::format!("ICC compression failed: {e}"))))?;
+        .map_err(|e| {
+            at!(PngError::InvalidInput(alloc::format!(
+                "ICC compression failed: {e}"
+            )))
+        })?;
 
     let mut chunk_data = Vec::with_capacity(keyword.len() + 1 + compressed_len);
     chunk_data.extend_from_slice(keyword);

@@ -274,10 +274,11 @@ impl PngAncillary {
     /// Parse iCCP chunk: null-terminated profile name, compression method, compressed data.
     fn parse_iccp(&mut self, data: &[u8]) -> crate::error::Result<()> {
         // Find null terminator for profile name
-        let null_pos = data
-            .iter()
-            .position(|&b| b == 0)
-            .ok_or_else(|| at!(PngError::Decode("iCCP: missing profile name terminator".into())))?;
+        let null_pos = data.iter().position(|&b| b == 0).ok_or_else(|| {
+            at!(PngError::Decode(
+                "iCCP: missing profile name terminator".into()
+            ))
+        })?;
 
         // Byte after null is compression method (must be 0 = zlib)
         if null_pos + 2 > data.len() {
@@ -305,7 +306,11 @@ impl PngAncillary {
         let mut decompressor = zenflate::Decompressor::new();
         let outcome = decompressor
             .zlib_decompress(compressed, &mut output, Unstoppable)
-            .map_err(|e| at!(PngError::Decode(alloc::format!("iCCP decompression failed: {e:?}"))))?;
+            .map_err(|e| {
+                at!(PngError::Decode(alloc::format!(
+                    "iCCP decompression failed: {e:?}"
+                )))
+            })?;
         output.truncate(outcome.output_written);
         self.icc_profile = Some(output);
         Ok(())

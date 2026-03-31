@@ -159,9 +159,11 @@ pub(crate) fn decode_interlaced(
                         pass + 1
                     ))));
                 }
-                decompressor
-                    .fill()
-                    .map_err(|e| at!(PngError::Decode(alloc::format!("decompression error: {e:?}"))))?;
+                decompressor.fill().map_err(|e| {
+                    at!(PngError::Decode(alloc::format!(
+                        "decompression error: {e:?}"
+                    )))
+                })?;
             }
 
             let peeked = decompressor.peek();

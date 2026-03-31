@@ -306,7 +306,9 @@ impl<'a> ApngDecoder<'a> {
                     return Err(at!(PngError::Decode("APNG: truncated IDAT data".into())));
                 }
                 decompressor.fill().map_err(|e| {
-                    at!(PngError::Decode(alloc::format!("APNG IDAT decompression error: {e:?}")))
+                    at!(PngError::Decode(alloc::format!(
+                        "APNG IDAT decompression error: {e:?}"
+                    )))
                 })?;
             }
 
@@ -344,7 +346,9 @@ impl<'a> ApngDecoder<'a> {
         loop {
             let (length, chunk_type, data_start, crc_end) = read_chunk_header(data, pos)
                 .ok_or_else(|| {
-                    at!(PngError::Decode("APNG: unexpected end of file scanning for fcTL".into()))
+                    at!(PngError::Decode(
+                        "APNG: unexpected end of file scanning for fcTL".into()
+                    ))
                 })?;
 
             if chunk_type == *b"IEND" {
@@ -418,7 +422,9 @@ impl<'a> ApngDecoder<'a> {
                     return Err(at!(PngError::Decode("APNG: truncated fdAT data".into())));
                 }
                 decompressor.fill().map_err(|e| {
-                    at!(PngError::Decode(alloc::format!("APNG fdAT decompression error: {e:?}")))
+                    at!(PngError::Decode(alloc::format!(
+                        "APNG fdAT decompression error: {e:?}"
+                    )))
                 })?;
             }
 
