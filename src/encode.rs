@@ -787,7 +787,7 @@ pub fn encode_apng(
         .clone_from(&config.encode.text_chunks);
     write_meta.last_modified = config.encode.last_modified;
 
-    Ok(crate::encoder::apng::encode_apng_truecolor(
+    crate::encoder::apng::encode_apng_truecolor(
         frames,
         canvas_width,
         canvas_height,
@@ -796,7 +796,7 @@ pub fn encode_apng(
         effort,
         cancel,
         deadline,
-    )?)
+    )
 }
 
 #[cfg(test)]

@@ -36,7 +36,7 @@ fn unfilter_avg_scalar_any(row: &mut [u8], prev: &[u8], bpp: usize) {
 
 #[cfg(target_arch = "x86_64")]
 #[arcane]
-fn unfilter_avg_bpp4_impl_v1(_token: Sse2Token, row: &mut [u8], prev: &[u8]) {
+fn unfilter_avg_bpp4_impl_v1(_token: X64V1Token, row: &mut [u8], prev: &[u8]) {
     let len = row.len();
     if len < 4 {
         return;

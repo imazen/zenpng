@@ -344,7 +344,7 @@ pub type PngLimits = PngDecodeConfig;
 
 /// Probe PNG metadata without decoding pixels.
 pub fn probe(data: &[u8]) -> crate::error::Result<PngInfo> {
-    Ok(crate::decoder::probe_png(data)?)
+    crate::decoder::probe_png(data)
 }
 
 /// Decode PNG to pixels.
@@ -359,7 +359,7 @@ pub fn decode(
     config: &PngDecodeConfig,
     cancel: &dyn Stop,
 ) -> crate::error::Result<PngDecodeOutput> {
-    Ok(crate::decoder::decode_png(data, config, cancel)?)
+    crate::decoder::decode_png(data, config, cancel)
 }
 
 // ── APNG decode ──────────────────────────────────────────────────────

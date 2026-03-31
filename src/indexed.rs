@@ -314,7 +314,7 @@ fn encode_from_quantize_output(
     let effort = encode_config.compression.effort();
     let opts = encode_config.compress_options(cancel, deadline, None);
 
-    Ok(crate::encoder::write_indexed_png(
+    crate::encoder::write_indexed_png(
         &result.indices,
         width,
         height,
@@ -323,7 +323,7 @@ fn encode_from_quantize_output(
         &write_meta,
         effort,
         opts,
-    )?)
+    )
 }
 
 /// Internal: encode result from an exact palette (≤256 unique colors, zero loss).
@@ -659,7 +659,7 @@ fn encode_apng_from_palette(
         .clone_from(&config.encode.text_chunks);
     write_meta.last_modified = config.encode.last_modified;
 
-    Ok(crate::encoder::apng::encode_apng_indexed_from_indices(
+    crate::encoder::apng::encode_apng_indexed_from_indices(
         frames,
         palette_rgba,
         all_indices,
@@ -670,7 +670,7 @@ fn encode_apng_from_palette(
         effort,
         cancel,
         deadline,
-    )?)
+    )
 }
 
 /// Convert sRGB u8 to OKLab [L, a, b].

@@ -30,7 +30,7 @@ fn unfilter_sub_scalar_any(row: &mut [u8], bpp: usize) {
 
 #[cfg(target_arch = "x86_64")]
 #[arcane]
-fn unfilter_sub_bpp4_impl_v1(_token: Sse2Token, row: &mut [u8]) {
+fn unfilter_sub_bpp4_impl_v1(_token: X64V1Token, row: &mut [u8]) {
     let len = row.len();
     if len < 8 {
         // Need at least 2 pixels (first pixel is identity, second pixel is first addition)
@@ -59,7 +59,7 @@ fn unfilter_sub_bpp4_impl_v1(_token: Sse2Token, row: &mut [u8]) {
 
 #[cfg(target_arch = "x86_64")]
 #[arcane]
-fn unfilter_sub_bpp3_impl_v1(_token: Sse2Token, row: &mut [u8]) {
+fn unfilter_sub_bpp3_impl_v1(_token: X64V1Token, row: &mut [u8]) {
     let len = row.len();
     if len < 6 {
         unfilter_sub_scalar_any(row, 3);

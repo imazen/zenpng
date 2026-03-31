@@ -1980,7 +1980,7 @@ fn zopfli_adaptive(
     // Phase 3: Run top candidates in parallel (or sequentially if single-threaded).
     // All threads share the combined stop — deadline expiry gracefully stops
     // all threads, cancellation hard-aborts them.
-    let zopfli_results: Vec<Result<Vec<u8>, PngError>> = if max_threads == 1
+    let zopfli_results: Vec<crate::error::Result<Vec<u8>>> = if max_threads == 1
         || candidates.len() <= 1
     {
         candidates
@@ -2483,7 +2483,7 @@ mod zopfli_tests {
         // Cancel after a few check() calls — zenzop should error.
         let data = test_data();
         let cancel = CallCountCancel::new(2);
-        let result = compress_with_zopfli_n(&data, 50, &cancel);
+        let result = compress_with_zopfli_n(&data, 50, &cancel).map_err(|e| e.decompose().0);
         assert!(
             matches!(
                 result,
@@ -2588,7 +2588,8 @@ mod zopfli_tests {
         let deadline = enough::Unstoppable;
         let mut current_best = None;
 
-        let result = zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best, 1);
+        let result = zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best, 1)
+            .map_err(|e| e.decompose().0);
         assert!(
             matches!(
                 result,

@@ -77,12 +77,12 @@ fn apply_filter(filter: u8, row: &[u8], prev: &[u8], bpp: usize, out: &mut [u8])
 /// Disable all SIMD tokens including SSE2 baseline.
 fn disable_all_simd() {
     // Sse2Token disable cascades upward to V2, V3, V4
-    archmage::Sse2Token::dangerously_disable_token_process_wide(true).unwrap();
+    archmage::X64V1Token::dangerously_disable_token_process_wide(true).unwrap();
 }
 
 /// Re-enable all SIMD tokens.
 fn enable_all_simd() {
-    archmage::Sse2Token::dangerously_disable_token_process_wide(false).unwrap();
+    archmage::X64V1Token::dangerously_disable_token_process_wide(false).unwrap();
 }
 
 fn bench_unfilter(
