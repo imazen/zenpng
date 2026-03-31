@@ -24,6 +24,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::error::PngError;
+#[allow(unused_imports)]
+use whereat::at;
 
 /// Output of a single-image quantization.
 #[derive(Debug, Clone)]
@@ -166,7 +168,7 @@ pub fn default_quantizer() -> Box<dyn Quantizer> {
 ///
 /// Returns an error if the named backend is not enabled via feature flags.
 /// Valid names: `"zenquant"`, `"imagequant"`, `"quantette"`.
-pub fn quantizer_by_name(name: &str) -> Result<Box<dyn Quantizer>, PngError> {
+pub fn quantizer_by_name(name: &str) -> crate::error::Result<Box<dyn Quantizer>> {
     match name {
         #[cfg(feature = "quantize")]
         "zenquant" => Ok(Box::new(
@@ -176,10 +178,10 @@ pub fn quantizer_by_name(name: &str) -> Result<Box<dyn Quantizer>, PngError> {
         "imagequant" => Ok(Box::new(ImagequantQuantizer::default())),
         #[cfg(feature = "quantette")]
         "quantette" => Ok(Box::new(QuantetteQuantizer::default())),
-        _ => Err(PngError::InvalidInput(format!(
+        _ => Err(at!(PngError::InvalidInput(format!(
             "unknown or disabled quantizer backend: {name:?}. Available: {:?}",
             available_backends()
-        ))),
+        )))),
     }
 }
 

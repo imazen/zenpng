@@ -19,6 +19,8 @@ use crate::chunk::ihdr::Ihdr;
 use crate::chunk::{ChunkIter, PNG_SIGNATURE};
 use crate::decode::{PhysUnit, PngChromaticities, PngDecodeOutput, PngInfo};
 use crate::error::PngError;
+#[allow(unused_imports)]
+use whereat::at;
 
 use self::interlace::decode_interlaced;
 use self::postprocess::{OutputFormat, build_pixel_data, post_process_row};
@@ -131,18 +133,18 @@ pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &PngAncillary) -> PngInfo {
 // ── Probe helper ────────────────────────────────────────────────────
 
 /// Probe PNG metadata without decoding pixels.
-pub(crate) fn probe_png(data: &[u8]) -> Result<PngInfo, PngError> {
+pub(crate) fn probe_png(data: &[u8]) -> crate::error::Result<PngInfo> {
     if data.len() < 8 || data[..8] != PNG_SIGNATURE {
-        return Err(PngError::Decode("not a PNG file".into()));
+        return Err(at!(PngError::Decode("not a PNG file".into())));
     }
 
     let mut chunks = ChunkIter::new(data);
 
     let ihdr_chunk = chunks
         .next()
-        .ok_or_else(|| PngError::Decode("empty PNG".into()))??;
+        .ok_or_else(|| at!(PngError::Decode("empty PNG".into())))??;
     if ihdr_chunk.chunk_type != *b"IHDR" {
-        return Err(PngError::Decode("first chunk is not IHDR".into()));
+        return Err(at!(PngError::Decode("first chunk is not IHDR".into())));
     }
     let ihdr = Ihdr::parse(ihdr_chunk.data)?;
 
@@ -177,7 +179,7 @@ pub(crate) fn decode_png(
     data: &[u8],
     limits: &crate::decode::PngDecodeConfig,
     cancel: &dyn Stop,
-) -> Result<PngDecodeOutput, PngError> {
+) -> crate::error::Result<PngDecodeOutput> {
     // Check for interlacing first
     if data.len() >= 29 && data[..8] == PNG_SIGNATURE {
         let interlace = data[28]; // IHDR interlace byte
@@ -202,7 +204,7 @@ pub(crate) fn decode_png(
         let raw_row_bytes = ihdr.raw_row_bytes()?;
         let total = raw_row_bytes
             .checked_mul(h)
-            .ok_or_else(|| PngError::InvalidInput("image too large for this platform".into()))?;
+            .ok_or_else(|| at!(PngError::InvalidInput("image too large for this platform".into())))?;
         let stride = ihdr.stride()?; // raw_row_bytes + 1 (filter byte)
         let bpp = ihdr.filter_bpp();
 
@@ -258,12 +260,12 @@ pub(crate) fn decode_png(
                 Some(Ok(())) => {}
                 Some(Err(e)) => return Err(e),
                 None => {
-                    return Err(PngError::Decode(
+                    return Err(at!(PngError::Decode(
                         "unexpected end of image data at row 0".into(),
-                    ));
+                    )));
                 }
             }
-            cancel.check()?;
+            cancel.check().map_err(|e| at!(PngError::from(e)))?;
         }
 
         // Rows 1..h: prev is the previous row in the output buffer
@@ -275,12 +277,12 @@ pub(crate) fn decode_png(
                 Some(Ok(())) => {}
                 Some(Err(e)) => return Err(e),
                 None => {
-                    return Err(PngError::Decode(alloc::format!(
+                    return Err(at!(PngError::Decode(alloc::format!(
                         "unexpected end of image data at row {y}"
-                    )));
+                    ))));
                 }
             }
-            cancel.check()?;
+            cancel.check().map_err(|e| at!(PngError::from(e)))?;
         }
 
         reader.finish_metadata();
@@ -326,7 +328,7 @@ pub(crate) fn decode_png(
 
     while let Some(result) = reader.next_raw_row() {
         let raw = result?;
-        cancel.check()?;
+        cancel.check().map_err(|e| at!(PngError::from(e)))?;
         raw_copy[..raw.len()].copy_from_slice(raw);
         post_process_row(
             &raw_copy[..raw.len()],
@@ -390,7 +392,7 @@ fn try_decode_stored(
     raw_row_bytes: usize,
     bpp: usize,
     cancel: &dyn Stop,
-) -> Option<Result<Vec<u8>, PngError>> {
+) -> Option<crate::error::Result<Vec<u8>>> {
     // Collect IDAT chunk payload slices (the zlib stream, possibly split across chunks).
     let mut idat_slices: Vec<&[u8]> = Vec::new();
     let mut pos = first_idat_pos;
@@ -417,7 +419,7 @@ fn try_decode_stored(
                 &file_data[data_start..data_end],
             );
             if stored_crc != computed {
-                return Some(Err(PngError::Decode("CRC mismatch in IDAT chunk".into())));
+                return Some(Err(at!(PngError::Decode("CRC mismatch in IDAT chunk".into()))));
             }
         }
         idat_slices.push(&file_data[data_start..data_end]);
@@ -468,7 +470,7 @@ fn try_decode_stored(
 
     loop {
         if zpos >= zlib_end {
-            return Some(Err(PngError::Decode("truncated stored block".into())));
+            return Some(Err(at!(PngError::Decode("truncated stored block".into()))));
         }
         let bfinal = zlib[zpos] & 0x01;
         let btype = (zlib[zpos] >> 1) & 0x03;
@@ -477,20 +479,20 @@ fn try_decode_stored(
         }
         zpos += 1;
         if zpos + 4 > zlib_end {
-            return Some(Err(PngError::Decode(
+            return Some(Err(at!(PngError::Decode(
                 "truncated stored block header".into(),
-            )));
+            ))));
         }
         let len = u16::from_le_bytes([zlib[zpos], zlib[zpos + 1]]) as usize;
         let nlen = u16::from_le_bytes([zlib[zpos + 2], zlib[zpos + 3]]) as usize;
         if len != (!nlen & 0xFFFF) {
-            return Some(Err(PngError::Decode(
+            return Some(Err(at!(PngError::Decode(
                 "stored block LEN/NLEN mismatch".into(),
-            )));
+            ))));
         }
         zpos += 4;
         if zpos + len > zlib_end {
-            return Some(Err(PngError::Decode("truncated stored block data".into())));
+            return Some(Err(at!(PngError::Decode("truncated stored block data".into()))));
         }
         if len > 0 {
             spans.push((zpos, len));
@@ -509,7 +511,7 @@ fn try_decode_stored(
             computed = zenflate::adler32(computed, &zlib[start..start + len]);
         }
         if stored_adler != computed {
-            return Some(Err(PngError::Decode("Adler-32 checksum mismatch".into())));
+            return Some(Err(at!(PngError::Decode("Adler-32 checksum mismatch".into()))));
         }
     }
 
@@ -518,9 +520,9 @@ fn try_decode_stored(
     let total_payload: usize = spans.iter().map(|&(_, l)| l).sum();
     let expected = stride * height;
     if total_payload < expected {
-        return Some(Err(PngError::Decode(alloc::format!(
+        return Some(Err(at!(PngError::Decode(alloc::format!(
             "stored data too short: {total_payload} < {expected}"
-        ))));
+        )))));
     }
 
     let total_pixels = raw_row_bytes * height;
@@ -614,7 +616,7 @@ fn decode_interlaced_to_output(
     data: &[u8],
     config: &crate::decode::PngDecodeConfig,
     cancel: &dyn Stop,
-) -> Result<PngDecodeOutput, PngError> {
+) -> crate::error::Result<PngDecodeOutput> {
     let (ihdr, ancillary, pixels, _fmt, mut warnings) = decode_interlaced(data, config, cancel)?;
     let w = ihdr.width as usize;
     let h = ihdr.height as usize;
@@ -1466,7 +1468,7 @@ mod tests {
                         );
                         total_timeout += 1;
                         corpus_we_fail += 1;
-                        break Err(PngError::Decode("timeout".into()));
+                        break Err(PngError::Decode("timeout".into()).into());
                     }
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 };

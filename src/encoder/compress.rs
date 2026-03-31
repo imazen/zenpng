@@ -8,6 +8,8 @@ use enough::Stop;
 use zenflate::{CompressionLevel, Compressor};
 
 use crate::error::PngError;
+#[allow(unused_imports)]
+use whereat::at;
 
 use super::filter::{
     FAST_STRATEGIES, HEURISTIC_STRATEGIES, HeuristicScratch, MINIMAL_STRATEGIES, Strategy,
@@ -724,16 +726,16 @@ pub(crate) fn try_compress(
     verify_buf: &mut [u8],
     best_compressed: &mut Option<Vec<u8>>,
     cancel: &dyn Stop,
-) -> Result<usize, PngError> {
+) -> crate::error::Result<usize> {
     let mut best_for_stream = usize::MAX;
     for compressor in compressors.iter_mut() {
         let compressed_len = match compressor.zlib_compress(filtered, compress_buf, cancel) {
             Ok(len) => len,
-            Err(zenflate::CompressionError::Stopped(reason)) => return Err(reason.into()),
+            Err(zenflate::CompressionError::Stopped(reason)) => return Err(at!(PngError::from(reason))),
             Err(e) => {
-                return Err(PngError::InvalidInput(alloc::format!(
+                return Err(at!(PngError::InvalidInput(alloc::format!(
                     "compression failed: {e}"
-                )));
+                ))));
             }
         };
 
@@ -770,7 +772,7 @@ fn try_compress_with_fallbacks(
     verify_buf: &mut [u8],
     best_compressed: &mut Option<Vec<u8>>,
     cancel: &dyn Stop,
-) -> Result<usize, PngError> {
+) -> crate::error::Result<usize> {
     let mut best_size = usize::MAX;
     let mut level = CompressionLevel::new(effort);
     loop {
@@ -818,7 +820,7 @@ pub(crate) fn compress_filtered(
     effort: u32,
     opts: super::CompressOptions<'_>,
     mut stats: Option<&mut PhaseStats>,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     use std::time::Instant;
 
     let params = EffortParams::from_effort_and_bpp(effort, bpp);
@@ -1013,12 +1015,12 @@ pub(crate) fn compress_filtered(
                 match screen_compressor.zlib_compress(&filtered, &mut compress_buf, opts.cancel) {
                     Ok(len) => len,
                     Err(zenflate::CompressionError::Stopped(reason)) => {
-                        return Err(reason.into());
+                        return Err(at!(PngError::from(reason)));
                     }
                     Err(e) => {
-                        return Err(PngError::InvalidInput(alloc::format!(
+                        return Err(at!(PngError::InvalidInput(alloc::format!(
                             "compression failed: {e}"
-                        )));
+                        ))));
                     }
                 };
 
@@ -1076,7 +1078,7 @@ pub(crate) fn compress_filtered(
     // Early return: screen-only modes don't need refinement, or deadline hit
     if params.screen_is_final || opts.deadline.should_stop() {
         return best_compressed
-            .ok_or_else(|| PngError::InvalidInput("no filter strategies tried".to_string()));
+            .ok_or_else(|| at!(PngError::InvalidInput("no filter strategies tried".to_string())));
     }
 
     // ---- Phase 2: Refine top-K at target effort(s) ----
@@ -1578,7 +1580,7 @@ pub(crate) fn compress_filtered(
         }
     }
 
-    best_compressed.ok_or_else(|| PngError::InvalidInput("no filter strategies tried".to_string()))
+    best_compressed.ok_or_else(|| at!(PngError::InvalidInput("no filter strategies tried".to_string())))
 }
 
 /// Check if any RGBA8 pixel has alpha == 0.
@@ -1765,7 +1767,7 @@ fn write_stored_block_header(out: &mut Vec<u8>, len: usize, is_final: bool) {
 }
 
 /// Recompress a single candidate with zenflate effort 30.
-fn recompress_one(data: &[u8], cancel: &dyn Stop) -> Result<Vec<u8>, PngError> {
+fn recompress_one(data: &[u8], cancel: &dyn Stop) -> crate::error::Result<Vec<u8>> {
     let mut compressor = Compressor::new(CompressionLevel::new(30));
     let bound = Compressor::zlib_compress_bound(data.len());
     let mut output = vec![0u8; bound];
@@ -1789,10 +1791,10 @@ fn zenflate_recompress(
     cancel: &dyn Stop,
     current_best: &mut Option<Vec<u8>>,
     max_threads: usize,
-) -> Result<Option<Vec<u8>>, PngError> {
+) -> crate::error::Result<Option<Vec<u8>>> {
     let mut best: Option<Vec<u8>> = None;
 
-    let results: Vec<Result<Vec<u8>, PngError>> = if max_threads == 1 || candidates.len() <= 1 {
+    let results: Vec<crate::error::Result<Vec<u8>>> = if max_threads == 1 || candidates.len() <= 1 {
         // Sequential
         candidates
             .iter()
@@ -1832,7 +1834,7 @@ fn full_optimal_recompress_one(
     data: &[u8],
     effort: u32,
     cancel: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let mut compressor = Compressor::new(CompressionLevel::new(effort));
     let bound = Compressor::zlib_compress_bound(data.len());
     let mut output = vec![0u8; bound];
@@ -1859,10 +1861,10 @@ fn zenflate_full_optimal_recompress(
     cancel: &dyn Stop,
     current_best: &mut Option<Vec<u8>>,
     max_threads: usize,
-) -> Result<Option<Vec<u8>>, PngError> {
+) -> crate::error::Result<Option<Vec<u8>>> {
     let mut best: Option<Vec<u8>> = None;
 
-    let results: Vec<Result<Vec<u8>, PngError>> = if max_threads == 1 || candidates.len() <= 1 {
+    let results: Vec<crate::error::Result<Vec<u8>>> = if max_threads == 1 || candidates.len() <= 1 {
         // Sequential
         candidates
             .iter()
@@ -1908,7 +1910,7 @@ fn zopfli_adaptive(
     remaining_ns: Option<&dyn Fn() -> Option<u64>>,
     current_best: &mut Option<Vec<u8>>,
     max_threads: usize,
-) -> Result<Option<Vec<u8>>, PngError> {
+) -> crate::error::Result<Option<Vec<u8>>> {
     use std::time::Instant;
 
     // Combine cancel + deadline for zenzop — when deadline expires, zenzop
@@ -1998,7 +2000,7 @@ fn compress_with_zopfli_n(
     data: &[u8],
     iterations: u64,
     stop: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     use std::io::Write;
     let mut options = zenzop::Options::default();
     options.iteration_count = core::num::NonZeroU64::new(iterations.max(1)).unwrap();

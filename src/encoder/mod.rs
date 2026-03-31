@@ -14,6 +14,8 @@ use enough::Stop;
 use crate::chunk::PNG_SIGNATURE;
 use crate::chunk::write::write_chunk;
 use crate::error::PngError;
+#[allow(unused_imports)]
+use whereat::at;
 
 pub(crate) use self::compress::compress_filtered;
 pub(crate) use self::metadata::{PngWriteMetadata, metadata_size_estimate, write_all_metadata};
@@ -64,20 +66,20 @@ pub(crate) fn write_indexed_png(
     write_meta: &PngWriteMetadata<'_>,
     effort: u32,
     opts: CompressOptions<'_>,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let w = width as usize;
     let h = height as usize;
     let n_colors = palette_rgb.len() / 3;
 
     if n_colors == 0 || n_colors > 256 {
-        return Err(PngError::InvalidInput(alloc::format!(
+        return Err(at!(PngError::InvalidInput(alloc::format!(
             "palette must have 1-256 entries, got {n_colors}"
-        )));
+        ))));
     }
     if indices.len() < w * h {
-        return Err(PngError::InvalidInput(
+        return Err(at!(PngError::InvalidInput(
             "index buffer too small for dimensions".to_string(),
-        ));
+        )));
     }
 
     let bit_depth = select_bit_depth(n_colors);
@@ -148,7 +150,7 @@ pub(crate) fn write_truecolor_png(
     write_meta: &PngWriteMetadata<'_>,
     effort: u32,
     opts: CompressOptions<'_>,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let w = width as usize;
     let h = height as usize;
 
@@ -157,10 +159,10 @@ pub(crate) fn write_truecolor_png(
         // pixel_bytes has one byte per sample (pre-scaled to bit_depth range)
         let expected_samples = w * h;
         if pixel_bytes.len() < expected_samples {
-            return Err(PngError::InvalidInput(alloc::format!(
+            return Err(at!(PngError::InvalidInput(alloc::format!(
                 "pixel buffer too small: need {expected_samples} samples, got {}",
                 pixel_bytes.len()
-            )));
+            ))));
         }
         let packed = pack_all_rows(pixel_bytes, w, h, bit_depth);
         let row_bytes = packed_row_bytes(w, bit_depth);
@@ -198,9 +200,9 @@ pub(crate) fn write_truecolor_png(
         4 => 2, // GrayscaleAlpha
         6 => 4, // RGBA
         _ => {
-            return Err(PngError::InvalidInput(alloc::format!(
+            return Err(at!(PngError::InvalidInput(alloc::format!(
                 "unsupported PNG color type: {color_type}"
-            )));
+            ))));
         }
     };
     let bytes_per_channel = bit_depth as usize / 8;
@@ -209,10 +211,10 @@ pub(crate) fn write_truecolor_png(
 
     let expected_len = row_bytes * h;
     if pixel_bytes.len() < expected_len {
-        return Err(PngError::InvalidInput(alloc::format!(
+        return Err(at!(PngError::InvalidInput(alloc::format!(
             "pixel buffer too small: need {expected_len}, got {}",
             pixel_bytes.len()
-        )));
+        ))));
     }
 
     // Effort 0 fast path: write zlib stored blocks directly into the PNG output,
@@ -323,7 +325,7 @@ pub(crate) fn write_truecolor_png_with_stats(
     effort: u32,
     opts: CompressOptions<'_>,
     stats: &mut PhaseStats,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let w = width as usize;
     let h = height as usize;
 
@@ -331,10 +333,10 @@ pub(crate) fn write_truecolor_png_with_stats(
     if color_type == 0 && bit_depth < 8 {
         let expected_samples = w * h;
         if pixel_bytes.len() < expected_samples {
-            return Err(PngError::InvalidInput(alloc::format!(
+            return Err(at!(PngError::InvalidInput(alloc::format!(
                 "pixel buffer too small: need {expected_samples} samples, got {}",
                 pixel_bytes.len()
-            )));
+            ))));
         }
         let packed = pack_all_rows(pixel_bytes, w, h, bit_depth);
         let row_bytes = packed_row_bytes(w, bit_depth);
@@ -370,9 +372,9 @@ pub(crate) fn write_truecolor_png_with_stats(
         4 => 2,
         6 => 4,
         _ => {
-            return Err(PngError::InvalidInput(alloc::format!(
+            return Err(at!(PngError::InvalidInput(alloc::format!(
                 "unsupported PNG color type: {color_type}"
-            )));
+            ))));
         }
     };
     let bytes_per_channel = bit_depth as usize / 8;
@@ -381,10 +383,10 @@ pub(crate) fn write_truecolor_png_with_stats(
 
     let expected_len = row_bytes * h;
     if pixel_bytes.len() < expected_len {
-        return Err(PngError::InvalidInput(alloc::format!(
+        return Err(at!(PngError::InvalidInput(alloc::format!(
             "pixel buffer too small: need {expected_len}, got {}",
             pixel_bytes.len()
-        )));
+        ))));
     }
 
     let compressed = compress_filtered(

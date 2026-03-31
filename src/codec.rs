@@ -639,12 +639,12 @@ impl PngEncoder {
             None => &enough::Unstoppable,
         };
         // Pre-flight stop check
-        cancel.check().map_err(PngError::from)?;
+        cancel.check().map_err(|e| at!(PngError::from(e)))?;
         // Pre-flight limit checks
         if let Some(ref limits) = self.limits {
             limits
                 .check_dimensions(w, h)
-                .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+                .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
             let channels: u64 = match color_type {
                 crate::encode::ColorType::Grayscale => 1,
                 crate::encode::ColorType::Rgb => 3,
@@ -659,7 +659,7 @@ impl PngEncoder {
             let estimated_mem = w as u64 * h as u64 * bpp;
             limits
                 .check_memory(estimated_mem)
-                .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+                .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
         }
         let config = self.config_with_threading();
         let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
@@ -674,7 +674,7 @@ impl PngEncoder {
         if let Some(ref limits) = self.limits {
             limits
                 .check_output_size(data.len() as u64)
-                .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+                .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
         }
         Ok(EncodeOutput::new(data, ImageFormat::Png))
     }
@@ -1146,7 +1146,7 @@ impl zencodec::encode::Encoder for PngEncoder {
                 if let Some(ref limits) = self.limits {
                     limits
                         .check_output_size(data.len() as u64)
-                        .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+                        .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
                 }
                 Ok(EncodeOutput::new(data, ImageFormat::Png))
             }
@@ -1162,7 +1162,7 @@ impl zencodec::encode::Encoder for PngEncoder {
                 if let Some(ref limits) = self.limits {
                     limits
                         .check_output_size(data.len() as u64)
-                        .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+                        .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
                 }
                 Ok(EncodeOutput::new(data, ImageFormat::Png))
             }
@@ -1228,7 +1228,7 @@ impl PngAnimationFrameEncoder {
     /// Supports RGBA8, BGRA8, RGB8, and Gray8 inputs. Other formats
     /// (16-bit, float) are rejected with a clear error listing the
     /// supported formats.
-    fn pixels_to_rgba8(pixels: &PixelSlice<'_>) -> Result<Vec<u8>, PngError> {
+    fn pixels_to_rgba8(pixels: &PixelSlice<'_>) -> Result<Vec<u8>, At<PngError>> {
         let desc = pixels.descriptor();
         match (desc.channel_type(), desc.layout()) {
             (zenpixels::ChannelType::U8, zenpixels::ChannelLayout::Rgba) => {
@@ -1252,11 +1252,11 @@ impl PngAnimationFrameEncoder {
                 let src = contiguous_bytes(pixels);
                 Ok(src.iter().flat_map(|&g| [g, g, g, 255]).collect())
             }
-            _ => Err(PngError::InvalidInput(alloc::format!(
+            _ => Err(at!(PngError::InvalidInput(alloc::format!(
                 "APNG frame encoder: unsupported pixel format {:?}; \
                  supported formats are RGBA8, BGRA8, RGB8, and Gray8",
                 desc
-            ))),
+            )))),
         }
     }
 }
@@ -1280,12 +1280,12 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
             // Check max_frames (new frame count = current + 1)
             limits
                 .check_frames(self.frames.len() as u32 + 1)
-                .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+                .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
             // Check max_memory (cumulative pixel data size)
             let new_cumulative = self.cumulative_pixel_bytes + rgba.len() as u64;
             limits
                 .check_memory(new_cumulative)
-                .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+                .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
         }
         self.cumulative_pixel_bytes += rgba.len() as u64;
         self.frames.push(AccumulatedFrame {
@@ -1296,19 +1296,19 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
     }
 
     fn finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, At<PngError>> {
-        self.do_finish(stop).map_err(|e| at!(e))
+        self.do_finish(stop)
     }
 }
 
 impl PngAnimationFrameEncoder {
-    fn do_finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, PngError> {
+    fn do_finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, At<PngError>> {
         let cancel: &dyn enough::Stop = stop.unwrap_or(&enough::Unstoppable);
-        cancel.check().map_err(PngError::from)?;
+        cancel.check().map_err(|e| at!(PngError::from(e)))?;
 
         if self.frames.is_empty() {
-            return Err(PngError::InvalidInput(
+            return Err(at!(PngError::InvalidInput(
                 "APNG frame encoder: no frames pushed".into(),
-            ));
+            )));
         }
 
         // Convert accumulated frames to ApngFrameInput
@@ -1635,7 +1635,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
         let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
         effective_limits
             .check_input_size(data.len() as u64)
-            .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+            .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
         PngAnimationFrameDecoder::new(
             &data,
             &self.config,
@@ -1644,7 +1644,6 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
             preferred,
             self.start_frame_index,
         )
-        .map_err(|e| at!(e))
     }
 
     fn push_decoder(
@@ -1690,19 +1689,19 @@ impl zencodec::decode::Decode for PngDecoder<'_> {
             Some(ref s) => s as &dyn enough::Stop,
             None => &enough::Unstoppable,
         };
-        cancel.check().map_err(PngError::from)?;
+        cancel.check().map_err(|e| at!(PngError::from(e)))?;
         // Check progressive policy before decoding
         check_progressive_policy(&self.data, self.policy.as_ref())?;
         // Check input size limit
         let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
         effective_limits
             .check_input_size(self.data.len() as u64)
-            .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+            .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
         // Check max_width / max_height before decoding
         let probe_info = crate::decode::probe(&self.data)?;
         effective_limits
             .check_dimensions(probe_info.width, probe_info.height)
-            .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+            .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
         let png_config = self.effective_config();
         let result = crate::decode::decode(&self.data, &png_config, cancel)?;
         let mut info = convert_info(&result.info);
@@ -1770,7 +1769,7 @@ fn push_decoder_native<'a>(
     let effective_limits = job.limits.as_ref().unwrap_or(&job.config.limits);
     effective_limits
         .check_input_size(data.len() as u64)
-        .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+        .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
 
     // Check for interlacing — fall back to full decode for Adam7
     if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
@@ -1793,7 +1792,7 @@ fn push_decoder_native<'a>(
         Some(s) => s,
         None => &enough::Unstoppable,
     };
-    cancel.check().map_err(PngError::from)?;
+    cancel.check().map_err(|e| at!(PngError::from(e)))?;
 
     let mut reader = RowDecoder::new(data, &png_config)?;
     let ihdr = *reader.ihdr();
@@ -1805,7 +1804,7 @@ fn push_decoder_native<'a>(
     // Check max_width / max_height before allocating pixel buffers
     limits
         .check_dimensions(w, h)
-        .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+        .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
 
     let descriptor = native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns);
 
@@ -1831,14 +1830,14 @@ fn push_decoder_native<'a>(
             let row_slice = dst.row_mut(0);
             match reader.next_raw_row_direct(&mut row_slice[..raw_row_bytes], &zeros) {
                 Some(Ok(())) => {}
-                Some(Err(e)) => return Err(at!(e)),
+                Some(Err(e)) => return Err(e),
                 None => {
                     return Err(at!(PngError::Decode(
                         "unexpected end of image data at row 0".into()
                     )));
                 }
             }
-            cancel.check().map_err(PngError::from)?;
+            cancel.check().map_err(|e| at!(PngError::from(e)))?;
         }
 
         // Rows 1..h: prev is the previous row in the sink buffer.
@@ -1851,14 +1850,14 @@ fn push_decoder_native<'a>(
             let row_slice = dst.row_mut(y);
             match reader.next_raw_row_direct(&mut row_slice[..raw_row_bytes], &prev_buf) {
                 Some(Ok(())) => {}
-                Some(Err(e)) => return Err(at!(e)),
+                Some(Err(e)) => return Err(e),
                 None => {
                     return Err(at!(PngError::Decode(alloc::format!(
                         "unexpected end of image data at row {y}"
                     ))));
                 }
             }
-            cancel.check().map_err(PngError::from)?;
+            cancel.check().map_err(|e| at!(PngError::from(e)))?;
         }
         drop(dst);
     } else {
@@ -1875,7 +1874,7 @@ fn push_decoder_native<'a>(
         let mut y = 0u32;
         while let Some(result) = reader.next_raw_row() {
             let raw = result?;
-            cancel.check().map_err(PngError::from)?;
+            cancel.check().map_err(|e| at!(PngError::from(e)))?;
 
             // Copy raw row data so the borrow on reader is released (NLL),
             // allowing reader.ancillary() below.
@@ -1952,13 +1951,13 @@ impl<'a> PngStreamingDecoder<'a> {
             Some(s) => s,
             None => &enough::Unstoppable,
         };
-        cancel.check().map_err(PngError::from)?;
+        cancel.check().map_err(|e| at!(PngError::from(e)))?;
 
         let effective_limits = limits.unwrap_or(&config.limits);
         // Check input size limit
         effective_limits
             .check_input_size(data.len() as u64)
-            .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+            .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
         let png_config = PngDecodeConfig {
             max_pixels: effective_limits.max_pixels,
             max_memory_bytes: effective_limits.max_memory_bytes,
@@ -1972,7 +1971,7 @@ impl<'a> PngStreamingDecoder<'a> {
         let mut info = convert_info(&probe_info);
         apply_policy_to_info(&mut info, policy);
 
-        let reader = crate::decoder::row::RowDecoder::new(data, &png_config).map_err(|e| at!(e))?;
+        let reader = crate::decoder::row::RowDecoder::new(data, &png_config)?;
         let ihdr = *reader.ihdr();
         let has_trns = reader.ancillary().trns.is_some();
 
@@ -1982,14 +1981,14 @@ impl<'a> PngStreamingDecoder<'a> {
         // Check max_width / max_height before allocating pixel buffers
         effective_limits
             .check_dimensions(w, h)
-            .map_err(|e| PngError::LimitExceeded(alloc::format!("{e}")))?;
+            .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
 
         let descriptor = native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns);
 
         let is_passthrough =
             !has_trns && ihdr.bit_depth == 8 && (ihdr.color_type == 6 || ihdr.color_type == 2);
 
-        let raw_row_bytes = ihdr.raw_row_bytes().map_err(|e| at!(e))?;
+        let raw_row_bytes = ihdr.raw_row_bytes()?;
         let out_row_bytes = w as usize * descriptor.bytes_per_pixel();
 
         Ok(Self {
@@ -2020,12 +2019,12 @@ impl zencodec::decode::StreamingDecode for PngStreamingDecoder<'_> {
         // Check cooperative cancellation per-row
         if let Some(ref stop) = self.stop {
             let cancel: &dyn enough::Stop = stop;
-            cancel.check().map_err(PngError::from)?;
+            cancel.check().map_err(|e| at!(PngError::from(e)))?;
         }
 
         let raw = match self.reader.next_raw_row() {
             Some(Ok(row)) => row,
-            Some(Err(e)) => return Err(at!(e)),
+            Some(Err(e)) => return Err(e),
             None => return Ok(None),
         };
 
@@ -2039,7 +2038,7 @@ impl zencodec::decode::StreamingDecode for PngStreamingDecoder<'_> {
         } else {
             // Need post-processing: copy raw to release borrow on reader
             self.raw_copy[..raw.len()].copy_from_slice(raw);
-            let raw_len = self.reader.ihdr().raw_row_bytes().map_err(|e| at!(e))?;
+            let raw_len = self.reader.ihdr().raw_row_bytes()?;
 
             // Post-process expands/converts the raw row into row_buf
             let mut tmp = core::mem::take(&mut self.row_buf);
@@ -2105,8 +2104,8 @@ impl PngAnimationFrameDecoder {
         policy: Option<&zencodec::decode::DecodePolicy>,
         preferred: &[PixelDescriptor],
         start_frame_index: u32,
-    ) -> Result<Self, PngError> {
-        let probe_info = crate::decode::probe(data).map_err(|e| e.decompose().0)?;
+    ) -> Result<Self, At<PngError>> {
+        let probe_info = crate::decode::probe(data)?;
         let mut image_info = convert_info(&probe_info);
         apply_policy_to_info(&mut image_info, policy);
 

@@ -9,6 +9,8 @@ use zenflate::Unstoppable;
 use super::ChunkRef;
 use crate::decode::{PngBackground, PngTime, SignificantBits, TextChunk};
 use crate::error::PngError;
+#[allow(unused_imports)]
+use whereat::at;
 
 // ── fcTL frame control ──────────────────────────────────────────────
 
@@ -30,12 +32,12 @@ pub(crate) struct FrameControl {
 impl FrameControl {
     /// Parse from 26-byte fcTL chunk data.
     /// Validates dimensions fit within the canvas defined by `canvas_width` × `canvas_height`.
-    pub fn parse(data: &[u8], canvas_width: u32, canvas_height: u32) -> Result<Self, PngError> {
+    pub fn parse(data: &[u8], canvas_width: u32, canvas_height: u32) -> crate::error::Result<Self> {
         if data.len() != 26 {
-            return Err(PngError::Decode(alloc::format!(
+            return Err(at!(PngError::Decode(alloc::format!(
                 "fcTL chunk is {} bytes, expected 26",
                 data.len()
-            )));
+            ))));
         }
 
         let sequence_number = u32::from_be_bytes(data[0..4].try_into().unwrap());
@@ -49,30 +51,30 @@ impl FrameControl {
         let blend_op = data[25];
 
         if width == 0 || height == 0 {
-            return Err(PngError::Decode("fcTL: zero frame dimension".into()));
+            return Err(at!(PngError::Decode("fcTL: zero frame dimension".into())));
         }
         if x_offset.checked_add(width).is_none_or(|v| v > canvas_width) {
-            return Err(PngError::Decode(alloc::format!(
+            return Err(at!(PngError::Decode(alloc::format!(
                 "fcTL: x_offset({x_offset}) + width({width}) exceeds canvas width({canvas_width})"
-            )));
+            ))));
         }
         if y_offset
             .checked_add(height)
             .is_none_or(|v| v > canvas_height)
         {
-            return Err(PngError::Decode(alloc::format!(
+            return Err(at!(PngError::Decode(alloc::format!(
                 "fcTL: y_offset({y_offset}) + height({height}) exceeds canvas height({canvas_height})"
-            )));
+            ))));
         }
         if dispose_op > 2 {
-            return Err(PngError::Decode(alloc::format!(
+            return Err(at!(PngError::Decode(alloc::format!(
                 "fcTL: invalid dispose_op {dispose_op}"
-            )));
+            ))));
         }
         if blend_op > 1 {
-            return Err(PngError::Decode(alloc::format!(
+            return Err(at!(PngError::Decode(alloc::format!(
                 "fcTL: invalid blend_op {blend_op}"
-            )));
+            ))));
         }
 
         Ok(Self {
@@ -143,12 +145,12 @@ pub(crate) struct PngAncillary {
 impl PngAncillary {
     /// Collect metadata from a single chunk. Returns true if this is an IDAT chunk
     /// (signals the caller to stop collecting pre-IDAT metadata).
-    pub fn collect(&mut self, chunk: &ChunkRef<'_>) -> Result<bool, PngError> {
+    pub fn collect(&mut self, chunk: &ChunkRef<'_>) -> crate::error::Result<bool> {
         match &chunk.chunk_type {
             b"IDAT" => return Ok(true),
             b"PLTE" => {
                 if !chunk.data.len().is_multiple_of(3) || chunk.data.is_empty() {
-                    return Err(PngError::Decode("invalid PLTE chunk length".into()));
+                    return Err(at!(PngError::Decode("invalid PLTE chunk length".into())));
                 }
                 self.palette = Some(chunk.data.to_vec());
             }
@@ -220,13 +222,13 @@ impl PngAncillary {
                     let num_frames = u32::from_be_bytes(chunk.data[0..4].try_into().unwrap());
                     let num_plays = u32::from_be_bytes(chunk.data[4..8].try_into().unwrap());
                     if num_frames == 0 {
-                        return Err(PngError::Decode("acTL: num_frames must be > 0".into()));
+                        return Err(at!(PngError::Decode("acTL: num_frames must be > 0".into())));
                     }
                     if num_frames > 65536 {
-                        return Err(PngError::LimitExceeded(alloc::format!(
+                        return Err(at!(PngError::LimitExceeded(alloc::format!(
                             "acTL: num_frames {} exceeds limit of 65536",
                             num_frames
-                        )));
+                        ))));
                     }
                     self.actl = Some((num_frames, num_plays));
                 }
@@ -270,25 +272,25 @@ impl PngAncillary {
     }
 
     /// Parse iCCP chunk: null-terminated profile name, compression method, compressed data.
-    fn parse_iccp(&mut self, data: &[u8]) -> Result<(), PngError> {
+    fn parse_iccp(&mut self, data: &[u8]) -> crate::error::Result<()> {
         // Find null terminator for profile name
         let null_pos = data
             .iter()
             .position(|&b| b == 0)
-            .ok_or_else(|| PngError::Decode("iCCP: missing profile name terminator".into()))?;
+            .ok_or_else(|| at!(PngError::Decode("iCCP: missing profile name terminator".into())))?;
 
         // Byte after null is compression method (must be 0 = zlib)
         if null_pos + 2 > data.len() {
-            return Err(PngError::Decode(
+            return Err(at!(PngError::Decode(
                 "iCCP: truncated after profile name".into(),
-            ));
+            )));
         }
         let compression_method = data[null_pos + 1];
         if compression_method != 0 {
-            return Err(PngError::Decode(alloc::format!(
+            return Err(at!(PngError::Decode(alloc::format!(
                 "iCCP: unknown compression method {}",
                 compression_method
-            )));
+            ))));
         }
 
         let compressed = &data[null_pos + 2..];
@@ -303,7 +305,7 @@ impl PngAncillary {
         let mut decompressor = zenflate::Decompressor::new();
         let outcome = decompressor
             .zlib_decompress(compressed, &mut output, Unstoppable)
-            .map_err(|e| PngError::Decode(alloc::format!("iCCP decompression failed: {e:?}")))?;
+            .map_err(|e| at!(PngError::Decode(alloc::format!("iCCP decompression failed: {e:?}"))))?;
         output.truncate(outcome.output_written);
         self.icc_profile = Some(output);
         Ok(())

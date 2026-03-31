@@ -541,7 +541,7 @@ pub fn encode_apng_auto(
     let mut worst_ba: Option<f32> = None;
 
     for (i, indices) in mf.frame_indices.iter().enumerate() {
-        cancel.check().map_err(PngError::from)?;
+        cancel.check().map_err(|e| at!(PngError::from(e)))?;
 
         let frame_pixels: &[Rgba<u8>] = bytemuck::cast_slice(&frames[i].pixels[..expected_len]);
         let frame_loss = compute_mean_delta_e(frame_pixels, &mf.palette_rgba, indices);

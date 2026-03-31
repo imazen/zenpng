@@ -5,6 +5,8 @@ use alloc::vec::Vec;
 use crate::chunk::ancillary::PngAncillary;
 use crate::chunk::ihdr::Ihdr;
 use crate::error::PngError;
+#[allow(unused_imports)]
+use whereat::at;
 
 use imgref::ImgVec;
 use rgb::{Gray, Rgb, Rgba};
@@ -439,7 +441,7 @@ pub(crate) fn build_pixel_data(
     pixels: Vec<u8>,
     w: usize,
     h: usize,
-) -> Result<PixelBuffer, PngError> {
+) -> crate::error::Result<PixelBuffer> {
     let w32 = w as u32;
     let h32 = h as u32;
     match (ihdr.color_type, ihdr.bit_depth, ancillary.trns.is_some()) {
@@ -457,7 +459,7 @@ pub(crate) fn build_pixel_data(
             // GrayAlpha16 now impls Pod; construct via raw bytes
             let ga_bytes: Vec<u8> = pixels;
             PixelBuffer::from_vec(ga_bytes, w as u32, h as u32, GrayAlpha16::DESCRIPTOR)
-                .map_err(|e| PngError::Decode(alloc::format!("{e}")))
+                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))
         }
         (0, _, false) if ihdr.bit_depth <= 8 => {
             let gray: Vec<Gray<u8>> = pixels.iter().map(|&g| Gray(g)).collect();
@@ -467,7 +469,7 @@ pub(crate) fn build_pixel_data(
             // Gray + tRNS → RGBA8
             let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);
             Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
-                .map_err(|e| PngError::Decode(alloc::format!("{e}")))?)
+                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))?)
         }
         // RGB
         (2, 16, false) => {
@@ -489,36 +491,36 @@ pub(crate) fn build_pixel_data(
         (2, 8, false) => {
             let rgb: Vec<Rgb<u8>> = bytemuck::cast_vec(pixels);
             Ok(PixelBuffer::from_pixels_erased(rgb, w32, h32)
-                .map_err(|e| PngError::Decode(alloc::format!("{e}")))?)
+                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))?)
         }
         (2, 8, true) => {
             let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);
             Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
-                .map_err(|e| PngError::Decode(alloc::format!("{e}")))?)
+                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))?)
         }
         // Indexed
         (3, _, true) => {
             let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);
             Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
-                .map_err(|e| PngError::Decode(alloc::format!("{e}")))?)
+                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))?)
         }
         (3, _, false) => {
             let rgb: Vec<Rgb<u8>> = bytemuck::cast_vec(pixels);
             Ok(PixelBuffer::from_pixels_erased(rgb, w32, h32)
-                .map_err(|e| PngError::Decode(alloc::format!("{e}")))?)
+                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))?)
         }
         // GrayAlpha
         (4, 16, _) => {
             // GrayAlpha16 now impls Pod; construct via raw bytes
             // pixels are already native-endian u16 pairs (v, a) = same layout as GrayAlpha16
             PixelBuffer::from_vec(pixels, w as u32, h as u32, GrayAlpha16::DESCRIPTOR)
-                .map_err(|e| PngError::Decode(alloc::format!("{e}")))
+                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))
         }
         (4, 8, _) => {
             // GA8 already expanded to RGBA8
             let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);
             Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
-                .map_err(|e| PngError::Decode(alloc::format!("{e}")))?)
+                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))?)
         }
         // RGBA
         (6, 16, _) => {
@@ -528,13 +530,13 @@ pub(crate) fn build_pixel_data(
         (6, 8, _) => {
             let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);
             Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
-                .map_err(|e| PngError::Decode(alloc::format!("{e}")))?)
+                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))?)
         }
-        _ => Err(PngError::Decode(alloc::format!(
+        _ => Err(at!(PngError::Decode(alloc::format!(
             "unsupported color_type={} bit_depth={}",
             ihdr.color_type,
             ihdr.bit_depth
-        ))),
+        )))),
     }
 }
 

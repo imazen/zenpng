@@ -10,6 +10,8 @@ use crate::chunk::ancillary::PngAncillary;
 use crate::chunk::ihdr::Ihdr;
 use crate::chunk::{ChunkIter, ChunkRef};
 use crate::error::PngError;
+#[allow(unused_imports)]
+use whereat::at;
 
 use super::postprocess::output_bytes_per_pixel;
 
@@ -272,7 +274,7 @@ pub(super) fn unfilter_row(
     row: &mut [u8],
     prev: &[u8],
     bpp: usize,
-) -> Result<(), PngError> {
+) -> crate::error::Result<()> {
     crate::simd::unfilter_row(filter_type, row, prev, bpp)
 }
 
@@ -306,10 +308,10 @@ impl<'a> RowDecoder<'a> {
     pub fn new(
         data: Cow<'a, [u8]>,
         config: &crate::decode::PngDecodeConfig,
-    ) -> Result<Self, PngError> {
+    ) -> crate::error::Result<Self> {
         // Validate signature
         if data.len() < 8 || data[..8] != crate::chunk::PNG_SIGNATURE {
-            return Err(PngError::Decode("not a PNG file".into()));
+            return Err(at!(PngError::Decode("not a PNG file".into())));
         }
 
         let mut chunks = ChunkIter::new_with_config(&data, config.skip_critical_chunk_crc);
@@ -317,9 +319,9 @@ impl<'a> RowDecoder<'a> {
         // First chunk must be IHDR
         let ihdr_chunk = chunks
             .next()
-            .ok_or_else(|| PngError::Decode("empty PNG (no chunks)".into()))??;
+            .ok_or_else(|| at!(PngError::Decode("empty PNG (no chunks)".into())))??;
         if ihdr_chunk.chunk_type != *b"IHDR" {
-            return Err(PngError::Decode("first chunk is not IHDR".into()));
+            return Err(at!(PngError::Decode("first chunk is not IHDR".into())));
         }
         let ihdr = Ihdr::parse(ihdr_chunk.data)?;
 
@@ -343,13 +345,13 @@ impl<'a> RowDecoder<'a> {
         let chunk_warnings = chunks.warnings;
 
         let first_idat_pos =
-            first_idat_pos.ok_or_else(|| PngError::Decode("no IDAT chunk found".into()))?;
+            first_idat_pos.ok_or_else(|| at!(PngError::Decode("no IDAT chunk found".into())))?;
 
         // Validate palette for indexed images
         if ihdr.is_indexed() && ancillary.palette.is_none() {
-            return Err(PngError::Decode(
+            return Err(at!(PngError::Decode(
                 "indexed color type requires PLTE chunk".into(),
-            ));
+            )));
         }
 
         // Apply limits
@@ -395,7 +397,7 @@ impl<'a> RowDecoder<'a> {
     }
 
     /// Yield the next unfiltered raw row, or None if all rows have been read.
-    pub fn next_raw_row(&mut self) -> Option<Result<&[u8], PngError>> {
+    pub fn next_raw_row(&mut self) -> Option<crate::error::Result<&[u8]>> {
         if self.rows_yielded >= self.ihdr.height {
             return None;
         }
@@ -441,7 +443,7 @@ impl<'a> RowDecoder<'a> {
         &mut self,
         dest: &mut [u8],
         prev: &[u8],
-    ) -> Option<Result<(), PngError>> {
+    ) -> Option<crate::error::Result<()>> {
         if self.rows_yielded >= self.ihdr.height {
             return None;
         }
@@ -471,7 +473,7 @@ impl<'a> RowDecoder<'a> {
     }
 
     /// Fill the decompressor until at least one full stride is available.
-    fn fill_stride(&mut self) -> Result<(), PngError> {
+    fn fill_stride(&mut self) -> crate::error::Result<()> {
         loop {
             let available = self.decompressor.peek().len();
             if available >= self.stride {
@@ -479,21 +481,21 @@ impl<'a> RowDecoder<'a> {
             }
             if self.decompressor.is_done() {
                 if available > 0 && available < self.stride {
-                    return Err(PngError::Decode(alloc::format!(
+                    return Err(at!(PngError::Decode(alloc::format!(
                         "truncated row data: got {} bytes, expected {} (row {})",
                         available,
                         self.stride,
                         self.rows_yielded
-                    )));
+                    ))));
                 }
                 return Ok(());
             }
             match self.decompressor.fill() {
                 Ok(_) => {}
                 Err(e) => {
-                    return Err(PngError::Decode(alloc::format!(
+                    return Err(at!(PngError::Decode(alloc::format!(
                         "decompression error: {e:?}"
-                    )));
+                    ))));
                 }
             }
         }

@@ -10,6 +10,8 @@ use crate::chunk::ancillary::PngAncillary;
 use crate::chunk::ihdr::Ihdr;
 use crate::chunk::{ChunkIter, ChunkRef, PNG_SIGNATURE};
 use crate::error::PngError;
+#[allow(unused_imports)]
+use whereat::at;
 
 use super::postprocess::{OutputFormat, post_process_row};
 use super::row::{IdatSource, unfilter_row};
@@ -58,11 +60,11 @@ pub(crate) fn decode_interlaced(
         OutputFormat,
         Vec<crate::decode::PngWarning>,
     ),
-    PngError,
+    whereat::At<PngError>,
 > {
     // Validate signature
     if data.len() < 8 || data[..8] != PNG_SIGNATURE {
-        return Err(PngError::Decode("not a PNG file".into()));
+        return Err(at!(PngError::Decode("not a PNG file".into())));
     }
 
     let mut chunks = ChunkIter::new_with_config(data, config.skip_critical_chunk_crc);
@@ -70,9 +72,9 @@ pub(crate) fn decode_interlaced(
     // Parse IHDR
     let ihdr_chunk = chunks
         .next()
-        .ok_or_else(|| PngError::Decode("empty PNG".into()))??;
+        .ok_or_else(|| at!(PngError::Decode("empty PNG".into())))??;
     if ihdr_chunk.chunk_type != *b"IHDR" {
-        return Err(PngError::Decode("first chunk is not IHDR".into()));
+        return Err(at!(PngError::Decode("first chunk is not IHDR".into())));
     }
     let ihdr = Ihdr::parse(ihdr_chunk.data)?;
 
@@ -92,12 +94,12 @@ pub(crate) fn decode_interlaced(
     let mut decode_warnings = chunks.warnings;
 
     let first_idat_pos =
-        first_idat_pos.ok_or_else(|| PngError::Decode("no IDAT chunk found".into()))?;
+        first_idat_pos.ok_or_else(|| at!(PngError::Decode("no IDAT chunk found".into())))?;
 
     if ihdr.is_indexed() && ancillary.palette.is_none() {
-        return Err(PngError::Decode(
+        return Err(at!(PngError::Decode(
             "indexed color type requires PLTE chunk".into(),
-        ));
+        )));
     }
 
     let fmt = OutputFormat::from_ihdr(&ihdr, &ancillary);
@@ -144,7 +146,7 @@ pub(crate) fn decode_interlaced(
         let mut row_buf = Vec::new();
 
         for pass_y in 0..ph as usize {
-            cancel.check()?;
+            cancel.check().map_err(|e| at!(PngError::from(e)))?;
             // Fill decompressor until we have a full stride
             loop {
                 let available = decompressor.peek().len();
@@ -152,14 +154,14 @@ pub(crate) fn decode_interlaced(
                     break;
                 }
                 if decompressor.is_done() {
-                    return Err(PngError::Decode(alloc::format!(
+                    return Err(at!(PngError::Decode(alloc::format!(
                         "truncated interlaced data in pass {}",
                         pass + 1
-                    )));
+                    ))));
                 }
                 decompressor
                     .fill()
-                    .map_err(|e| PngError::Decode(alloc::format!("decompression error: {e:?}")))?;
+                    .map_err(|e| at!(PngError::Decode(alloc::format!("decompression error: {e:?}"))))?;
             }
 
             let peeked = decompressor.peek();

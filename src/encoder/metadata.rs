@@ -8,6 +8,8 @@ use zenflate::{CompressionLevel, Compressor, Unstoppable};
 use crate::chunk::write::write_chunk;
 use crate::decode::{PhysUnit, PngChromaticities, PngTime, TextChunk};
 use crate::error::PngError;
+#[allow(unused_imports)]
+use whereat::at;
 
 /// All metadata to embed when writing a PNG file.
 ///
@@ -81,7 +83,7 @@ impl<'a> PngWriteMetadata<'a> {
 pub(crate) fn write_all_metadata(
     out: &mut Vec<u8>,
     meta: &PngWriteMetadata<'_>,
-) -> Result<(), PngError> {
+) -> crate::error::Result<()> {
     let has_cicp = meta.cicp.is_some();
     let has_iccp = meta.generic.is_some_and(|g| g.icc_profile.is_some());
     let has_srgb = meta.srgb_intent.is_some();
@@ -238,7 +240,7 @@ fn write_clli_chunk(out: &mut Vec<u8>, clli: &ContentLightLevel) {
     write_chunk(out, b"cLLI", &data);
 }
 
-fn write_iccp_chunk(out: &mut Vec<u8>, icc_profile: &[u8]) -> Result<(), PngError> {
+fn write_iccp_chunk(out: &mut Vec<u8>, icc_profile: &[u8]) -> crate::error::Result<()> {
     // iCCP: keyword "ICC Profile" + null + compression_method(0) + zlib-compressed profile
     let keyword = b"ICC Profile\0";
     let compression_method = [0u8]; // zlib
@@ -250,7 +252,7 @@ fn write_iccp_chunk(out: &mut Vec<u8>, icc_profile: &[u8]) -> Result<(), PngErro
     let mut compressed = vec![0u8; bound];
     let compressed_len = compressor
         .zlib_compress(icc_profile, &mut compressed, Unstoppable)
-        .map_err(|e| PngError::InvalidInput(alloc::format!("ICC compression failed: {e}")))?;
+        .map_err(|e| at!(PngError::InvalidInput(alloc::format!("ICC compression failed: {e}"))))?;
 
     let mut chunk_data = Vec::with_capacity(keyword.len() + 1 + compressed_len);
     chunk_data.extend_from_slice(keyword);

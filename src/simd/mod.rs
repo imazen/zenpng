@@ -9,6 +9,8 @@ mod sub;
 mod up;
 
 use crate::error::PngError;
+#[allow(unused_imports)]
+use whereat::at;
 
 /// Expose the raw unfilter dispatch for benchmarking.
 #[cfg(feature = "_dev")]
@@ -28,7 +30,7 @@ pub(crate) fn unfilter_row(
     row: &mut [u8],
     prev: &[u8],
     bpp: usize,
-) -> Result<(), PngError> {
+) -> crate::error::Result<()> {
     match filter_type {
         0 => Ok(()),
         1 => {
@@ -47,9 +49,9 @@ pub(crate) fn unfilter_row(
             paeth::unfilter_paeth(row, prev, bpp);
             Ok(())
         }
-        _ => Err(PngError::Decode(alloc::format!(
+        _ => Err(at!(PngError::Decode(alloc::format!(
             "unknown filter type {}",
             filter_type
-        ))),
+        )))),
     }
 }

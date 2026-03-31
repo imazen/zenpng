@@ -7,6 +7,8 @@ use zencodec::{Cicp, ContentLightLevel, MasteringDisplay};
 use zenpixels::PixelBuffer;
 
 use crate::error::PngError;
+#[allow(unused_imports)]
+use whereat::at;
 
 /// Physical pixel dimensions unit (pHYs chunk).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -304,19 +306,19 @@ impl PngDecodeConfig {
         width: u32,
         height: u32,
         bytes_per_pixel: u32,
-    ) -> Result<(), PngError> {
+    ) -> crate::error::Result<()> {
         if let Some(max_px) = self.max_pixels {
             let pixels = width as u64 * height as u64;
             if pixels > max_px {
-                return Err(PngError::LimitExceeded("pixel count exceeds limit".into()));
+                return Err(at!(PngError::LimitExceeded("pixel count exceeds limit".into())));
             }
         }
         if let Some(max_mem) = self.max_memory_bytes {
             let estimated = width as u64 * height as u64 * bytes_per_pixel as u64;
             if estimated > max_mem {
-                return Err(PngError::LimitExceeded(
+                return Err(at!(PngError::LimitExceeded(
                     "estimated memory exceeds limit".into(),
-                ));
+                )));
             }
         }
         Ok(())

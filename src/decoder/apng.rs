@@ -12,6 +12,8 @@ use crate::chunk::ancillary::{FrameControl, PngAncillary};
 use crate::chunk::ihdr::Ihdr;
 use crate::decode::{PngDecodeConfig, PngWarning};
 use crate::error::PngError;
+#[allow(unused_imports)]
+use whereat::at;
 
 use super::postprocess::{OutputFormat, build_pixel_data, post_process_row};
 use super::row::{FdatSource, IdatSource, unfilter_row};
@@ -84,16 +86,16 @@ pub(crate) struct ApngDecoder<'a> {
 
 impl<'a> ApngDecoder<'a> {
     /// Create a new APNG decoder from PNG file bytes.
-    pub fn new(data: &'a [u8], config: &PngDecodeConfig) -> Result<Self, PngError> {
+    pub fn new(data: &'a [u8], config: &PngDecodeConfig) -> crate::error::Result<Self> {
         if data.len() < 8 || data[..8] != PNG_SIGNATURE {
-            return Err(PngError::Decode("not a PNG file".into()));
+            return Err(at!(PngError::Decode("not a PNG file".into())));
         }
 
         // Parse IHDR
         let (_, ihdr_type, ihdr_data_start, ihdr_crc_end) = read_chunk_header(data, 8)
-            .ok_or_else(|| PngError::Decode("truncated IHDR chunk".into()))?;
+            .ok_or_else(|| at!(PngError::Decode("truncated IHDR chunk".into())))?;
         if ihdr_type != *b"IHDR" {
-            return Err(PngError::Decode("first chunk is not IHDR".into()));
+            return Err(at!(PngError::Decode("first chunk is not IHDR".into())));
         }
         let ihdr_length = u32::from_be_bytes(data[8..12].try_into().unwrap()) as usize;
         let ihdr = Ihdr::parse(&data[ihdr_data_start..ihdr_data_start + ihdr_length])?;
@@ -160,17 +162,17 @@ impl<'a> ApngDecoder<'a> {
         }
 
         let first_idat_pos =
-            first_idat_pos.ok_or_else(|| PngError::Decode("no IDAT chunk found".into()))?;
+            first_idat_pos.ok_or_else(|| at!(PngError::Decode("no IDAT chunk found".into())))?;
 
         let (num_frames, num_plays) = ancillary
             .actl
-            .ok_or_else(|| PngError::Decode("APNG: no acTL chunk found".into()))?;
+            .ok_or_else(|| at!(PngError::Decode("APNG: no acTL chunk found".into())))?;
 
         // Validate palette for indexed images
         if ihdr.is_indexed() && ancillary.palette.is_none() {
-            return Err(PngError::Decode(
+            return Err(at!(PngError::Decode(
                 "indexed color type requires PLTE chunk".into(),
-            ));
+            )));
         }
 
         Ok(Self {
@@ -222,7 +224,7 @@ impl<'a> ApngDecoder<'a> {
     }
 
     /// Decode the next frame. Returns `None` when all frames have been yielded.
-    pub fn next_frame(&mut self, cancel: &dyn Stop) -> Result<Option<RawFrame>, PngError> {
+    pub fn next_frame(&mut self, cancel: &dyn Stop) -> crate::error::Result<Option<RawFrame>> {
         if self.current_frame >= self.num_frames {
             return Ok(None);
         }
@@ -234,7 +236,7 @@ impl<'a> ApngDecoder<'a> {
             // Frame 0 uses IDAT data
             let fctl = self
                 .frame0_fctl
-                .ok_or_else(|| PngError::Decode("APNG: frame 0 missing fcTL".into()))?;
+                .ok_or_else(|| at!(PngError::Decode("APNG: frame 0 missing fcTL".into())))?;
             let pixels = self.decode_idat_frame(&fctl, cancel)?;
             return Ok(Some(RawFrame { pixels, fctl }));
         }
@@ -258,7 +260,7 @@ impl<'a> ApngDecoder<'a> {
         &self,
         fctl: &FrameControl,
         cancel: &dyn Stop,
-    ) -> Result<PixelBuffer, PngError> {
+    ) -> crate::error::Result<PixelBuffer> {
         // For frame 0, the IDAT data covers the full canvas (IHDR dimensions).
         // The fcTL for frame 0 must have the same dimensions as IHDR.
         let frame_ihdr = Ihdr {
@@ -293,7 +295,7 @@ impl<'a> ApngDecoder<'a> {
         let mut row_buf = Vec::new();
 
         for _y in 0..h {
-            cancel.check()?;
+            cancel.check().map_err(|e| at!(PngError::from(e)))?;
             // Fill until we have a stride
             loop {
                 let available = decompressor.peek().len();
@@ -301,10 +303,10 @@ impl<'a> ApngDecoder<'a> {
                     break;
                 }
                 if decompressor.is_done() {
-                    return Err(PngError::Decode("APNG: truncated IDAT data".into()));
+                    return Err(at!(PngError::Decode("APNG: truncated IDAT data".into())));
                 }
                 decompressor.fill().map_err(|e| {
-                    PngError::Decode(alloc::format!("APNG IDAT decompression error: {e:?}"))
+                    at!(PngError::Decode(alloc::format!("APNG IDAT decompression error: {e:?}")))
                 })?;
             }
 
@@ -335,20 +337,20 @@ impl<'a> ApngDecoder<'a> {
 
     /// Scan from `self.chunk_pos` to find the next fcTL followed by fdAT.
     /// Returns the FrameControl and the byte offset of the first fdAT chunk.
-    fn find_next_fctl_fdat(&mut self) -> Result<(FrameControl, usize), PngError> {
+    fn find_next_fctl_fdat(&mut self) -> crate::error::Result<(FrameControl, usize)> {
         let data = self.file_data;
         let mut pos = self.chunk_pos;
 
         loop {
             let (length, chunk_type, data_start, crc_end) = read_chunk_header(data, pos)
                 .ok_or_else(|| {
-                    PngError::Decode("APNG: unexpected end of file scanning for fcTL".into())
+                    at!(PngError::Decode("APNG: unexpected end of file scanning for fcTL".into()))
                 })?;
 
             if chunk_type == *b"IEND" {
-                return Err(PngError::Decode(
+                return Err(at!(PngError::Decode(
                     "APNG: reached IEND before finding expected fcTL".into(),
-                ));
+                )));
             }
 
             if chunk_type == *b"fcTL" {
@@ -372,7 +374,7 @@ impl<'a> ApngDecoder<'a> {
         &mut self,
         fctl: &FrameControl,
         cancel: &dyn Stop,
-    ) -> Result<PixelBuffer, PngError> {
+    ) -> crate::error::Result<PixelBuffer> {
         let frame_ihdr = Ihdr {
             width: fctl.width,
             height: fctl.height,
@@ -406,17 +408,17 @@ impl<'a> ApngDecoder<'a> {
         let mut row_buf = Vec::new();
 
         for _y in 0..h {
-            cancel.check()?;
+            cancel.check().map_err(|e| at!(PngError::from(e)))?;
             loop {
                 let available = decompressor.peek().len();
                 if available >= stride {
                     break;
                 }
                 if decompressor.is_done() {
-                    return Err(PngError::Decode("APNG: truncated fdAT data".into()));
+                    return Err(at!(PngError::Decode("APNG: truncated fdAT data".into())));
                 }
                 decompressor.fill().map_err(|e| {
-                    PngError::Decode(alloc::format!("APNG fdAT decompression error: {e:?}"))
+                    at!(PngError::Decode(alloc::format!("APNG fdAT decompression error: {e:?}")))
                 })?;
             }
 
@@ -477,7 +479,7 @@ pub(crate) fn decode_apng_composed(
     data: &[u8],
     config: &PngDecodeConfig,
     cancel: &dyn Stop,
-) -> Result<ComposedApng, PngError> {
+) -> crate::error::Result<ComposedApng> {
     let mut decoder = ApngDecoder::new(data, config)?;
     let canvas_w = decoder.ihdr().width as usize;
     let canvas_h = decoder.ihdr().height as usize;
@@ -490,7 +492,7 @@ pub(crate) fn decode_apng_composed(
     let canvas_bytes = canvas_w
         .checked_mul(canvas_h)
         .and_then(|v| v.checked_mul(bpp))
-        .ok_or_else(|| PngError::LimitExceeded("canvas size overflow".into()))?;
+        .ok_or_else(|| at!(PngError::LimitExceeded("canvas size overflow".into())))?;
 
     let num_frames = decoder.num_frames;
     let num_plays = decoder.num_plays;

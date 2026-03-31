@@ -1,6 +1,8 @@
 //! IHDR chunk parsing and validation.
 
 use crate::error::PngError;
+#[allow(unused_imports)]
+use whereat::at;
 
 /// PNG spec maximum dimension: 2^31 - 1.
 const PNG_MAX_DIMENSION: u32 = 0x7FFF_FFFF;
@@ -18,12 +20,12 @@ pub(crate) struct Ihdr {
 
 impl Ihdr {
     /// Parse IHDR from chunk data (must be exactly 13 bytes).
-    pub fn parse(data: &[u8]) -> Result<Self, PngError> {
+    pub fn parse(data: &[u8]) -> crate::error::Result<Self> {
         if data.len() != 13 {
-            return Err(PngError::Decode(alloc::format!(
+            return Err(at!(PngError::Decode(alloc::format!(
                 "IHDR chunk is {} bytes, expected 13",
                 data.len()
-            )));
+            ))));
         }
 
         let width = u32::from_be_bytes(data[0..4].try_into().unwrap());
@@ -35,35 +37,35 @@ impl Ihdr {
         let interlace = data[12];
 
         if width == 0 || height == 0 {
-            return Err(PngError::Decode("IHDR: zero dimension".into()));
+            return Err(at!(PngError::Decode("IHDR: zero dimension".into())));
         }
 
         if width > PNG_MAX_DIMENSION || height > PNG_MAX_DIMENSION {
-            return Err(PngError::Decode(alloc::format!(
+            return Err(at!(PngError::Decode(alloc::format!(
                 "IHDR: dimension {}x{} exceeds PNG maximum of {}",
                 width,
                 height,
                 PNG_MAX_DIMENSION
-            )));
+            ))));
         }
 
         if compression != 0 {
-            return Err(PngError::Decode(alloc::format!(
+            return Err(at!(PngError::Decode(alloc::format!(
                 "IHDR: unknown compression method {}",
                 compression
-            )));
+            ))));
         }
         if filter != 0 {
-            return Err(PngError::Decode(alloc::format!(
+            return Err(at!(PngError::Decode(alloc::format!(
                 "IHDR: unknown filter method {}",
                 filter
-            )));
+            ))));
         }
         if interlace > 1 {
-            return Err(PngError::Decode(alloc::format!(
+            return Err(at!(PngError::Decode(alloc::format!(
                 "IHDR: unknown interlace method {}",
                 interlace
-            )));
+            ))));
         }
 
         let ihdr = Self {
@@ -79,7 +81,7 @@ impl Ihdr {
 
     /// Validate color_type / bit_depth combination per PNG spec,
     /// and ensure row byte computation won't overflow `usize`.
-    fn validate(&self) -> Result<(), PngError> {
+    fn validate(&self) -> crate::error::Result<()> {
         let valid = match self.color_type {
             0 => matches!(self.bit_depth, 1 | 2 | 4 | 8 | 16), // Grayscale
             2 => matches!(self.bit_depth, 8 | 16),             // RGB
@@ -89,11 +91,11 @@ impl Ihdr {
             _ => false,
         };
         if !valid {
-            return Err(PngError::Decode(alloc::format!(
+            return Err(at!(PngError::Decode(alloc::format!(
                 "invalid color_type={} bit_depth={} combination",
                 self.color_type,
                 self.bit_depth
-            )));
+            ))));
         }
 
         // Verify that bits_per_row = width * channels * bit_depth fits in usize
@@ -108,14 +110,14 @@ impl Ihdr {
         match row_bytes {
             Some(bytes) if usize::try_from(bytes).is_ok() => {}
             _ => {
-                return Err(PngError::LimitExceeded(alloc::format!(
+                return Err(at!(PngError::LimitExceeded(alloc::format!(
                     "IHDR: row size overflow for {}x{} color_type={} bit_depth={} \
                      (row bytes would exceed platform address space)",
                     self.width,
                     self.height,
                     self.color_type,
                     self.bit_depth
-                )));
+                ))));
             }
         }
 
@@ -147,27 +149,27 @@ impl Ihdr {
     /// Returns an error if the computation overflows `usize`. This cannot
     /// happen for IHDR values that passed through [`Ihdr::parse`], which
     /// validates that row bytes fit in `usize`.
-    pub fn raw_row_bytes(&self) -> Result<usize, PngError> {
+    pub fn raw_row_bytes(&self) -> crate::error::Result<usize> {
         let bits_per_row = (self.width as u64)
             .checked_mul(self.channels() as u64)
             .and_then(|v| v.checked_mul(self.bit_depth as u64))
             .ok_or_else(|| {
-                PngError::LimitExceeded(alloc::format!(
+                at!(PngError::LimitExceeded(alloc::format!(
                     "bits_per_row overflow for width={} channels={} bit_depth={}",
                     self.width,
                     self.channels(),
                     self.bit_depth
-                ))
+                )))
             })?;
         let row_bytes = bits_per_row
             .checked_add(7)
             .map(|v| v / 8)
-            .ok_or_else(|| PngError::LimitExceeded("row_bytes overflow during rounding".into()))?;
+            .ok_or_else(|| at!(PngError::LimitExceeded("row_bytes overflow during rounding".into())))?;
         usize::try_from(row_bytes).map_err(|_| {
-            PngError::LimitExceeded(alloc::format!(
+            at!(PngError::LimitExceeded(alloc::format!(
                 "row_bytes {} exceeds platform address space",
                 row_bytes
-            ))
+            )))
         })
     }
 
@@ -175,10 +177,10 @@ impl Ihdr {
     ///
     /// Returns an error if the computation overflows `usize`. See
     /// [`raw_row_bytes`](Self::raw_row_bytes).
-    pub fn stride(&self) -> Result<usize, PngError> {
+    pub fn stride(&self) -> crate::error::Result<usize> {
         self.raw_row_bytes()?
             .checked_add(1)
-            .ok_or_else(|| PngError::LimitExceeded("stride overflow".into()))
+            .ok_or_else(|| at!(PngError::LimitExceeded("stride overflow".into())))
     }
 
     /// Whether the image uses sub-8-bit depth (1, 2, or 4).

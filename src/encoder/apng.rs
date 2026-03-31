@@ -9,6 +9,8 @@ use crate::chunk::write::write_chunk;
 use crate::encode::ApngFrameInput;
 use crate::encoder::metadata::{PngWriteMetadata, metadata_size_estimate, write_all_metadata};
 use crate::error::PngError;
+#[allow(unused_imports)]
+use whereat::at;
 
 use super::CompressOptions;
 use super::compress::compress_filtered;
@@ -109,7 +111,7 @@ fn trial_compress_size(
     height: usize,
     bpp: usize,
     cancel: &dyn Stop,
-) -> Result<usize, PngError> {
+) -> crate::error::Result<usize> {
     let opts = CompressOptions {
         parallel: false,
         cancel,
@@ -449,7 +451,7 @@ fn optimize_apng_truecolor(
     canvas_h: u32,
     bpp: usize,
     cancel: &dyn Stop,
-) -> Result<Vec<OptimizedFrame>, PngError> {
+) -> crate::error::Result<Vec<OptimizedFrame>> {
     let w = canvas_w as usize;
     let h = canvas_h as usize;
     let npx = w * h;
@@ -458,7 +460,7 @@ fn optimize_apng_truecolor(
     let mut canvas = vec![0u8; npx * bpp]; // transparent initial canvas
 
     for i in 0..frames.len() {
-        cancel.check()?;
+        cancel.check().map_err(|e| at!(PngError::from(e)))?;
 
         let target = frame_data[i];
 
@@ -668,7 +670,7 @@ fn lookahead_next_frame_size(
     w: usize,
     bpp: usize,
     cancel: &dyn Stop,
-) -> Result<usize, PngError> {
+) -> crate::error::Result<usize> {
     let next_region = compute_delta_region(canvas, next_target, canvas_w, canvas_h, bpp);
 
     if next_region.is_none() {
@@ -707,7 +709,7 @@ fn optimize_apng_indexed(
     canvas_w: u32,
     canvas_h: u32,
     cancel: &dyn Stop,
-) -> Result<Vec<OptimizedFrame>, PngError> {
+) -> crate::error::Result<Vec<OptimizedFrame>> {
     let w = canvas_w as usize;
     let h = canvas_h as usize;
     let bpp = 1usize;
@@ -720,7 +722,7 @@ fn optimize_apng_indexed(
     let mut canvas = vec![0u8; npx]; // initial canvas (index 0)
 
     for i in 0..frame_indices.len() {
-        cancel.check()?;
+        cancel.check().map_err(|e| at!(PngError::from(e)))?;
 
         let target = &frame_indices[i];
 
@@ -908,7 +910,7 @@ fn lookahead_next_frame_size_indexed(
     transparent_idx: Option<u8>,
     palette_rgba: &[[u8; 4]],
     cancel: &dyn Stop,
-) -> Result<usize, PngError> {
+) -> crate::error::Result<usize> {
     let bpp = 1usize;
     let next_region = compute_delta_region_indexed(canvas, next_target, canvas_w, canvas_h);
 
@@ -1032,7 +1034,7 @@ pub(crate) fn encode_apng_truecolor(
     effort: u32,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let num_frames = frames.len() as u32;
     let expected_rgba = canvas_width as usize * canvas_height as usize * 4;
 
@@ -1093,7 +1095,7 @@ pub(crate) fn encode_apng_truecolor(
     if let Some(ref opt_frames) = optimized {
         // ── Optimized path: use per-frame dispose/blend from optimizer ──
         for (i, opt) in opt_frames.iter().enumerate() {
-            cancel.check()?;
+            cancel.check().map_err(|e| at!(PngError::from(e)))?;
 
             let frame = &frames[i];
             let fctl_seq = seq.next();
@@ -1182,7 +1184,7 @@ pub(crate) fn encode_apng_truecolor(
 
         // Frames 1+: fcTL + fdAT with delta regions
         for i in 1..frames.len() {
-            cancel.check()?;
+            cancel.check().map_err(|e| at!(PngError::from(e)))?;
 
             let prev = frame_data[i - 1];
             let curr = frame_data[i];
@@ -1320,7 +1322,7 @@ pub(crate) fn encode_apng_indexed_from_indices(
     effort: u32,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
-) -> Result<Vec<u8>, PngError> {
+) -> crate::error::Result<Vec<u8>> {
     let num_frames = frames.len() as u32;
     let n_colors = palette_rgba.len();
 
@@ -1397,7 +1399,7 @@ pub(crate) fn encode_apng_indexed_from_indices(
     if let Some(ref opt_frames) = optimized {
         // ── Optimized path ──
         for (i, opt) in opt_frames.iter().enumerate() {
-            cancel.check()?;
+            cancel.check().map_err(|e| at!(PngError::from(e)))?;
 
             let frame = &frames[i];
             let (region_w, region_h, region_x, region_y) = if i == 0 {
@@ -1459,7 +1461,7 @@ pub(crate) fn encode_apng_indexed_from_indices(
     } else {
         // ── Unoptimized path ──
         for (i, frame) in frames.iter().enumerate() {
-            cancel.check()?;
+            cancel.check().map_err(|e| at!(PngError::from(e)))?;
 
             let curr_indices = &frame_indices[i];
 
