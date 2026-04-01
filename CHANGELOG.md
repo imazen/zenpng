@@ -2,7 +2,7 @@
 
 All notable changes to zenpng are documented here.
 
-## [Unreleased]
+## [0.1.2] - 2026-04-01
 
 ### Streaming Encode (zencodec `Encoder` trait)
 
