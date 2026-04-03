@@ -62,6 +62,46 @@ jobs:
       - name: Test (i686)
         run: cross test --target i686-unknown-linux-gnu
 
+  wasm:
+    name: Test (wasm32)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm32
+
+      - name: Install wasmtime
+        run: |
+          curl https://wasmtime.dev/install.sh -sSf | bash
+          echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
+
+      - name: Test (default features, WASM SIMD128)
+        env:
+          RUSTFLAGS: "-C target-feature=+simd128"
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --dir ."
+        run: cargo test --lib --target wasm32-wasip1
+
+      - name: Test (no default features)
+        env:
+          RUSTFLAGS: "-C target-feature=+simd128"
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --dir ."
+        run: cargo test --lib --target wasm32-wasip1 --no-default-features
+
+      - name: Test (all quantizer backends)
+        env:
+          RUSTFLAGS: "-C target-feature=+simd128"
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --dir ."
+        run: cargo test --lib --target wasm32-wasip1 --features "quantize,quantette"
+
+      - name: Test (without SIMD128, scalar fallback)
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --dir ."
+        run: cargo test --lib --target wasm32-wasip1
+
   feature-permutations:
     name: Feature permutations
     runs-on: ubuntu-latest

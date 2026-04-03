@@ -2340,6 +2340,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // uses parallel thread::scope
     fn compress_filtered_parallel() {
         let data = vec![128u8; 12 * 4];
         let opts = super::super::CompressOptions {

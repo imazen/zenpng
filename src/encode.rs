@@ -1133,6 +1133,7 @@ mod tests {
     // ── Parallel encoding ───────────────────────────────────────────
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // uses parallel threading
     fn parallel_encoding_produces_valid_png() {
         let (pixels, w, h) = small_rgb_image();
         let img = Img::new(pixels, w, h);
@@ -1318,6 +1319,7 @@ mod tests {
     // ── High effort on tiny data (brute-force, fork, beam paths) ────
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // recompression uses thread::scope
     fn roundtrip_effort_24_intense_rgba() {
         let (pixels, w, h) = small_rgba_image();
         let img = Img::new(pixels, w, h);
@@ -1331,6 +1333,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // recompression uses thread::scope
     fn roundtrip_effort_27_crush() {
         let (pixels, w, h) = small_rgb_image();
         let img = Img::new(pixels, w, h);
@@ -1342,6 +1345,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // recompression uses thread::scope
     fn roundtrip_effort_30_maniac() {
         let (pixels, w, h) = small_rgb_image();
         let img = Img::new(pixels, w, h);
@@ -1353,6 +1357,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // recompression uses thread::scope
     fn roundtrip_effort_31_brag() {
         let (pixels, w, h) = small_rgb_image();
         let img = Img::new(pixels, w, h);

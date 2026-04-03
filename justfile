@@ -32,6 +32,11 @@ ci: fmt
     cargo test --all-features
     cargo doc --no-deps --all-features
 
+# Run WASM tests (requires wasm32-wasip1 target and wasmtime)
+wasm:
+    RUSTFLAGS="-C target-feature=+simd128" CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --dir ." cargo test --lib --target wasm32-wasip1
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --dir ." cargo test --lib --target wasm32-wasip1
+
 # Feature permutation checks (includes path-dep features that CI skips)
 feature-check:
     cargo test

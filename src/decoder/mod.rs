@@ -750,6 +750,7 @@ mod tests {
 
     /// Regression test: decode all local Tier 1 fixtures from tests/regression/.
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn regression_fixtures_decode() {
         let fixture_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/regression");
         assert!(
@@ -841,6 +842,7 @@ mod tests {
     /// Compare our decoder's pixel output against the reference png crate
     /// for every PNGSuite file, fetched via codec-corpus.
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn pngsuite_comparison() {
         let corpus = match codec_corpus::Corpus::new() {
             Ok(c) => c,
@@ -938,6 +940,7 @@ mod tests {
     /// Compare our decoder against the reference png crate on the
     /// png-conformance corpus.
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn png_conformance_corpus() {
         let corpus = match codec_corpus::Corpus::new() {
             Ok(c) => c,
@@ -2279,6 +2282,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn badadler_fixture_rejected_with_strict() {
         let path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/regression/badadler.png");
@@ -2295,6 +2299,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn badadler_fixture_accepted_by_default() {
         let path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/regression/badadler.png");
@@ -2682,6 +2687,7 @@ mod tests {
     // ── High effort encode+decode (exercises brute-force compress paths) ──
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // recompression uses thread::scope
     fn roundtrip_rgb8_effort_24_intense() {
         let pixels: Vec<Rgb<u8>> = (0..64)
             .map(|i| Rgb {
@@ -2711,6 +2717,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // recompression uses thread::scope
     fn roundtrip_rgba8_effort_27_crush() {
         let pixels: Vec<Rgba<u8>> = (0..64)
             .map(|i| Rgba {
@@ -2740,6 +2747,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // spawns a thread for larger stack
     fn roundtrip_gray8_effort_30_maniac() {
         // Run in a thread with an explicit 16 MiB stack to avoid stack
         // overflow on platforms where the default test-thread stack is

@@ -33,11 +33,14 @@ almost-enough = { version = "0.4.3", features = ["std"] }
 
 [dev-dependencies]
 png = "0.18"
-codec-corpus = "1.0.2"
 flate2 = "1"
-libdeflater = "1.25"
 miniz_oxide = "0.9.1"
 zopfli = "0.8"
+
+# These dev-deps don't compile for wasm32 (C bindings or unsupported platform deps)
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+codec-corpus = "1.0.2"
+libdeflater = "1.25"
 lodepng = "3.12.2"
 
 [profile.test]

@@ -1784,6 +1784,7 @@ mod tests {
     /// which contains a ~9MB NearOptimalState with `unchecked`. This must not
     /// overflow the default 8MB thread stack, even from a deep call chain.
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // spawns a thread for larger stack
     fn filter_image_beam_near_optimal_does_not_overflow_stack() {
         // Consume ~2MB of stack before calling beam search, simulating the
         // real encode path (encode_rgb8 → write_truecolor_png →
