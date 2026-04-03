@@ -917,13 +917,17 @@ mod tests {
 
     fn roundtrip_rgb(config: &EncodeConfig) {
         let (pixels, w, h) = small_rgb_image();
-        let img = Img::new(pixels, w, h);
+        let img = Img::new(pixels.clone(), w, h);
         let encoded = encode_rgb8(img.as_ref(), None, config, &Unstoppable, &Unstoppable).unwrap();
         assert!(encoded[..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
         let decoded =
             crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
         assert_eq!(decoded.info.width, w as u32);
         assert_eq!(decoded.info.height, h as u32);
+        // Pixel-perfect verification
+        let raw = decoded.pixels.copy_to_contiguous_bytes();
+        let expected: Vec<u8> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        assert_eq!(raw, expected);
     }
 
     #[test]
@@ -959,19 +963,32 @@ mod tests {
     #[test]
     fn roundtrip_rgba_with_transparency() {
         let (pixels, w, h) = small_rgba_image();
-        let img = Img::new(pixels, w, h);
+        let img = Img::new(pixels.clone(), w, h);
         let config = EncodeConfig::default().with_compression(Compression::Fast);
         let encoded =
             encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
         let decoded =
             crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
         assert_eq!(decoded.info.width, w as u32);
+        assert!(decoded.info.has_alpha);
+        // Verify pixels: opaque pixels exact, transparent pixels preserve alpha
+        let raw = decoded.pixels.copy_to_contiguous_bytes();
+        assert_eq!(raw.len(), w * h * 4);
+        for (i, px) in pixels.iter().enumerate() {
+            let off = i * 4;
+            if px.a == 255 {
+                assert_eq!(raw[off], px.r, "pixel {i} R");
+                assert_eq!(raw[off + 1], px.g, "pixel {i} G");
+                assert_eq!(raw[off + 2], px.b, "pixel {i} B");
+            }
+            assert_eq!(raw[off + 3], px.a, "pixel {i} A");
+        }
     }
 
     #[test]
     fn roundtrip_gray8() {
         let pixels: Vec<Gray<u8>> = (0..32).map(|i| Gray(i * 8)).collect();
-        let img = Img::new(pixels, 8, 4);
+        let img = Img::new(pixels.clone(), 8, 4);
         let config = EncodeConfig::default().with_compression(Compression::Fast);
         let encoded =
             encode_gray8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
@@ -979,61 +996,90 @@ mod tests {
             crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
         assert_eq!(decoded.info.width, 8);
         assert!(!decoded.info.has_alpha);
+        let raw = decoded.pixels.copy_to_contiguous_bytes();
+        let expected: Vec<u8> = pixels.iter().map(|p| p.value()).collect();
+        assert_eq!(raw, expected);
     }
 
     #[test]
     fn roundtrip_rgb16() {
         let pixels: Vec<Rgb<u16>> = (0..32)
             .map(|i| Rgb {
-                r: i * 2048,
-                g: i * 1024,
-                b: i * 512,
+                r: i * 2048 + 1,
+                g: i * 1024 + 3,
+                b: i * 512 + 7,
             })
             .collect();
-        let img = Img::new(pixels, 8, 4);
+        let img = Img::new(pixels.clone(), 8, 4);
         let config = EncodeConfig::default().with_compression(Compression::Fastest);
         let encoded =
             encode_rgb16(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
         let decoded =
             crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
         assert_eq!(decoded.info.width, 8);
+        let raw = decoded.pixels.copy_to_contiguous_bytes();
+        let expected: Vec<u8> = pixels
+            .iter()
+            .flat_map(|p| [p.r.to_ne_bytes(), p.g.to_ne_bytes(), p.b.to_ne_bytes()].concat())
+            .collect();
+        assert_eq!(raw, expected);
     }
 
     #[test]
     fn roundtrip_rgba16() {
         let pixels: Vec<Rgba<u16>> = (0..32)
             .map(|i| Rgba {
-                r: i * 2048,
-                g: i * 1024,
-                b: i * 512,
+                r: i * 2048 + 1,
+                g: i * 1024 + 3,
+                b: i * 512 + 7,
                 a: 65535,
             })
             .collect();
-        let img = Img::new(pixels, 8, 4);
+        let img = Img::new(pixels.clone(), 8, 4);
         let config = EncodeConfig::default().with_compression(Compression::Fastest);
         let encoded =
             encode_rgba16(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
         let decoded =
             crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
         assert_eq!(decoded.info.width, 8);
+        let raw = decoded.pixels.copy_to_contiguous_bytes();
+        let expected: Vec<u8> = pixels
+            .iter()
+            .flat_map(|p| {
+                [
+                    p.r.to_ne_bytes(),
+                    p.g.to_ne_bytes(),
+                    p.b.to_ne_bytes(),
+                    p.a.to_ne_bytes(),
+                ]
+                .concat()
+            })
+            .collect();
+        assert_eq!(raw, expected);
     }
 
     #[test]
     fn roundtrip_gray16() {
-        let pixels: Vec<Gray<u16>> = (0..32).map(|i| Gray(i * 2048)).collect();
-        let img = Img::new(pixels, 8, 4);
+        let pixels: Vec<Gray<u16>> = (0..32).map(|i| Gray(i * 2048 + 5)).collect();
+        let img = Img::new(pixels.clone(), 8, 4);
         let config = EncodeConfig::default().with_compression(Compression::Fastest);
         let encoded =
             encode_gray16(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
         let decoded =
             crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
         assert_eq!(decoded.info.width, 8);
+        let raw = decoded.pixels.copy_to_contiguous_bytes();
+        let expected: Vec<u8> = pixels
+            .iter()
+            .flat_map(|p| p.value().to_ne_bytes())
+            .collect();
+        assert_eq!(raw, expected);
     }
 
     #[test]
     fn near_lossless_produces_valid_output() {
         let (pixels, w, h) = small_rgb_image();
-        let img = Img::new(pixels, w, h);
+        let img = Img::new(pixels.clone(), w, h);
         let encoded = encode_rgb8(
             img.as_ref(),
             None,
@@ -1047,6 +1093,23 @@ mod tests {
         let decoded =
             crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
         assert_eq!(decoded.info.width, w as u32);
+        // With 3 near-lossless bits, max error per sample is 2^2 = 4
+        let raw = decoded.pixels.copy_to_contiguous_bytes();
+        for (i, px) in pixels.iter().enumerate() {
+            let off = i * 3;
+            assert!(
+                (raw[off] as i16 - px.r as i16).unsigned_abs() <= 4,
+                "pixel {i} R"
+            );
+            assert!(
+                (raw[off + 1] as i16 - px.g as i16).unsigned_abs() <= 4,
+                "pixel {i} G"
+            );
+            assert!(
+                (raw[off + 2] as i16 - px.b as i16).unsigned_abs() <= 4,
+                "pixel {i} B"
+            );
+        }
     }
 
     // ── APNG encoding ───────────────────────────────────────────────
@@ -1102,6 +1165,15 @@ mod tests {
         let encoded =
             encode_apng(&frames, w, h, &config, None, &Unstoppable, &Unstoppable).unwrap();
         assert!(encoded[..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        // Decode APNG and verify frame pixels
+        let apng =
+            crate::decode_apng(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+        assert_eq!(apng.frames.len(), 1);
+        let frame_bytes = apng.frames[0].pixels.copy_to_contiguous_bytes();
+        // All pixels are (128, 128, 128, 128)
+        for chunk in frame_bytes.chunks(4) {
+            assert_eq!(chunk, &[128, 128, 128, 128]);
+        }
     }
 
     // ── Color type and bit depth ────────────────────────────────────
@@ -1249,7 +1321,7 @@ mod tests {
     #[test]
     fn near_lossless_rgba() {
         let (pixels, w, h) = small_rgba_image();
-        let img = Img::new(pixels, w, h);
+        let img = Img::new(pixels.clone(), w, h);
         let config = EncodeConfig::default()
             .with_compression(Compression::Fast)
             .with_near_lossless_bits(2);
@@ -1258,6 +1330,26 @@ mod tests {
         let decoded =
             crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
         assert_eq!(decoded.info.width, w as u32);
+        // Alpha must be exact; RGB bounded error
+        let raw = decoded.pixels.copy_to_contiguous_bytes();
+        for (i, px) in pixels.iter().enumerate() {
+            let off = i * 4;
+            assert_eq!(raw[off + 3], px.a, "pixel {i} alpha must be exact");
+            if px.a == 255 {
+                assert!(
+                    (raw[off] as i16 - px.r as i16).unsigned_abs() <= 4,
+                    "pixel {i} R"
+                );
+                assert!(
+                    (raw[off + 1] as i16 - px.g as i16).unsigned_abs() <= 4,
+                    "pixel {i} G"
+                );
+                assert!(
+                    (raw[off + 2] as i16 - px.b as i16).unsigned_abs() <= 4,
+                    "pixel {i} B"
+                );
+            }
+        }
     }
 
     // ── Gray near-lossless ──────────────────────────────────────────
@@ -1265,7 +1357,7 @@ mod tests {
     #[test]
     fn near_lossless_gray() {
         let pixels: Vec<Gray<u8>> = (0..32).map(|i| Gray(i * 8)).collect();
-        let img = Img::new(pixels, 8, 4);
+        let img = Img::new(pixels.clone(), 8, 4);
         let config = EncodeConfig::default()
             .with_compression(Compression::Fast)
             .with_near_lossless_bits(2);
@@ -1274,6 +1366,13 @@ mod tests {
         let decoded =
             crate::decode(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
         assert_eq!(decoded.info.width, 8);
+        let raw = decoded.pixels.copy_to_contiguous_bytes();
+        for (i, px) in pixels.iter().enumerate() {
+            assert!(
+                (raw[i] as i16 - px.value() as i16).unsigned_abs() <= 4,
+                "pixel {i}"
+            );
+        }
     }
 
     // ── Metadata roundtrip ──────────────────────────────────────────
@@ -1614,6 +1713,11 @@ mod tests {
         assert_eq!(decoded.frames.len(), 2);
         assert_eq!(decoded.info.width, w);
         assert_eq!(decoded.info.height, h);
+        // Verify frame pixel data
+        let f0 = decoded.frames[0].pixels.copy_to_contiguous_bytes();
+        let f1 = decoded.frames[1].pixels.copy_to_contiguous_bytes();
+        assert_eq!(f0, frame0);
+        assert_eq!(f1, frame1);
     }
 
     #[test]
@@ -1631,7 +1735,13 @@ mod tests {
             .with_encode(EncodeConfig::default().with_compression(Compression::High));
         let encoded =
             encode_apng(&frames, w, h, &config, None, &Unstoppable, &Unstoppable).unwrap();
-        assert!(encoded[..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        let decoded =
+            crate::decode_apng(&encoded, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+        assert_eq!(decoded.frames.len(), 2);
+        let f0 = decoded.frames[0].pixels.copy_to_contiguous_bytes();
+        let f1 = decoded.frames[1].pixels.copy_to_contiguous_bytes();
+        assert_eq!(f0, frame0);
+        assert_eq!(f1, frame1);
     }
 
     // ── Non-animated PNG through decode_apng ────────────────────────

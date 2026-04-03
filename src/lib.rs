@@ -55,9 +55,6 @@ mod types;
 // #[cfg(feature = "zennode")]
 // pub mod zennode_defs;
 
-#[cfg(all(test, target_arch = "wasm32"))]
-mod wasm_tests;
-
 pub use codec::{
     PngAnimationFrameDecoder, PngAnimationFrameEncoder, PngDecodeJob, PngDecoder, PngDecoderConfig,
     PngEncodeJob, PngEncoder, PngEncoderConfig,
