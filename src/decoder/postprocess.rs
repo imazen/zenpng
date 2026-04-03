@@ -336,8 +336,8 @@ pub(crate) struct OutputFormat {
 }
 
 impl OutputFormat {
-    pub fn from_ihdr(ihdr: &Ihdr, ancillary: &PngAncillary) -> Self {
-        match ihdr.color_type {
+    pub fn from_ihdr(ihdr: &Ihdr, ancillary: &PngAncillary) -> crate::error::Result<Self> {
+        Ok(match ihdr.color_type {
             0 => {
                 if ancillary.trns.is_some() {
                     // Gray + tRNS → RGBA
@@ -429,8 +429,13 @@ impl OutputFormat {
                     }
                 }
             }
-            _ => unreachable!(),
-        }
+            _ => {
+                return Err(at!(PngError::Decode(alloc::format!(
+                    "unsupported color_type {} in IHDR",
+                    ihdr.color_type
+                ))));
+            }
+        })
     }
 }
 
@@ -774,7 +779,7 @@ mod tests {
     fn output_format_gray_trns_16() {
         let ihdr = make_ihdr(0, 16);
         let anc = anc_with_trns(vec![0, 0]);
-        let fmt = OutputFormat::from_ihdr(&ihdr, &anc);
+        let fmt = OutputFormat::from_ihdr(&ihdr, &anc).unwrap();
         assert_eq!(fmt.channels, 2);
         assert_eq!(fmt.bytes_per_channel, 2);
     }
@@ -783,7 +788,7 @@ mod tests {
     fn output_format_gray_trns_8() {
         let ihdr = make_ihdr(0, 8);
         let anc = anc_with_trns(vec![0, 0]);
-        let fmt = OutputFormat::from_ihdr(&ihdr, &anc);
+        let fmt = OutputFormat::from_ihdr(&ihdr, &anc).unwrap();
         assert_eq!(fmt.channels, 4);
         assert_eq!(fmt.bytes_per_channel, 1);
     }
@@ -792,41 +797,52 @@ mod tests {
     fn output_format_all_types() {
         let anc = empty_anc();
         // Gray8
-        let f = OutputFormat::from_ihdr(&make_ihdr(0, 8), &anc);
+        let f = OutputFormat::from_ihdr(&make_ihdr(0, 8), &anc).unwrap();
         assert_eq!((f.channels, f.bytes_per_channel), (1, 1));
         // Gray16
-        let f = OutputFormat::from_ihdr(&make_ihdr(0, 16), &anc);
+        let f = OutputFormat::from_ihdr(&make_ihdr(0, 16), &anc).unwrap();
         assert_eq!((f.channels, f.bytes_per_channel), (1, 2));
         // RGB8
-        let f = OutputFormat::from_ihdr(&make_ihdr(2, 8), &anc);
+        let f = OutputFormat::from_ihdr(&make_ihdr(2, 8), &anc).unwrap();
         assert_eq!((f.channels, f.bytes_per_channel), (3, 1));
         // RGB16
-        let f = OutputFormat::from_ihdr(&make_ihdr(2, 16), &anc);
+        let f = OutputFormat::from_ihdr(&make_ihdr(2, 16), &anc).unwrap();
         assert_eq!((f.channels, f.bytes_per_channel), (3, 2));
         // RGB8 + tRNS
         let at = anc_with_trns(vec![0; 6]);
-        let f = OutputFormat::from_ihdr(&make_ihdr(2, 8), &at);
+        let f = OutputFormat::from_ihdr(&make_ihdr(2, 8), &at).unwrap();
         assert_eq!((f.channels, f.bytes_per_channel), (4, 1));
         // RGB16 + tRNS
-        let f = OutputFormat::from_ihdr(&make_ihdr(2, 16), &at);
+        let f = OutputFormat::from_ihdr(&make_ihdr(2, 16), &at).unwrap();
         assert_eq!((f.channels, f.bytes_per_channel), (4, 2));
         // Indexed
-        let f = OutputFormat::from_ihdr(&make_ihdr(3, 8), &anc);
+        let f = OutputFormat::from_ihdr(&make_ihdr(3, 8), &anc).unwrap();
         assert_eq!((f.channels, f.bytes_per_channel), (3, 1));
-        let f = OutputFormat::from_ihdr(&make_ihdr(3, 8), &at);
+        let f = OutputFormat::from_ihdr(&make_ihdr(3, 8), &at).unwrap();
         assert_eq!((f.channels, f.bytes_per_channel), (4, 1));
         // GrayAlpha8
-        let f = OutputFormat::from_ihdr(&make_ihdr(4, 8), &anc);
+        let f = OutputFormat::from_ihdr(&make_ihdr(4, 8), &anc).unwrap();
         assert_eq!((f.channels, f.bytes_per_channel), (4, 1));
         // GrayAlpha16
-        let f = OutputFormat::from_ihdr(&make_ihdr(4, 16), &anc);
+        let f = OutputFormat::from_ihdr(&make_ihdr(4, 16), &anc).unwrap();
         assert_eq!((f.channels, f.bytes_per_channel), (2, 2));
         // RGBA8
-        let f = OutputFormat::from_ihdr(&make_ihdr(6, 8), &anc);
+        let f = OutputFormat::from_ihdr(&make_ihdr(6, 8), &anc).unwrap();
         assert_eq!((f.channels, f.bytes_per_channel), (4, 1));
         // RGBA16
-        let f = OutputFormat::from_ihdr(&make_ihdr(6, 16), &anc);
+        let f = OutputFormat::from_ihdr(&make_ihdr(6, 16), &anc).unwrap();
         assert_eq!((f.channels, f.bytes_per_channel), (4, 2));
+    }
+
+    #[test]
+    fn output_format_invalid_color_type_returns_error() {
+        let anc = empty_anc();
+        // color_type=5 is invalid per PNG spec
+        let ihdr = make_ihdr(5, 8);
+        assert!(OutputFormat::from_ihdr(&ihdr, &anc).is_err());
+        // color_type=7 is also invalid
+        let ihdr = make_ihdr(7, 8);
+        assert!(OutputFormat::from_ihdr(&ihdr, &anc).is_err());
     }
 
     // ── build_pixel_data ──

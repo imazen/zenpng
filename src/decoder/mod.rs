@@ -320,7 +320,7 @@ pub(crate) fn decode_png(
     }
 
     // General path for all other formats
-    let fmt = OutputFormat::from_ihdr(&ihdr, reader.ancillary());
+    let fmt = OutputFormat::from_ihdr(&ihdr, reader.ancillary())?;
     let pixel_bytes = fmt.channels * fmt.bytes_per_channel;
     let out_row_bytes = w * pixel_bytes;
 

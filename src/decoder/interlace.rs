@@ -102,7 +102,7 @@ pub(crate) fn decode_interlaced(
         )));
     }
 
-    let fmt = OutputFormat::from_ihdr(&ihdr, &ancillary);
+    let fmt = OutputFormat::from_ihdr(&ihdr, &ancillary)?;
 
     let out_bpp = (fmt.channels * fmt.bytes_per_channel) as u32;
     config.validate(ihdr.width, ihdr.height, out_bpp)?;

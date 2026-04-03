@@ -283,7 +283,7 @@ impl<'a> ApngDecoder<'a> {
         let mut decompressor = zenflate::StreamDecompressor::zlib(source, stride * 2)
             .with_skip_checksum(self.config.skip_decompression_checksum);
 
-        let fmt = OutputFormat::from_ihdr(&frame_ihdr, &self.ancillary);
+        let fmt = OutputFormat::from_ihdr(&frame_ihdr, &self.ancillary)?;
         let w = fctl.width as usize;
         let h = fctl.height as usize;
         let pixel_bytes = fmt.channels * fmt.bytes_per_channel;
@@ -400,7 +400,7 @@ impl<'a> ApngDecoder<'a> {
         let mut decompressor = zenflate::StreamDecompressor::zlib(source, stride * 2)
             .with_skip_checksum(self.config.skip_decompression_checksum);
 
-        let fmt = OutputFormat::from_ihdr(&frame_ihdr, &self.ancillary);
+        let fmt = OutputFormat::from_ihdr(&frame_ihdr, &self.ancillary)?;
         let w = fctl.width as usize;
         let h = fctl.height as usize;
         let pixel_bytes = fmt.channels * fmt.bytes_per_channel;
