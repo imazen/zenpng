@@ -22,6 +22,24 @@ use crate::error::PngError;
 /// Default encode timeout: 120 seconds.
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 
+/// Create a default encode deadline.
+///
+/// On native targets, returns a `WithTimeout` that expires after `DEFAULT_TIMEOUT_MS`.
+/// On `wasm32`, `Instant::now()` panics (no system clock), so we return `Unstoppable`.
+fn default_deadline() -> impl enough::Stop {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        almost_enough::time::WithTimeout::new(
+            enough::Unstoppable,
+            std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS),
+        )
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        enough::Unstoppable
+    }
+}
+
 // ── Supported descriptors ────────────────────────────────────────────
 
 static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
@@ -662,8 +680,7 @@ impl PngEncoder {
                 .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
         }
         let config = self.config_with_threading();
-        let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
-        let deadline = almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
+        let deadline = default_deadline();
         // Apply encode policy to filter metadata
         let effective_meta = apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref());
         let meta_ref = effective_meta.as_ref();
@@ -723,9 +740,7 @@ impl zencodec::encode::Encoder for PngEncoder {
                         Some(ref s) => s as &dyn enough::Stop,
                         None => &enough::Unstoppable,
                     };
-                    let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
-                    let deadline =
-                        almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
+                    let deadline = default_deadline();
                     let quantizer = crate::default_quantizer();
                     let config = self.config_with_threading();
                     let result = crate::encode_auto(
@@ -806,9 +821,7 @@ impl zencodec::encode::Encoder for PngEncoder {
                         Some(ref s) => s as &dyn enough::Stop,
                         None => &enough::Unstoppable,
                     };
-                    let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
-                    let deadline =
-                        almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
+                    let deadline = default_deadline();
                     let quantizer = crate::default_quantizer();
                     let config = self.config_with_threading();
                     let result = crate::encode_auto(
@@ -1331,8 +1344,7 @@ impl PngAnimationFrameEncoder {
             num_plays: self.loop_count,
         };
 
-        let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
-        let deadline = almost_enough::time::WithTimeout::new(enough::Unstoppable, timeout);
+        let deadline = default_deadline();
 
         let data = crate::encode::encode_apng(
             &inputs,
