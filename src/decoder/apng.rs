@@ -396,7 +396,8 @@ impl<'a> ApngDecoder<'a> {
             self.file_data,
             fdat_pos,
             self.config.skip_critical_chunk_crc,
-        );
+        )
+        .map_err(|e| at!(e))?;
         let mut decompressor = zenflate::StreamDecompressor::zlib(source, stride * 2)
             .with_skip_checksum(self.config.skip_decompression_checksum);
 

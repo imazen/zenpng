@@ -1,5 +1,5 @@
 # PNG signature and chunk types
-"\x89PNG\r\n\x1a\n"
+"\x89PNG\x0d\x0a\x1a\x0a"
 "IHDR"
 "IDAT"
 "IEND"

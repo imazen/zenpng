@@ -158,14 +158,28 @@ pub(crate) struct FdatSource<'a> {
 impl<'a> FdatSource<'a> {
     /// Create a new fdAT source positioned at the first fdAT chunk.
     /// `first_fdat_pos` is the byte offset of the first fdAT chunk header.
-    pub fn new(data: &'a [u8], first_fdat_pos: usize, skip_crc: bool) -> Self {
+    pub fn new(data: &'a [u8], first_fdat_pos: usize, skip_crc: bool) -> Result<Self, PngError> {
         // Parse the first fdAT chunk inline
-        let length =
-            u32::from_be_bytes(data[first_fdat_pos..first_fdat_pos + 4].try_into().unwrap())
-                as usize;
+        let length_bytes: [u8; 4] = data
+            .get(first_fdat_pos..first_fdat_pos + 4)
+            .ok_or_else(|| PngError::Decode("truncated fdAT chunk header (length)".into()))?
+            .try_into()
+            .unwrap(); // infallible: slice is exactly 4 bytes
+        let length = u32::from_be_bytes(length_bytes) as usize;
         let data_start = first_fdat_pos + 8; // skip length + type
-        let data_end = data_start + length;
-        let next_pos = data_end + 4; // skip CRC
+        let data_end = data_start
+            .checked_add(length)
+            .ok_or_else(|| PngError::Decode("fdAT chunk length overflow".into()))?;
+        let next_pos = data_end
+            .checked_add(4)
+            .ok_or_else(|| PngError::Decode("fdAT chunk length overflow".into()))?;
+
+        if data_end > data.len() {
+            return Err(PngError::Decode("truncated fdAT chunk data".into()));
+        }
+        if next_pos > data.len() {
+            return Err(PngError::Decode("truncated fdAT chunk CRC".into()));
+        }
 
         // Skip the 4-byte sequence number to get to deflate data
         let deflate_start = data_start + 4;
@@ -175,14 +189,14 @@ impl<'a> FdatSource<'a> {
             &data[data_end..data_end] // empty
         };
 
-        Self {
+        Ok(Self {
             data,
             chunk_pos: next_pos,
             current_data: deflate_data,
             done: false,
             post_fdat_pos: 0,
             skip_crc,
-        }
+        })
     }
 }
 
