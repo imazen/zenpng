@@ -1,23 +1,305 @@
-# PNG signature and chunk types
-"\x89PNG\x0d\x0a\x1a\x0a"
-"IHDR"
-"IDAT"
-"IEND"
-"PLTE"
-"tRNS"
-"gAMA"
-"cHRM"
-"sRGB"
-"iCCP"
-"tEXt"
-"iTXt"
-"zTXt"
-"pHYs"
-"sBIT"
-"bKGD"
-"hIST"
-"tIME"
-"acTL"
-"fcTL"
-"fdAT"
-"eXIf"
+# ================================================================
+# PNG fuzzing dictionary for zenpng
+# Covers: signature, critical/ancillary/APNG/HDR chunks, IHDR
+# field values, filter bytes, zlib headers, text keywords, and
+# multi-byte structural combos.
+# ================================================================
+
+# ── PNG signature ───────────────────────────────────────────────
+png_signature="\x89PNG\x0d\x0a\x1a\x0a"
+
+# ── Critical chunk types ────────────────────────────────────────
+chunk_IHDR="IHDR"
+chunk_PLTE="PLTE"
+chunk_IDAT="IDAT"
+chunk_IEND="IEND"
+
+# ── Ancillary chunk types (standard) ───────────────────────────
+chunk_tRNS="tRNS"
+chunk_cHRM="cHRM"
+chunk_gAMA="gAMA"
+chunk_iCCP="iCCP"
+chunk_sBIT="sBIT"
+chunk_sRGB="sRGB"
+chunk_bKGD="bKGD"
+chunk_hIST="hIST"
+chunk_pHYs="pHYs"
+chunk_sPLT="sPLT"
+chunk_tIME="tIME"
+chunk_tEXt="tEXt"
+chunk_zTXt="zTXt"
+chunk_iTXt="iTXt"
+chunk_eXIf="eXIf"
+
+# ── APNG extension chunks ──────────────────────────────────────
+chunk_acTL="acTL"
+chunk_fcTL="fcTL"
+chunk_fdAT="fdAT"
+
+# ── PNGv3 / HDR extension chunks ───────────────────────────────
+chunk_cICP="cICP"
+chunk_cLLI="cLLI"
+chunk_mDCV="mDCV"
+
+# ── IHDR color types (byte 9 of IHDR data) ─────────────────────
+color_grayscale="\x00"
+color_rgb="\x02"
+color_indexed="\x03"
+color_gray_alpha="\x04"
+color_rgba="\x06"
+
+# ── IHDR bit depths (byte 8 of IHDR data) ──────────────────────
+depth_1="\x01"
+depth_2="\x02"
+depth_4="\x04"
+depth_8="\x08"
+depth_16="\x10"
+
+# ── IHDR compression method (byte 10, must be 0) ───────────────
+compression_deflate="\x00"
+
+# ── IHDR filter method (byte 11, must be 0) ────────────────────
+filter_method_adaptive="\x00"
+
+# ── IHDR interlace methods (byte 12) ───────────────────────────
+interlace_none="\x00"
+interlace_adam7="\x01"
+
+# ── Row filter type bytes (first byte of each scanline) ────────
+filter_none="\x00"
+filter_sub="\x01"
+filter_up="\x02"
+filter_average="\x03"
+filter_paeth="\x04"
+
+# ── Invalid filter byte (triggers error path) ──────────────────
+filter_invalid="\x05"
+
+# ── sRGB rendering intents (1 byte) ────────────────────────────
+srgb_perceptual="\x00"
+srgb_relative="\x01"
+srgb_saturation="\x02"
+srgb_absolute="\x03"
+
+# ── cICP common values ─────────────────────────────────────────
+# sRGB: primaries=1, transfer=13, matrix=0, full_range=1
+cicp_srgb="\x01\x0d\x00\x01"
+# BT.709: primaries=1, transfer=1, matrix=0, full_range=0
+cicp_bt709="\x01\x01\x00\x00"
+# BT.2020 PQ HDR: primaries=9, transfer=16, matrix=0, full_range=1
+cicp_bt2020_pq="\x09\x10\x00\x01"
+# BT.2020 HLG HDR: primaries=9, transfer=18, matrix=0, full_range=1
+cicp_bt2020_hlg="\x09\x12\x00\x01"
+# Display P3: primaries=12, transfer=13, matrix=0, full_range=1
+cicp_display_p3="\x0c\x0d\x00\x01"
+
+# ── APNG dispose ops (fcTL byte 24) ────────────────────────────
+dispose_none="\x00"
+dispose_background="\x01"
+dispose_previous="\x02"
+
+# ── APNG blend ops (fcTL byte 25) ──────────────────────────────
+blend_source="\x00"
+blend_over="\x01"
+
+# ── gAMA standard values (4 bytes, big-endian, x100000) ────────
+# 1/2.2 = 45455
+gama_srgb="\x00\x00\xb1\x8f"
+# 1.0 = 100000
+gama_linear="\x00\x01\x86\xa0"
+# 1/1.8 = 55556
+gama_mac="\x00\x00\xd9\x04"
+
+# ── pHYs standard values ───────────────────────────────────────
+# 72 DPI in meters: 2835 ppu
+phys_72dpi="\x00\x00\x0b\x13\x00\x00\x0b\x13\x01"
+# 96 DPI in meters: 3780 ppu
+phys_96dpi="\x00\x00\x0e\xc4\x00\x00\x0e\xc4\x01"
+# unit: unknown
+phys_unit_unknown="\x00"
+# unit: meter
+phys_unit_meter="\x01"
+
+# ── Chunk length values (big-endian u32) ────────────────────────
+# 0 bytes (IEND)
+len_0="\x00\x00\x00\x00"
+# 1 byte (sRGB)
+len_1="\x00\x00\x00\x01"
+# 4 bytes (gAMA, cICP)
+len_4="\x00\x00\x00\x04"
+# 7 bytes (tIME)
+len_7="\x00\x00\x00\x07"
+# 8 bytes (acTL, cLLI)
+len_8="\x00\x00\x00\x08"
+# 9 bytes (pHYs)
+len_9="\x00\x00\x00\x09"
+# 13 bytes (IHDR)
+len_13="\x00\x00\x00\x0d"
+# 24 bytes (mDCV)
+len_24="\x00\x00\x00\x18"
+# 26 bytes (fcTL)
+len_26="\x00\x00\x00\x1a"
+# 32 bytes (cHRM)
+len_32="\x00\x00\x00\x20"
+
+# ── Structural combos ──────────────────────────────────────────
+# PNG signature + IHDR chunk length (13)
+sig_ihdr="\x89PNG\x0d\x0a\x1a\x0a\x00\x00\x00\x0dIHDR"
+# Minimal 1x1 RGBA 8-bit IHDR data (13 bytes)
+ihdr_1x1_rgba8="\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+# Minimal 1x1 RGB 8-bit IHDR data (13 bytes)
+ihdr_1x1_rgb8="\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00"
+# Minimal 1x1 grayscale 8-bit IHDR data (13 bytes)
+ihdr_1x1_gray8="\x00\x00\x00\x01\x00\x00\x00\x01\x08\x00\x00\x00\x00"
+# Minimal 1x1 indexed 8-bit IHDR data (13 bytes)
+ihdr_1x1_idx8="\x00\x00\x00\x01\x00\x00\x00\x01\x08\x03\x00\x00\x00"
+# Minimal 1x1 gray+alpha 8-bit IHDR data (13 bytes)
+ihdr_1x1_ga8="\x00\x00\x00\x01\x00\x00\x00\x01\x08\x04\x00\x00\x00"
+# Minimal 1x1 RGBA 16-bit IHDR data (13 bytes)
+ihdr_1x1_rgba16="\x00\x00\x00\x01\x00\x00\x00\x01\x10\x06\x00\x00\x00"
+# Minimal 1x1 grayscale 1-bit IHDR data (13 bytes)
+ihdr_1x1_gray1="\x00\x00\x00\x01\x00\x00\x00\x01\x01\x00\x00\x00\x00"
+# 1x1 RGBA 8-bit interlaced IHDR data (13 bytes)
+ihdr_1x1_rgba8_adam7="\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x01"
+# IEND chunk (length=0, type, CRC)
+iend_full="\x00\x00\x00\x00IEND\xae\x42\x60\x82"
+
+# ── Dimension values (big-endian u32) ───────────────────────────
+dim_1="\x00\x00\x00\x01"
+dim_2="\x00\x00\x00\x02"
+dim_4="\x00\x00\x00\x04"
+dim_8="\x00\x00\x00\x08"
+dim_16="\x00\x00\x00\x10"
+dim_32="\x00\x00\x00\x20"
+dim_64="\x00\x00\x00\x40"
+dim_256="\x00\x00\x01\x00"
+dim_1024="\x00\x00\x04\x00"
+# Zero dimension (invalid)
+dim_0="\x00\x00\x00\x00"
+# Max PNG dimension: 2^31 - 1
+dim_max="\x7f\xff\xff\xff"
+# 2^31 (invalid, one past max)
+dim_overflow="\x80\x00\x00\x00"
+
+# ── zlib/deflate headers (IDAT compressed data prefix) ─────────
+# zlib CM=8 (deflate), CINFO=7 (32K window), FCHECK valid
+zlib_default="\x78\x9c"
+zlib_fastest="\x78\x01"
+zlib_best="\x78\xda"
+zlib_no_compression="\x78\x01\x01"
+# Deflate stored block: BFINAL=1, BTYPE=00
+deflate_stored_final="\x01"
+# Deflate fixed Huffman block: BFINAL=1, BTYPE=01
+deflate_fixed_final="\x03"
+
+# ── iCCP profile name patterns ──────────────────────────────────
+iccp_srgb_name="sRGB\x00\x00"
+iccp_icc_profile="ICC Profile\x00\x00"
+
+# ── tEXt/zTXt/iTXt standard keywords (PNG spec section 11.3.4) ─
+kw_title="Title\x00"
+kw_author="Author\x00"
+kw_description="Description\x00"
+kw_copyright="Copyright\x00"
+kw_creation_time="Creation Time\x00"
+kw_software="Software\x00"
+kw_disclaimer="Disclaimer\x00"
+kw_warning="Warning\x00"
+kw_source="Source\x00"
+kw_comment="Comment\x00"
+kw_creator="Creator\x00"
+
+# ── XMP/iTXt patterns ──────────────────────────────────────────
+xmp_keyword="XML:com.adobe.xmp\x00"
+# iTXt uncompressed, empty lang/translated keyword
+itxt_uncompressed="\x00\x00\x00\x00"
+# iTXt compressed
+itxt_compressed="\x01\x00\x00\x00"
+
+# ── tRNS transparency data patterns ────────────────────────────
+# Grayscale transparent value (2 bytes)
+trns_gray="\x00\x00"
+# RGB transparent value (6 bytes)
+trns_rgb="\x00\x00\x00\x00\x00\x00"
+# Indexed: single entry fully transparent
+trns_indexed_one="\x00"
+# Indexed: fully opaque
+trns_indexed_opaque="\xff"
+
+# ── PLTE palette fragments ─────────────────────────────────────
+# Black entry
+plte_black="\x00\x00\x00"
+# White entry
+plte_white="\xff\xff\xff"
+# Red entry
+plte_red="\xff\x00\x00"
+# Minimum palette: 1 entry (3 bytes)
+plte_min="\x00\x00\x00"
+
+# ── bKGD patterns ──────────────────────────────────────────────
+# Indexed: palette index 0
+bkgd_indexed="\x00"
+# Grayscale: value 0 (2 bytes)
+bkgd_gray="\x00\x00"
+# RGB: black (6 bytes)
+bkgd_rgb="\x00\x00\x00\x00\x00\x00"
+
+# ── acTL animation control patterns ────────────────────────────
+# 1 frame, 0 loops (infinite)
+actl_1_inf="\x00\x00\x00\x01\x00\x00\x00\x00"
+# 2 frames, 1 loop
+actl_2_1="\x00\x00\x00\x02\x00\x00\x00\x01"
+# 0 frames (invalid)
+actl_0_frames="\x00\x00\x00\x00\x00\x00\x00\x00"
+
+# ── fcTL delay patterns (2 bytes each: delay_num, delay_den) ───
+# 100ms = 1/10
+delay_100ms="\x00\x01\x00\x0a"
+# 0 delay_den (treated as 100 per APNG spec)
+delay_den_zero="\x00\x01\x00\x00"
+
+# ── cHRM sRGB chromaticities (32 bytes, fixed-point x100000) ───
+chrm_srgb="\x00\x00\x7a\x26\x00\x00\x80\x84\x00\x00\xfa\x00\x00\x00\x80\x84\x00\x00\x49\x24\x00\x01\x31\x2e\x00\x00\x25\x32\x00\x00\x0b\x36"
+
+# ── sBIT significant bits patterns ─────────────────────────────
+# Grayscale: 8 significant bits
+sbit_gray8="\x08"
+# RGB: 8 bits per channel
+sbit_rgb888="\x08\x08\x08"
+# RGBA: 8 bits per channel
+sbit_rgba8888="\x08\x08\x08\x08"
+# Gray+alpha: 8 bits each
+sbit_ga88="\x08\x08"
+# RGB: 5 bits per channel (e.g., from 16-bit source)
+sbit_rgb555="\x05\x05\x05"
+
+# ── tIME patterns (7 bytes) ────────────────────────────────────
+# 2024-01-01 00:00:00
+time_2024="\x07\xe8\x01\x01\x00\x00\x00"
+
+# ── Null byte and separator ────────────────────────────────────
+null="\x00"
+null_pair="\x00\x00"
+
+# ── Invalid/boundary color types (error paths) ─────────────────
+color_invalid_1="\x01"
+color_invalid_5="\x05"
+color_invalid_7="\x07"
+color_invalid_ff="\xff"
+
+# ── Edge-case bit depths ───────────────────────────────────────
+depth_0="\x00"
+depth_3="\x03"
+depth_32="\x20"
+
+# ── CRC patterns ───────────────────────────────────────────────
+# IEND CRC (fixed, chunk has 0-byte data)
+crc_iend="\xae\x42\x60\x82"
+
+# ── Large chunk length values (overflow/DoS testing) ───────────
+len_max_u32="\xff\xff\xff\xff"
+len_large="\x7f\xff\xff\xff"
+
+# ── EXIF header patterns ───────────────────────────────────────
+exif_le="II\x2a\x00"
+exif_be="MM\x00\x2a"
