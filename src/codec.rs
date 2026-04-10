@@ -2348,6 +2348,7 @@ fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
     }
     if let Some(cicp) = info.cicp {
         zi = zi.with_cicp(cicp);
+        zi = zi.with_color_authority(zencodec::ColorAuthority::Cicp);
     }
     if let Some(clli) = info.content_light_level {
         zi = zi.with_content_light_level(clli);
