@@ -1716,6 +1716,13 @@ impl zencodec::decode::Decode for PngDecoder<'_> {
             .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
         let png_config = self.effective_config();
         let result = crate::decode::decode(&self.data, &png_config, cancel)?;
+        // Build the probe from decoder state instead of a second full-file
+        // chunk scan. Every PngProbe field is already present in PngInfo
+        // (palette_size, compressed_data_size, creating_tool, dimensions,
+        // color type, bit depth, alpha, interlace, sequence). The previous
+        // `crate::detect::probe(&self.data)` call re-parsed the entire file.
+        // Other detect::probe call sites (probe-only paths) are untouched.
+        let probe = crate::detect::PngProbe::from_info(&result.info);
         let mut info = convert_info(&result.info);
         apply_policy_to_info(&mut info, self.policy.as_ref());
         let pixels = if self.preferred.is_empty() {
@@ -1723,10 +1730,7 @@ impl zencodec::decode::Decode for PngDecoder<'_> {
         } else {
             negotiate_and_convert(result.pixels, &self.preferred)
         };
-        let mut output = DecodeOutput::new(pixels, info);
-        if let Ok(probe) = crate::detect::probe(&self.data) {
-            output = output.with_source_encoding_details(probe);
-        }
+        let output = DecodeOutput::new(pixels, info).with_source_encoding_details(probe);
         Ok(output)
     }
 }

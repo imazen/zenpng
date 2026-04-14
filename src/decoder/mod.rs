@@ -127,6 +127,12 @@ pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &PngAncillary) -> PngInfo {
         last_modified: ancillary.last_modified,
         significant_bits: ancillary.significant_bits,
         interlaced: ihdr.interlace == 1,
+        palette_size: ancillary
+            .palette
+            .as_ref()
+            .map(|p| (p.len() / 3).min(u16::MAX as usize) as u16),
+        compressed_data_size: ancillary.idat_bytes,
+        creating_tool: ancillary.creating_tool.clone(),
     }
 }
 
@@ -149,10 +155,14 @@ pub(crate) fn probe_png(data: &[u8]) -> crate::error::Result<PngInfo> {
     let ihdr = Ihdr::parse(ihdr_chunk.data)?;
 
     let mut ancillary = PngAncillary::default();
+    let mut idat_bytes: u64 = 0;
     for chunk_result in &mut chunks {
         let chunk = chunk_result?;
         match &chunk.chunk_type {
-            b"IDAT" => break,
+            b"IDAT" => {
+                idat_bytes = idat_bytes.saturating_add(chunk.data.len() as u64);
+                break;
+            }
             b"IEND" => break,
             _ => {
                 ancillary.collect(&chunk)?;
@@ -160,14 +170,25 @@ pub(crate) fn probe_png(data: &[u8]) -> crate::error::Result<PngInfo> {
         }
     }
 
-    // Also scan post-IDAT chunks for late metadata
+    // Also scan post-IDAT chunks for late metadata (and sum remaining IDAT
+    // and APNG fdAT lengths so `compressed_data_size` matches `detect::probe`).
     for chunk_result in chunks {
         let chunk = chunk_result?;
-        if chunk.chunk_type == *b"IEND" {
-            break;
+        match &chunk.chunk_type {
+            b"IEND" => break,
+            b"IDAT" => {
+                idat_bytes = idat_bytes.saturating_add(chunk.data.len() as u64);
+            }
+            b"fdAT" => {
+                idat_bytes = idat_bytes.saturating_add(chunk.data.len() as u64);
+                ancillary.collect_late(&chunk);
+            }
+            _ => {
+                ancillary.collect_late(&chunk);
+            }
         }
-        ancillary.collect_late(&chunk);
     }
+    ancillary.idat_bytes = idat_bytes;
 
     Ok(build_png_info(&ihdr, &ancillary))
 }
@@ -1144,6 +1165,9 @@ mod tests {
             last_modified: None,
             significant_bits: None,
             interlaced: reader.info().interlaced,
+            palette_size: None,
+            compressed_data_size: 0,
+            creating_tool: None,
         };
 
         Ok(PngDecodeOutput {

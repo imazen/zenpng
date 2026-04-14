@@ -140,6 +140,17 @@ pub(crate) struct PngAncillary {
     pub last_modified: Option<PngTime>,
     /// sBIT significant bits per channel.
     pub significant_bits: Option<SignificantBits>,
+    /// Total bytes of IDAT/fdAT chunk payloads observed during decoding.
+    ///
+    /// Populated by the decoder's existing IDAT walk passes; never by
+    /// [`collect`](Self::collect) itself (which stops at the first IDAT).
+    pub idat_bytes: u64,
+    /// First "creating tool" found in tEXt/zTXt/iTXt chunks with a
+    /// `Software`, `Creator`, or `Comment` keyword. Matches the extraction
+    /// rules used by [`crate::detect::probe`]; populated incrementally as
+    /// text chunks are parsed so [`crate::detect::PngProbe::from_info`]
+    /// produces the same value without a second scan.
+    pub creating_tool: Option<String>,
 }
 
 impl PngAncillary {
@@ -216,6 +227,7 @@ impl PngAncillary {
             }
             b"iTXt" => {
                 self.try_parse_xmp(chunk.data);
+                self.try_extract_creating_tool_itxt(chunk.data);
             }
             b"acTL" => {
                 if chunk.data.len() == 8 {
@@ -370,6 +382,46 @@ impl PngAncillary {
         }
     }
 
+    /// Try to extract a creating-tool string from an iTXt chunk.
+    ///
+    /// Mirrors the extraction logic in [`crate::detect::probe`] so that
+    /// [`crate::detect::PngProbe::from_info`] produces the same value
+    /// without a second chunk-level scan. iTXt is: keyword(null) compression_flag
+    /// (1) compression_method(1) language_tag(null) translated_keyword(null) text.
+    /// First match across all text chunks wins.
+    fn try_extract_creating_tool_itxt(&mut self, data: &[u8]) {
+        if self.creating_tool.is_some() || data.is_empty() {
+            return;
+        }
+        let Some(null_pos) = data.iter().position(|&b| b == 0) else {
+            return;
+        };
+        let keyword = match core::str::from_utf8(&data[..null_pos]) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        if keyword != "Software" && keyword != "Creator" {
+            return;
+        }
+        let rest = &data[null_pos + 1..];
+        if rest.len() < 2 {
+            return;
+        }
+        let after_method = &rest[2..];
+        let Some(p1) = after_method.iter().position(|&b| b == 0) else {
+            return;
+        };
+        let after_lang = &after_method[p1 + 1..];
+        let Some(p2) = after_lang.iter().position(|&b| b == 0) else {
+            return;
+        };
+        let text = &after_lang[p2 + 1..];
+        // detect::probe does not decompress iTXt; replicate that exactly.
+        if let Ok(s) = core::str::from_utf8(text) {
+            self.creating_tool = Some(String::from(s));
+        }
+    }
+
     /// Parse tEXt chunk: keyword\0text (Latin-1).
     fn parse_text(&mut self, data: &[u8], compressed: bool) {
         if let Some(null_pos) = data.iter().position(|&b| b == 0) {
@@ -379,6 +431,15 @@ impl PngAncillary {
                 // Latin-1 → UTF-8 (lossy for non-ASCII but preserves valid text)
                 let kw: String = keyword.iter().map(|&b| b as char).collect();
                 let val: String = text.iter().map(|&b| b as char).collect();
+                // Match detect::probe: only uncompressed tEXt with Software,
+                // Creator, or Comment keywords contributes to creating_tool.
+                // zTXt (compressed) is not considered. First match wins.
+                if !compressed
+                    && self.creating_tool.is_none()
+                    && (kw == "Software" || kw == "Creator" || kw == "Comment")
+                {
+                    self.creating_tool = Some(val.clone());
+                }
                 self.text_chunks.push(TextChunk {
                     keyword: kw,
                     text: val,
@@ -483,6 +544,7 @@ impl PngAncillary {
                 if self.xmp.is_none() {
                     self.try_parse_xmp(chunk.data);
                 }
+                self.try_extract_creating_tool_itxt(chunk.data);
             }
             b"tEXt" => {
                 self.parse_text(chunk.data, false);

@@ -2,6 +2,21 @@
 
 All notable changes to zenpng are documented here.
 
+## [Unreleased]
+
+### Performance
+- Skip the second full-file chunk scan that the zencodec decode path used
+  to perform for `PngProbe` construction. `PngProbe::from_info` now builds
+  the probe from decoder state in ~25 ns instead of re-parsing every chunk
+  (~85 ns mean, ~635 ns on PNGs with many text chunks — ~17x speedup on
+  that worst case).
+
+### Added
+- `PngProbe::from_info(&PngInfo)` constructor for building a probe from
+  decoder-produced metadata with no extra I/O.
+- `PngInfo::palette_size`, `PngInfo::compressed_data_size`, and
+  `PngInfo::creating_tool` fields, populated as chunks are walked.
+
 ## [0.1.2] - 2026-04-01
 
 ### Streaming Encode (zencodec `Encoder` trait)

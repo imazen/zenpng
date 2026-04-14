@@ -293,17 +293,49 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
     let has_alpha =
         color_type == ColorType::GrayscaleAlpha || color_type == ColorType::Rgba || has_trns;
 
+    Ok(assemble_probe(ProbeInputs {
+        width,
+        height,
+        color_type,
+        bit_depth,
+        has_alpha,
+        has_trns,
+        interlaced,
+        sequence,
+        palette_size,
+        creating_tool,
+        idat_total,
+    }))
+}
+
+/// Fields pulled together from a chunk scan or from decoder state, used to
+/// build a [`PngProbe`] via the shared heuristics.
+struct ProbeInputs {
+    width: u32,
+    height: u32,
+    color_type: ColorType,
+    bit_depth: u8,
+    has_alpha: bool,
+    has_trns: bool,
+    interlaced: bool,
+    sequence: zencodec::ImageSequence,
+    palette_size: u16,
+    creating_tool: Option<String>,
+    idat_total: u64,
+}
+
+fn assemble_probe(inp: ProbeInputs) -> PngProbe {
     // Calculate raw data size
-    let channels = if has_trns && color_type == ColorType::Indexed {
+    let channels = if inp.has_trns && inp.color_type == ColorType::Indexed {
         1 // indexed stays 1 channel even with tRNS
     } else {
-        color_type.channels()
+        inp.color_type.channels()
     };
     let raw_data_size =
-        width as u64 * height as u64 * channels as u64 * (bit_depth.max(8) as u64 / 8);
+        inp.width as u64 * inp.height as u64 * channels as u64 * (inp.bit_depth.max(8) as u64 / 8);
 
     let compression_ratio = if raw_data_size > 0 {
-        idat_total as f32 / raw_data_size as f32
+        inp.idat_total as f32 / raw_data_size as f32
     } else {
         1.0
     };
@@ -331,17 +363,17 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
     // Build recommendations
     let mut recommendations = Vec::new();
 
-    if interlaced {
+    if inp.interlaced {
         recommendations.push(Recommendation::RemoveInterlacing);
     }
 
-    if color_type == ColorType::Rgba && !has_trns {
+    if inp.color_type == ColorType::Rgba && !inp.has_trns {
         // Could potentially drop alpha if all pixels are opaque
         // (we can't verify without decoding, so this is a suggestion)
         recommendations.push(Recommendation::DropUnusedAlpha);
     }
 
-    if bit_depth == 16 {
+    if inp.bit_depth == 16 {
         recommendations.push(Recommendation::ReduceBitDepth);
     }
 
@@ -351,25 +383,58 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
         recommendations.push(Recommendation::AlreadyOptimal);
     }
 
-    Ok(PngProbe {
-        width,
-        height,
-        color_type,
-        bit_depth,
-        has_alpha,
-        interlaced,
-        sequence,
-        palette_size,
-        creating_tool,
-        compressed_data_size: idat_total,
+    PngProbe {
+        width: inp.width,
+        height: inp.height,
+        color_type: inp.color_type,
+        bit_depth: inp.bit_depth,
+        has_alpha: inp.has_alpha,
+        interlaced: inp.interlaced,
+        sequence: inp.sequence,
+        palette_size: inp.palette_size,
+        creating_tool: inp.creating_tool,
+        compressed_data_size: inp.idat_total,
         raw_data_size,
         compression_ratio,
         compression_assessment,
         recommendations,
-    })
+    }
 }
 
 impl PngProbe {
+    /// Construct a `PngProbe` from decoder-produced [`crate::decode::PngInfo`]
+    /// without a second chunk-level scan.
+    ///
+    /// `PngInfo` already carries every input the probe heuristics need
+    /// (dimensions, color type, bit depth, interlace, alpha/sequence,
+    /// palette size, compressed data size, creating-tool). This entry point
+    /// is used inside the main decode path to avoid redoing the work that
+    /// [`probe`] performs on its own. External callers that only have
+    /// raw PNG bytes should keep using [`probe`].
+    pub fn from_info(info: &crate::decode::PngInfo) -> Self {
+        let color_type = ColorType::from_png(info.color_type);
+        // tRNS presence can be inferred: `has_alpha` is set when the color
+        // type has intrinsic alpha (4/6) or when a tRNS chunk was observed.
+        // For color types without intrinsic alpha, `has_alpha` therefore
+        // equals `has_trns`. For color types 4/6, tRNS is irrelevant to the
+        // downstream heuristics (raw_data_size channels, DropUnusedAlpha).
+        let intrinsic_alpha = info.color_type == 4 || info.color_type == 6;
+        let has_trns = info.has_alpha && !intrinsic_alpha;
+        assemble_probe(ProbeInputs {
+            width: info.width,
+            height: info.height,
+            color_type,
+            bit_depth: info.bit_depth,
+            has_alpha: info.has_alpha,
+            has_trns,
+            interlaced: info.interlaced,
+            sequence: info.sequence.clone(),
+            palette_size: info.palette_size.unwrap_or(0),
+            creating_tool: info.creating_tool.clone(),
+            idat_total: info.compressed_data_size,
+        })
+    }
+
     /// Whether re-encoding is likely to produce a smaller file.
     pub fn is_improvable(&self) -> bool {
         matches!(
