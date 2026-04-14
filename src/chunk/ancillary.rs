@@ -274,7 +274,7 @@ impl PngAncillary {
     /// Parse iCCP chunk: null-terminated profile name, compression method, compressed data.
     fn parse_iccp(&mut self, data: &[u8]) -> crate::error::Result<()> {
         // Find null terminator for profile name
-        let null_pos = data.iter().position(|&b| b == 0).ok_or_else(|| {
+        let null_pos = memchr::memchr(0, data).ok_or_else(|| {
             at!(PngError::Decode(
                 "iCCP: missing profile name terminator".into()
             ))
@@ -338,14 +338,14 @@ impl PngAncillary {
         let rest = &rest[2..];
 
         // Skip language tag (null-terminated)
-        let lang_end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
+        let lang_end = memchr::memchr(0, rest).unwrap_or(rest.len());
         if lang_end >= rest.len() {
             return;
         }
         let rest = &rest[lang_end + 1..];
 
         // Skip translated keyword (null-terminated)
-        let trans_end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
+        let trans_end = memchr::memchr(0, rest).unwrap_or(rest.len());
         if trans_end >= rest.len() {
             return;
         }
@@ -372,7 +372,7 @@ impl PngAncillary {
 
     /// Parse tEXt chunk: keyword\0text (Latin-1).
     fn parse_text(&mut self, data: &[u8], compressed: bool) {
-        if let Some(null_pos) = data.iter().position(|&b| b == 0) {
+        if let Some(null_pos) = memchr::memchr(0, data) {
             let keyword = &data[..null_pos];
             let text = &data[null_pos + 1..];
             if !keyword.is_empty() && keyword.len() <= 79 {
@@ -390,7 +390,7 @@ impl PngAncillary {
 
     /// Parse zTXt chunk: keyword\0compression_method + compressed_text.
     fn parse_ztxt(&mut self, data: &[u8]) {
-        let Some(null_pos) = data.iter().position(|&b| b == 0) else {
+        let Some(null_pos) = memchr::memchr(0, data) else {
             return;
         };
         let keyword = &data[..null_pos];
