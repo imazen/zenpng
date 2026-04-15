@@ -521,24 +521,30 @@ impl<'a> RowDecoder<'a> {
         // then collect metadata from post-IDAT chunks.
         let data: &[u8] = self.decompressor.source_ref().file_data();
         let mut pos = self.first_idat_pos;
+        let mut idat_bytes: u64 = 0;
 
-        // Skip all IDAT chunks
+        // Skip all IDAT chunks (and sum their payload sizes for source-encoding
+        // analysis — zero extra cost since we're walking them anyway).
         while pos + 12 <= data.len() {
             let length = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
             let chunk_type: [u8; 4] = data[pos + 4..pos + 8].try_into().unwrap();
             let Some(crc_end) = (pos + 8).checked_add(length).and_then(|v| v.checked_add(4)) else {
+                self.ancillary.idat_bytes = idat_bytes;
                 return;
             };
             if crc_end > data.len() {
+                self.ancillary.idat_bytes = idat_bytes;
                 return;
             }
             if chunk_type != *b"IDAT" {
                 break;
             }
+            idat_bytes = idat_bytes.saturating_add(length as u64);
             pos = crc_end;
         }
 
-        // Now collect post-IDAT chunks
+        // Now collect post-IDAT chunks (and continue summing fdAT bytes
+        // for APNG so `compressed_data_size` matches `detect::probe`).
         while pos + 12 <= data.len() {
             let length = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
             let chunk_type: [u8; 4] = data[pos + 4..pos + 8].try_into().unwrap();
@@ -558,6 +564,10 @@ impl<'a> RowDecoder<'a> {
                 break;
             }
 
+            if chunk_type == *b"fdAT" {
+                idat_bytes = idat_bytes.saturating_add(length as u64);
+            }
+
             let chunk_data = &data[data_start..data_end];
             self.ancillary.collect_late(&ChunkRef {
                 chunk_type,
@@ -565,6 +575,7 @@ impl<'a> RowDecoder<'a> {
             });
             pos = crc_end;
         }
+        self.ancillary.idat_bytes = idat_bytes;
     }
 
     /// Collect decode-related warnings (chunk CRC skips, decompression checksum).

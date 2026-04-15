@@ -155,6 +155,18 @@ pub struct PngInfo {
     pub significant_bits: Option<SignificantBits>,
     /// Whether the image uses Adam7 interlacing.
     pub interlaced: bool,
+    /// Number of entries in the PLTE chunk, if present. `None` for
+    /// non-indexed images with no palette.
+    pub palette_size: Option<u16>,
+    /// Total bytes of IDAT/fdAT chunk payloads in the source file.
+    ///
+    /// Populated by the decoder while walking chunks; used to compute the
+    /// compression ratio reported by [`crate::detect::PngProbe`].
+    pub compressed_data_size: u64,
+    /// First creating-tool string extracted from `Software`/`Creator`/`Comment`
+    /// tEXt chunks or `Software`/`Creator` iTXt chunks, matching the rules
+    /// used by [`crate::detect::probe`]. `None` if no such chunk is present.
+    pub creating_tool: Option<alloc::string::String>,
 }
 
 /// Non-fatal issues detected during PNG decoding.

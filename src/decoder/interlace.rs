@@ -218,7 +218,9 @@ pub(crate) fn decode_interlaced(
     // Collect post-IDAT metadata: scan forward from first_idat_pos, skip IDATs
     {
         let mut pos = first_idat_pos;
-        // Skip IDAT chunks
+        let mut idat_bytes: u64 = 0;
+        // Skip IDAT chunks (and sum their payload sizes — zero extra cost since
+        // we're walking them anyway).
         while pos + 12 <= data.len() {
             let length = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
             let chunk_type: [u8; 4] = data[pos + 4..pos + 8].try_into().unwrap();
@@ -231,9 +233,11 @@ pub(crate) fn decode_interlaced(
             if chunk_type != *b"IDAT" {
                 break;
             }
+            idat_bytes = idat_bytes.saturating_add(length as u64);
             pos = crc_end;
         }
-        // Collect late metadata
+        // Collect late metadata (and continue summing fdAT bytes for APNG
+        // so `compressed_data_size` matches `detect::probe`).
         while pos + 12 <= data.len() {
             let length = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
             let chunk_type: [u8; 4] = data[pos + 4..pos + 8].try_into().unwrap();
@@ -250,6 +254,9 @@ pub(crate) fn decode_interlaced(
             if chunk_type == *b"IEND" {
                 break;
             }
+            if chunk_type == *b"fdAT" {
+                idat_bytes = idat_bytes.saturating_add(length as u64);
+            }
             let chunk_data = &data[data_start..data_end];
             ancillary.collect_late(&ChunkRef {
                 chunk_type,
@@ -257,6 +264,7 @@ pub(crate) fn decode_interlaced(
             });
             pos = crc_end;
         }
+        ancillary.idat_bytes = idat_bytes;
     }
 
     // Collect decompressor warnings
