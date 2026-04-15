@@ -1140,6 +1140,7 @@ fn score_candidates<'a>(
 }
 
 #[autoversion]
+#[cfg_attr(target_arch = "x86", allow(unused_imports))]
 pub(crate) fn apply_filter(filter: u8, row: &[u8], prev_row: &[u8], bpp: usize, out: &mut [u8]) {
     let len = row.len();
     match filter {
@@ -1204,6 +1205,7 @@ fn sav_score(data: &[u8]) -> u64 {
 }
 
 #[autoversion]
+#[cfg_attr(target_arch = "x86", allow(unused_imports))]
 fn entropy_score(data: &[u8]) -> f64 {
     if data.is_empty() {
         return 0.0;
@@ -1224,6 +1226,7 @@ fn entropy_score(data: &[u8]) -> f64 {
 }
 
 #[autoversion]
+#[cfg_attr(target_arch = "x86", allow(unused_imports))]
 fn bigrams_score(data: &[u8], seen: &mut [u64], touched: &mut Vec<u16>) -> usize {
     if data.len() < 2 {
         return 0;
@@ -1264,6 +1267,7 @@ fn bigrams_score(data: &[u8], seen: &mut [u64], touched: &mut Vec<u16>) -> usize
 /// the 65536-entry iteration that made this function 30-170x slower than
 /// MinSum.
 #[autoversion]
+#[cfg_attr(target_arch = "x86", allow(unused_imports))]
 fn bigram_entropy_score(data: &[u8], counts: &mut [u32], nonzero: &mut Vec<u16>) -> f64 {
     if data.len() < 2 {
         return 0.0;
