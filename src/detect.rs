@@ -239,7 +239,7 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
                 // Parse tEXt: keyword\0value
                 if chunk_data_end > chunk_data_start {
                     let chunk_bytes = &data[chunk_data_start..chunk_data_end];
-                    if let Some(null_pos) = chunk_bytes.iter().position(|&b| b == 0) {
+                    if let Some(null_pos) = memchr::memchr(0, chunk_bytes) {
                         let keyword = core::str::from_utf8(&chunk_bytes[..null_pos]).ok();
                         let value_bytes = &chunk_bytes[null_pos + 1..];
                         let value = core::str::from_utf8(value_bytes).ok();
@@ -257,7 +257,7 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
                 // Parse iTXt: keyword\0compression_flag\0method\0lang\0translated_kw\0text
                 if chunk_data_end > chunk_data_start {
                     let chunk_bytes = &data[chunk_data_start..chunk_data_end];
-                    if let Some(null_pos) = chunk_bytes.iter().position(|&b| b == 0) {
+                    if let Some(null_pos) = memchr::memchr(0, chunk_bytes) {
                         let keyword = core::str::from_utf8(&chunk_bytes[..null_pos]).ok();
                         if let Some(kw) = keyword
                             && (kw == "Software" || kw == "Creator")
@@ -268,10 +268,10 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
                             if rest.len() >= 2 {
                                 let after_method = &rest[2..];
                                 // Skip lang_tag\0
-                                if let Some(p1) = after_method.iter().position(|&b| b == 0) {
+                                if let Some(p1) = memchr::memchr(0, after_method) {
                                     let after_lang = &after_method[p1 + 1..];
                                     // Skip translated_keyword\0
-                                    if let Some(p2) = after_lang.iter().position(|&b| b == 0) {
+                                    if let Some(p2) = memchr::memchr(0, after_lang) {
                                         let text = &after_lang[p2 + 1..];
                                         if let Ok(s) = core::str::from_utf8(text) {
                                             creating_tool = Some(String::from(s));

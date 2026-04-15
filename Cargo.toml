@@ -24,6 +24,7 @@ imagequant = { version = "4", optional = true }
 quantette = { version = "0.5", optional = true, default-features = false, features = ["kmeans", "std"] }
 whereat = "0.1.4"
 zenflate = { version = "0.3.2" }
+memchr = { version = "2.8.0", default-features = false }
 archmage = { version = "0.9.14", default-features = false, features = ["macros", "std"] }
 safe_unaligned_simd = { version = "0.2.5", default-features = false }
 linear-srgb = "0.6.5"
