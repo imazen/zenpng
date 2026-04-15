@@ -1153,6 +1153,24 @@ impl zencodec::encode::Encoder for PngEncoder {
                             }
                             state.push_converted_row();
                         }
+                        PixelFormat::Rgbx8 => {
+                            let row_pixels = self.canvas_width as usize;
+                            for (i, c) in src.chunks_exact(4).enumerate().take(row_pixels) {
+                                state.convert_buf[i * 3] = c[0];
+                                state.convert_buf[i * 3 + 1] = c[1];
+                                state.convert_buf[i * 3 + 2] = c[2];
+                            }
+                            state.push_converted_row();
+                        }
+                        PixelFormat::Bgrx8 => {
+                            let row_pixels = self.canvas_width as usize;
+                            for (i, c) in src.chunks_exact(4).enumerate().take(row_pixels) {
+                                state.convert_buf[i * 3] = c[2];
+                                state.convert_buf[i * 3 + 1] = c[1];
+                                state.convert_buf[i * 3 + 2] = c[0];
+                            }
+                            state.push_converted_row();
+                        }
                         _ => {
                             return Err(at!(PngError::from(
                                 zencodec::UnsupportedOperation::PixelFormat
@@ -3456,6 +3474,141 @@ mod tests {
                 b: 0,
                 a: 200
             }
+        );
+    }
+
+    #[test]
+    fn supported_descriptors_includes_rgbx_and_bgrx() {
+        use zencodec::encode::EncoderConfig;
+        let desc = PngEncoderConfig::supported_descriptors();
+        assert!(
+            desc.contains(&PixelDescriptor::RGBX8_SRGB),
+            "RGBX8_SRGB must be in supported_descriptors"
+        );
+        assert!(
+            desc.contains(&PixelDescriptor::BGRX8_SRGB),
+            "BGRX8_SRGB must be in supported_descriptors"
+        );
+    }
+
+    #[test]
+    fn encode_rgbx8_roundtrip() {
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        // 16×16 image, RGBX8 layout: 4 bytes per pixel, byte 3 is padding.
+        let w: u32 = 16;
+        let h: u32 = 16;
+        let mut buf = Vec::with_capacity((w * h * 4) as usize);
+        for _ in 0..(w * h) {
+            // padding byte 3 deliberately non-0xFF to confirm it's ignored
+            buf.extend_from_slice(&[255, 128, 0, 0x13]);
+        }
+        let stride = (w * 4) as usize;
+        let slice = PixelSlice::new(&buf, w, h, stride, PixelDescriptor::RGBX8_SRGB).unwrap();
+
+        let output = PngEncoderConfig::new()
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(slice.erase())
+            .unwrap();
+        assert_eq!(output.format(), ImageFormat::Png);
+        assert!(!output.data().is_empty());
+
+        let decoded = PngDecoderConfig::new().decode(output.data()).unwrap();
+        let rgba = to_rgba8(decoded.into_buffer());
+        let px = rgba.buf();
+        assert_eq!(
+            px[0],
+            Rgba {
+                r: 255,
+                g: 128,
+                b: 0,
+                a: 255,
+            },
+            "RGBX8 padding byte must not leak into decoded alpha"
+        );
+    }
+
+    #[test]
+    fn encode_bgrx8_roundtrip() {
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let w: u32 = 16;
+        let h: u32 = 16;
+        let mut buf = Vec::with_capacity((w * h * 4) as usize);
+        for _ in 0..(w * h) {
+            // BGR order: B=0, G=128, R=255; padding byte deliberately non-0xFF
+            buf.extend_from_slice(&[0, 128, 255, 0x42]);
+        }
+        let stride = (w * 4) as usize;
+        let slice = PixelSlice::new(&buf, w, h, stride, PixelDescriptor::BGRX8_SRGB).unwrap();
+
+        let output = PngEncoderConfig::new()
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(slice.erase())
+            .unwrap();
+        assert!(!output.data().is_empty());
+
+        let decoded = PngDecoderConfig::new().decode(output.data()).unwrap();
+        let rgba = to_rgba8(decoded.into_buffer());
+        let px = rgba.buf();
+        assert_eq!(
+            px[0],
+            Rgba {
+                r: 255,
+                g: 128,
+                b: 0,
+                a: 255,
+            },
+            "BGRX8 padding byte must not leak into decoded alpha"
+        );
+    }
+
+    #[test]
+    fn encode_rgbx8_matches_rgb8_size() {
+        // RGBX8 should produce an RGB PNG, not an RGBA PNG — size should match
+        // (or be very close to) the equivalent RGB8 encode, not the RGBA8 encode.
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let w: u32 = 16;
+        let h: u32 = 16;
+
+        let mut rgbx = Vec::with_capacity((w * h * 4) as usize);
+        let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+        for i in 0..(w * h) {
+            let r = (i & 0xff) as u8;
+            let g = ((i >> 1) & 0xff) as u8;
+            let b = ((i >> 2) & 0xff) as u8;
+            rgbx.extend_from_slice(&[r, g, b, 0x55]);
+            rgb.extend_from_slice(&[r, g, b]);
+        }
+
+        let rgbx_slice =
+            PixelSlice::new(&rgbx, w, h, (w * 4) as usize, PixelDescriptor::RGBX8_SRGB).unwrap();
+        let rgb_slice =
+            PixelSlice::new(&rgb, w, h, (w * 3) as usize, PixelDescriptor::RGB8_SRGB).unwrap();
+
+        let rgbx_out = PngEncoderConfig::new()
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(rgbx_slice.erase())
+            .unwrap();
+        let rgb_out = PngEncoderConfig::new()
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(rgb_slice.erase())
+            .unwrap();
+
+        // Same channel count → same output size (deterministic encoder settings).
+        assert_eq!(
+            rgbx_out.data().len(),
+            rgb_out.data().len(),
+            "RGBX8 should encode as 3-channel RGB, matching RGB8 output size"
         );
     }
 
@@ -6978,7 +7131,10 @@ mod tests {
         assert!(!out.info().has_alpha, "container reports no alpha source");
         let desc = out.into_buffer().descriptor();
         assert_eq!(desc.alpha(), Some(AlphaMode::Opaque));
-        assert_eq!(desc.pixel_format(), PixelDescriptor::BGRA8_SRGB.pixel_format());
+        assert_eq!(
+            desc.pixel_format(),
+            PixelDescriptor::BGRA8_SRGB.pixel_format()
+        );
     }
 
     /// Decoding an RGBA source (with real alpha variation) keeps the
