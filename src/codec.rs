@@ -47,6 +47,8 @@ static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGBA8_SRGB,
     PixelDescriptor::GRAY8_SRGB,
     PixelDescriptor::BGRA8_SRGB,
+    PixelDescriptor::RGBX8_SRGB,
+    PixelDescriptor::BGRX8_SRGB,
     PixelDescriptor::RGB16_SRGB,
     PixelDescriptor::RGBA16_SRGB,
     PixelDescriptor::GRAY16_SRGB,
@@ -853,6 +855,24 @@ impl zencodec::encode::Encoder for PngEncoder {
                     .collect();
                 self.do_encode(&rgba, w, h, crate::encode::ColorType::Rgba)
             }
+            PixelFormat::Rgbx8 => {
+                // Padding byte 3 is undefined — strip to RGB.
+                let raw = contiguous_bytes(&pixels);
+                let rgb: Vec<u8> = raw
+                    .chunks_exact(4)
+                    .flat_map(|c| [c[0], c[1], c[2]])
+                    .collect();
+                self.do_encode(&rgb, w, h, crate::encode::ColorType::Rgb)
+            }
+            PixelFormat::Bgrx8 => {
+                // BGRA layout with padding byte 3 — strip to RGB via swap.
+                let raw = contiguous_bytes(&pixels);
+                let rgb: Vec<u8> = raw
+                    .chunks_exact(4)
+                    .flat_map(|c| [c[2], c[1], c[0]])
+                    .collect();
+                self.do_encode(&rgb, w, h, crate::encode::ColorType::Rgb)
+            }
             _ => Err(at!(PngError::from(
                 zencodec::UnsupportedOperation::PixelFormat
             ))),
@@ -994,6 +1014,18 @@ impl zencodec::encode::Encoder for PngEncoder {
                                     .extend_from_slice(&[c[2], c[1], c[0], c[3]]);
                             }
                         }
+                        PixelFormat::Rgbx8 => {
+                            let row_pixels = self.canvas_width as usize;
+                            for c in src.chunks_exact(4).take(row_pixels) {
+                                state.pixel_data.extend_from_slice(&[c[0], c[1], c[2]]);
+                            }
+                        }
+                        PixelFormat::Bgrx8 => {
+                            let row_pixels = self.canvas_width as usize;
+                            for c in src.chunks_exact(4).take(row_pixels) {
+                                state.pixel_data.extend_from_slice(&[c[2], c[1], c[0]]);
+                            }
+                        }
                         _ => {
                             return Err(at!(PngError::from(
                                 zencodec::UnsupportedOperation::PixelFormat
@@ -1047,6 +1079,24 @@ impl zencodec::encode::Encoder for PngEncoder {
                                 state.convert_buf[i * 4 + 1] = c[1];
                                 state.convert_buf[i * 4 + 2] = c[0];
                                 state.convert_buf[i * 4 + 3] = c[3];
+                            }
+                            state.push_converted_row();
+                        }
+                        PixelFormat::Rgbx8 => {
+                            let row_pixels = self.canvas_width as usize;
+                            for (i, c) in src.chunks_exact(4).enumerate().take(row_pixels) {
+                                state.convert_buf[i * 3] = c[0];
+                                state.convert_buf[i * 3 + 1] = c[1];
+                                state.convert_buf[i * 3 + 2] = c[2];
+                            }
+                            state.push_converted_row();
+                        }
+                        PixelFormat::Bgrx8 => {
+                            let row_pixels = self.canvas_width as usize;
+                            for (i, c) in src.chunks_exact(4).enumerate().take(row_pixels) {
+                                state.convert_buf[i * 3] = c[2];
+                                state.convert_buf[i * 3 + 1] = c[1];
+                                state.convert_buf[i * 3 + 2] = c[0];
                             }
                             state.push_converted_row();
                         }
@@ -2244,6 +2294,12 @@ use zenpixels_convert::{PixelBufferConvertExt as _, PixelBufferConvertTypedExt a
 ///
 /// Uses `negotiate_pixel_format` to pick the best match, then converts
 /// if the native format doesn't already match.
+///
+/// When the source has no alpha channel but the target layout does, the
+/// synthesized alpha bytes are all 0xFF — promote the output descriptor's
+/// `AlphaMode` from `Straight` to `Opaque` so callers can skip alpha
+/// compositing / premultiplication work downstream. (We don't scan pixels
+/// to detect the all-opaque case for sources that *do* carry alpha.)
 fn negotiate_and_convert(pixels: PixelBuffer, preferred: &[PixelDescriptor]) -> PixelBuffer {
     let native_desc = pixels.descriptor();
     let target = zencodec::decode::negotiate_pixel_format(preferred, DECODE_DESCRIPTORS);
@@ -2256,11 +2312,27 @@ fn negotiate_and_convert(pixels: PixelBuffer, preferred: &[PixelDescriptor]) -> 
         return pixels;
     }
 
+    let source_had_no_alpha = native_desc.alpha().is_none();
+
     // Use convert_to() for all format conversions (8/16/F32, all layouts)
-    match pixels.convert_to(target) {
-        Ok(converted) => converted,
-        Err(_) => pixels, // Fallback to native format if conversion unavailable
+    let converted = match pixels.convert_to(target) {
+        Ok(c) => c,
+        Err(_) => return pixels, // Fallback to native format if conversion unavailable
+    };
+
+    // Promote Straight → Opaque when source contributed no alpha information.
+    if source_had_no_alpha
+        && matches!(
+            converted.descriptor().alpha(),
+            Some(zenpixels::AlphaMode::Straight)
+        )
+    {
+        let opaque_desc = converted
+            .descriptor()
+            .with_alpha(Some(zenpixels::AlphaMode::Opaque));
+        return converted.with_descriptor(opaque_desc);
     }
+    converted
 }
 
 // ── Pixel conversion helpers ─────────────────────────────────────────
@@ -2502,6 +2574,11 @@ fn pixel_format_to_png(
         )),
         PixelFormat::Bgra8 => Some((
             crate::encode::ColorType::Rgba,
+            crate::encode::BitDepth::Eight,
+        )),
+        // Rgbx8 and Bgrx8 are 4-byte layouts with undefined padding; emit 3-channel RGB.
+        PixelFormat::Rgbx8 | PixelFormat::Bgrx8 => Some((
+            crate::encode::ColorType::Rgb,
             crate::encode::BitDepth::Eight,
         )),
         _ => None,
@@ -6868,5 +6945,76 @@ mod tests {
         .unwrap();
         assert_eq!(decoded.info.width, 4);
         assert_eq!(decoded.info.height, 4);
+    }
+
+    /// Decoding an RGB-only PNG into an RGBA8/BGRA8 target must flag the
+    /// output descriptor's alpha mode as `Opaque` — the alpha bytes were
+    /// synthesized (all 0xFF) by the conversion, not carried by the source.
+    #[test]
+    fn decode_rgb_source_to_bgra8_reports_opaque_alpha() {
+        use zenpixels::AlphaMode;
+
+        let enc = PngEncoderConfig::new();
+        let pixels = vec![
+            Rgb {
+                r: 10u8,
+                g: 20,
+                b: 30,
+            };
+            16
+        ];
+        let img = Img::new(pixels, 4, 4);
+        let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
+
+        let dec = PngDecoderConfig::new();
+        let job = dec.job();
+        let decoder = job
+            .decoder(
+                alloc::borrow::Cow::Borrowed(encoded.data()),
+                &[PixelDescriptor::BGRA8_SRGB],
+            )
+            .unwrap();
+        let out = decoder.decode().unwrap();
+        assert!(!out.info().has_alpha, "container reports no alpha source");
+        let desc = out.into_buffer().descriptor();
+        assert_eq!(desc.alpha(), Some(AlphaMode::Opaque));
+        assert_eq!(desc.pixel_format(), PixelDescriptor::BGRA8_SRGB.pixel_format());
+    }
+
+    /// Decoding an RGBA source (with real alpha variation) keeps the
+    /// descriptor's alpha mode as `Straight` — we don't scan pixels, only
+    /// use container-level information.
+    #[test]
+    fn decode_rgba_source_keeps_straight_alpha_without_scan() {
+        use zenpixels::AlphaMode;
+
+        let enc = PngEncoderConfig::new();
+        // Vary alpha so the encoder can't downcast to indexed/RGB.
+        let mut pixels: Vec<Rgba<u8>> = Vec::with_capacity(16);
+        for i in 0..16u8 {
+            pixels.push(Rgba {
+                r: i.wrapping_mul(17),
+                g: 20,
+                b: 30,
+                a: if i == 0 { 128 } else { 255 },
+            });
+        }
+        let img = Img::new(pixels, 4, 4);
+        let encoded = enc.encode_rgba8(img.as_ref()).unwrap();
+
+        let dec = PngDecoderConfig::new();
+        let job = dec.job();
+        let decoder = job
+            .decoder(
+                alloc::borrow::Cow::Borrowed(encoded.data()),
+                &[PixelDescriptor::BGRA8_SRGB],
+            )
+            .unwrap();
+        let out = decoder.decode().unwrap();
+        assert!(out.info().has_alpha);
+        assert_eq!(
+            out.into_buffer().descriptor().alpha(),
+            Some(AlphaMode::Straight),
+        );
     }
 }
