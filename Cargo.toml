@@ -8,7 +8,7 @@ description = "PNG encoding and decoding with zencodec trait integration"
 categories = ["multimedia::images", "multimedia::encoding"]
 keywords = ["png", "image", "encoder", "decoder", "codec"]
 repository = "https://github.com/imazen/zenpng"
-exclude = ["CLAUDE.md", "CONTEXT-HANDOFF.md", "FEEDBACK.md", "justfile", "specs/", "heaptrack.*", ".plan", "benchmarks/", "TUNING.md", "2-26-26-tables.md", "analyze_zopfli.py", ".github/", ".claude/", ".superwork/", ".zenbench/", "copter-report/", "Cross.toml", "Cargo.toml.original.txt", "fuzz/"]
+exclude = ["CLAUDE.md", "CONTEXT-HANDOFF.md", "FEEDBACK.md", "justfile", "specs/", "heaptrack.*", ".plan", "benchmarks/", "TUNING.md", "2-26-26-tables.md", "analyze_zopfli.py", "ideas.md", "scripts/", "*.svg", ".github/", ".claude/", ".superwork/", ".zenbench/", "copter-report/", "Cross.toml", "Cargo.toml.original.txt", "fuzz/"]
 
 [dependencies]
 thiserror = { version = "2.0", default-features = false }
