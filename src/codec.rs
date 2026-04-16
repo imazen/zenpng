@@ -336,22 +336,14 @@ fn quality_to_mpe(quality: f32) -> f32 {
     TABLE[last].1
 }
 
-/// Convert a [`ThreadingPolicy`](zencodec::ThreadingPolicy) to a concrete thread count.
-///
-/// Returns 0 for "no limit" (use as many threads as beneficial),
-/// 1 for single-threaded, or N for a specific cap.
-fn threading_to_count(policy: zencodec::ThreadingPolicy) -> usize {
-    match policy {
-        zencodec::ThreadingPolicy::SingleThread => 1,
-        zencodec::ThreadingPolicy::LimitOrSingle { max_threads } => max_threads as usize,
-        zencodec::ThreadingPolicy::LimitOrAny {
-            preferred_max_threads,
-        } => preferred_max_threads as usize,
-        zencodec::ThreadingPolicy::Balanced => {
-            std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1))
-        }
-        zencodec::ThreadingPolicy::Unlimited => 0, // 0 = no limit
-        _ => 0,                                    // future variants: default to no limit
+/// Apply threading policy to PNG encode config fields.
+fn apply_threading(config: &mut crate::encode::EncodeConfig, policy: zencodec::ThreadingPolicy) {
+    if policy.is_parallel() {
+        // max_threads 0 = no limit (use ambient pool / all cores)
+        config.max_threads = 0;
+    } else {
+        config.max_threads = 1;
+        config.parallel = false;
     }
 }
 
@@ -502,14 +494,9 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
 
     fn animation_frame_encoder(self) -> Result<PngAnimationFrameEncoder, At<PngError>> {
         let effective_meta = apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref());
-        // Apply threading policy from limits to the config.
         let mut config = self.config.config.clone();
         if let Some(ref limits) = self.limits {
-            let thread_count = threading_to_count(limits.threading());
-            config.max_threads = thread_count;
-            if thread_count == 1 {
-                config.parallel = false;
-            }
+            apply_threading(&mut config, limits.threading());
         }
         let mut enc = PngAnimationFrameEncoder::new(
             config,
@@ -623,15 +610,10 @@ struct PreFilteredState {
 }
 
 impl PngEncoder {
-    /// Build an `EncodeConfig` with threading policy applied from resource limits.
     fn config_with_threading(&self) -> EncodeConfig {
         let mut config = self.config.config.clone();
         if let Some(ref limits) = self.limits {
-            let thread_count = threading_to_count(limits.threading());
-            config.max_threads = thread_count;
-            if thread_count == 1 {
-                config.parallel = false;
-            }
+            apply_threading(&mut config, limits.threading());
         }
         config
     }
@@ -6024,7 +6006,7 @@ mod tests {
         let img = imgref::ImgVec::new(pixels, 32, 32);
 
         let config = PngEncoderConfig::new();
-        let limits = ResourceLimits::none().with_threading(ThreadingPolicy::SingleThread);
+        let limits = ResourceLimits::none().with_threading(ThreadingPolicy::Sequential);
         let encoder = config.clone().job().with_limits(limits).encoder().unwrap();
         let output = encoder
             .encode(PixelSlice::from(img.as_ref()).erase())
@@ -6068,7 +6050,7 @@ mod tests {
 
         // Encode with SingleThread
         let config_st = PngEncoderConfig::new();
-        let limits = ResourceLimits::none().with_threading(ThreadingPolicy::SingleThread);
+        let limits = ResourceLimits::none().with_threading(ThreadingPolicy::Sequential);
         let st_output = config_st
             .job()
             .with_limits(limits)
