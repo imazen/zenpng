@@ -71,10 +71,9 @@ pub(crate) fn output_bytes_per_pixel(ihdr: &Ihdr, ancillary: &PngAncillary) -> u
             // GrayAlpha: GA8 → RGBA8 (4 bytes), GA16 → GrayAlpha16 (4 bytes)
             4
         }
-        6 => {
-            // RGBA
-            if ihdr.bit_depth == 16 { 8 } else { 4 }
-        }
+        // RGBA
+        6 if ihdr.bit_depth == 16 => 8,
+        6 => 4,
         _ => 4,
     }
 }

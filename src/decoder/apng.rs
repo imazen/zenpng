@@ -107,21 +107,13 @@ impl<'a> ApngDecoder<'a> {
         let mut frame0_fctl = None;
         let mut default_image_is_frame = false;
 
-        loop {
-            let Some((length, chunk_type, data_start, crc_end)) = read_chunk_header(data, pos)
-            else {
-                break;
-            };
-
+        while let Some((length, chunk_type, data_start, crc_end)) = read_chunk_header(data, pos) {
             match &chunk_type {
                 b"IDAT" => {
                     first_idat_pos = Some(pos);
                     // Resume scanning from after IDAT chunks
                     let mut scan = crc_end;
-                    loop {
-                        let Some((_, ct, _, ce)) = read_chunk_header(data, scan) else {
-                            break;
-                        };
+                    while let Some((_, ct, _, ce)) = read_chunk_header(data, scan) {
                         if ct != *b"IDAT" {
                             break;
                         }
@@ -850,6 +842,7 @@ fn composite_frame(
 /// Per-pixel alpha composite for RGBA8.
 /// out_c = fg_c * fg_a / 255 + bg_c * bg_a * (255 - fg_a) / (255*255)
 /// Simplified APNG spec formula: out = fg + bg * (255 - fg_a) / 255
+#[allow(clippy::manual_checked_ops)]
 fn blend_over_row_8(dst: &mut [u8], src: &[u8]) {
     for (dst_px, src_px) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
         let fg_a = src_px[3] as u32;
@@ -881,6 +874,7 @@ fn blend_over_row_8(dst: &mut [u8], src: &[u8]) {
 }
 
 /// Per-pixel alpha composite for RGBA16 (native endian).
+#[allow(clippy::manual_checked_ops)]
 fn blend_over_row_16(dst: &mut [u8], src: &[u8]) {
     for (dst_px, src_px) in dst.chunks_exact_mut(8).zip(src.chunks_exact(8)) {
         let fg_a = u16::from_ne_bytes([src_px[6], src_px[7]]) as u64;

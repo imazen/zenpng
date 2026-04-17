@@ -165,62 +165,62 @@ impl PngAncillary {
                 }
                 self.palette = Some(chunk.data.to_vec());
             }
-            b"tRNS" => {
-                if !chunk.data.is_empty() {
-                    // For indexed color, tRNS must not exceed palette entries.
-                    // If oversized, discard data but preserve the chunk's presence
-                    // so we still output RGBA format (with all alpha=255).
-                    if let Some(ref palette) = self.palette {
-                        let max_entries = palette.len() / 3;
-                        if chunk.data.len() > max_entries {
-                            self.trns = Some(Vec::new());
-                        } else {
-                            self.trns = Some(chunk.data.to_vec());
-                        }
+            b"tRNS"
+                if !chunk.data.is_empty() =>
+            {
+                // For indexed color, tRNS must not exceed palette entries.
+                // If oversized, discard data but preserve the chunk's presence
+                // so we still output RGBA format (with all alpha=255).
+                if let Some(ref palette) = self.palette {
+                    let max_entries = palette.len() / 3;
+                    if chunk.data.len() > max_entries {
+                        self.trns = Some(Vec::new());
                     } else {
                         self.trns = Some(chunk.data.to_vec());
                     }
+                } else {
+                    self.trns = Some(chunk.data.to_vec());
                 }
             }
             b"iCCP" => {
                 // iCCP is ancillary — ignore parse failures (e.g., broken profiles)
                 let _ = self.parse_iccp(chunk.data);
             }
-            b"gAMA" => {
-                if chunk.data.len() == 4 {
-                    self.gamma = Some(u32::from_be_bytes(chunk.data[..4].try_into().unwrap()));
-                }
+            b"gAMA"
+                if chunk.data.len() == 4 =>
+            {
+                self.gamma = Some(u32::from_be_bytes(chunk.data[..4].try_into().unwrap()));
             }
-            b"sRGB" => {
-                if !chunk.data.is_empty() {
-                    self.srgb_intent = Some(chunk.data[0]);
-                }
+            b"sRGB"
+                if !chunk.data.is_empty() =>
+            {
+                self.srgb_intent = Some(chunk.data[0]);
             }
-            b"cHRM" => {
-                if chunk.data.len() == 32 {
-                    let mut vals = [0i32; 8];
-                    for (i, v) in vals.iter_mut().enumerate() {
-                        *v = i32::from_be_bytes(chunk.data[i * 4..(i + 1) * 4].try_into().unwrap());
-                    }
-                    self.chrm = Some(vals);
+            b"cHRM"
+                if chunk.data.len() == 32 =>
+            {
+                let mut vals = [0i32; 8];
+                for (i, v) in vals.iter_mut().enumerate() {
+                    *v = i32::from_be_bytes(chunk.data[i * 4..(i + 1) * 4].try_into().unwrap());
                 }
+                self.chrm = Some(vals);
             }
-            b"cICP" => {
-                if chunk.data.len() == 4 {
-                    self.cicp = Some(chunk.data[..4].try_into().unwrap());
-                }
+            b"cICP"
+                if chunk.data.len() == 4 =>
+            {
+                self.cicp = Some(chunk.data[..4].try_into().unwrap());
             }
-            b"cLLI" => {
-                if chunk.data.len() == 8 {
-                    let max_cll = u32::from_be_bytes(chunk.data[0..4].try_into().unwrap());
-                    let max_fall = u32::from_be_bytes(chunk.data[4..8].try_into().unwrap());
-                    self.clli = Some([max_cll, max_fall]);
-                }
+            b"cLLI"
+                if chunk.data.len() == 8 =>
+            {
+                let max_cll = u32::from_be_bytes(chunk.data[0..4].try_into().unwrap());
+                let max_fall = u32::from_be_bytes(chunk.data[4..8].try_into().unwrap());
+                self.clli = Some([max_cll, max_fall]);
             }
-            b"mDCV" => {
-                if chunk.data.len() == 24 {
-                    self.mdcv = Some(chunk.data.to_vec());
-                }
+            b"mDCV"
+                if chunk.data.len() == 24 =>
+            {
+                self.mdcv = Some(chunk.data.to_vec());
             }
             b"eXIf" => {
                 self.exif = Some(chunk.data.to_vec());
@@ -229,29 +229,29 @@ impl PngAncillary {
                 self.try_parse_xmp(chunk.data);
                 self.try_extract_creating_tool_itxt(chunk.data);
             }
-            b"acTL" => {
-                if chunk.data.len() == 8 {
-                    let num_frames = u32::from_be_bytes(chunk.data[0..4].try_into().unwrap());
-                    let num_plays = u32::from_be_bytes(chunk.data[4..8].try_into().unwrap());
-                    if num_frames == 0 {
-                        return Err(at!(PngError::Decode("acTL: num_frames must be > 0".into())));
-                    }
-                    if num_frames > 65536 {
-                        return Err(at!(PngError::LimitExceeded(alloc::format!(
-                            "acTL: num_frames {} exceeds limit of 65536",
-                            num_frames
-                        ))));
-                    }
-                    self.actl = Some((num_frames, num_plays));
+            b"acTL"
+                if chunk.data.len() == 8 =>
+            {
+                let num_frames = u32::from_be_bytes(chunk.data[0..4].try_into().unwrap());
+                let num_plays = u32::from_be_bytes(chunk.data[4..8].try_into().unwrap());
+                if num_frames == 0 {
+                    return Err(at!(PngError::Decode("acTL: num_frames must be > 0".into())));
                 }
+                if num_frames > 65536 {
+                    return Err(at!(PngError::LimitExceeded(alloc::format!(
+                        "acTL: num_frames {} exceeds limit of 65536",
+                        num_frames
+                    ))));
+                }
+                self.actl = Some((num_frames, num_plays));
             }
-            b"pHYs" => {
-                if chunk.data.len() == 9 {
-                    let ppux = u32::from_be_bytes(chunk.data[0..4].try_into().unwrap());
-                    let ppuy = u32::from_be_bytes(chunk.data[4..8].try_into().unwrap());
-                    let unit = chunk.data[8];
-                    self.phys = Some((ppux, ppuy, unit));
-                }
+            b"pHYs"
+                if chunk.data.len() == 9 =>
+            {
+                let ppux = u32::from_be_bytes(chunk.data[0..4].try_into().unwrap());
+                let ppuy = u32::from_be_bytes(chunk.data[4..8].try_into().unwrap());
+                let unit = chunk.data[8];
+                self.phys = Some((ppux, ppuy, unit));
             }
             b"tEXt" => {
                 self.parse_text(chunk.data, false);
@@ -262,18 +262,18 @@ impl PngAncillary {
             b"bKGD" => {
                 self.parse_bkgd(chunk.data);
             }
-            b"tIME" => {
-                if chunk.data.len() == 7 {
-                    let year = u16::from_be_bytes(chunk.data[0..2].try_into().unwrap());
-                    self.last_modified = Some(PngTime {
-                        year,
-                        month: chunk.data[2],
-                        day: chunk.data[3],
-                        hour: chunk.data[4],
-                        minute: chunk.data[5],
-                        second: chunk.data[6],
-                    });
-                }
+            b"tIME"
+                if chunk.data.len() == 7 =>
+            {
+                let year = u16::from_be_bytes(chunk.data[0..2].try_into().unwrap());
+                self.last_modified = Some(PngTime {
+                    year,
+                    month: chunk.data[2],
+                    day: chunk.data[3],
+                    hour: chunk.data[4],
+                    minute: chunk.data[5],
+                    second: chunk.data[6],
+                });
             }
             b"sBIT" => {
                 self.parse_sbit(chunk.data);
@@ -535,10 +535,10 @@ impl PngAncillary {
     /// encoders place after IDAT).
     pub fn collect_late(&mut self, chunk: &ChunkRef<'_>) {
         match &chunk.chunk_type {
-            b"eXIf" => {
-                if self.exif.is_none() {
-                    self.exif = Some(chunk.data.to_vec());
-                }
+            b"eXIf"
+                if self.exif.is_none() =>
+            {
+                self.exif = Some(chunk.data.to_vec());
             }
             b"iTXt" => {
                 if self.xmp.is_none() {
@@ -552,18 +552,18 @@ impl PngAncillary {
             b"zTXt" => {
                 self.parse_ztxt(chunk.data);
             }
-            b"tIME" => {
-                if self.last_modified.is_none() && chunk.data.len() == 7 {
-                    let year = u16::from_be_bytes(chunk.data[0..2].try_into().unwrap());
-                    self.last_modified = Some(PngTime {
-                        year,
-                        month: chunk.data[2],
-                        day: chunk.data[3],
-                        hour: chunk.data[4],
-                        minute: chunk.data[5],
-                        second: chunk.data[6],
-                    });
-                }
+            b"tIME"
+                if self.last_modified.is_none() && chunk.data.len() == 7 =>
+            {
+                let year = u16::from_be_bytes(chunk.data[0..2].try_into().unwrap());
+                self.last_modified = Some(PngTime {
+                    year,
+                    month: chunk.data[2],
+                    day: chunk.data[3],
+                    hour: chunk.data[4],
+                    minute: chunk.data[5],
+                    second: chunk.data[6],
+                });
             }
             _ => {}
         }

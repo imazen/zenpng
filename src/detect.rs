@@ -235,47 +235,47 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
                     random_access: false,
                 };
             }
-            b"tEXt" => {
+            b"tEXt"
                 // Parse tEXt: keyword\0value
-                if chunk_data_end > chunk_data_start {
-                    let chunk_bytes = &data[chunk_data_start..chunk_data_end];
-                    if let Some(null_pos) = memchr::memchr(0, chunk_bytes) {
-                        let keyword = core::str::from_utf8(&chunk_bytes[..null_pos]).ok();
-                        let value_bytes = &chunk_bytes[null_pos + 1..];
-                        let value = core::str::from_utf8(value_bytes).ok();
+                if chunk_data_end > chunk_data_start =>
+            {
+                let chunk_bytes = &data[chunk_data_start..chunk_data_end];
+                if let Some(null_pos) = memchr::memchr(0, chunk_bytes) {
+                    let keyword = core::str::from_utf8(&chunk_bytes[..null_pos]).ok();
+                    let value_bytes = &chunk_bytes[null_pos + 1..];
+                    let value = core::str::from_utf8(value_bytes).ok();
 
-                        if let (Some(kw), Some(val)) = (keyword, value)
-                            && (kw == "Software" || kw == "Creator" || kw == "Comment")
-                            && creating_tool.is_none()
-                        {
-                            creating_tool = Some(String::from(val));
-                        }
+                    if let (Some(kw), Some(val)) = (keyword, value)
+                        && (kw == "Software" || kw == "Creator" || kw == "Comment")
+                        && creating_tool.is_none()
+                    {
+                        creating_tool = Some(String::from(val));
                     }
                 }
             }
-            b"iTXt" => {
+            b"iTXt"
                 // Parse iTXt: keyword\0compression_flag\0method\0lang\0translated_kw\0text
-                if chunk_data_end > chunk_data_start {
-                    let chunk_bytes = &data[chunk_data_start..chunk_data_end];
-                    if let Some(null_pos) = memchr::memchr(0, chunk_bytes) {
-                        let keyword = core::str::from_utf8(&chunk_bytes[..null_pos]).ok();
-                        if let Some(kw) = keyword
-                            && (kw == "Software" || kw == "Creator")
-                            && creating_tool.is_none()
-                        {
-                            // Skip compression_flag, method, lang_tag\0, translated_kw\0
-                            let rest = &chunk_bytes[null_pos + 1..];
-                            if rest.len() >= 2 {
-                                let after_method = &rest[2..];
-                                // Skip lang_tag\0
-                                if let Some(p1) = memchr::memchr(0, after_method) {
-                                    let after_lang = &after_method[p1 + 1..];
-                                    // Skip translated_keyword\0
-                                    if let Some(p2) = memchr::memchr(0, after_lang) {
-                                        let text = &after_lang[p2 + 1..];
-                                        if let Ok(s) = core::str::from_utf8(text) {
-                                            creating_tool = Some(String::from(s));
-                                        }
+                if chunk_data_end > chunk_data_start =>
+            {
+                let chunk_bytes = &data[chunk_data_start..chunk_data_end];
+                if let Some(null_pos) = memchr::memchr(0, chunk_bytes) {
+                    let keyword = core::str::from_utf8(&chunk_bytes[..null_pos]).ok();
+                    if let Some(kw) = keyword
+                        && (kw == "Software" || kw == "Creator")
+                        && creating_tool.is_none()
+                    {
+                        // Skip compression_flag, method, lang_tag\0, translated_kw\0
+                        let rest = &chunk_bytes[null_pos + 1..];
+                        if rest.len() >= 2 {
+                            let after_method = &rest[2..];
+                            // Skip lang_tag\0
+                            if let Some(p1) = memchr::memchr(0, after_method) {
+                                let after_lang = &after_method[p1 + 1..];
+                                // Skip translated_keyword\0
+                                if let Some(p2) = memchr::memchr(0, after_lang) {
+                                    let text = &after_lang[p2 + 1..];
+                                    if let Ok(s) = core::str::from_utf8(text) {
+                                        creating_tool = Some(String::from(s));
                                     }
                                 }
                             }
