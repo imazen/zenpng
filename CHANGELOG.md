@@ -4,6 +4,8 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-04-17
+
 ### Performance
 - Skip the second full-file chunk scan that the zencodec decode path used
   to perform for `PngProbe` construction. `PngProbe::from_info` now builds
