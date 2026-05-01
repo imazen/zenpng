@@ -500,6 +500,44 @@ pub(crate) fn encode_raw(
     let w = width as usize;
     let h = height as usize;
 
+    // Gamut downcast: rewrite a wider-gamut buffer into sRGB primaries
+    // when every pixel fits losslessly. Gated on (a) the explicit flag,
+    // (b) compression.effort() >= 7 (this pass is more expensive than
+    // the byte-level predicates per CLAUDE.md design), (c) 8-bit RGB or
+    // RGBA, and (d) a detectable source gamut from cICP. On success the
+    // rewritten buffer takes over and wide-gamut metadata is dropped.
+    let gamut_bytes;
+    let bytes = if config.downcast.gamut_downcast
+        && effort >= 7
+        && bit_depth == BitDepth::Eight
+        && (color_type == ColorType::Rgb || color_type == ColorType::Rgba)
+        && let Some(cicp) = write_meta.cicp
+        && let Some(src_gamut) = crate::gamut::SourceGamut::from_cicp(cicp)
+    {
+        let downcast = match color_type {
+            ColorType::Rgb => crate::gamut::try_downcast_rgb8_to_srgb(bytes, src_gamut),
+            ColorType::Rgba => crate::gamut::try_downcast_rgba8_to_srgb(bytes, src_gamut),
+            _ => None,
+        };
+        match downcast {
+            Some(out) => {
+                gamut_bytes = out;
+                // Re-tag as sRGB: drop wide-gamut signals.
+                write_meta.cicp = None;
+                write_meta.chromaticities = None;
+                write_meta.source_gamma = None;
+                if write_meta.srgb_intent.is_none() {
+                    // Default to perceptual rendering intent.
+                    write_meta.srgb_intent = Some(0);
+                }
+                &gamut_bytes
+            }
+            None => bytes,
+        }
+    } else {
+        bytes
+    };
+
     // Near-lossless: quantize LSBs for better compression (8-bit only)
     let nl_bytes;
     let bytes = if config.near_lossless_bits > 0 && bit_depth == BitDepth::Eight {
@@ -906,6 +944,160 @@ mod tests {
         assert!(c.srgb_intent.is_none());
         assert!(c.chromaticities.is_none());
         assert_eq!(c.near_lossless_bits, 0);
+        // Downcast defaults: cheap predicates on, expensive ones off.
+        assert!(c.downcast.rgba_to_rgb);
+        assert!(c.downcast.rgb_to_gray);
+        assert!(c.downcast.sub_byte_gray);
+        assert!(c.downcast.indexed);
+        assert!(c.downcast.alpha_to_trns);
+        assert!(c.downcast.downcast_16_to_8_replicated);
+        assert!(!c.downcast.downcast_16_to_8_low_zero);
+        assert!(!c.downcast.gamut_downcast);
+    }
+
+    #[test]
+    fn downcast_flags_none_disables_everything() {
+        let f = DowncastFlags::none();
+        assert!(!f.rgba_to_rgb);
+        assert!(!f.rgb_to_gray);
+        assert!(!f.sub_byte_gray);
+        assert!(!f.indexed);
+        assert!(!f.alpha_to_trns);
+        assert!(!f.downcast_16_to_8_replicated);
+        assert!(!f.downcast_16_to_8_low_zero);
+        assert!(!f.gamut_downcast);
+    }
+
+    #[test]
+    fn rgba8_with_downcast_flags_none_keeps_rgba() {
+        // 4 RGBA pixels, all opaque, all gray — would normally become Gray8.
+        // With downcast disabled, must stay RGBA8.
+        let pixels: Vec<Rgba<u8>> = (0..4)
+            .map(|i| Rgba { r: i * 30, g: i * 30, b: i * 30, a: 255 })
+            .collect();
+        let img = Img::new(pixels, 4, 1);
+        let config = EncodeConfig::default()
+            .with_compression(Compression::Fastest)
+            .with_downcast(DowncastFlags::none());
+        let encoded =
+            encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::default(), &Unstoppable).unwrap();
+        // PNG color_type 6 = RGBA, NOT gray.
+        assert_eq!(decoded.info.color_type, 6, "downcast disabled — must stay RGBA");
+    }
+
+    #[test]
+    fn rgba8_p3_to_srgb_gamut_downcast_at_high_effort() {
+        // RGBA8 buffer tagged Display P3 + sRGB transfer, with all pixels
+        // landing inside sRGB gamut. With gamut_downcast=true and effort
+        // 7+, the encoder should rewrite values into sRGB primaries and
+        // emit an sRGB chunk (no cICP).
+        use zencodec::{Cicp, Metadata};
+        // Pixels chosen to be unambiguously in-sRGB for both interpretations.
+        let pixels: Vec<Rgba<u8>> = (0..16)
+            .map(|i| Rgba {
+                r: 80 + (i * 3) as u8,
+                g: 90 + (i * 2) as u8,
+                b: 100 + (i * 1) as u8,
+                a: 255,
+            })
+            .collect();
+        let img = Img::new(pixels.clone(), 4, 4);
+
+        let metadata = Metadata::none().with_cicp(Cicp::DISPLAY_P3);
+
+        let mut flags = DowncastFlags::default();
+        flags.gamut_downcast = true;
+        // Disable indexed/sub-byte to keep the test observation simple.
+        flags.indexed = false;
+        flags.sub_byte_gray = false;
+        flags.alpha_to_trns = false;
+        flags.rgb_to_gray = false;
+
+        let config = EncodeConfig::default()
+            .with_compression(Compression::Fast) // effort 7
+            .with_downcast(flags);
+
+        let encoded = encode_rgba8(
+            img.as_ref(),
+            Some(&metadata),
+            &config,
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let decoded = crate::decode(
+            &encoded,
+            &crate::PngDecodeConfig::default(),
+            &Unstoppable,
+        )
+        .unwrap();
+        // After downcast, the file should NOT carry P3 cICP.
+        assert!(
+            decoded.info.cicp.is_none() || decoded.info.cicp == Some(Cicp::SRGB),
+            "expected sRGB tagging after gamut downcast, got cicp={:?}",
+            decoded.info.cicp
+        );
+    }
+
+    #[test]
+    fn rgba8_p3_gamut_downcast_disabled_when_effort_too_low() {
+        // Same buffer, gamut_downcast on but effort < 7 — must keep P3.
+        use zencodec::{Cicp, Metadata};
+        let pixels: Vec<Rgba<u8>> = (0..4)
+            .map(|i| Rgba { r: 100 + i, g: 100, b: 100, a: 255 })
+            .collect();
+        let img = Img::new(pixels, 4, 1);
+        let metadata = Metadata::none().with_cicp(Cicp::DISPLAY_P3);
+        let mut flags = DowncastFlags::default();
+        flags.gamut_downcast = true;
+        flags.indexed = false;
+        flags.sub_byte_gray = false;
+        flags.alpha_to_trns = false;
+        flags.rgb_to_gray = false;
+        let config = EncodeConfig::default()
+            .with_compression(Compression::Turbo) // effort 2 < 7
+            .with_downcast(flags);
+        let encoded = encode_rgba8(
+            img.as_ref(),
+            Some(&metadata),
+            &config,
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let decoded = crate::decode(
+            &encoded,
+            &crate::PngDecodeConfig::default(),
+            &Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(
+            decoded.info.cicp,
+            Some(Cicp::DISPLAY_P3),
+            "low effort must skip gamut downcast"
+        );
+    }
+
+    #[test]
+    fn rgba8_with_default_flags_downcasts_to_gray() {
+        // Same buffer, default flags — should auto-downcast to grayscale.
+        let pixels: Vec<Rgba<u8>> = (0..4)
+            .map(|i| Rgba { r: i * 30, g: i * 30, b: i * 30, a: 255 })
+            .collect();
+        let img = Img::new(pixels, 4, 1);
+        let config = EncodeConfig::default().with_compression(Compression::Fastest);
+        let encoded =
+            encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::default(), &Unstoppable).unwrap();
+        // Should be Gray (0) or Indexed (3) — both fine, just not RGBA (6).
+        assert!(
+            decoded.info.color_type == 0 || decoded.info.color_type == 3,
+            "expected gray/indexed downcast, got color_type={}",
+            decoded.info.color_type
+        );
     }
 
     #[test]

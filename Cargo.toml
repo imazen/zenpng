@@ -99,3 +99,8 @@ name = "fused_predicates"
 harness = false
 required-features = ["_dev"]
 
+[[bench]]
+name = "scalar_vs_simd"
+harness = false
+required-features = ["_dev"]
+

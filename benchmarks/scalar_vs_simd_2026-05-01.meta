@@ -1,0 +1,36 @@
+# Scalar-vs-SIMD comparison — 2026-05-01
+git_commit: pre-commit
+host: AMD Ryzen 9 7950X (water-cooled), 128 GB
+command: cargo bench --features _dev --bench scalar_vs_simd
+
+Decision: keep magetypes 512-bit generic SIMD; no hand-tuned intrinsics.
+
+Per CLAUDE.md: manual intrinsics only justified if they save 10%+ over
+magetypes. The numbers say magetypes V4x is already doing its job:
+
+Success-path scans (SIMD vs scalar speedup):
+  Size       Predicate                  Scalar   SIMD     Speedup
+  ---------- -------------------------- -------- -------- -------
+  1 MP       is_grayscale_rgba8         1.03 ms   88 µs   11.7x
+  1 MP       alpha_is_binary_rgba8       624 µs  144 µs    4.3x
+  1 MP       is_grayscale_rgb8           774 µs  114 µs    6.8x
+  1 MP       bit_replication_be16       2.20 ms  172 µs   12.8x
+  1 MP       fused (3-in-1, CG)         2.99 ms  195 µs   15.3x
+  16 MP      is_grayscale_rgba8         19.9 ms  9.7 ms    2.05x  (DRAM-bound)
+  16 MP      alpha_is_binary_rgba8      15.9 ms  8.2 ms    1.95x  (DRAM-bound)
+  16 MP      is_grayscale_rgb8          16.9 ms  9.4 ms    1.81x  (DRAM-bound)
+  16 MP      bit_replication_be16       43.5 ms 18.9 ms    2.30x  (DRAM-bound)
+  16 MP      fused (3-in-1, CG)         47.7 ms 11.0 ms    4.34x  (DRAM saved by fusion)
+
+In-cache (1 MP): SIMD 4-15x faster — magetypes pulling its weight.
+DRAM-bound (16 MP): SIMD 2x faster, hard ceiling at memory bandwidth.
+
+A hand-written AVX-512 specialization could shave register spills and
+use AVX-512 mask registers natively, but at ~2x scalar in DRAM-bound
+territory there's no obvious 10% gap to close. Mask-register optimisation
+might help in-cache but we're already 11-15x scalar there — diminishing
+returns.
+
+Note on is_opaque_rgba8 row: scalar wins because the bench input has
+alpha=0 at pixel 0 (fast-fail). For full-scan success path, see fused_*
+which uses the same buffer with all three checks.

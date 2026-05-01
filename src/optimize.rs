@@ -72,6 +72,34 @@ pub(crate) fn analyze_rgba8(
     let want_indexed = flags.indexed;
     let want_sub_byte = flags.sub_byte_gray && want_grayscale;
 
+    // Fast path: when none of the per-pixel-stateful tracking
+    // (HashMap palette, sub-byte gray, transparent-color)
+    // is requested, run the fused SIMD predicate and skip the scalar
+    // walk entirely. ~2× faster at 16 MP vs the scalar path; even bigger
+    // win at the bandwidth limit because the scalar pass touches every
+    // byte regardless of which checks are alive.
+    if !want_indexed && !want_sub_byte && !want_alpha_to_trns {
+        let req = crate::simd::scan::FusedRequest {
+            check_opaque: want_opaque,
+            check_grayscale: want_grayscale,
+            check_binary_alpha: false,
+        };
+        let r = crate::simd::scan::fused_predicates_rgba8_cg(bytes, req);
+        return ImageAnalysis {
+            is_grayscale: r.is_grayscale,
+            is_opaque: r.is_opaque,
+            // No sub-byte tracking requested → 8 (default depth).
+            min_gray_bit_depth: 8,
+            // Opaque images are trivially binary-alpha; otherwise N/A
+            // (alpha_to_trns is off so downstream won't read this).
+            is_binary_alpha: r.is_opaque,
+            transparent_color: None,
+            // Palette tracking off → we didn't count.
+            unique_color_count: 257,
+            exact_palette: None,
+        };
+    }
+
     let mut is_grayscale = want_grayscale;
     let mut is_opaque = want_opaque;
     let mut is_binary_alpha = want_alpha_to_trns;

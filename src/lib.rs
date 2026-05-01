@@ -46,6 +46,7 @@ pub mod detect;
 mod encode;
 mod encoder;
 mod error;
+mod gamut;
 #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
 mod indexed;
 mod optimize;
@@ -112,4 +113,85 @@ pub mod __bench_scan {
         fused_predicates_rgba8, fused_predicates_rgba8_cg, is_grayscale_rgb8, is_grayscale_rgba8,
         is_opaque_rgba8,
     };
+
+    // Hand-written scalar references for benchmarking. Match the
+    // semantics of the SIMD predicates exactly so the bench is
+    // apples-to-apples — only the dispatch differs.
+
+    pub fn scalar_is_opaque_rgba8(rgba: &[u8]) -> bool {
+        let mut i = 0;
+        while i + 4 <= rgba.len() {
+            if rgba[i + 3] != 255 {
+                return false;
+            }
+            i += 4;
+        }
+        true
+    }
+
+    pub fn scalar_is_grayscale_rgba8(rgba: &[u8]) -> bool {
+        let mut i = 0;
+        while i + 4 <= rgba.len() {
+            if rgba[i] != rgba[i + 1] || rgba[i + 1] != rgba[i + 2] {
+                return false;
+            }
+            i += 4;
+        }
+        true
+    }
+
+    pub fn scalar_alpha_is_binary_rgba8(rgba: &[u8]) -> bool {
+        let mut i = 0;
+        while i + 4 <= rgba.len() {
+            let a = rgba[i + 3];
+            if a != 0 && a != 255 {
+                return false;
+            }
+            i += 4;
+        }
+        true
+    }
+
+    pub fn scalar_is_grayscale_rgb8(rgb: &[u8]) -> bool {
+        let mut i = 0;
+        while i + 3 <= rgb.len() {
+            if rgb[i] != rgb[i + 1] || rgb[i + 1] != rgb[i + 2] {
+                return false;
+            }
+            i += 3;
+        }
+        true
+    }
+
+    pub fn scalar_bit_replication_lossless_be16(be: &[u8]) -> bool {
+        be.chunks_exact(2).all(|p| p[0] == p[1])
+    }
+
+    pub fn scalar_fused_predicates_rgba8(rgba: &[u8], req: FusedRequest) -> FusedResult {
+        let mut o = req.check_opaque;
+        let mut g = req.check_grayscale;
+        let mut b = req.check_binary_alpha;
+        let mut i = 0;
+        while i + 4 <= rgba.len() && (o | g | b) {
+            let r = rgba[i];
+            let gg = rgba[i + 1];
+            let bb = rgba[i + 2];
+            let a = rgba[i + 3];
+            if o && a != 255 {
+                o = false;
+            }
+            if g && (r != gg || gg != bb) {
+                g = false;
+            }
+            if b && a != 0 && a != 255 {
+                b = false;
+            }
+            i += 4;
+        }
+        FusedResult {
+            is_opaque: o,
+            is_grayscale: g,
+            is_binary_alpha: b,
+        }
+    }
 }
