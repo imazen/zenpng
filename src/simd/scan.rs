@@ -15,7 +15,6 @@
 //!   is `hi == lo` (PNG bit-replication: `u16 = u8 * 0x0101`).
 
 use archmage::prelude::*;
-use magetypes::simd::generic::u8x64 as GenericU8x64;
 
 // ── Repeating-pattern masks ────────────────────────────────────────────
 //
@@ -84,11 +83,8 @@ pub(crate) fn is_opaque_rgba8(rgba: &[u8]) -> bool {
     )
 }
 
-#[magetypes(v4x, v4, v3, neon, wasm128, scalar)]
+#[magetypes(define(u8x64), v4x, v4, v3, neon, wasm128, scalar)]
 fn is_opaque_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
-    #[allow(non_camel_case_types)]
-    type u8x64 = GenericU8x64<Token>;
-
     let alpha_mask = u8x64::from_array(token, ALPHA_MASK_RGBA8);
     let opaque = u8x64::splat(token, 0xFF);
     let mut i = 0;
@@ -122,11 +118,8 @@ pub(crate) fn is_grayscale_rgba8(rgba: &[u8]) -> bool {
     )
 }
 
-#[magetypes(v4x, v4, v3, neon, wasm128, scalar)]
+#[magetypes(define(u8x64), v4x, v4, v3, neon, wasm128, scalar)]
 fn is_grayscale_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
-    #[allow(non_camel_case_types)]
-    type u8x64 = GenericU8x64<Token>;
-
     let mask = u8x64::from_array(token, RGB_DELTA_MASK_RGBA8);
     let mut i = 0;
     // Need 65 bytes per chunk: a load at i and a load at i+1.
@@ -163,11 +156,8 @@ pub(crate) fn alpha_is_binary_rgba8(rgba: &[u8]) -> bool {
     )
 }
 
-#[magetypes(v4x, v4, v3, neon, wasm128, scalar)]
+#[magetypes(define(u8x64), v4x, v4, v3, neon, wasm128, scalar)]
 fn alpha_is_binary_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
-    #[allow(non_camel_case_types)]
-    type u8x64 = GenericU8x64<Token>;
-
     let alpha_mask = u8x64::from_array(token, ALPHA_MASK_RGBA8);
     let zero = u8x64::splat(token, 0);
     let opaque = u8x64::splat(token, 0xFF);
@@ -207,11 +197,8 @@ pub(crate) fn is_grayscale_rgb8(rgb: &[u8]) -> bool {
     )
 }
 
-#[magetypes(v4x, v4, v3, neon, wasm128, scalar)]
+#[magetypes(define(u8x64), v4x, v4, v3, neon, wasm128, scalar)]
 fn is_grayscale_rgb8_impl(token: Token, rgb: &[u8]) -> bool {
-    #[allow(non_camel_case_types)]
-    type u8x64 = GenericU8x64<Token>;
-
     // Within bytes [0..64), [64..128), [128..192) the phase k%3 starts at
     // 0, 1, 2 respectively (because 64 % 3 == 1).
     let m0 = u8x64::from_array(token, rgb8_phase_mask(0));
@@ -256,11 +243,8 @@ pub(crate) fn bit_replication_lossless_be16(be_bytes: &[u8]) -> bool {
     )
 }
 
-#[magetypes(v4x, v4, v3, neon, wasm128, scalar)]
+#[magetypes(define(u8x64), v4x, v4, v3, neon, wasm128, scalar)]
 fn bit_replication_lossless_be16_impl(token: Token, be_bytes: &[u8]) -> bool {
-    #[allow(non_camel_case_types)]
-    type u8x64 = GenericU8x64<Token>;
-
     // Compare the buffer against a +1 shifted view: at even byte positions
     // the comparison checks pair[k]==pair[k+1] (the bit-replication test).
     // Odd positions compare pair[k+1]==pair[k+2] (across-pair, don't care)
@@ -291,7 +275,6 @@ fn bit_replication_lossless_be16_impl(token: Token, be_bytes: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
     fn scalar_is_opaque(rgba: &[u8]) -> bool {
@@ -309,6 +292,311 @@ mod tests {
     fn scalar_bit_replication(be: &[u8]) -> bool {
         be.chunks_exact(2).all(|p| p[0] == p[1])
     }
+
+    // ── Tiny inline synthetics — explicit true/false fixtures per
+    // predicate. These run at every dispatch tier via
+    // `for_each_token_permutation`, so every code path (V4x AVX-512,
+    // V4 AVX2, V3 SSE4.2, NEON, WASM128, scalar) is exercised on the
+    // exact same byte sequence. Each tier should agree with the named
+    // expectation.
+
+    fn run_at_all_tiers(label: &str, body: impl Fn()) {
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| body());
+        eprintln!("{label}: {report}");
+    }
+
+    // is_opaque_rgba8 ────────────────────────────────────────────────
+
+    #[test]
+    fn is_opaque_true_one_pixel() {
+        run_at_all_tiers("opaque_true_1px", || {
+            // 1 RGBA pixel, alpha = 255
+            assert!(super::is_opaque_rgba8(&[100, 50, 25, 255]));
+        });
+    }
+
+    #[test]
+    fn is_opaque_true_four_pixels() {
+        run_at_all_tiers("opaque_true_4px", || {
+            // 4 pixels, all alpha = 255
+            assert!(super::is_opaque_rgba8(&[
+                10, 20, 30, 255, //
+                40, 50, 60, 255, //
+                70, 80, 90, 255, //
+                100, 110, 120, 255,
+            ]));
+        });
+    }
+
+    #[test]
+    fn is_opaque_false_alpha_zero_at_first() {
+        run_at_all_tiers("opaque_false_first_alpha_0", || {
+            assert!(!super::is_opaque_rgba8(&[
+                10, 20, 30, 0, //
+                40, 50, 60, 255,
+            ]));
+        });
+    }
+
+    #[test]
+    fn is_opaque_false_alpha_254_at_last() {
+        run_at_all_tiers("opaque_false_last_alpha_254", || {
+            assert!(!super::is_opaque_rgba8(&[
+                10, 20, 30, 255, //
+                40, 50, 60, 254,
+            ]));
+        });
+    }
+
+    #[test]
+    fn is_opaque_false_alpha_128_in_middle_of_simd_chunk() {
+        run_at_all_tiers("opaque_false_alpha_128_pixel_5", || {
+            // 16 pixels = exactly one 64-byte SIMD chunk.
+            // Trips on pixel 5 with alpha=128 (high bit set, harder reduction).
+            let mut v = [0u8; 64];
+            for i in 0..16 {
+                v[i * 4] = (i * 7) as u8;
+                v[i * 4 + 1] = (i * 7) as u8;
+                v[i * 4 + 2] = (i * 7) as u8;
+                v[i * 4 + 3] = 255;
+            }
+            v[5 * 4 + 3] = 128;
+            assert!(!super::is_opaque_rgba8(&v));
+        });
+    }
+
+    #[test]
+    fn is_opaque_empty_buffer_is_true() {
+        run_at_all_tiers("opaque_empty", || {
+            assert!(super::is_opaque_rgba8(&[]));
+        });
+    }
+
+    // is_grayscale_rgba8 ─────────────────────────────────────────────
+
+    #[test]
+    fn grayscale_rgba8_true_one_pixel() {
+        run_at_all_tiers("gray_rgba_true_1px", || {
+            // R == G == B = 128
+            assert!(super::is_grayscale_rgba8(&[128, 128, 128, 255]));
+        });
+    }
+
+    #[test]
+    fn grayscale_rgba8_true_with_varying_alpha() {
+        run_at_all_tiers("gray_rgba_true_var_alpha", || {
+            // Alpha varies but RGB always equal — still grayscale.
+            assert!(super::is_grayscale_rgba8(&[
+                42, 42, 42, 255, //
+                42, 42, 42, 0, //
+                42, 42, 42, 64,
+            ]));
+        });
+    }
+
+    #[test]
+    fn grayscale_rgba8_false_first_pixel_g_differs() {
+        run_at_all_tiers("gray_rgba_false_first_g", || {
+            // R=10, G=11, B=10 → not grayscale
+            assert!(!super::is_grayscale_rgba8(&[10, 11, 10, 255]));
+        });
+    }
+
+    #[test]
+    fn grayscale_rgba8_false_last_pixel_b_differs() {
+        run_at_all_tiers("gray_rgba_false_last_b", || {
+            assert!(!super::is_grayscale_rgba8(&[
+                10, 10, 10, 255, //
+                20, 20, 21, 255,
+            ]));
+        });
+    }
+
+    #[test]
+    fn grayscale_rgba8_false_off_by_one_in_simd_chunk() {
+        run_at_all_tiers("gray_rgba_false_off_by_one", || {
+            // 17 pixels (68 bytes) — first SIMD chunk catches it, then 1-pixel tail.
+            let mut v = [0u8; 68];
+            for i in 0..17 {
+                let g = (i * 13) as u8;
+                v[i * 4] = g;
+                v[i * 4 + 1] = g;
+                v[i * 4 + 2] = g;
+                v[i * 4 + 3] = 255;
+            }
+            v[7 * 4 + 1] = v[7 * 4].wrapping_add(1); // G off by 1
+            assert!(!super::is_grayscale_rgba8(&v));
+        });
+    }
+
+    // alpha_is_binary_rgba8 ──────────────────────────────────────────
+
+    #[test]
+    fn alpha_binary_true_all_255() {
+        run_at_all_tiers("ab_true_all_255", || {
+            assert!(super::alpha_is_binary_rgba8(&[
+                10, 20, 30, 255, //
+                40, 50, 60, 255,
+            ]));
+        });
+    }
+
+    #[test]
+    fn alpha_binary_true_mix_0_and_255() {
+        run_at_all_tiers("ab_true_mix", || {
+            assert!(super::alpha_is_binary_rgba8(&[
+                10, 20, 30, 0, //
+                40, 50, 60, 255, //
+                70, 80, 90, 0,
+            ]));
+        });
+    }
+
+    #[test]
+    fn alpha_binary_false_alpha_1() {
+        run_at_all_tiers("ab_false_alpha_1", || {
+            // alpha = 1 is the smallest non-zero non-255 — easy to miss
+            // if the predicate uses a sloppy mask.
+            assert!(!super::alpha_is_binary_rgba8(&[10, 20, 30, 1]));
+        });
+    }
+
+    #[test]
+    fn alpha_binary_false_alpha_254() {
+        run_at_all_tiers("ab_false_alpha_254", || {
+            // alpha = 254 — boundary case (1 below 255).
+            assert!(!super::alpha_is_binary_rgba8(&[10, 20, 30, 254]));
+        });
+    }
+
+    #[test]
+    fn alpha_binary_false_alpha_128_mid_simd() {
+        run_at_all_tiers("ab_false_128_mid", || {
+            // 32 pixels (128 bytes) — alpha 128 at pixel 9 inside 2nd SIMD chunk.
+            let mut v = [0u8; 128];
+            for i in 0..32 {
+                v[i * 4] = (i * 5) as u8;
+                v[i * 4 + 3] = if i & 1 == 0 { 0 } else { 255 };
+            }
+            v[9 * 4 + 3] = 128;
+            assert!(!super::alpha_is_binary_rgba8(&v));
+        });
+    }
+
+    // is_grayscale_rgb8 ──────────────────────────────────────────────
+
+    #[test]
+    fn grayscale_rgb8_true_one_pixel() {
+        run_at_all_tiers("gray_rgb_true_1px", || {
+            assert!(super::is_grayscale_rgb8(&[42, 42, 42]));
+        });
+    }
+
+    #[test]
+    fn grayscale_rgb8_true_three_pixels() {
+        run_at_all_tiers("gray_rgb_true_3px", || {
+            assert!(super::is_grayscale_rgb8(&[10, 10, 10, 20, 20, 20, 30, 30, 30]));
+        });
+    }
+
+    #[test]
+    fn grayscale_rgb8_false_first_pixel() {
+        run_at_all_tiers("gray_rgb_false_first", || {
+            assert!(!super::is_grayscale_rgb8(&[10, 11, 10]));
+        });
+    }
+
+    #[test]
+    fn grayscale_rgb8_false_in_supernode_phase_1() {
+        run_at_all_tiers("gray_rgb_false_phase1", || {
+            // 64 RGB pixels = 192 bytes, exactly one super-chunk. Plant a
+            // mismatch in phase-1 territory (bytes 64..128).
+            let mut v = [0u8; 192];
+            for i in 0..64 {
+                let g = (i * 3) as u8;
+                v[i * 3] = g;
+                v[i * 3 + 1] = g;
+                v[i * 3 + 2] = g;
+            }
+            v[30 * 3 + 1] = v[30 * 3].wrapping_add(1);
+            assert!(!super::is_grayscale_rgb8(&v));
+        });
+    }
+
+    #[test]
+    fn grayscale_rgb8_false_in_phase_2() {
+        run_at_all_tiers("gray_rgb_false_phase2", || {
+            let mut v = [0u8; 192];
+            for i in 0..64 {
+                let g = (i * 3) as u8;
+                v[i * 3] = g;
+                v[i * 3 + 1] = g;
+                v[i * 3 + 2] = g;
+            }
+            v[50 * 3 + 2] = v[50 * 3].wrapping_add(7);
+            assert!(!super::is_grayscale_rgb8(&v));
+        });
+    }
+
+    // bit_replication_lossless_be16 ──────────────────────────────────
+
+    #[test]
+    fn bit_repl_true_one_pair() {
+        run_at_all_tiers("repl_true_1pair", || {
+            // [0x12, 0x12] — replicated, lossless 16→8 to 0x12
+            assert!(super::bit_replication_lossless_be16(&[0x12, 0x12]));
+        });
+    }
+
+    #[test]
+    fn bit_repl_true_pure_white_black() {
+        run_at_all_tiers("repl_true_white_black", || {
+            // 0xFFFF and 0x0000 are both bit-replicated extremes.
+            assert!(super::bit_replication_lossless_be16(&[
+                0xFF, 0xFF, 0x00, 0x00, 0x80, 0x80,
+            ]));
+        });
+    }
+
+    #[test]
+    fn bit_repl_false_low_byte_zero() {
+        run_at_all_tiers("repl_false_low_zero", || {
+            // [0x12, 0x00] — legacy "low byte zero", NOT bit-replicated.
+            // PNG decoder would reconstruct 0x12 → 0x1212 (not 0x1200).
+            assert!(!super::bit_replication_lossless_be16(&[0x12, 0x00]));
+        });
+    }
+
+    #[test]
+    fn bit_repl_false_off_by_one() {
+        run_at_all_tiers("repl_false_off_by_one", || {
+            // hi=0x55, lo=0x56 — close but not equal.
+            assert!(!super::bit_replication_lossless_be16(&[0x55, 0x56]));
+        });
+    }
+
+    #[test]
+    fn bit_repl_false_in_simd_chunk() {
+        run_at_all_tiers("repl_false_simd_chunk", || {
+            // 32 pairs (64 bytes) — break pair 17 inside the SIMD chunk.
+            let mut v = [0u8; 64];
+            for i in 0..32 {
+                let b = (i * 17) as u8;
+                v[i * 2] = b;
+                v[i * 2 + 1] = b;
+            }
+            v[17 * 2 + 1] = v[17 * 2].wrapping_add(1);
+            assert!(!super::bit_replication_lossless_be16(&v));
+        });
+    }
+
+    #[test]
+    fn bit_repl_empty_buffer_is_true() {
+        run_at_all_tiers("repl_empty", || {
+            assert!(super::bit_replication_lossless_be16(&[]));
+        });
+    }
+
 
     fn rgba_pattern(n_pixels: usize, mutate: impl Fn(usize, &mut [u8; 4])) -> Vec<u8> {
         let mut v = Vec::with_capacity(n_pixels * 4);

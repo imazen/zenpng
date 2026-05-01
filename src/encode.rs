@@ -79,6 +79,87 @@ pub struct EncodeConfig {
     pub text_chunks: Vec<TextChunk>,
     /// Last modification time for tIME chunk.
     pub last_modified: Option<PngTime>,
+    /// Lossless color-type and bit-depth downcast options.
+    ///
+    /// Each flag controls one optimization that detects when the input has
+    /// fewer effective bits/channels/colors than its declared format. All
+    /// are pure scans of the source pixels; the encoded output is always
+    /// bit-exact for the chosen format. Disable individual flags for
+    /// debugging or to skip the scan cost on inputs known not to benefit.
+    pub downcast: DowncastFlags,
+}
+
+/// Lossless downcast knobs applied before filtering.
+///
+/// These predicates run once over the input. Most early-exit on the first
+/// disqualifying pixel — on photographic content they bail in row 1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DowncastFlags {
+    /// Detect all-opaque RGBA and emit RGB (drops the alpha channel).
+    /// Saves 25% of raw pixel bytes before filtering.
+    pub rgba_to_rgb: bool,
+    /// Detect `R == G == B` for every pixel and emit Grayscale (or
+    /// GrayscaleAlpha when alpha is needed). Saves 50–67% of raw bytes.
+    pub rgb_to_gray: bool,
+    /// Detect every grayscale value being a multiple of 17 / 85 / 255 and
+    /// emit 4-/2-/1-bit grayscale via sub-byte packing. Up to 8× reduction
+    /// on line art and B&W scans.
+    pub sub_byte_gray: bool,
+    /// Detect ≤256 unique colors and emit indexed PNG with PLTE/tRNS.
+    pub indexed: bool,
+    /// Detect binary alpha + a single exclusive transparent color and emit
+    /// it via tRNS instead of a full alpha channel.
+    pub alpha_to_trns: bool,
+    /// Detect 16-bit channels with PNG-lossless bit-replication
+    /// (`hi == lo` per pair → `u16 = u8 * 0x0101`) and downcast to 8-bit.
+    /// This is the correct PNG-lossless 16→8 condition; use this on inputs
+    /// produced by widening 8-bit data via bit-replication.
+    pub downcast_16_to_8_replicated: bool,
+    /// Detect 16-bit channels whose low byte is always zero and downcast
+    /// by dropping the low byte. This is **not** a strict round-trip under
+    /// PNG semantics: a decoder reconstructs `0x12 → 0x1212`, not `0x1200`,
+    /// so the encoded color drifts. Off by default; enable only when the
+    /// caller's pipeline treats u16 channels as `u8 << 8`.
+    pub downcast_16_to_8_low_zero: bool,
+    /// Detect Display-P3 / Rec.2020 / Adobe-RGB inputs whose pixels all
+    /// fall within sRGB primaries, transform values into sRGB, and re-tag.
+    /// More expensive than the byte-level predicates (per-pixel matrix
+    /// multiply with early-exit) — gated on `compression.effort() >= 7`.
+    /// Off by default until the implementation lands.
+    pub gamut_downcast: bool,
+}
+
+impl Default for DowncastFlags {
+    fn default() -> Self {
+        Self {
+            rgba_to_rgb: true,
+            rgb_to_gray: true,
+            sub_byte_gray: true,
+            indexed: true,
+            alpha_to_trns: true,
+            downcast_16_to_8_replicated: true,
+            downcast_16_to_8_low_zero: false,
+            gamut_downcast: false,
+        }
+    }
+}
+
+impl DowncastFlags {
+    /// Disable every downcast — write the input format verbatim.
+    #[must_use]
+    pub fn none() -> Self {
+        Self {
+            rgba_to_rgb: false,
+            rgb_to_gray: false,
+            sub_byte_gray: false,
+            indexed: false,
+            alpha_to_trns: false,
+            downcast_16_to_8_replicated: false,
+            downcast_16_to_8_low_zero: false,
+            gamut_downcast: false,
+        }
+    }
 }
 
 impl EncodeConfig {
@@ -157,6 +238,13 @@ impl EncodeConfig {
     #[must_use]
     pub fn with_last_modified(mut self, time: PngTime) -> Self {
         self.last_modified = Some(time);
+        self
+    }
+
+    /// Replace the downcast flag set wholesale.
+    #[must_use]
+    pub fn with_downcast(mut self, flags: DowncastFlags) -> Self {
+        self.downcast = flags;
         self
     }
 
@@ -428,12 +516,13 @@ pub(crate) fn encode_raw(
         bytes
     };
 
-    // Auto-optimize color type and bit depth
+    // Auto-optimize color type and bit depth (gated on downcast flags).
+    let dc = &config.downcast;
     let optimization = match (color_type, bit_depth) {
-        (ColorType::Rgba, BitDepth::Eight) => crate::optimize::optimize_rgba8(bytes, w, h),
-        (ColorType::Rgb, BitDepth::Eight) => crate::optimize::optimize_rgb8(bytes, w, h),
+        (ColorType::Rgba, BitDepth::Eight) => crate::optimize::optimize_rgba8(bytes, w, h, dc),
+        (ColorType::Rgb, BitDepth::Eight) => crate::optimize::optimize_rgb8(bytes, w, h, dc),
         (_, BitDepth::Sixteen) => {
-            crate::optimize::optimize_16bit(bytes, w, h, color_type.to_png_byte())
+            crate::optimize::optimize_16bit(bytes, w, h, color_type.to_png_byte(), dc)
         }
         _ => crate::optimize::OptimalEncoding::Original,
     };
@@ -595,7 +684,7 @@ fn encode_raw_with_stats(
     // Determine optimal encoding (same logic as encode_raw)
     let (eff_bytes, eff_ct, eff_bd, eff_trns) = match (color_type, bit_depth) {
         (ColorType::Rgba, BitDepth::Eight) => {
-            match crate::optimize::optimize_rgba8(bytes, w, h) {
+            match crate::optimize::optimize_rgba8(bytes, w, h, &config.downcast) {
                 crate::optimize::OptimalEncoding::Truecolor {
                     bytes: ob,
                     color_type: ct,
@@ -619,7 +708,7 @@ fn encode_raw_with_stats(
                 ),
             }
         }
-        (ColorType::Rgb, BitDepth::Eight) => match crate::optimize::optimize_rgb8(bytes, w, h) {
+        (ColorType::Rgb, BitDepth::Eight) => match crate::optimize::optimize_rgb8(bytes, w, h, &config.downcast) {
             crate::optimize::OptimalEncoding::Truecolor {
                 bytes: ob,
                 color_type: ct,
@@ -634,7 +723,7 @@ fn encode_raw_with_stats(
             ),
         },
         (_, BitDepth::Sixteen) => {
-            match crate::optimize::optimize_16bit(bytes, w, h, color_type.to_png_byte()) {
+            match crate::optimize::optimize_16bit(bytes, w, h, color_type.to_png_byte(), &config.downcast) {
                 crate::optimize::OptimalEncoding::Truecolor {
                     bytes: ob,
                     color_type: ct,
@@ -1554,13 +1643,15 @@ mod tests {
 
     #[test]
     fn rgb16_reduces_to_8bit_when_samples_fit() {
-        // Values that are multiples of 256: BE representation has low byte = 0
-        // e.g., 0x0800 → BE [0x08, 0x00] → reducible to 8-bit value 0x08
+        // Bit-replicated u16 values (`u16 = u8 * 0x0101`) — the strict
+        // PNG-lossless 16→8 condition. e.g. value 0x0808 → BE [0x08, 0x08]
+        // → reducible to 8-bit 0x08, decoder reconstructs 0x0808 via
+        // bit-replication. Values that are mere `u8 << 8` (low byte 0)
+        // are rejected by the default `downcast_16_to_8_replicated` flag.
         let pixels: Vec<Rgb<u16>> = (0..32)
-            .map(|i| Rgb {
-                r: i * 256,
-                g: 0,
-                b: 0,
+            .map(|i| {
+                let v = i * 0x0101; // bit-replicated u8 → u16
+                Rgb { r: v, g: 0, b: 0 }
             })
             .collect();
         let img = Img::new(pixels, 8, 4);

@@ -15,6 +15,8 @@
 use alloc::vec::Vec;
 use std::collections::HashMap;
 
+use crate::encode::DowncastFlags;
+
 /// Result of pixel analysis: what optimizations are available.
 pub(crate) struct ImageAnalysis {
     /// All pixels have R==G==B.
@@ -55,24 +57,47 @@ pub(crate) struct ExactPaletteData {
 /// - Sub-byte gray bit depth (1/2/4/8)
 /// - Single transparent color detection
 /// - Unique color counting with early exit at 257
-pub(crate) fn analyze_rgba8(bytes: &[u8], width: usize, height: usize) -> ImageAnalysis {
+pub(crate) fn analyze_rgba8(
+    bytes: &[u8],
+    width: usize,
+    height: usize,
+    flags: &DowncastFlags,
+) -> ImageAnalysis {
     let npixels = width * height;
-    let mut is_grayscale = true;
-    let mut is_opaque = true;
-    let mut is_binary_alpha = true;
-    let mut color_map: HashMap<[u8; 4], u8> = HashMap::with_capacity(257);
-    let mut palette: Vec<[u8; 4]> = Vec::with_capacity(256);
-    let mut palette_overflow = false;
+
+    // What the flag set requires us to track.
+    let want_grayscale = flags.rgb_to_gray;
+    let want_opaque = flags.rgba_to_rgb;
+    let want_alpha_to_trns = flags.alpha_to_trns;
+    let want_indexed = flags.indexed;
+    let want_sub_byte = flags.sub_byte_gray && want_grayscale;
+
+    let mut is_grayscale = want_grayscale;
+    let mut is_opaque = want_opaque;
+    let mut is_binary_alpha = want_alpha_to_trns;
+    let mut color_map: HashMap<[u8; 4], u8> = if want_indexed {
+        HashMap::with_capacity(257)
+    } else {
+        HashMap::new()
+    };
+    let mut palette: Vec<[u8; 4]> = if want_indexed {
+        Vec::with_capacity(256)
+    } else {
+        Vec::new()
+    };
+    // Treat as overflowed up front when palette tracking is disabled — avoids
+    // every per-pixel `if !palette_overflow` branch firing.
+    let mut palette_overflow = !want_indexed;
     let mut has_transparency = false;
 
     // Sub-byte gray tracking: can we fit all gray values in fewer bits?
-    let mut can_1bit = true; // all values ∈ {0, 255}
-    let mut can_2bit = true; // all values % 85 == 0
-    let mut can_4bit = true; // all values % 17 == 0
+    let mut can_1bit = want_sub_byte; // all values ∈ {0, 255}
+    let mut can_2bit = want_sub_byte; // all values % 85 == 0
+    let mut can_4bit = want_sub_byte; // all values % 17 == 0
 
     // Single transparent color tracking
     let mut transparent_color: Option<[u8; 3]> = None;
-    let mut multi_transparent = false;
+    let mut multi_transparent = !want_alpha_to_trns;
 
     for i in 0..npixels {
         let off = i * 4;
@@ -85,12 +110,15 @@ pub(crate) fn analyze_rgba8(bytes: &[u8], width: usize, height: usize) -> ImageA
             is_grayscale = false;
         }
         if a != 255 {
-            is_opaque = false;
+            if want_opaque {
+                is_opaque = false;
+            }
             has_transparency = true;
             if a != 0 {
-                is_binary_alpha = false;
+                if want_alpha_to_trns {
+                    is_binary_alpha = false;
+                }
             } else if !multi_transparent {
-                // Alpha == 0: track the transparent color
                 let tc = [r, g, b];
                 match transparent_color {
                     None => transparent_color = Some(tc),
@@ -98,12 +126,11 @@ pub(crate) fn analyze_rgba8(bytes: &[u8], width: usize, height: usize) -> ImageA
                         multi_transparent = true;
                         transparent_color = None;
                     }
-                    _ => {} // same color, fine
+                    _ => {}
                 }
             }
         }
 
-        // Sub-byte gray: only track when still possibly grayscale
         if is_grayscale && can_4bit {
             if !r.is_multiple_of(17) {
                 can_4bit = false;
@@ -175,18 +202,34 @@ pub(crate) fn analyze_rgba8(bytes: &[u8], width: usize, height: usize) -> ImageA
 }
 
 /// Analyze RGB8 pixel data for lossless optimization opportunities.
-pub(crate) fn analyze_rgb8(bytes: &[u8], width: usize, height: usize) -> ImageAnalysis {
+pub(crate) fn analyze_rgb8(
+    bytes: &[u8],
+    width: usize,
+    height: usize,
+    flags: &DowncastFlags,
+) -> ImageAnalysis {
     let npixels = width * height;
-    let mut is_grayscale = true;
-    // For RGB palette counting, we use [R,G,B,255] as the key to share logic
-    let mut color_map: HashMap<[u8; 4], u8> = HashMap::with_capacity(257);
-    let mut palette: Vec<[u8; 4]> = Vec::with_capacity(256);
-    let mut palette_overflow = false;
 
-    // Sub-byte gray tracking
-    let mut can_1bit = true;
-    let mut can_2bit = true;
-    let mut can_4bit = true;
+    let want_grayscale = flags.rgb_to_gray;
+    let want_indexed = flags.indexed;
+    let want_sub_byte = flags.sub_byte_gray && want_grayscale;
+
+    let mut is_grayscale = want_grayscale;
+    let mut color_map: HashMap<[u8; 4], u8> = if want_indexed {
+        HashMap::with_capacity(257)
+    } else {
+        HashMap::new()
+    };
+    let mut palette: Vec<[u8; 4]> = if want_indexed {
+        Vec::with_capacity(256)
+    } else {
+        Vec::new()
+    };
+    let mut palette_overflow = !want_indexed;
+
+    let mut can_1bit = want_sub_byte;
+    let mut can_2bit = want_sub_byte;
+    let mut can_4bit = want_sub_byte;
 
     for i in 0..npixels {
         let off = i * 3;
@@ -264,13 +307,26 @@ pub(crate) fn analyze_rgb8(bytes: &[u8], width: usize, height: usize) -> ImageAn
     }
 }
 
-/// Check if 16-bit pixel data can be losslessly reduced to 8-bit.
+/// PNG-lossless 16→8 check: every BE u16 pair satisfies `hi == lo`.
 ///
-/// Examines big-endian u16 samples: reducible when all low bytes are zero
-/// (i.e., the value is a multiple of 256, like 0x1200 → 0x12).
-pub(crate) fn can_reduce_16_to_8(be_bytes: &[u8]) -> bool {
-    // PNG 16-bit data is big-endian: [high, low] pairs.
-    // Reducible when all low bytes (odd indices) are zero.
+/// This is the strict round-trip condition under PNG's bit-replication
+/// upsample (`u16 = u8 * 0x0101`). After dropping the low byte, a decoder
+/// reconstructs the original 16-bit value exactly.
+///
+/// SIMD-accelerated via `crate::simd::scan` with early-exit on the first
+/// non-replicated pair.
+pub(crate) fn can_reduce_16_to_8_replicated(be_bytes: &[u8]) -> bool {
+    crate::simd::scan::bit_replication_lossless_be16(be_bytes)
+}
+
+/// Legacy 16→8 check: every BE u16 has its low byte == 0.
+///
+/// **This is not strictly PNG-lossless.** A decoder applies bit-replication
+/// when reading 8-bit data (`0x12 → 0x1212`), so a 16-bit input of `0x1200`
+/// reduced to `0x12` round-trips back as `0x1212` (off by 18). Kept for
+/// callers whose pipeline treats u16 channels as `u8 << 8` and expects this
+/// behavior. Off by default in [`crate::encode::DowncastFlags`].
+pub(crate) fn can_reduce_16_to_8_low_zero(be_bytes: &[u8]) -> bool {
     be_bytes.chunks_exact(2).all(|pair| pair[1] == 0)
 }
 
@@ -507,11 +563,17 @@ pub(crate) enum OptimalEncoding {
 /// 7. RGB8 + tRNS
 /// 8. RGB8 (opaque)
 /// 9. Original (RGBA8)
-pub(crate) fn optimize_rgba8(bytes: &[u8], width: usize, height: usize) -> OptimalEncoding {
-    let analysis = analyze_rgba8(bytes, width, height);
+pub(crate) fn optimize_rgba8(
+    bytes: &[u8],
+    width: usize,
+    height: usize,
+    flags: &DowncastFlags,
+) -> OptimalEncoding {
+    let analysis = analyze_rgba8(bytes, width, height, flags);
 
     // Check if tRNS is usable: binary alpha + single transparent color + exclusive
-    let trns_usable = analysis.is_binary_alpha
+    let trns_usable = flags.alpha_to_trns
+        && analysis.is_binary_alpha
         && !analysis.is_opaque
         && analysis.transparent_color.is_some()
         && trns_color_is_exclusive(bytes, analysis.transparent_color.unwrap());
@@ -665,8 +727,13 @@ pub(crate) fn optimize_rgba8(bytes: &[u8], width: usize, height: usize) -> Optim
 }
 
 /// Determine the optimal encoding for RGB8 pixel data.
-pub(crate) fn optimize_rgb8(bytes: &[u8], width: usize, height: usize) -> OptimalEncoding {
-    let analysis = analyze_rgb8(bytes, width, height);
+pub(crate) fn optimize_rgb8(
+    bytes: &[u8],
+    width: usize,
+    height: usize,
+    flags: &DowncastFlags,
+) -> OptimalEncoding {
+    let analysis = analyze_rgb8(bytes, width, height, flags);
 
     let truecolor_bpp: usize = if analysis.is_grayscale { 1 } else { 3 };
 
@@ -727,8 +794,15 @@ pub(crate) fn optimize_16bit(
     width: usize,
     height: usize,
     color_type: u8,
+    flags: &DowncastFlags,
 ) -> OptimalEncoding {
-    if !can_reduce_16_to_8(be_bytes) {
+    // Try the lossless bit-replication path first (the correct PNG round-trip
+    // condition). Only fall back to the legacy low-byte-zero path if explicitly
+    // enabled — that path is technically lossy under PNG bit-replication
+    // semantics. Honor flags: either disabled → keep 16-bit.
+    let reducible = (flags.downcast_16_to_8_replicated && can_reduce_16_to_8_replicated(be_bytes))
+        || (flags.downcast_16_to_8_low_zero && can_reduce_16_to_8_low_zero(be_bytes));
+    if !reducible {
         return OptimalEncoding::Original;
     }
 
@@ -745,7 +819,7 @@ pub(crate) fn optimize_16bit(
     match channels {
         4 => {
             // RGBA16 → 8-bit, then try further optimization
-            let opt = optimize_rgba8(&reduced, width, height);
+            let opt = optimize_rgba8(&reduced, width, height, flags);
             match opt {
                 OptimalEncoding::Original => OptimalEncoding::Truecolor {
                     bytes: reduced,
@@ -757,7 +831,7 @@ pub(crate) fn optimize_16bit(
             }
         }
         3 => {
-            let opt = optimize_rgb8(&reduced, width, height);
+            let opt = optimize_rgb8(&reduced, width, height, flags);
             match opt {
                 OptimalEncoding::Original => OptimalEncoding::Truecolor {
                     bytes: reduced,
@@ -788,7 +862,7 @@ mod tests {
     fn detect_grayscale_opaque_rgba() {
         // 2x1 image: gray pixels with alpha=255
         let bytes = [128, 128, 128, 255, 64, 64, 64, 255];
-        let a = analyze_rgba8(&bytes, 2, 1);
+        let a = analyze_rgba8(&bytes, 2, 1, &DowncastFlags::default());
         assert!(a.is_grayscale);
         assert!(a.is_opaque);
         assert_eq!(a.unique_color_count, 2);
@@ -797,7 +871,7 @@ mod tests {
     #[test]
     fn detect_non_grayscale() {
         let bytes = [255, 0, 0, 255, 0, 255, 0, 255];
-        let a = analyze_rgba8(&bytes, 2, 1);
+        let a = analyze_rgba8(&bytes, 2, 1, &DowncastFlags::default());
         assert!(!a.is_grayscale);
         assert!(a.is_opaque);
     }
@@ -805,7 +879,7 @@ mod tests {
     #[test]
     fn detect_transparency() {
         let bytes = [128, 128, 128, 128, 64, 64, 64, 0];
-        let a = analyze_rgba8(&bytes, 2, 1);
+        let a = analyze_rgba8(&bytes, 2, 1, &DowncastFlags::default());
         assert!(a.is_grayscale);
         assert!(!a.is_opaque);
     }
@@ -816,7 +890,7 @@ mod tests {
         let bytes = [
             255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255,
         ];
-        let a = analyze_rgba8(&bytes, 4, 1);
+        let a = analyze_rgba8(&bytes, 4, 1, &DowncastFlags::default());
         assert_eq!(a.unique_color_count, 3);
         assert!(a.exact_palette.is_some());
         let ep = a.exact_palette.unwrap();
@@ -836,29 +910,42 @@ mod tests {
             bytes.push(0);
             bytes.push(255);
         }
-        let a = analyze_rgba8(&bytes, 257, 1);
+        let a = analyze_rgba8(&bytes, 257, 1, &DowncastFlags::default());
         assert_eq!(a.unique_color_count, 257);
         assert!(a.exact_palette.is_none());
     }
 
     #[test]
-    fn reduce_16_to_8_possible() {
-        let be = [0x80, 0x00, 0x40, 0x00, 0xFF, 0x00];
-        assert!(can_reduce_16_to_8(&be));
+    fn reduce_16_to_8_replicated_possible() {
+        // PNG-lossless: each pair must satisfy hi == lo.
+        let be = [0x80, 0x80, 0x40, 0x40, 0xFF, 0xFF];
+        assert!(can_reduce_16_to_8_replicated(&be));
         let reduced = reduce_16_to_8(&be);
         assert_eq!(reduced, [0x80, 0x40, 0xFF]);
     }
 
     #[test]
-    fn reduce_16_to_8_not_possible() {
-        let be = [0x80, 0x01, 0x40, 0x00]; // first sample has low byte = 1
-        assert!(!can_reduce_16_to_8(&be));
+    fn reduce_16_to_8_replicated_not_possible() {
+        // hi != lo on the first pair → not bit-replicated.
+        let be = [0x80, 0x81, 0x40, 0x40];
+        assert!(!can_reduce_16_to_8_replicated(&be));
+        // Low-byte-zero is the legacy lossy mode; the same pair fails it too.
+        assert!(!can_reduce_16_to_8_low_zero(&be));
+    }
+
+    #[test]
+    fn reduce_16_to_8_low_zero_path() {
+        // Legacy low-byte-zero check (off by default in DowncastFlags).
+        let be = [0x80, 0x00, 0x40, 0x00, 0xFF, 0x00];
+        assert!(can_reduce_16_to_8_low_zero(&be));
+        // But it's NOT bit-replicated — would round-trip to 0x8080 not 0x8000.
+        assert!(!can_reduce_16_to_8_replicated(&be));
     }
 
     #[test]
     fn optimize_rgba_to_gray() {
         let bytes = [100, 100, 100, 255, 200, 200, 200, 255];
-        match optimize_rgba8(&bytes, 2, 1) {
+        match optimize_rgba8(&bytes, 2, 1, &DowncastFlags::default()) {
             // Could be either Indexed (2 colors) or Gray — indexed wins
             OptimalEncoding::Indexed { .. } => {}
             OptimalEncoding::Truecolor {
@@ -882,7 +969,7 @@ mod tests {
                 bytes.extend_from_slice(&[r * 13, g * 13, 128, 255]);
             }
         }
-        match optimize_rgba8(&bytes, 400, 1) {
+        match optimize_rgba8(&bytes, 400, 1, &DowncastFlags::default()) {
             OptimalEncoding::Truecolor {
                 color_type,
                 bit_depth,
@@ -945,7 +1032,7 @@ mod tests {
     #[test]
     fn rgb_grayscale_detection() {
         let bytes = [50, 50, 50, 100, 100, 100, 150, 150, 150];
-        let a = analyze_rgb8(&bytes, 3, 1);
+        let a = analyze_rgb8(&bytes, 3, 1, &DowncastFlags::default());
         assert!(a.is_grayscale);
         assert_eq!(a.unique_color_count, 3);
     }
@@ -954,7 +1041,7 @@ mod tests {
     fn min_gray_bit_depth_1bit() {
         // All values ∈ {0, 255} → 1-bit
         let bytes = [0, 0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255];
-        let a = analyze_rgba8(&bytes, 3, 1);
+        let a = analyze_rgba8(&bytes, 3, 1, &DowncastFlags::default());
         assert!(a.is_grayscale);
         assert_eq!(a.min_gray_bit_depth, 1);
     }
@@ -965,7 +1052,7 @@ mod tests {
         let bytes = [
             0, 0, 0, 255, 85, 85, 85, 255, 170, 170, 170, 255, 255, 255, 255, 255,
         ];
-        let a = analyze_rgba8(&bytes, 4, 1);
+        let a = analyze_rgba8(&bytes, 4, 1, &DowncastFlags::default());
         assert!(a.is_grayscale);
         assert_eq!(a.min_gray_bit_depth, 2);
     }
@@ -974,7 +1061,7 @@ mod tests {
     fn min_gray_bit_depth_4bit() {
         // Value 34 = 17*2 → fits 4-bit but not 2-bit
         let bytes = [0, 0, 0, 255, 34, 34, 34, 255, 255, 255, 255, 255];
-        let a = analyze_rgba8(&bytes, 3, 1);
+        let a = analyze_rgba8(&bytes, 3, 1, &DowncastFlags::default());
         assert!(a.is_grayscale);
         assert_eq!(a.min_gray_bit_depth, 4);
     }
@@ -983,7 +1070,7 @@ mod tests {
     fn min_gray_bit_depth_8bit() {
         // Value 100 is not divisible by 17 → 8-bit
         let bytes = [100, 100, 100, 255, 200, 200, 200, 255];
-        let a = analyze_rgba8(&bytes, 2, 1);
+        let a = analyze_rgba8(&bytes, 2, 1, &DowncastFlags::default());
         assert!(a.is_grayscale);
         assert_eq!(a.min_gray_bit_depth, 8);
     }
@@ -992,7 +1079,7 @@ mod tests {
     fn binary_alpha_detection() {
         // Alpha values: 0 and 255 only → binary alpha
         let bytes = [255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 255];
-        let a = analyze_rgba8(&bytes, 3, 1);
+        let a = analyze_rgba8(&bytes, 3, 1, &DowncastFlags::default());
         assert!(a.is_binary_alpha);
         assert!(!a.is_opaque);
     }
@@ -1001,7 +1088,7 @@ mod tests {
     fn non_binary_alpha_detection() {
         // Alpha value 128 → not binary
         let bytes = [255, 0, 0, 128, 0, 255, 0, 255];
-        let a = analyze_rgba8(&bytes, 2, 1);
+        let a = analyze_rgba8(&bytes, 2, 1, &DowncastFlags::default());
         assert!(!a.is_binary_alpha);
     }
 
@@ -1009,7 +1096,7 @@ mod tests {
     fn single_transparent_color_tracking() {
         // One transparent color [255, 0, 0] with alpha=0
         let bytes = [255, 0, 0, 0, 0, 255, 0, 255, 255, 0, 0, 0];
-        let a = analyze_rgba8(&bytes, 3, 1);
+        let a = analyze_rgba8(&bytes, 3, 1, &DowncastFlags::default());
         assert_eq!(a.transparent_color, Some([255, 0, 0]));
     }
 
@@ -1017,7 +1104,7 @@ mod tests {
     fn multi_transparent_colors() {
         // Two different transparent colors → None
         let bytes = [255, 0, 0, 0, 0, 255, 0, 0, 128, 128, 128, 255];
-        let a = analyze_rgba8(&bytes, 3, 1);
+        let a = analyze_rgba8(&bytes, 3, 1, &DowncastFlags::default());
         assert_eq!(a.transparent_color, None);
     }
 
@@ -1053,7 +1140,7 @@ mod tests {
         let bytes = [
             0, 0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255, 255, 255, 255, 255,
         ];
-        match optimize_rgba8(&bytes, 4, 1) {
+        match optimize_rgba8(&bytes, 4, 1, &DowncastFlags::default()) {
             OptimalEncoding::Truecolor {
                 color_type,
                 bit_depth,
@@ -1089,7 +1176,7 @@ mod tests {
         bytes[3] = 0;
         if let OptimalEncoding::Truecolor {
             color_type, trns, ..
-        } = optimize_rgba8(&bytes, 20, 20)
+        } = optimize_rgba8(&bytes, 20, 20, &DowncastFlags::default())
         {
             // Should be grayscale (0) with tRNS, or grayscale+alpha (4)
             if color_type == 0 {
@@ -1115,7 +1202,7 @@ mod tests {
         bytes[3] = 0;
         if let OptimalEncoding::Truecolor {
             color_type, trns, ..
-        } = optimize_rgba8(&bytes, 420, 1)
+        } = optimize_rgba8(&bytes, 420, 1, &DowncastFlags::default())
             && color_type == 2
         {
             // RGB with tRNS
@@ -1134,7 +1221,7 @@ mod tests {
             let a = if i < 256 { 128u8 } else { 200u8 }; // semi-transparent
             bytes.extend_from_slice(&[g, g, g, a]);
         }
-        let opt = optimize_rgba8(&bytes, 257, 1);
+        let opt = optimize_rgba8(&bytes, 257, 1, &DowncastFlags::default());
         // Should optimize to GrayAlpha (color_type=4) since >256 unique RGBA colors
         match opt {
             OptimalEncoding::Truecolor { color_type, .. } => {
@@ -1158,7 +1245,7 @@ mod tests {
             let a = if i < 100 { 128u8 } else { 200u8 };
             bytes.extend_from_slice(&[r, g, b, a]);
         }
-        let opt = optimize_rgba8(&bytes, 300, 1);
+        let opt = optimize_rgba8(&bytes, 300, 1, &DowncastFlags::default());
         assert!(matches!(opt, OptimalEncoding::Original));
     }
 
@@ -1170,7 +1257,7 @@ mod tests {
             let g = i * 17; // 0, 17, 34, ..., 255
             bytes.extend_from_slice(&[g, g, g]);
         }
-        let opt = optimize_rgb8(&bytes, 16, 1);
+        let opt = optimize_rgb8(&bytes, 16, 1, &DowncastFlags::default());
         // Should be optimized (either sub-byte gray or indexed)
         assert!(!matches!(opt, OptimalEncoding::Original));
     }
@@ -1186,46 +1273,44 @@ mod tests {
                 ((i * 13) % 256) as u8,
             ]);
         }
-        let opt = optimize_rgb8(&bytes, 300, 1);
+        let opt = optimize_rgb8(&bytes, 300, 1, &DowncastFlags::default());
         assert!(matches!(opt, OptimalEncoding::Original));
     }
 
     #[test]
     fn optimize_16bit_reducible_rgba() {
-        // RGBA16 where low bytes are zero → reducible to 8-bit
-        // 4 pixels of RGBA16: each sample is [high, 0]
+        // RGBA16 with bit-replicated channels (hi == lo per pair) → reducible.
         let mut bytes = Vec::new();
         for _ in 0..4 {
-            bytes.extend_from_slice(&[128, 0, 64, 0, 32, 0, 255, 0]);
+            bytes.extend_from_slice(&[128, 128, 64, 64, 32, 32, 255, 255]);
         }
-        let opt = optimize_16bit(&bytes, 4, 1, 6);
+        let opt = optimize_16bit(&bytes, 4, 1, 6, &DowncastFlags::default());
         assert!(!matches!(opt, OptimalEncoding::Original));
     }
 
     #[test]
     fn optimize_16bit_not_reducible() {
-        // RGBA16 where low bytes are nonzero → not reducible
-        let bytes = [128, 1, 64, 0, 32, 0, 255, 0]; // 1 pixel, first sample has low=1
-        let opt = optimize_16bit(&bytes, 1, 1, 6);
+        // hi != lo on first pair → not bit-replicated.
+        let bytes = [128, 129, 64, 64, 32, 32, 255, 255]; // 1 pixel
+        let opt = optimize_16bit(&bytes, 1, 1, 6, &DowncastFlags::default());
         assert!(matches!(opt, OptimalEncoding::Original));
     }
 
     #[test]
     fn optimize_16bit_reducible_rgb() {
-        // RGB16 where low bytes are zero
         let mut bytes = Vec::new();
         for _ in 0..4 {
-            bytes.extend_from_slice(&[100, 0, 200, 0, 50, 0]);
+            bytes.extend_from_slice(&[100, 100, 200, 200, 50, 50]);
         }
-        let opt = optimize_16bit(&bytes, 4, 1, 2);
+        let opt = optimize_16bit(&bytes, 4, 1, 2, &DowncastFlags::default());
         assert!(!matches!(opt, OptimalEncoding::Original));
     }
 
     #[test]
     fn optimize_16bit_gray_alpha() {
-        // GrayAlpha16 reducible: [gray_high, 0, alpha_high, 0]
-        let bytes = [128, 0, 200, 0]; // 1 pixel
-        let opt = optimize_16bit(&bytes, 1, 1, 4);
+        // GrayAlpha16 reducible: [gray_hi, gray_hi, alpha_hi, alpha_hi]
+        let bytes = [128, 128, 200, 200]; // 1 pixel
+        let opt = optimize_16bit(&bytes, 1, 1, 4, &DowncastFlags::default());
         match opt {
             OptimalEncoding::Truecolor {
                 color_type,
@@ -1242,14 +1327,14 @@ mod tests {
     #[test]
     fn optimize_16bit_unknown_color_type() {
         let bytes = [128, 128];
-        let opt = optimize_16bit(&bytes, 1, 1, 99);
+        let opt = optimize_16bit(&bytes, 1, 1, 99, &DowncastFlags::default());
         assert!(matches!(opt, OptimalEncoding::Original));
     }
 
     #[test]
     fn min_gray_bit_depth_2bit_values() {
         // Values that are multiples of 85 (0, 85, 170, 255) → 2-bit
-        let a = analyze_rgba8(&[85, 85, 85, 255, 170, 170, 170, 255], 2, 1);
+        let a = analyze_rgba8(&[85, 85, 85, 255, 170, 170, 170, 255], 2, 1, &DowncastFlags::default());
         assert!(a.is_grayscale);
         assert_eq!(a.min_gray_bit_depth, 2);
     }
@@ -1304,7 +1389,7 @@ mod tests {
     fn analyze_rgb8_min_gray_2bit() {
         // RGB grayscale with values 85 and 170 → can_1bit=false, can_2bit=true → bit_depth=2
         let bytes = [85, 85, 85, 170, 170, 170];
-        let a = analyze_rgb8(&bytes, 2, 1);
+        let a = analyze_rgb8(&bytes, 2, 1, &DowncastFlags::default());
         assert!(a.is_grayscale);
         assert_eq!(a.min_gray_bit_depth, 2);
     }
@@ -1358,7 +1443,7 @@ mod tests {
         }
         // Add a transparent pixel with exclusive color 0
         bytes.extend_from_slice(&[0, 0, 0, 0]);
-        let opt = optimize_rgba8(&bytes, 257, 1);
+        let opt = optimize_rgba8(&bytes, 257, 1, &DowncastFlags::default());
         match opt {
             OptimalEncoding::Truecolor {
                 color_type,
@@ -1385,7 +1470,7 @@ mod tests {
             let g = (i % 256) as u8;
             bytes.extend_from_slice(&[g, g, g]);
         }
-        let opt = optimize_rgb8(&bytes, 257, 1);
+        let opt = optimize_rgb8(&bytes, 257, 1, &DowncastFlags::default());
         match opt {
             OptimalEncoding::Truecolor {
                 color_type,
@@ -1404,18 +1489,19 @@ mod tests {
 
     #[test]
     fn optimize_16bit_rgba_to_rgba8_no_further() {
-        // RGBA16 → RGBA8, but >256 unique, not grayscale, with non-binary alpha
-        // → no further optimization, should get Truecolor{color_type=6, bit_depth=8}
+        // RGBA16 → RGBA8 via bit-replicated 16→8 (hi == lo), but >256 unique,
+        // not grayscale, with non-binary alpha → no further optimization,
+        // should get Truecolor{color_type=6, bit_depth=8}.
         let mut bytes = Vec::new();
         for i in 0..300u16 {
             let r = (i % 256) as u8;
             let g = ((i * 7) % 256) as u8;
             let b = ((i * 13) % 256) as u8;
             let a = if i < 100 { 128u8 } else { 200u8 };
-            // big-endian 16-bit with low byte = 0
-            bytes.extend_from_slice(&[r, 0, g, 0, b, 0, a, 0]);
+            // big-endian 16-bit with hi == lo (bit-replicated)
+            bytes.extend_from_slice(&[r, r, g, g, b, b, a, a]);
         }
-        let opt = optimize_16bit(&bytes, 300, 1, 6);
+        let opt = optimize_16bit(&bytes, 300, 1, 6, &DowncastFlags::default());
         match opt {
             OptimalEncoding::Truecolor {
                 color_type,
