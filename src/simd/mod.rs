@@ -5,6 +5,7 @@
 
 mod avg;
 mod paeth;
+pub(crate) mod scan;
 mod sub;
 mod up;
 

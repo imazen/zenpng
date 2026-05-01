@@ -32,7 +32,8 @@ quantette = { version = "0.5", optional = true, default-features = false, featur
 whereat = "0.1.4"
 zenflate = { version = "0.3.2" }
 memchr = { version = "2.8.0", default-features = false }
-archmage = { version = "0.9.14", default-features = false, features = ["macros", "std"] }
+archmage = { version = "0.9.23", default-features = false, features = ["macros", "std", "avx512"] }
+magetypes = { version = "0.9.23", default-features = false, features = ["std", "w512", "avx512"] }
 safe_unaligned_simd = { version = "0.2.5", default-features = false }
 linear-srgb = "0.6.5"
 zenzop = { version = "0.4.1", optional = true, default-features = false, features = ["zlib", "std"] }
@@ -49,6 +50,7 @@ lodepng = "3.12.2"
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 codec-corpus = "1.0.2"
 libdeflater = "1.25"
+zenbench = "0.1.8"
 
 [profile.test]
 opt-level = 2
@@ -64,6 +66,9 @@ zopfli = ["dep:zenzop"]
 zencodec = []
 # zennode = ["dep:zennode"]
 _dev = ["archmage/testable_dispatch"]
+# Acknowledged by archmage's `incant!` cfg — kept always-on; no-op for users
+# (we always compile the AVX-512 path so V4x dispatch is available at runtime).
+avx512 = []
 
 [[example]]
 name = "phase_timing"
