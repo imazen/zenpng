@@ -1,0 +1,113 @@
+    Finished `bench` profile [optimized] target(s) in 0.21s
+     Running benches/fused_predicates.rs (target/release/deps/fused_predicates-aa7e3abb8965cba4)
+[zenbench] calibration: int=0.36ns/iter mem_bw=88.2GiB/s mem_lat=315.9ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.29ns/iter, TSC: 4.490 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1777651198-174552.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1777651198-174552
+  git: 5c14dd7a6806d0ac4a6ccf3266fe3d51262c7227
+═══════════════════════════════════════════════════════════════
+
+  tiny_64x64_4Kpx  4 rounds × 2K calls ⚠ only 4 rounds
+                              mean ±mad µs  95% CI vs base       px/s
+  ├─ pass_all_three_checks
+  │  ├─ separate_3_passes      1.6 ±0.1µs  [0.5–4.0]µs         2.49G [1]
+  │  ├─ fused_runtime_branch   0.8 ±0.0µs  [-106.4%–-88.5%]    5.09G
+  │  ╰─ fused_const_generic    1.0 ±0.1µs  [-106.1%–-88.1%]    4.07G [2]
+  ╰─ fail_first_pixel
+     ├─ separate_3_passes      0.0 ±0.0µs  [0.0–0.0]µs          527G
+     ├─ fused_runtime_branch   0.0 ±0.0µs  [-106.4%–-88.5%]     550G
+     ╰─ fused_const_generic    0.0 ±0.0µs  [-106.1%–-88.1%]     458G
+
+  fused_runtime_branch  █████████████████████████████████████████████ 550 Gpx/s
+  separate_3_passes     ███████████████████████████████████████████ 527 Gpx/s
+  fused_const_generic   █████████████████████████████████████ 458 Gpx/s
+  fused_runtime_branch  █ 5.09 Gpx/s
+  fused_const_generic   █ 4.07 Gpx/s
+  separate_3_passes     █ 2.49 Gpx/s
+  [1] CV=142%
+  [2] CV=97%
+
+  small_256x256_64Kpx  4 rounds × 153 calls ⚠ only 4 rounds
+                               mean ±mad µs  95% CI vs base       px/s
+  ├─ pass_all_three_checks
+  │  ├─ separate_3_passes       8.3 ±1.2µs  [7.4–9.2]µs         7.89G [1]
+  │  ├─ fused_runtime_branch   24.3 ±5.8µs  [-110.8%–-88.8%]    2.70G [2] [3]
+  │  ╰─ fused_const_generic     8.4 ±1.5µs  [-110.8%–-88.8%]    7.83G [4] [5]
+  ╰─ fail_first_pixel
+     ├─ separate_3_passes       0.0 ±0.0µs  [0.0–0.0]µs         4830G [6]
+     ├─ fused_runtime_branch    0.0 ±0.0µs  [-110.8%–-88.8%]    3677G [7]
+     ╰─ fused_const_generic     0.0 ±0.0µs  [-110.8%–-88.8%]    4649G [8] [9]
+
+  separate_3_passes     █████████████████████████████████████████████ 4830 Gpx/s
+  fused_const_generic   ███████████████████████████████████████████ 4649 Gpx/s
+  fused_runtime_branch  ██████████████████████████████████ 3677 Gpx/s
+  separate_3_passes     █ 7.89 Gpx/s
+  fused_const_generic   █ 7.83 Gpx/s
+  fused_runtime_branch  █ 2.70 Gpx/s
+  [1] drift r=1.00 — later rounds slower
+  [2] drift r=1.00 — later rounds slower
+  [3] CV=77%
+  [4] drift r=1.00 — later rounds slower
+  [5] CV=22%
+  [6] drift r=1.00 — later rounds slower
+  [7] drift r=1.00 — later rounds slower
+  [8] drift r=1.00 — later rounds slower
+  [9] CV=36%
+
+  medium_1024x1024_1MP  4 rounds × 36 calls ⚠ only 4 rounds
+                              mean ±mad ms  95% CI vs base        px/s
+  ├─ pass_all_three_checks
+  │  ├─ separate_3_passes      1.1 ±0.3ms  [0.3–2.3]ms           992M [1] [2]
+  │  ├─ fused_runtime_branch   0.7 ±0.3ms  [-132.5%–-46.3%]     1.56G [3] [4]
+  │  ╰─ fused_const_generic    0.7 ±0.5ms  [-132.5%–-46.3%]     1.56G [5] [6]
+  ╰─ fail_first_pixel
+     ├─ separate_3_passes      0.0 ±0.0ms  [0.0–0.0]ms         17278G [7]
+     ├─ fused_runtime_branch   0.0 ±0.0ms  [-132.5%–-46.3%]    14220G [8] [9]
+     ╰─ fused_const_generic    0.0 ±0.0ms  [-132.5%–-46.3%]    15862G [10] [11]
+
+  separate_3_passes     ████████████████████████████████████████████ 17278 Gpx/s
+  fused_const_generic   ████████████████████████████████████████ 15862 Gpx/s
+  fused_runtime_branch  ████████████████████████████████████ 14220 Gpx/s
+  fused_runtime_branch  █ 1.56 Gpx/s
+  fused_const_generic   █ 1.56 Gpx/s
+  separate_3_passes     █ 992 Mpx/s
+  [1] drift r=1.00 — later rounds slower
+  [2] CV=117%
+  [3] drift r=1.00 — later rounds slower
+  [4] CV=56%
+  [5] drift r=1.00 — later rounds slower
+  [6] CV=72%
+  [7] drift r=1.00 — later rounds slower
+  [8] drift r=1.00 — later rounds slower
+  [9] CV=54%
+  [10] drift r=1.00 — later rounds slower
+  [11] CV=32%
+
+  large_4096x4096_16MP  4 rounds × 1 calls ⚠ only 4 rounds
+                              mean ±mad ms  95% CI vs base        px/s
+  ├─ pass_all_three_checks
+  │  ├─ separate_3_passes      15.4 ±2.4ms  [11.5–18.2]ms        1.09G [1]
+  │  ├─ fused_runtime_branch    9.0 ±1.2ms  [-118.0%–-74.8%]     1.87G
+  │  ╰─ fused_const_generic     6.9 ±1.3ms  [-118.0%–-74.8%]     2.42G [2]
+  ╰─ fail_first_pixel
+     ├─ separate_3_passes       0.0 ±0.0ms  [0.0–0.0]ms         10165G [3]
+     ├─ fused_runtime_branch    0.0 ±0.0ms  [-118.0%–-74.8%]    13239G [4]
+     ╰─ fused_const_generic     0.0 ±0.0ms  [-118.0%–-74.8%]    14857G [5]
+
+  fused_const_generic   ████████████████████████████████████████████ 14857 Gpx/s
+  fused_runtime_branch  ███████████████████████████████████████ 13239 Gpx/s
+  separate_3_passes     ██████████████████████████████ 10165 Gpx/s
+  fused_const_generic   █ 2.42 Gpx/s
+  fused_runtime_branch  █ 1.87 Gpx/s
+  separate_3_passes     █ 1.09 Gpx/s
+  [1] CV=27%
+  [2] CV=25%
+  [3] CV=28%
+  [4] CV=32%
+  [5] CV=39%
+
+  total: 506.0s  (430 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json

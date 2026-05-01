@@ -271,6 +271,316 @@ fn bit_replication_lossless_be16_impl(token: Token, be_bytes: &[u8]) -> bool {
     true
 }
 
+// ── Fused single-pass RGBA8 predicates ─────────────────────────────────
+//
+// Runs `is_opaque`, `is_grayscale`, and `alpha_is_binary` against the
+// same buffer in **one** streaming pass — three checks at the bandwidth
+// cost of one. Every check is lane-parallel against the same 64-byte
+// SIMD register, so the per-iteration cost is roughly:
+//   1 load + 0–1 shifted load + 3 simd_ne + 3 mask + 3 any_true.
+//
+// Two variants:
+//   * `fused_predicates_rgba8` — runtime-branch, drops checks via
+//     `still_*` flags as they flip. One function, simpler.
+//   * `fused_predicates_rgba8_cg` — const-generic recursive trampoline.
+//     8 specializations (one per (A, B, C) bool tuple); when a check
+//     flips we tail-recurse into the specialization where that const
+//     is `false`, dead-code-eliminating the dropped check from the
+//     hot loop. Eliminates the `if still_*` branches at the cost of
+//     monomorphized code-size.
+//
+// Both honor the request flags so a caller can ask for any subset.
+
+/// Set of checks the fused predicate scanner should evaluate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FusedRequest {
+    pub check_opaque: bool,
+    pub check_grayscale: bool,
+    pub check_binary_alpha: bool,
+}
+
+impl FusedRequest {
+    /// Request all three checks.
+    pub const fn all() -> Self {
+        Self {
+            check_opaque: true,
+            check_grayscale: true,
+            check_binary_alpha: true,
+        }
+    }
+}
+
+/// Result of a fused predicate pass. Each field is meaningful only if
+/// the corresponding `check_*` was requested; for unrequested checks the
+/// value is `false` (treated as "we don't know / not requested").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FusedResult {
+    pub is_opaque: bool,
+    pub is_grayscale: bool,
+    pub is_binary_alpha: bool,
+}
+
+// ── Runtime-branch fused predicate ─────────────────────────────────────
+
+pub fn fused_predicates_rgba8(rgba: &[u8], req: FusedRequest) -> FusedResult {
+    incant!(
+        fused_predicates_rgba8_impl(rgba, req),
+        [v4x, v4, v3, neon, wasm128, scalar]
+    )
+}
+
+#[magetypes(define(u8x64), v4x, v4, v3, neon, wasm128, scalar)]
+fn fused_predicates_rgba8_impl(token: Token, rgba: &[u8], req: FusedRequest) -> FusedResult {
+    let alpha_mask = u8x64::from_array(token, ALPHA_MASK_RGBA8);
+    let rgb_delta_mask = u8x64::from_array(token, RGB_DELTA_MASK_RGBA8);
+    let zero = u8x64::splat(token, 0);
+    let opaque = u8x64::splat(token, 0xFF);
+
+    let mut still_o = req.check_opaque;
+    let mut still_g = req.check_grayscale;
+    let mut still_b = req.check_binary_alpha;
+
+    let mut i = 0;
+    let len = rgba.len();
+    // While at least one check is alive AND we have room for the shifted
+    // grayscale load. If grayscale isn't requested (or has flipped off)
+    // the trailing 64-byte chunk gets handled by the second loop below.
+    while still_o | still_g | still_b {
+        if !still_g && i + 64 > len {
+            break;
+        }
+        if still_g && i + 65 > len {
+            break;
+        }
+        let chunk0: &[u8; 64] = (&rgba[i..i + 64]).try_into().unwrap();
+        let v0 = u8x64::load(token, chunk0);
+
+        if still_o {
+            let bad = v0.simd_ne(opaque) & alpha_mask;
+            if bad.any_true() {
+                still_o = false;
+            }
+        }
+        if still_b {
+            let bad = v0.simd_ne(zero) & v0.simd_ne(opaque) & alpha_mask;
+            if bad.any_true() {
+                still_b = false;
+            }
+        }
+        if still_g {
+            let chunk1: &[u8; 64] = (&rgba[i + 1..i + 65]).try_into().unwrap();
+            let v1 = u8x64::load(token, chunk1);
+            let bad = v0.simd_ne(v1) & rgb_delta_mask;
+            if bad.any_true() {
+                still_g = false;
+            }
+        }
+
+        i += 64;
+    }
+
+    // Scalar tail (handles whatever's left, including the last 64-byte
+    // chunk we couldn't enter when grayscale was alive due to the +1
+    // shifted-load constraint).
+    while i + 4 <= len && (still_o | still_g | still_b) {
+        let r = rgba[i];
+        let g = rgba[i + 1];
+        let b = rgba[i + 2];
+        let a = rgba[i + 3];
+        if still_o && a != 255 {
+            still_o = false;
+        }
+        if still_g && (r != g || g != b) {
+            still_g = false;
+        }
+        if still_b && a != 0 && a != 255 {
+            still_b = false;
+        }
+        i += 4;
+    }
+
+    FusedResult {
+        is_opaque: still_o,
+        is_grayscale: still_g,
+        is_binary_alpha: still_b,
+    }
+}
+
+// ── Const-generic recursive fused predicate ────────────────────────────
+//
+// Same kernel, but each check's enabled state is a `const bool`. When a
+// check flips we recurse into a specialization with that const set to
+// `false`. The compiler eliminates the corresponding `if A { … }` branch
+// in the dead specialization, leaving a tighter hot loop.
+
+pub fn fused_predicates_rgba8_cg(rgba: &[u8], req: FusedRequest) -> FusedResult {
+    match (req.check_opaque, req.check_grayscale, req.check_binary_alpha) {
+        (true, true, true) => fused_cg::<true, true, true>(rgba),
+        (true, true, false) => fused_cg::<true, true, false>(rgba),
+        (true, false, true) => fused_cg::<true, false, true>(rgba),
+        (true, false, false) => fused_cg::<true, false, false>(rgba),
+        (false, true, true) => fused_cg::<false, true, true>(rgba),
+        (false, true, false) => fused_cg::<false, true, false>(rgba),
+        (false, false, true) => fused_cg::<false, false, true>(rgba),
+        (false, false, false) => FusedResult::default(),
+    }
+}
+
+#[inline]
+fn fused_cg<const A: bool, const B: bool, const C: bool>(rgba: &[u8]) -> FusedResult {
+    incant!(
+        fused_cg_impl::<A, B, C>(rgba),
+        [v4x, v4, v3, neon, wasm128, scalar]
+    )
+}
+
+#[magetypes(define(u8x64), v4x, v4, v3, neon, wasm128, scalar)]
+fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
+    token: Token,
+    rgba: &[u8],
+) -> FusedResult {
+    if !(A || B || C) {
+        // Base case: no live checks, nothing to do. The caller already
+        // recorded `false` for everything that flipped on the way down.
+        return FusedResult::default();
+    }
+
+    let alpha_mask = u8x64::from_array(token, ALPHA_MASK_RGBA8);
+    let rgb_delta_mask = u8x64::from_array(token, RGB_DELTA_MASK_RGBA8);
+    let zero = u8x64::splat(token, 0);
+    let opaque = u8x64::splat(token, 0xFF);
+
+    let len = rgba.len();
+    let mut i = 0;
+    // With B alive we need the shifted load; otherwise just 64. The
+    // ternary is on a const, so it const-propagates.
+    let bound = if B { 65 } else { 64 };
+
+    while i + bound <= len {
+        let chunk0: &[u8; 64] = (&rgba[i..i + 64]).try_into().unwrap();
+        let v0 = u8x64::load(token, chunk0);
+
+        // Collect all flips for THIS chunk before recursing. Otherwise a
+        // single chunk that breaks two checks would only register one.
+        let mut next_a = A;
+        let mut next_b = B;
+        let mut next_c = C;
+
+        if A {
+            let bad = v0.simd_ne(opaque) & alpha_mask;
+            if bad.any_true() {
+                next_a = false;
+            }
+        }
+        if C {
+            let bad = v0.simd_ne(zero) & v0.simd_ne(opaque) & alpha_mask;
+            if bad.any_true() {
+                next_c = false;
+            }
+        }
+        if B {
+            let chunk1: &[u8; 64] = (&rgba[i + 1..i + 65]).try_into().unwrap();
+            let v1 = u8x64::load(token, chunk1);
+            let bad = v0.simd_ne(v1) & rgb_delta_mask;
+            if bad.any_true() {
+                next_b = false;
+            }
+        }
+
+        // If nothing flipped this iteration, advance.
+        if next_a == A && next_b == B && next_c == C {
+            i += 64;
+            continue;
+        }
+
+        // Something flipped. Recurse into the matching specialization
+        // with the remainder. Each arm wires up the resulting fields:
+        // for any flipped check, the field is `false`; for still-live
+        // checks, the recursion's result carries through. The compiler
+        // dead-code-eliminates arms unreachable from this specialization.
+        let rest = &rgba[i + 64..];
+        return match (next_a, next_b, next_c) {
+            (true, true, true) => unreachable!(),
+            (true, true, false) => {
+                let s = fused_cg::<true, true, false>(rest);
+                FusedResult {
+                    is_opaque: s.is_opaque,
+                    is_grayscale: s.is_grayscale,
+                    is_binary_alpha: false,
+                }
+            }
+            (true, false, true) => {
+                let s = fused_cg::<true, false, true>(rest);
+                FusedResult {
+                    is_opaque: s.is_opaque,
+                    is_grayscale: false,
+                    is_binary_alpha: s.is_binary_alpha,
+                }
+            }
+            (false, true, true) => {
+                let s = fused_cg::<false, true, true>(rest);
+                FusedResult {
+                    is_opaque: false,
+                    is_grayscale: s.is_grayscale,
+                    is_binary_alpha: s.is_binary_alpha,
+                }
+            }
+            (true, false, false) => {
+                let s = fused_cg::<true, false, false>(rest);
+                FusedResult {
+                    is_opaque: s.is_opaque,
+                    is_grayscale: false,
+                    is_binary_alpha: false,
+                }
+            }
+            (false, true, false) => {
+                let s = fused_cg::<false, true, false>(rest);
+                FusedResult {
+                    is_opaque: false,
+                    is_grayscale: s.is_grayscale,
+                    is_binary_alpha: false,
+                }
+            }
+            (false, false, true) => {
+                let s = fused_cg::<false, false, true>(rest);
+                FusedResult {
+                    is_opaque: false,
+                    is_grayscale: false,
+                    is_binary_alpha: s.is_binary_alpha,
+                }
+            }
+            (false, false, false) => FusedResult::default(),
+        };
+    }
+
+    // Scalar tail. The const params collapse the per-pixel branches.
+    let mut o = A;
+    let mut g = B;
+    let mut c = C;
+    while i + 4 <= len && (o | g | c) {
+        let r = rgba[i];
+        let gg = rgba[i + 1];
+        let bb = rgba[i + 2];
+        let a = rgba[i + 3];
+        if A && o && a != 255 {
+            o = false;
+        }
+        if B && g && (r != gg || gg != bb) {
+            g = false;
+        }
+        if C && c && a != 0 && a != 255 {
+            c = false;
+        }
+        i += 4;
+    }
+
+    FusedResult {
+        is_opaque: o,
+        is_grayscale: g,
+        is_binary_alpha: c,
+    }
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -595,6 +905,227 @@ mod tests {
         run_at_all_tiers("repl_empty", || {
             assert!(super::bit_replication_lossless_be16(&[]));
         });
+    }
+
+    // ── Fused predicate tests ────────────────────────────────────────
+
+    fn scalar_fused(rgba: &[u8], req: super::FusedRequest) -> super::FusedResult {
+        let mut o = req.check_opaque;
+        let mut g = req.check_grayscale;
+        let mut b = req.check_binary_alpha;
+        for chunk in rgba.chunks_exact(4) {
+            if o && chunk[3] != 255 {
+                o = false;
+            }
+            if g && (chunk[0] != chunk[1] || chunk[1] != chunk[2]) {
+                g = false;
+            }
+            if b && chunk[3] != 0 && chunk[3] != 255 {
+                b = false;
+            }
+        }
+        super::FusedResult {
+            is_opaque: o,
+            is_grayscale: g,
+            is_binary_alpha: b,
+        }
+    }
+
+    fn run_fused_match_test(label: &str, rgba: &[u8], req: super::FusedRequest) {
+        let expected = scalar_fused(rgba, req);
+        run_at_all_tiers(&format!("fused_runtime_{label}"), || {
+            let got = super::fused_predicates_rgba8(rgba, req);
+            assert_eq!(
+                got, expected,
+                "runtime mismatch label={label} req={req:?} expected={expected:?}"
+            );
+        });
+        run_at_all_tiers(&format!("fused_cg_{label}"), || {
+            let got = super::fused_predicates_rgba8_cg(rgba, req);
+            assert_eq!(
+                got, expected,
+                "const-generic mismatch label={label} req={req:?} expected={expected:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn fused_pure_grayscale_opaque() {
+        // Every pixel R=G=B, alpha=255 — all three checks should pass.
+        let v = [
+            10, 10, 10, 255, //
+            20, 20, 20, 255, //
+            30, 30, 30, 255,
+        ];
+        run_fused_match_test("gray_opaque", &v, super::FusedRequest::all());
+    }
+
+    #[test]
+    fn fused_colorful_with_binary_alpha() {
+        // Not grayscale (R != G), alpha is binary (mix of 0 and 255).
+        let v = [
+            10, 20, 30, 0, //
+            40, 50, 60, 255, //
+            70, 80, 90, 0,
+        ];
+        run_fused_match_test("color_binary", &v, super::FusedRequest::all());
+    }
+
+    #[test]
+    fn fused_first_pixel_breaks_all_three() {
+        // Pixel 0: not opaque (alpha=128), not gray (R!=G), not binary (alpha=128).
+        // Subsequent pixels are fine — confirms early-exit on first chunk.
+        let mut v = [255u8; 256]; // 64 RGBA pixels, defaults R=G=B=A=255 (gray, opaque, binary)
+        v[0] = 0;
+        v[1] = 1;
+        v[2] = 2;
+        v[3] = 128;
+        run_fused_match_test("first_break_all", &v, super::FusedRequest::all());
+    }
+
+    #[test]
+    fn fused_subset_only_opaque() {
+        // Even if grayscale would be false, we don't ask — return reflects that.
+        let v = [10, 20, 30, 255, 40, 50, 60, 255]; // not gray, but opaque
+        let req = super::FusedRequest {
+            check_opaque: true,
+            check_grayscale: false,
+            check_binary_alpha: false,
+        };
+        run_fused_match_test("subset_opaque_only", &v, req);
+    }
+
+    #[test]
+    fn fused_subset_only_grayscale_with_simd_chunk() {
+        // 64 pixels (256 bytes) — full SIMD chunk path.
+        let mut v = [0u8; 256];
+        for i in 0..64 {
+            let g = (i * 3) as u8;
+            v[i * 4] = g;
+            v[i * 4 + 1] = g;
+            v[i * 4 + 2] = g;
+            v[i * 4 + 3] = if i & 1 == 0 { 0 } else { 200 };
+        }
+        let req = super::FusedRequest {
+            check_opaque: false,
+            check_grayscale: true,
+            check_binary_alpha: false,
+        };
+        run_fused_match_test("subset_gray_only_64px", &v, req);
+    }
+
+    #[test]
+    fn fused_no_checks_requested() {
+        // All-false request → all-false result, no work done.
+        let v = [10, 20, 30, 128, 40, 50, 60, 255];
+        let req = super::FusedRequest::default();
+        run_fused_match_test("no_checks", &v, req);
+    }
+
+    #[test]
+    fn fused_grayscale_breaks_at_pixel_5_in_simd_chunk() {
+        // 16 pixels, exactly one SIMD chunk of 64 bytes — verifies the
+        // const-generic path correctly recurses on B-flip during the
+        // SIMD sweep (not just in scalar tail).
+        let mut v = [0u8; 64];
+        for i in 0..16 {
+            let g = (i * 11) as u8;
+            v[i * 4] = g;
+            v[i * 4 + 1] = g;
+            v[i * 4 + 2] = g;
+            v[i * 4 + 3] = 255;
+        }
+        v[5 * 4 + 1] = v[5 * 4].wrapping_add(7); // G != R at pixel 5
+        run_fused_match_test("gray_break_chunk", &v, super::FusedRequest::all());
+    }
+
+    #[test]
+    fn fused_opaque_breaks_at_simd_boundary() {
+        // 32 pixels (128 bytes = 2 SIMD chunks). Opacity breaks in chunk 2,
+        // pixel 20 (alpha=64). Grayscale stays true.
+        let mut v = [0u8; 128];
+        for i in 0..32 {
+            let g = (i * 5) as u8;
+            v[i * 4] = g;
+            v[i * 4 + 1] = g;
+            v[i * 4 + 2] = g;
+            v[i * 4 + 3] = 255;
+        }
+        v[20 * 4 + 3] = 64; // mid-alpha
+        run_fused_match_test("opaque_break_chunk2", &v, super::FusedRequest::all());
+    }
+
+    #[test]
+    fn fused_all_three_break_at_different_pixels() {
+        // Pixel 3: alpha=128 → opacity AND binary alpha both flip
+        // Pixel 7: G != R → grayscale flips
+        // Verifies multiple flips don't corrupt each other in either variant.
+        let mut v = [0u8; 64];
+        for i in 0..16 {
+            let g = (i * 3) as u8;
+            v[i * 4] = g;
+            v[i * 4 + 1] = g;
+            v[i * 4 + 2] = g;
+            v[i * 4 + 3] = if i & 1 == 0 { 0 } else { 255 };
+        }
+        v[3 * 4 + 3] = 128; // alpha not in {0,255}
+        v[7 * 4 + 1] = v[7 * 4].wrapping_add(1);
+        run_fused_match_test("multi_break", &v, super::FusedRequest::all());
+    }
+
+    #[test]
+    fn fused_short_buffer_only_scalar_tail() {
+        // 8 pixels, no SIMD chunk — exercises tail logic in both variants.
+        let v = [
+            10, 10, 10, 255, //
+            20, 20, 20, 0, //
+            30, 30, 30, 255, //
+            40, 41, 40, 0, // pixel 3: not gray
+            50, 50, 50, 255, //
+            60, 60, 60, 200, // pixel 5: alpha not binary
+            70, 70, 70, 0, //
+            80, 80, 80, 255,
+        ];
+        run_fused_match_test("short_tail_only", &v, super::FusedRequest::all());
+    }
+
+    #[test]
+    fn fused_runtime_and_cg_agree_on_random_inputs() {
+        // Simple LCG for determinism; not a security-sensitive RNG.
+        let mut state: u32 = 0xC0FFEE12;
+        let mut next = || {
+            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+            state
+        };
+        for trial in 0..10 {
+            let n_pixels = 100 + (next() % 4096) as usize;
+            let mut v = Vec::with_capacity(n_pixels * 4);
+            for _ in 0..n_pixels {
+                let r = next() as u8;
+                let g_chance = (next() % 4 == 0) as u8;
+                let g = if g_chance == 0 { r } else { next() as u8 };
+                let b = if g_chance == 0 { r } else { next() as u8 };
+                let a = match next() % 5 {
+                    0 => 0,
+                    1 => 255,
+                    2 => 128,
+                    _ => next() as u8,
+                };
+                v.extend_from_slice(&[r, g, b, a]);
+            }
+            let req = super::FusedRequest::all();
+            let runtime = super::fused_predicates_rgba8(&v, req);
+            let cg = super::fused_predicates_rgba8_cg(&v, req);
+            let scalar = scalar_fused(&v, req);
+            assert_eq!(
+                runtime, scalar,
+                "trial {trial}: runtime != scalar  n_pixels={n_pixels}"
+            );
+            assert_eq!(
+                cg, scalar,
+                "trial {trial}: cg != scalar  n_pixels={n_pixels}"
+            );
+        }
     }
 
 

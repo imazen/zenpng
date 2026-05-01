@@ -94,3 +94,8 @@ name = "scan_predicates"
 harness = false
 required-features = ["_dev"]
 
+[[bench]]
+name = "fused_predicates"
+harness = false
+required-features = ["_dev"]
+

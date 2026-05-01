@@ -1,0 +1,15 @@
+# Fused predicate benchmark — 2026-05-01
+git_commit: pre-commit
+host: AMD Ryzen 9 7950X (water-cooled), 128 GB
+command: cargo bench --features _dev --bench fused_predicates
+notes:
+  - Compares: separate_3_passes vs fused_runtime_branch vs fused_const_generic
+  - Workload: every pixel passes all three checks (success path = full scan).
+  - Bandwidth fusion saves ~3× memory traffic theoretically; observed at 16 MP:
+      separate    : 15.4 ms (0.96 ms/MP)
+      fused_rt    :  9.0 ms (0.56 ms/MP)  — 1.7× speedup
+      fused_cg    :  6.9 ms (0.43 ms/MP)  — 2.2× speedup
+  - At 1 MP both fused variants tie (~0.7 ms/MP); CV high
+  - Fail-fast (first pixel breaks): all variants <50 ns
+  - Const-generic version: 8 specializations, dead-code-eliminated checks
+    inside each spec; on flip recurse into spec with that const = false.

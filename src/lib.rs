@@ -108,7 +108,8 @@ pub fn __bench_unfilter_row(filter_type: u8, row: &mut [u8], prev: &[u8], bpp: u
 #[doc(hidden)]
 pub mod __bench_scan {
     pub use crate::simd::scan::{
-        alpha_is_binary_rgba8, bit_replication_lossless_be16, is_grayscale_rgb8,
-        is_grayscale_rgba8, is_opaque_rgba8,
+        FusedRequest, FusedResult, alpha_is_binary_rgba8, bit_replication_lossless_be16,
+        fused_predicates_rgba8, fused_predicates_rgba8_cg, is_grayscale_rgb8, is_grayscale_rgba8,
+        is_opaque_rgba8,
     };
 }
