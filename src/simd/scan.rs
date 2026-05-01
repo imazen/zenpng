@@ -76,7 +76,7 @@ const fn rgb8_phase_mask(start_phase: usize) -> [u8; 64] {
 
 /// Returns true iff every alpha byte equals 255. Early-exit on first
 /// non-opaque pixel.
-pub(crate) fn is_opaque_rgba8(rgba: &[u8]) -> bool {
+pub fn is_opaque_rgba8(rgba: &[u8]) -> bool {
     incant!(
         is_opaque_rgba8_impl(rgba),
         [v4x, v4, v3, neon, wasm128, scalar]
@@ -111,7 +111,7 @@ fn is_opaque_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
 
 /// Returns true iff every pixel has `R == G == B`. Alpha is ignored.
 /// Early-exits on first colorful pixel.
-pub(crate) fn is_grayscale_rgba8(rgba: &[u8]) -> bool {
+pub fn is_grayscale_rgba8(rgba: &[u8]) -> bool {
     incant!(
         is_grayscale_rgba8_impl(rgba),
         [v4x, v4, v3, neon, wasm128, scalar]
@@ -149,7 +149,7 @@ fn is_grayscale_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
 
 /// Returns true iff every alpha byte is exactly 0 or 255. Useful for
 /// choosing tRNS encoding over a full alpha channel. Early-exit.
-pub(crate) fn alpha_is_binary_rgba8(rgba: &[u8]) -> bool {
+pub fn alpha_is_binary_rgba8(rgba: &[u8]) -> bool {
     incant!(
         alpha_is_binary_rgba8_impl(rgba),
         [v4x, v4, v3, neon, wasm128, scalar]
@@ -190,7 +190,7 @@ fn alpha_is_binary_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
 /// 3-byte pixels don't tile evenly into 64-byte SIMD chunks (gcd(3,64)=1),
 /// so we process 192-byte super-chunks (64 RGB pixels). Within each super-
 /// chunk three masks handle the three byte-phase rotations.
-pub(crate) fn is_grayscale_rgb8(rgb: &[u8]) -> bool {
+pub fn is_grayscale_rgb8(rgb: &[u8]) -> bool {
     incant!(
         is_grayscale_rgb8_impl(rgb),
         [v4x, v4, v3, neon, wasm128, scalar]
@@ -236,7 +236,7 @@ fn is_grayscale_rgb8_impl(token: Token, rgb: &[u8]) -> bool {
 /// will reconstruct the original via bit-replication (`u16 = u8 * 0x0101`).
 ///
 /// `be_bytes.len()` must be a multiple of 2.
-pub(crate) fn bit_replication_lossless_be16(be_bytes: &[u8]) -> bool {
+pub fn bit_replication_lossless_be16(be_bytes: &[u8]) -> bool {
     incant!(
         bit_replication_lossless_be16_impl(be_bytes),
         [v4x, v4, v3, neon, wasm128, scalar]

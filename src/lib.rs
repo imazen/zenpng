@@ -67,8 +67,8 @@ pub use decode::{
     decode, decode_apng, probe,
 };
 pub use encode::{
-    ApngEncodeConfig, ApngFrameInput, EncodeConfig, encode_apng, encode_gray8, encode_gray16,
-    encode_rgb8, encode_rgb16, encode_rgba8, encode_rgba16,
+    ApngEncodeConfig, ApngFrameInput, DowncastFlags, EncodeConfig, encode_apng, encode_gray8,
+    encode_gray16, encode_rgb8, encode_rgb16, encode_rgba8, encode_rgba16,
 };
 pub use error::PngError;
 #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
@@ -100,4 +100,15 @@ pub use crate::encoder::{PhaseStat, PhaseStats};
 #[doc(hidden)]
 pub fn __bench_unfilter_row(filter_type: u8, row: &mut [u8], prev: &[u8], bpp: usize) {
     simd::bench_unfilter_row(filter_type, row, prev, bpp);
+}
+
+/// Benchmarking access to the SIMD downcast predicates. Public via `_dev`
+/// only; the names are unstable. See `benches/scan_predicates.rs`.
+#[cfg(feature = "_dev")]
+#[doc(hidden)]
+pub mod __bench_scan {
+    pub use crate::simd::scan::{
+        alpha_is_binary_rgba8, bit_replication_lossless_be16, is_grayscale_rgb8,
+        is_grayscale_rgba8, is_opaque_rgba8,
+    };
 }

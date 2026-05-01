@@ -1,0 +1,16 @@
+# Predicate scan benchmark — 2026-05-01
+git_commit: pre-commit
+host: AMD Ryzen 9 7950X (water-cooled), 128 GB
+command: cargo bench --features _dev --bench scan_predicates
+notes:
+  - 4 sizes: 64x64 (4 Kpx), 256x256 (64 Kpx), 1024x1024 (1 MP), 4096x4096 (16 MP)
+  - Each predicate: pass (full scan) and fail_first (early-exit)
+  - Reported variance (CV 22-57%) is high; only 4 rounds completed for
+    medium/large due to per-round time budget. Treat numbers as ballpark.
+  - 1MP pass-path ms/MP (most representative):
+      is_opaque_rgba8                ~83  µs/MP
+      is_grayscale_rgba8            ~133  µs/MP
+      alpha_is_binary_rgba8         ~100  µs/MP
+      is_grayscale_rgb8              ~62  µs/MP
+      bit_replication_lossless_be16 ~197  µs/MP (8 bytes/MP of u16 data)
+  - fail_first paths under 50ns at every size — confirms early-exit

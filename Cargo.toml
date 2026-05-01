@@ -89,3 +89,8 @@ required-features = ["quantize", "_dev"]
 [[example]]
 name = "strategy_explorer"
 
+[[bench]]
+name = "scan_predicates"
+harness = false
+required-features = ["_dev"]
+

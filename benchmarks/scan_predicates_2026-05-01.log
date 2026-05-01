@@ -1,0 +1,162 @@
+    Finished `bench` profile [optimized] target(s) in 0.11s
+     Running benches/scan_predicates.rs (target/release/deps/scan_predicates-965b196e0fe22317)
+[zenbench] calibration: int=0.39ns/iter mem_bw=86.7GiB/s mem_lat=59.3ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.68ns/iter, TSC: 4.491 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1777649139-9834b.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1777649139-9834b
+  git: 02547cb42319d9681b8afbfdf374e9fc8f2e23ca
+═══════════════════════════════════════════════════════════════
+
+  tiny_64x64_4Kpx  4 rounds × 4K calls ⚠ only 4 rounds
+                    mean ±mad ns  95% CI vs base       px/s
+  ├─ is_opaque_rgba8
+  │  ├─ pass         208 ±10ns  [196–217]ns         19.7G
+  │  ╰─ fail_first      2 ±0ns  [-103.6%–-93.6%]    2122G [1]
+  ├─ is_grayscale_rgba8
+  │  ├─ pass         269 ±22ns  [232–295]ns         15.2G
+  │  ╰─ fail_first      4 ±0ns  [-103.6%–-93.6%]    1077G [2] [3]
+  ├─ alpha_is_binary_rgba8
+  │  ├─ pass         227 ±21ns  [206–245]ns         18.1G
+  │  ╰─ fail_first      2 ±0ns  [-103.6%–-93.6%]    2020G [4]
+  ├─ is_grayscale_rgb8
+  │  ├─ pass         468 ±70ns  [330–681]ns         8.76G [5]
+  │  ╰─ fail_first   153 ±12ns  [-103.6%–-93.6%]    26.7G [6]
+  ╰─ bit_replication_lossless_be16
+     ├─ pass         502 ±35ns  [440–550]ns         8.15G
+     ╰─ fail_first      2 ±0ns  [-103.6%–-93.6%]    2004G [7]
+
+  fail_first  ███████████████████████████████████████████████████████ 2122 Gpx/s
+  fail_first  ████████████████████████████████████████████████████ 2020 Gpx/s
+  fail_first  ████████████████████████████████████████████████████ 2004 Gpx/s
+  fail_first  ████████████████████████████ 1077 Gpx/s
+  fail_first  █ 26.7 Gpx/s
+  pass        █ 19.7 Gpx/s
+  pass        █ 18.1 Gpx/s
+  pass        █ 15.2 Gpx/s
+  pass        █ 8.76 Gpx/s
+  pass        █ 8.15 Gpx/s
+  [1] drift r=-0.80 — later rounds faster
+  [2] drift r=-0.80 — later rounds faster
+  [3] CV=106%
+  [4] drift r=-0.80 — later rounds faster
+  [5] CV=47%
+  [6] drift r=-0.80 — later rounds faster
+  [7] drift r=-0.80 — later rounds faster
+
+  small_256x256_64Kpx  4 rounds × 294 calls ⚠ only 4 rounds
+                    mean ±mad µs  95% CI vs base        px/s
+  ├─ is_opaque_rgba8
+  │  ├─ pass         4.0 ±0.1µs  [3.5–4.9]µs          16.5G [1]
+  │  ╰─ fail_first   0.0 ±0.0µs  [-101.8%–-96.7%]    20303G [2]
+  ├─ is_grayscale_rgba8
+  │  ├─ pass         4.5 ±0.4µs  [4.1–5.1]µs          14.4G
+  │  ╰─ fail_first   0.0 ±0.0µs  [-101.8%–-96.7%]    17228G
+  ├─ alpha_is_binary_rgba8
+  │  ├─ pass         3.8 ±0.3µs  [3.4–4.1]µs          17.3G
+  │  ╰─ fail_first   0.0 ±0.0µs  [-101.8%–-96.7%]    17958G [3]
+  ├─ is_grayscale_rgb8
+  │  ├─ pass         3.8 ±0.3µs  [3.3–4.8]µs          17.0G [4]
+  │  ╰─ fail_first   0.2 ±0.0µs  [-101.8%–-96.7%]      416G
+  ╰─ bit_replication_lossless_be16
+     ├─ pass         8.8 ±0.6µs  [8.3–9.3]µs          7.46G
+     ╰─ fail_first   0.0 ±0.0µs  [-101.8%–-96.7%]    16237G
+
+  fail_first  ██████████████████████████████████████████████████████ 20303 Gpx/s
+  fail_first  ████████████████████████████████████████████████ 17958 Gpx/s
+  fail_first  ██████████████████████████████████████████████ 17228 Gpx/s
+  fail_first  ███████████████████████████████████████████ 16237 Gpx/s
+  fail_first  █ 416 Gpx/s
+  pass        █ 17.3 Gpx/s
+  pass        █ 17.0 Gpx/s
+  pass        █ 16.5 Gpx/s
+  pass        █ 14.4 Gpx/s
+  pass        █ 7.46 Gpx/s
+  [1] CV=22%
+  [2] CV=37%
+  [3] CV=22%
+  [4] CV=25%
+
+  medium_1024x1024_1MP  4 rounds × 78 calls ⚠ only 4 rounds
+                       mean ±mad µs  95% CI vs base        px/s
+  ├─ is_opaque_rgba8
+  │  ├─ pass          82.9 ±12.8µs  [62.5–110.8]µs       12.7G [1]
+  │  ╰─ fail_first      0.0 ±0.0µs  [-108.3%–-83.5%]    68612G [2] [3]
+  ├─ is_grayscale_rgba8
+  │  ├─ pass         132.9 ±30.2µs  [90.1–196.6]µs       7.89G [4]
+  │  ╰─ fail_first      0.0 ±0.0µs  [-108.3%–-83.5%]    61035G [5] [6]
+  ├─ alpha_is_binary_rgba8
+  │  ├─ pass          99.7 ±24.7µs  [62.4–153.1]µs       10.5G [7]
+  │  ╰─ fail_first      0.0 ±0.0µs  [-108.3%–-83.5%]    65413G [8] [9]
+  ├─ is_grayscale_rgb8
+  │  ├─ pass           62.4 ±4.1µs  [58.7–66.1]µs        16.8G
+  │  ╰─ fail_first      0.2 ±0.0µs  [-108.3%–-83.5%]     6288G [10]
+  ╰─ bit_replication_lossless_be16
+     ├─ pass         197.2 ±14.1µs  [173.0–216.4]µs      5.32G
+     ╰─ fail_first      0.0 ±0.0µs  [-108.3%–-83.5%]    58259G [11] [12]
+
+  fail_first  ██████████████████████████████████████████████████████ 68612 Gpx/s
+  fail_first  ███████████████████████████████████████████████████ 65413 Gpx/s
+  fail_first  ████████████████████████████████████████████████ 61035 Gpx/s
+  fail_first  ██████████████████████████████████████████████ 58259 Gpx/s
+  fail_first  █████ 6288 Gpx/s
+  pass        █ 16.8 Gpx/s
+  pass        █ 12.7 Gpx/s
+  pass        █ 10.5 Gpx/s
+  pass        █ 7.89 Gpx/s
+  pass        █ 5.32 Gpx/s
+  [1] CV=33%
+  [2] drift r=-1.00 — later rounds faster
+  [3] CV=25%
+  [4] CV=50%
+  [5] drift r=-1.00 — later rounds faster
+  [6] CV=42%
+  [7] CV=57%
+  [8] drift r=-1.00 — later rounds faster
+  [9] CV=30%
+  [10] drift r=-1.00 — later rounds faster
+  [11] drift r=-1.00 — later rounds faster
+  [12] CV=40%
+
+  large_4096x4096_16MP  4 rounds × 1 calls ⚠ only 4 rounds
+                    mean ±mad ms  95% CI vs base        px/s
+  ├─ is_opaque_rgba8
+  │  ├─ pass         19.5 ±6.5ms  [14.4–24.5]ms         862M [1]
+  │  ╰─ fail_first    0.0 ±0.0ms  [-126.0%–-74.0%]     9852G [2]
+  ├─ is_grayscale_rgba8
+  │  ├─ pass         18.4 ±7.0ms  [13.3–23.6]ms         911M [3]
+  │  ╰─ fail_first    0.0 ±0.0ms  [-126.0%–-74.0%]    15020G [4]
+  ├─ alpha_is_binary_rgba8
+  │  ├─ pass         12.9 ±2.9ms  [10.7–15.1]ms        1.30G [5]
+  │  ╰─ fail_first    0.0 ±0.0ms  [-126.0%–-74.0%]    16340G [6]
+  ├─ is_grayscale_rgb8
+  │  ├─ pass         11.4 ±3.3ms  [8.9–13.7]ms         1.48G [7]
+  │  ╰─ fail_first    0.0 ±0.0ms  [-126.0%–-74.0%]    12960G [8]
+  ╰─ bit_replication_lossless_be16
+     ├─ pass         28.6 ±1.8ms  [26.9–30.4]ms         586M
+     ╰─ fail_first    0.0 ±0.0ms  [-126.0%–-74.0%]    10075G [9]
+
+  fail_first  ██████████████████████████████████████████████████████ 16340 Gpx/s
+  fail_first  ██████████████████████████████████████████████████ 15020 Gpx/s
+  fail_first  ███████████████████████████████████████████ 12960 Gpx/s
+  fail_first  █████████████████████████████████ 10075 Gpx/s
+  fail_first  █████████████████████████████████ 9852 Gpx/s
+  pass        █ 1.48 Gpx/s
+  pass        █ 1.30 Gpx/s
+  pass        █ 911 Mpx/s
+  pass        █ 862 Mpx/s
+  pass        █ 586 Mpx/s
+  [1] CV=32%
+  [2] CV=59%
+  [3] CV=33%
+  [4] CV=34%
+  [5] CV=21%
+  [6] CV=28%
+  [7] CV=27%
+  [8] CV=35%
+  [9] CV=49%
+
+  total: 515.4s  (467 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
