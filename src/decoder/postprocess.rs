@@ -95,33 +95,56 @@ pub(crate) fn scale_to_8bit(value: u8, bit_depth: u8) -> u8 {
 }
 
 /// Unpack sub-8-bit grayscale pixels from a packed row.
+///
+/// `raw` must hold at least `ceil(width × bit_depth / 8)` bytes; callers in
+/// tree (`post_process_row` and the interlace path) always size the row to
+/// match. The defensive `break` below converts any future caller that
+/// violates the invariant into a partial-row truncation rather than a panic.
 fn unpack_sub_byte_gray(raw: &[u8], width: usize, bit_depth: u8, out: &mut Vec<u8>) {
     let pixels_per_byte = 8 / bit_depth as usize;
     let mask = (1u8 << bit_depth) - 1;
 
     for x in 0..width {
         let byte_idx = x / pixels_per_byte;
+        let Some(byte) = raw.get(byte_idx) else { break };
         let bit_offset = (pixels_per_byte - 1 - x % pixels_per_byte) * bit_depth as usize;
-        let value = (raw[byte_idx] >> bit_offset) & mask;
+        let value = (byte >> bit_offset) & mask;
         out.push(scale_to_8bit(value, bit_depth));
     }
 }
 
 /// Unpack sub-8-bit indexed pixels from a packed row.
+///
+/// `raw` must hold at least `ceil(width × bit_depth / 8)` bytes; see the doc
+/// on [`unpack_sub_byte_gray`] for the invariant and the rationale for the
+/// `break`-on-short-input fallback.
 fn unpack_sub_byte_indexed(raw: &[u8], width: usize, bit_depth: u8, out: &mut Vec<u8>) {
     let pixels_per_byte = 8 / bit_depth as usize;
     let mask = (1u8 << bit_depth) - 1;
 
     for x in 0..width {
         let byte_idx = x / pixels_per_byte;
+        let Some(byte) = raw.get(byte_idx) else { break };
         let bit_offset = (pixels_per_byte - 1 - x % pixels_per_byte) * bit_depth as usize;
-        let index = (raw[byte_idx] >> bit_offset) & mask;
+        let index = (byte >> bit_offset) & mask;
         out.push(index);
     }
 }
 
 /// Post-process a raw unfiltered row into output pixels.
 /// Returns the output pixel data for this row.
+///
+/// # Invariant
+///
+/// `raw` must contain at least `ceil(ihdr.width × ihdr.channels × ihdr.bit_depth / 8)`
+/// bytes — the unfiltered scanline length the row decoder produces. The
+/// in-tree callers (`RowDecoder` and the interlace pass loop) always supply
+/// a row sized this way. Sub-byte unpacking guards against shorter input
+/// with an early break, but the truecolor / palette-byte branches index
+/// `raw` directly and will panic on a too-short row. Treat that as an
+/// internal-API contract: violating it is a refactor bug, not an attacker
+/// surface, since untrusted input flows in via `decode_png` which sizes
+/// `raw` from the row decoder.
 pub(crate) fn post_process_row(
     raw: &[u8],
     ihdr: &Ihdr,
