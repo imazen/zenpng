@@ -13,6 +13,12 @@
 //! - RGB8:  `[R, G, B, R, G, B, …]` — 3 bytes/pixel
 //! - 16-bit: big-endian pairs `[hi, lo, hi, lo, …]`. Lossless 16→8 condition
 //!   is `hi == lo` (PNG bit-replication: `u16 = u8 * 0x0101`).
+//!
+//! Several predicates are scaffolding for upcoming encoder downcast
+//! optimizations and are not yet wired into the encode pipeline. Allow
+//! `dead_code` at module scope rather than scatter `#[allow]` per-item.
+
+#![allow(dead_code)]
 
 use archmage::prelude::*;
 

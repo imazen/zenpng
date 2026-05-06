@@ -1015,7 +1015,7 @@ mod tests {
             .map(|i| Rgba {
                 r: 80 + (i * 3) as u8,
                 g: 90 + (i * 2) as u8,
-                b: 100 + (i * 1) as u8,
+                b: 100 + i as u8,
                 a: 255,
             })
             .collect();
@@ -1023,13 +1023,15 @@ mod tests {
 
         let metadata = Metadata::none().with_cicp(Cicp::DISPLAY_P3);
 
-        let mut flags = DowncastFlags::default();
-        flags.gamut_downcast = true;
         // Disable indexed/sub-byte to keep the test observation simple.
-        flags.indexed = false;
-        flags.sub_byte_gray = false;
-        flags.alpha_to_trns = false;
-        flags.rgb_to_gray = false;
+        let flags = DowncastFlags {
+            gamut_downcast: true,
+            indexed: false,
+            sub_byte_gray: false,
+            alpha_to_trns: false,
+            rgb_to_gray: false,
+            ..Default::default()
+        };
 
         let config = EncodeConfig::default()
             .with_compression(Compression::Fast) // effort 7
@@ -1067,12 +1069,14 @@ mod tests {
             .collect();
         let img = Img::new(pixels, 4, 1);
         let metadata = Metadata::none().with_cicp(Cicp::DISPLAY_P3);
-        let mut flags = DowncastFlags::default();
-        flags.gamut_downcast = true;
-        flags.indexed = false;
-        flags.sub_byte_gray = false;
-        flags.alpha_to_trns = false;
-        flags.rgb_to_gray = false;
+        let flags = DowncastFlags {
+            gamut_downcast: true,
+            indexed: false,
+            sub_byte_gray: false,
+            alpha_to_trns: false,
+            rgb_to_gray: false,
+            ..Default::default()
+        };
         let config = EncodeConfig::default()
             .with_compression(Compression::Turbo) // effort 2 < 7
             .with_downcast(flags);

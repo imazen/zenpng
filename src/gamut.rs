@@ -38,6 +38,7 @@ use zencodec::Cicp;
 /// 3×3 row-major matrix that converts linear-light Display P3 → linear
 /// BT.709 (sRGB primaries). White points are both D65 — no chromatic
 /// adaptation needed. Values match `zenpixels-convert::gamut`.
+#[allow(clippy::excessive_precision)]
 const DISPLAY_P3_TO_BT709: [[f32; 3]; 3] = [
     [1.2249401762, -0.2249398679, 0.0],
     [-0.0420569547, 1.0420571193, 0.0],
@@ -238,7 +239,7 @@ mod tests {
         // Should be very close to (128, 128, 128) in sRGB too, modulo
         // EOTF/OETF roundoff.
         for &b in &srgb {
-            assert!(b >= 127 && b <= 129, "gray drifted to {b}");
+            assert!((127..=129).contains(&b), "gray drifted to {b}");
         }
     }
 
@@ -302,13 +303,7 @@ mod tests {
         // Output should not be wildly different from input (pixel 0 is
         // mostly red — sRGB representation should still skew red).
         assert!(srgb[0] > srgb[1], "pixel 0 should still be R-dominant");
-        assert!(
-            srgb[3 + 1] > srgb[3 + 0],
-            "pixel 1 should still be G-dominant"
-        );
-        assert!(
-            srgb[6 + 2] > srgb[6 + 0],
-            "pixel 2 should still be B-dominant"
-        );
+        assert!(srgb[3 + 1] > srgb[3], "pixel 1 should still be G-dominant");
+        assert!(srgb[6 + 2] > srgb[6], "pixel 2 should still be B-dominant");
     }
 }
