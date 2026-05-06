@@ -1174,4 +1174,84 @@ mod tests {
         assert_eq!(anc.text_chunks.len(), 1);
         assert_eq!(anc.text_chunks[0].text, "post-IDAT text");
     }
+
+    // ---- Security: text-chunk caps (H2 regression tests) ----
+
+    /// Build a tEXt chunk payload: keyword\0text.
+    fn text_chunk(keyword: &[u8], text: &[u8]) -> Vec<u8> {
+        let mut data = Vec::with_capacity(keyword.len() + 1 + text.len());
+        data.extend_from_slice(keyword);
+        data.push(0);
+        data.extend_from_slice(text);
+        data
+    }
+
+    #[test]
+    fn text_chunk_count_capped_at_max() {
+        // Push MAX_TEXT_CHUNKS + 50 distinct tEXt chunks; only MAX_TEXT_CHUNKS
+        // should be retained. Empty-keyword guard requires non-empty kw.
+        let mut anc = PngAncillary::default();
+        for i in 0..(MAX_TEXT_CHUNKS + 50) {
+            let kw = format!("Key{i}");
+            let data = text_chunk(kw.as_bytes(), b"v");
+            anc.collect(&make_chunk(b"tEXt", &data)).unwrap();
+        }
+        assert_eq!(anc.text_chunks.len(), MAX_TEXT_CHUNKS);
+    }
+
+    #[test]
+    fn creating_tool_extracted_before_text_cap() {
+        // Even after MAX_TEXT_CHUNKS is exhausted, the first matching
+        // Software/Creator/Comment keyword must still populate creating_tool
+        // for detect::probe parity.
+        let mut anc = PngAncillary::default();
+        // Fill text_chunks up to the cap with non-matching keywords first.
+        for i in 0..MAX_TEXT_CHUNKS {
+            let kw = format!("Other{i}");
+            let data = text_chunk(kw.as_bytes(), b"v");
+            anc.collect(&make_chunk(b"tEXt", &data)).unwrap();
+        }
+        assert_eq!(anc.text_chunks.len(), MAX_TEXT_CHUNKS);
+        assert!(anc.creating_tool.is_none());
+        // Now a Software chunk arrives past the cap: chunk is dropped, but
+        // creating_tool is still extracted.
+        let data = text_chunk(b"Software", b"zenpng-test/1.0");
+        anc.collect(&make_chunk(b"tEXt", &data)).unwrap();
+        assert_eq!(anc.text_chunks.len(), MAX_TEXT_CHUNKS);
+        assert_eq!(anc.creating_tool.as_deref(), Some("zenpng-test/1.0"));
+    }
+
+    #[test]
+    fn ztxt_compressed_budget_caps_consumption() {
+        // Build a zTXt chunk with ~64 KiB of compressed payload. The first 64
+        // chunks consume 4 MiB; the 65th must be dropped without decompression
+        // (so text_compressed_bytes_consumed stops growing).
+        let mut anc = PngAncillary::default();
+        // Construct a minimal valid zTXt: keyword\0compression_method(0)+payload.
+        // Use raw zlib-compressed bytes of "x" so each payload is small but
+        // decompression succeeds when budget allows.
+        let mut z = zenflate::Compressor::new(zenflate::CompressionLevel::fast());
+        let payload = vec![b'x'; 65_000];
+        let mut buf = vec![0u8; 70_000];
+        let n = z.zlib_compress(&payload, &mut buf, Unstoppable).unwrap();
+        buf.truncate(n);
+
+        let mut chunk_data = Vec::new();
+        chunk_data.extend_from_slice(b"K");
+        chunk_data.push(0);
+        chunk_data.push(0); // compression_method = zlib
+        chunk_data.extend_from_slice(&buf);
+
+        // Feed chunks until the cap is exceeded, then one more.
+        let per_chunk = buf.len() as u64;
+        let need = MAX_TEXT_COMPRESSED_BYTES.div_ceil(per_chunk) as usize;
+        for _ in 0..need {
+            anc.collect(&make_chunk(b"zTXt", &chunk_data)).unwrap();
+        }
+        let consumed_before = anc.text_compressed_bytes_consumed;
+        assert!(consumed_before <= MAX_TEXT_COMPRESSED_BYTES);
+        // One more chunk should be skipped without consuming budget.
+        anc.collect(&make_chunk(b"zTXt", &chunk_data)).unwrap();
+        assert_eq!(anc.text_compressed_bytes_consumed, consumed_before);
+    }
 }
