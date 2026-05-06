@@ -102,6 +102,20 @@ impl FrameControl {
     }
 }
 
+/// Maximum number of text chunks (tEXt + zTXt + iTXt) we accumulate before
+/// silently dropping further chunks. PNG/APNG files in the wild hold a handful
+/// of `Software`/`Comment`/`Description` entries; an attacker can stuff a small
+/// PNG with millions of zTXt chunks (each ~30 bytes) where every chunk forces
+/// a 1 MiB transient zlib output buffer and a permanent decompressed `String`.
+/// Capping at 256 entries keeps real-world metadata available without letting
+/// attacker text dominate decode peak memory.
+pub(crate) const MAX_TEXT_CHUNKS: usize = 256;
+
+/// Maximum total compressed bytes we will pass through zlib decompression for
+/// zTXt/iTXt text payloads across the whole file. Bounds aggregate decompress
+/// CPU time and transient buffer usage independent of `MAX_TEXT_CHUNKS`.
+pub(crate) const MAX_TEXT_COMPRESSED_BYTES: u64 = 4 * 1024 * 1024;
+
 /// Collected ancillary chunk data.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PngAncillary {
@@ -151,6 +165,11 @@ pub(crate) struct PngAncillary {
     /// text chunks are parsed so [`crate::detect::PngProbe::from_info`]
     /// produces the same value without a second scan.
     pub creating_tool: Option<String>,
+
+    /// Running total of compressed bytes fed into zlib decompression for
+    /// zTXt/iTXt chunks. Capped by [`MAX_TEXT_COMPRESSED_BYTES`]; once exceeded
+    /// further compressed text payloads are dropped without decompression.
+    pub text_compressed_bytes_consumed: u64,
 }
 
 impl PngAncillary {
@@ -349,7 +368,15 @@ impl PngAncillary {
                 self.xmp = Some(text_data.to_vec());
             }
         } else if compression_flag == 1 {
-            // zlib compressed
+            // zlib compressed — share the per-file compressed-text budget with
+            // zTXt to bound aggregate decompression CPU/transient memory.
+            let new_consumed = self
+                .text_compressed_bytes_consumed
+                .saturating_add(text_data.len() as u64);
+            if new_consumed > MAX_TEXT_COMPRESSED_BYTES {
+                return;
+            }
+            self.text_compressed_bytes_consumed = new_consumed;
             let max_output = 4 * 1024 * 1024; // 4 MB limit for XMP
             let mut output = vec![0u8; max_output];
             let mut decompressor = zenflate::Decompressor::new();
@@ -420,6 +447,11 @@ impl PngAncillary {
                 {
                     self.creating_tool = Some(val.clone());
                 }
+                if self.text_chunks.len() >= MAX_TEXT_CHUNKS {
+                    // Silently drop further text chunks; creating_tool above
+                    // still gets the first match for detect::probe parity.
+                    return;
+                }
                 self.text_chunks.push(TextChunk {
                     keyword: kw,
                     text: val,
@@ -450,6 +482,20 @@ impl PngAncillary {
         if compressed.is_empty() {
             return;
         }
+
+        // Skip decompression entirely once we've hit either cap. Bounds the
+        // attacker's ability to drive transient 1-MiB zlib output buffers and
+        // permanent decompressed-text storage via many small zTXt chunks.
+        if self.text_chunks.len() >= MAX_TEXT_CHUNKS {
+            return;
+        }
+        let new_consumed = self
+            .text_compressed_bytes_consumed
+            .saturating_add(compressed.len() as u64);
+        if new_consumed > MAX_TEXT_COMPRESSED_BYTES {
+            return;
+        }
+        self.text_compressed_bytes_consumed = new_consumed;
 
         // Decompress
         let max_output = 1024 * 1024; // 1 MB limit for text
