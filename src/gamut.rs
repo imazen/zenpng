@@ -302,7 +302,13 @@ mod tests {
         // Output should not be wildly different from input (pixel 0 is
         // mostly red — sRGB representation should still skew red).
         assert!(srgb[0] > srgb[1], "pixel 0 should still be R-dominant");
-        assert!(srgb[3 + 1] > srgb[3 + 0], "pixel 1 should still be G-dominant");
-        assert!(srgb[6 + 2] > srgb[6 + 0], "pixel 2 should still be B-dominant");
+        assert!(
+            srgb[3 + 1] > srgb[3 + 0],
+            "pixel 1 should still be G-dominant"
+        );
+        assert!(
+            srgb[6 + 2] > srgb[6 + 0],
+            "pixel 2 should still be B-dominant"
+        );
     }
 }

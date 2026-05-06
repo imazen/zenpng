@@ -1362,7 +1362,12 @@ mod tests {
     #[test]
     fn min_gray_bit_depth_2bit_values() {
         // Values that are multiples of 85 (0, 85, 170, 255) → 2-bit
-        let a = analyze_rgba8(&[85, 85, 85, 255, 170, 170, 170, 255], 2, 1, &DowncastFlags::default());
+        let a = analyze_rgba8(
+            &[85, 85, 85, 255, 170, 170, 170, 255],
+            2,
+            1,
+            &DowncastFlags::default(),
+        );
         assert!(a.is_grayscale);
         assert_eq!(a.min_gray_bit_depth, 2);
     }

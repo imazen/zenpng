@@ -414,7 +414,11 @@ fn fused_predicates_rgba8_impl(token: Token, rgba: &[u8], req: FusedRequest) -> 
 // in the dead specialization, leaving a tighter hot loop.
 
 pub fn fused_predicates_rgba8_cg(rgba: &[u8], req: FusedRequest) -> FusedResult {
-    match (req.check_opaque, req.check_grayscale, req.check_binary_alpha) {
+    match (
+        req.check_opaque,
+        req.check_grayscale,
+        req.check_binary_alpha,
+    ) {
         (true, true, true) => fused_cg::<true, true, true>(rgba),
         (true, true, false) => fused_cg::<true, true, false>(rgba),
         (true, false, true) => fused_cg::<true, false, true>(rgba),
@@ -805,7 +809,9 @@ mod tests {
     #[test]
     fn grayscale_rgb8_true_three_pixels() {
         run_at_all_tiers("gray_rgb_true_3px", || {
-            assert!(super::is_grayscale_rgb8(&[10, 10, 10, 20, 20, 20, 30, 30, 30]));
+            assert!(super::is_grayscale_rgb8(&[
+                10, 10, 10, 20, 20, 20, 30, 30, 30
+            ]));
         });
     }
 
@@ -1128,16 +1134,10 @@ mod tests {
         }
     }
 
-
     fn rgba_pattern(n_pixels: usize, mutate: impl Fn(usize, &mut [u8; 4])) -> Vec<u8> {
         let mut v = Vec::with_capacity(n_pixels * 4);
         for i in 0..n_pixels {
-            let mut p = [
-                (i * 7 + 3) as u8,
-                (i * 7 + 3) as u8,
-                (i * 7 + 3) as u8,
-                255,
-            ];
+            let mut p = [(i * 7 + 3) as u8, (i * 7 + 3) as u8, (i * 7 + 3) as u8, 255];
             mutate(i, &mut p);
             v.extend_from_slice(&p);
         }
@@ -1149,17 +1149,29 @@ mod tests {
         let report = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| {
             for &n in &[0usize, 1, 4, 15, 16, 17, 31, 64, 200, 1024, 4099] {
                 let v = rgba_pattern(n, |_, _| {});
-                assert_eq!(super::is_opaque_rgba8(&v), scalar_is_opaque(&v), "n={n} all-opaque");
+                assert_eq!(
+                    super::is_opaque_rgba8(&v),
+                    scalar_is_opaque(&v),
+                    "n={n} all-opaque"
+                );
                 if n > 5 {
                     let mut v = rgba_pattern(n, |_, _| {});
                     v[5 * 4 + 3] = 128;
-                    assert_eq!(super::is_opaque_rgba8(&v), scalar_is_opaque(&v), "n={n} pixel 5 alpha=128");
+                    assert_eq!(
+                        super::is_opaque_rgba8(&v),
+                        scalar_is_opaque(&v),
+                        "n={n} pixel 5 alpha=128"
+                    );
                 }
                 // Non-opaque at the very last pixel
                 if n > 0 {
                     let mut v = rgba_pattern(n, |_, _| {});
                     v[(n - 1) * 4 + 3] = 200;
-                    assert_eq!(super::is_opaque_rgba8(&v), scalar_is_opaque(&v), "n={n} last pixel alpha=200");
+                    assert_eq!(
+                        super::is_opaque_rgba8(&v),
+                        scalar_is_opaque(&v),
+                        "n={n} last pixel alpha=200"
+                    );
                 }
             }
         });
@@ -1171,19 +1183,31 @@ mod tests {
         let report = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| {
             for &n in &[0usize, 1, 4, 16, 17, 64, 200, 4099] {
                 let v = rgba_pattern(n, |_, _| {});
-                assert_eq!(super::is_grayscale_rgba8(&v), scalar_is_grayscale_rgba8(&v), "n={n} all-gray");
+                assert_eq!(
+                    super::is_grayscale_rgba8(&v),
+                    scalar_is_grayscale_rgba8(&v),
+                    "n={n} all-gray"
+                );
                 if n > 5 {
                     let mut v = rgba_pattern(n, |_, _| {});
                     v[5 * 4] = 1;
                     v[5 * 4 + 1] = 2;
                     v[5 * 4 + 2] = 3;
-                    assert_eq!(super::is_grayscale_rgba8(&v), scalar_is_grayscale_rgba8(&v), "n={n} colorful pixel 5");
+                    assert_eq!(
+                        super::is_grayscale_rgba8(&v),
+                        scalar_is_grayscale_rgba8(&v),
+                        "n={n} colorful pixel 5"
+                    );
                 }
                 // Off-by-one: only G differs from R by 1
                 if n > 5 {
                     let mut v = rgba_pattern(n, |_, _| {});
                     v[5 * 4 + 1] = v[5 * 4].wrapping_add(1);
-                    assert_eq!(super::is_grayscale_rgba8(&v), scalar_is_grayscale_rgba8(&v), "n={n} g=r+1 at pixel 5");
+                    assert_eq!(
+                        super::is_grayscale_rgba8(&v),
+                        scalar_is_grayscale_rgba8(&v),
+                        "n={n} g=r+1 at pixel 5"
+                    );
                 }
             }
         });
@@ -1195,16 +1219,28 @@ mod tests {
         let report = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| {
             for &n in &[0usize, 1, 4, 16, 64, 200, 4099] {
                 let v = rgba_pattern(n, |i, p| p[3] = if i & 1 == 0 { 0 } else { 255 });
-                assert_eq!(super::alpha_is_binary_rgba8(&v), scalar_alpha_binary(&v), "n={n} alternating 0/255");
+                assert_eq!(
+                    super::alpha_is_binary_rgba8(&v),
+                    scalar_alpha_binary(&v),
+                    "n={n} alternating 0/255"
+                );
                 if n > 5 {
                     let mut v = rgba_pattern(n, |i, p| p[3] = if i & 1 == 0 { 0 } else { 255 });
                     v[5 * 4 + 3] = 128;
-                    assert_eq!(super::alpha_is_binary_rgba8(&v), scalar_alpha_binary(&v), "n={n} alpha 128 at 5");
+                    assert_eq!(
+                        super::alpha_is_binary_rgba8(&v),
+                        scalar_alpha_binary(&v),
+                        "n={n} alpha 128 at 5"
+                    );
                 }
                 if n > 5 {
                     let mut v = rgba_pattern(n, |_, _| {});
                     v[5 * 4 + 3] = 1; // very small but nonzero
-                    assert_eq!(super::alpha_is_binary_rgba8(&v), scalar_alpha_binary(&v), "n={n} alpha 1 at 5");
+                    assert_eq!(
+                        super::alpha_is_binary_rgba8(&v),
+                        scalar_alpha_binary(&v),
+                        "n={n} alpha 1 at 5"
+                    );
                 }
             }
         });
@@ -1220,11 +1256,19 @@ mod tests {
                     let g = (i * 7 + 3) as u8;
                     v.extend_from_slice(&[g, g, g]);
                 }
-                assert_eq!(super::is_grayscale_rgb8(&v), scalar_is_grayscale_rgb8(&v), "n={n} all-gray");
+                assert_eq!(
+                    super::is_grayscale_rgb8(&v),
+                    scalar_is_grayscale_rgb8(&v),
+                    "n={n} all-gray"
+                );
                 if n > 80 {
                     let mut v2 = v.clone();
                     v2[80 * 3 + 1] = v2[80 * 3].wrapping_add(1);
-                    assert_eq!(super::is_grayscale_rgb8(&v2), scalar_is_grayscale_rgb8(&v2), "n={n} pixel 80 g+=1");
+                    assert_eq!(
+                        super::is_grayscale_rgb8(&v2),
+                        scalar_is_grayscale_rgb8(&v2),
+                        "n={n} pixel 80 g+=1"
+                    );
                 }
             }
         });

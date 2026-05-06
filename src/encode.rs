@@ -746,22 +746,30 @@ fn encode_raw_with_stats(
                 ),
             }
         }
-        (ColorType::Rgb, BitDepth::Eight) => match crate::optimize::optimize_rgb8(bytes, w, h, &config.downcast) {
-            crate::optimize::OptimalEncoding::Truecolor {
-                bytes: ob,
-                color_type: ct,
-                bit_depth: bd,
-                trns,
-            } => (Some(ob), ct, bd, trns),
-            _ => (
-                None,
-                color_type.to_png_byte(),
-                bit_depth.to_png_byte(),
-                None,
-            ),
-        },
+        (ColorType::Rgb, BitDepth::Eight) => {
+            match crate::optimize::optimize_rgb8(bytes, w, h, &config.downcast) {
+                crate::optimize::OptimalEncoding::Truecolor {
+                    bytes: ob,
+                    color_type: ct,
+                    bit_depth: bd,
+                    trns,
+                } => (Some(ob), ct, bd, trns),
+                _ => (
+                    None,
+                    color_type.to_png_byte(),
+                    bit_depth.to_png_byte(),
+                    None,
+                ),
+            }
+        }
         (_, BitDepth::Sixteen) => {
-            match crate::optimize::optimize_16bit(bytes, w, h, color_type.to_png_byte(), &config.downcast) {
+            match crate::optimize::optimize_16bit(
+                bytes,
+                w,
+                h,
+                color_type.to_png_byte(),
+                &config.downcast,
+            ) {
                 crate::optimize::OptimalEncoding::Truecolor {
                     bytes: ob,
                     color_type: ct,
@@ -973,7 +981,12 @@ mod tests {
         // 4 RGBA pixels, all opaque, all gray — would normally become Gray8.
         // With downcast disabled, must stay RGBA8.
         let pixels: Vec<Rgba<u8>> = (0..4)
-            .map(|i| Rgba { r: i * 30, g: i * 30, b: i * 30, a: 255 })
+            .map(|i| Rgba {
+                r: i * 30,
+                g: i * 30,
+                b: i * 30,
+                a: 255,
+            })
             .collect();
         let img = Img::new(pixels, 4, 1);
         let config = EncodeConfig::default()
@@ -984,7 +997,10 @@ mod tests {
         let decoded =
             crate::decode(&encoded, &crate::PngDecodeConfig::default(), &Unstoppable).unwrap();
         // PNG color_type 6 = RGBA, NOT gray.
-        assert_eq!(decoded.info.color_type, 6, "downcast disabled — must stay RGBA");
+        assert_eq!(
+            decoded.info.color_type, 6,
+            "downcast disabled — must stay RGBA"
+        );
     }
 
     #[test]
@@ -1027,12 +1043,8 @@ mod tests {
             &Unstoppable,
         )
         .unwrap();
-        let decoded = crate::decode(
-            &encoded,
-            &crate::PngDecodeConfig::default(),
-            &Unstoppable,
-        )
-        .unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::default(), &Unstoppable).unwrap();
         // After downcast, the file should NOT carry P3 cICP.
         assert!(
             decoded.info.cicp.is_none() || decoded.info.cicp == Some(Cicp::SRGB),
@@ -1046,7 +1058,12 @@ mod tests {
         // Same buffer, gamut_downcast on but effort < 7 — must keep P3.
         use zencodec::{Cicp, Metadata};
         let pixels: Vec<Rgba<u8>> = (0..4)
-            .map(|i| Rgba { r: 100 + i, g: 100, b: 100, a: 255 })
+            .map(|i| Rgba {
+                r: 100 + i,
+                g: 100,
+                b: 100,
+                a: 255,
+            })
             .collect();
         let img = Img::new(pixels, 4, 1);
         let metadata = Metadata::none().with_cicp(Cicp::DISPLAY_P3);
@@ -1067,12 +1084,8 @@ mod tests {
             &Unstoppable,
         )
         .unwrap();
-        let decoded = crate::decode(
-            &encoded,
-            &crate::PngDecodeConfig::default(),
-            &Unstoppable,
-        )
-        .unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::default(), &Unstoppable).unwrap();
         assert_eq!(
             decoded.info.cicp,
             Some(Cicp::DISPLAY_P3),
@@ -1084,7 +1097,12 @@ mod tests {
     fn rgba8_with_default_flags_downcasts_to_gray() {
         // Same buffer, default flags — should auto-downcast to grayscale.
         let pixels: Vec<Rgba<u8>> = (0..4)
-            .map(|i| Rgba { r: i * 30, g: i * 30, b: i * 30, a: 255 })
+            .map(|i| Rgba {
+                r: i * 30,
+                g: i * 30,
+                b: i * 30,
+                a: 255,
+            })
             .collect();
         let img = Img::new(pixels, 4, 1);
         let config = EncodeConfig::default().with_compression(Compression::Fastest);
