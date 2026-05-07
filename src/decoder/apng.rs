@@ -506,6 +506,14 @@ pub(crate) fn decode_apng_composed(
     // Previous frame's fctl (for applying dispose_op after yielding)
     let mut prev_fctl: Option<FrameControl> = None;
 
+    // Track cumulative frame memory. `config.max_memory_bytes` only governs the
+    // canvas allocation; without an additional cap, an attacker-crafted APNG
+    // with up to 65535 frames at canvas-sized RGBA can request many TiB of
+    // heap via `frames.push` (each frame is a full canvas-sized pixel copy).
+    // Apply the same `max_memory_bytes` budget to the cumulative `frames` Vec.
+    let per_frame_bytes = canvas_bytes as u64;
+    let mut total_frame_bytes: u64 = 0;
+
     while let Some(frame) = decoder.next_frame(cancel)? {
         // Apply dispose_op from the PREVIOUS frame before compositing this one
         if let Some(pfctl) = prev_fctl {
@@ -520,6 +528,17 @@ pub(crate) fn decode_apng_composed(
         // Promote subframe pixels to RGBA and composite onto canvas
         let subframe_rgba = promote_to_rgba(&frame.pixels, is_16bit);
         composite_frame(&frame.fctl, &subframe_rgba, &mut canvas, canvas_w, is_16bit);
+
+        // Enforce cumulative-frame memory budget BEFORE allocating the next
+        // frame's canvas-sized pixel copy.
+        if let Some(max_mem) = config.max_memory_bytes {
+            total_frame_bytes = total_frame_bytes.saturating_add(per_frame_bytes);
+            if total_frame_bytes > max_mem {
+                return Err(at!(PngError::LimitExceeded(
+                    "cumulative APNG frame memory exceeds limit".into(),
+                )));
+            }
+        }
 
         // Build PixelBuffer directly from canvas (single copy, no intermediate Vec)
         let pixels = canvas_to_pixel_data(&canvas, canvas_w, canvas_h, is_16bit);
