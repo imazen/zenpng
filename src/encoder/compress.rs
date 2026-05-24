@@ -87,92 +87,13 @@ impl EffortParams {
 
     fn from_effort(effort: u32) -> Self {
         if effort > 60 {
-            // Effort 61+: Full Maniac pipeline + FullOptimal.
-            // FullOptimal iterations = effort - 16 (e.g., effort 76 = 60i).
-            return Self {
-                zenflate_effort: 30,
-                strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
-                screen_is_final: false,
-                top_k: 3,
-                refine_efforts: &[30],
-                brute_configs: &[
-                    (1, 1),
-                    (1, 4),
-                    (3, 1),
-                    (3, 4),
-                    (5, 1),
-                    (5, 4),
-                    (8, 1),
-                    (8, 4),
-                ],
-                block_brute_configs: &[(5, 1), (5, 4)],
-                fork_brute_efforts: &[10, 15],
-                adaptive_fork_configs: &[(15, 2), (22, 2)],
-                beam_brute_configs: &[(10, 3), (15, 3)],
-                use_recompress: true,
-                full_optimal_effort: Some(effort),
-                full_optimal_only: false,
-            };
+            return Self::tier_full_maniac_with_full_optimal(effort);
         }
         if effort > 45 {
-            // Effort 46-60: 9 strategies + refine + moderate brute-force + FullOptimal.
-            return Self {
-                zenflate_effort: 30,
-                strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
-                screen_is_final: false,
-                top_k: 3,
-                refine_efforts: &[28, 30],
-                brute_configs: &[(1, 1), (1, 4), (3, 1), (3, 4)],
-                block_brute_configs: &[],
-                fork_brute_efforts: &[10, 15],
-                adaptive_fork_configs: &[],
-                beam_brute_configs: &[],
-                use_recompress: true,
-                full_optimal_effort: Some(effort),
-                full_optimal_only: false,
-            };
+            return Self::tier_moderate_brute_with_full_optimal(effort);
         }
         if effort > 30 {
-            // Effort 31-45: Full pipeline + FullOptimal recompression.
-            //
-            // Includes the complete e30 pipeline (screening, refinement,
-            // brute-force, BFF, beam) to guarantee monotonicity vs e30.
-            // FullOptimal recompression adds iterative forward DP on top.
-            //
-            // Previously used a lean pipeline (BFF only + FullOptimal) which
-            // regressed on 49% of images because BFF's Greedy-eval filter
-            // selection produced suboptimal candidates for FullOptimal.
-            // The full pipeline captures both screening-based and BFF-based
-            // candidates, letting FullOptimal pick the best.
-            //
-            // FullOptimal iterations = effort - 16 (E31->15i, E36->20i, E45->29i).
-            return Self {
-                zenflate_effort: 30,
-                strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
-                screen_is_final: false,
-                top_k: 3,
-                refine_efforts: &[28, 30],
-                brute_configs: &[
-                    (1, 1),
-                    (1, 4),
-                    (3, 1),
-                    (3, 4),
-                    (5, 1),
-                    (5, 4),
-                    (8, 1),
-                    (8, 4),
-                ],
-                block_brute_configs: &[],
-                fork_brute_efforts: &[10, 15],
-                adaptive_fork_configs: &[(15, 2), (22, 2)],
-                beam_brute_configs: &[(10, 3), (15, 3)],
-                use_recompress: true,
-                full_optimal_effort: Some(effort),
-                full_optimal_only: false,
-            };
+            return Self::tier_full_pipeline_with_full_optimal(effort);
         }
         match effort {
             // ── Low effort (0-7): screen IS final pass ──
@@ -713,6 +634,95 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
             },
+        }
+    }
+
+    // Effort 61+: Full Maniac pipeline + FullOptimal.
+    // FullOptimal iterations = effort - 16 (e.g., effort 76 = 60i).
+    fn tier_full_maniac_with_full_optimal(effort: u32) -> Self {
+        Self {
+            zenflate_effort: 30,
+            strategies: HEURISTIC_STRATEGIES,
+            screen_effort: 7,
+            screen_is_final: false,
+            top_k: 3,
+            refine_efforts: &[30],
+            brute_configs: &[
+                (1, 1),
+                (1, 4),
+                (3, 1),
+                (3, 4),
+                (5, 1),
+                (5, 4),
+                (8, 1),
+                (8, 4),
+            ],
+            block_brute_configs: &[(5, 1), (5, 4)],
+            fork_brute_efforts: &[10, 15],
+            adaptive_fork_configs: &[(15, 2), (22, 2)],
+            beam_brute_configs: &[(10, 3), (15, 3)],
+            use_recompress: true,
+            full_optimal_effort: Some(effort),
+            full_optimal_only: false,
+        }
+    }
+
+    // Effort 46-60: 9 strategies + refine + moderate brute-force + FullOptimal.
+    fn tier_moderate_brute_with_full_optimal(effort: u32) -> Self {
+        Self {
+            zenflate_effort: 30,
+            strategies: HEURISTIC_STRATEGIES,
+            screen_effort: 7,
+            screen_is_final: false,
+            top_k: 3,
+            refine_efforts: &[28, 30],
+            brute_configs: &[(1, 1), (1, 4), (3, 1), (3, 4)],
+            block_brute_configs: &[],
+            fork_brute_efforts: &[10, 15],
+            adaptive_fork_configs: &[],
+            beam_brute_configs: &[],
+            use_recompress: true,
+            full_optimal_effort: Some(effort),
+            full_optimal_only: false,
+        }
+    }
+
+    // Effort 31-45: Full e30 pipeline + FullOptimal recompression.
+    //
+    // The full e30 pipeline (screening, refinement, brute-force, BFF, beam) is included to
+    // guarantee monotonicity vs e30. FullOptimal recompression adds iterative forward DP on top.
+    //
+    // The previous lean variant (BFF only + FullOptimal) regressed on 49% of images because
+    // BFF's Greedy-eval filter selection produced suboptimal candidates for FullOptimal. The
+    // full pipeline captures both screening-based and BFF-based candidates, letting FullOptimal
+    // pick the best.
+    //
+    // FullOptimal iterations = effort - 16 (E31->15i, E36->20i, E45->29i).
+    fn tier_full_pipeline_with_full_optimal(effort: u32) -> Self {
+        Self {
+            zenflate_effort: 30,
+            strategies: HEURISTIC_STRATEGIES,
+            screen_effort: 7,
+            screen_is_final: false,
+            top_k: 3,
+            refine_efforts: &[28, 30],
+            brute_configs: &[
+                (1, 1),
+                (1, 4),
+                (3, 1),
+                (3, 4),
+                (5, 1),
+                (5, 4),
+                (8, 1),
+                (8, 4),
+            ],
+            block_brute_configs: &[],
+            fork_brute_efforts: &[10, 15],
+            adaptive_fork_configs: &[(15, 2), (22, 2)],
+            beam_brute_configs: &[(10, 3), (15, 3)],
+            use_recompress: true,
+            full_optimal_effort: Some(effort),
+            full_optimal_only: false,
         }
     }
 }
