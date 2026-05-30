@@ -4,6 +4,15 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Performance
+- Faster NEON (aarch64) Sub unfilter. The previous loop reloaded the running
+  reconstructed pixel from a scalar `u32` every step; the rewrite keeps it in a
+  NEON register across iterations (bpp=4 resolves two pixels per iteration via an
+  in-register prefix add). Measured on Ampere Altra / Neoverse-N1: Sub bpp=4
+  +33% (3088 → 4117 MB/s), Sub bpp=3 +20% (2716 → 3258 MB/s). Decode output is
+  byte-identical (verified by the `simd::sub` tier-permutation tests on aarch64).
+  Benchmark: `benchmarks/zenpng_arm_sub_unfilter_2026-05-29.{tsv,meta}`.
+
 ## [0.1.4] - 2026-04-17
 
 ### Performance

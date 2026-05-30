@@ -1,0 +1,9 @@
+filter	bpp	baseline_simd_mbps	optimized_simd_mbps	delta_pct	note
+Sub	3	2716	3258	+20.0	changed (in-register carry)
+Sub	4	3088	4117	+33.3	changed (2-pixel in-register prefix-add)
+Up	3	10591	10996	+3.8	unchanged code; within run-to-run noise
+Up	4	10342	10491	+1.4	unchanged code; within run-to-run noise
+Average	3	3024	3018	-0.2	unchanged code; noise
+Average	4	3024	3018	-0.2	unchanged code; noise
+Paeth	3	2167	2179	+0.6	unchanged code; noise
+Paeth	4	2092	2161	+3.3	unchanged code; noise

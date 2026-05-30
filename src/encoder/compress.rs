@@ -1466,29 +1466,28 @@ fn run_phase3_bruteforce(
     let mut brute_evals = 0u32;
 
     if can_brute_force && !opts.deadline.should_stop() && !filter_variance_low {
-        let mut run_set =
-            |strategies: &[Strategy],
-             state: &mut CompressState,
-             evals: &mut u32|
-             -> crate::error::Result<()> {
-                for &strategy in strategies {
-                    if opts.deadline.should_stop() {
-                        return Ok(());
-                    }
-                    *evals += run_one_brute_variant(
-                        state,
-                        packed_rows,
-                        row_bytes,
-                        height,
-                        bpp,
-                        strategy,
-                        params,
-                        recompress_candidates,
-                        opts,
-                    )?;
+        let mut run_set = |strategies: &[Strategy],
+                           state: &mut CompressState,
+                           evals: &mut u32|
+         -> crate::error::Result<()> {
+            for &strategy in strategies {
+                if opts.deadline.should_stop() {
+                    return Ok(());
                 }
-                Ok(())
-            };
+                *evals += run_one_brute_variant(
+                    state,
+                    packed_rows,
+                    row_bytes,
+                    height,
+                    bpp,
+                    strategy,
+                    params,
+                    recompress_candidates,
+                    opts,
+                )?;
+            }
+            Ok(())
+        };
 
         let bf: Vec<Strategy> = brute_configs
             .iter()

@@ -46,6 +46,13 @@ Filters are per-row in PNG. `incant!` dispatches once per row to the highest ava
 | Up     | ~1.0x       | ~1.0x        | LLVM auto-vectorizes scalar equivalently |
 | Average| ~0.95x      | ~1.0x        | bpp=3 SIMD was slower, reverted to scalar |
 
+(x86 figures above.) **ARM (Neoverse-N1) Sub unfilter:** the NEON Sub path keeps
+the running reconstructed pixel in a NEON register across iterations instead of
+reloading a scalar `u32` each step; bpp=4 resolves two pixels per iteration via an
+in-register prefix add. Measured (`examples/unfilter_bench.rs`, 2026-05-29):
+Sub bpp=4 +33% (3088 → 4117 MB/s), Sub bpp=3 +20% (2716 → 3258 MB/s). See
+`benchmarks/zenpng_arm_sub_unfilter_2026-05-29.{tsv,meta}`.
+
 ### SIMD Tier Assignments
 
 - **Paeth**: `[v2]` (SSE4.2) for both bpp=3 and bpp=4

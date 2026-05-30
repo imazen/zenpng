@@ -79,6 +79,10 @@ name = "decode_bench"
 required-features = ["_dev"]
 
 [[example]]
+name = "unfilter_bench"
+required-features = ["_dev"]
+
+[[example]]
 name = "joint_bench"
 required-features = ["joint"]
 

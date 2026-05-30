@@ -1,0 +1,51 @@
+# zenpng ARM Sub-unfilter SIMD optimization benchmark
+
+host:        arm-zen (Hetzner CAX, Ampere Altra / Neoverse-N1, aarch64, 4 vCPU / ~8 GB)
+date:        2026-05-29
+toolchain:   rustc/cargo 1.96.0, --release, runtime SIMD dispatch (NO -C target-cpu=native)
+feature:     _dev
+baseline:    main @ 8a1a716 ("ci: prebuilt cargo-fuzz + pin gnu fuzz target")
+change:      NEON Sub unfilter rewrite in src/simd/sub.rs. The recurrence
+             recon[x] = filt[x] + recon[x-bpp] is sequential; the previous NEON
+             loop reloaded the running pixel `a` from a scalar u32 every step
+             (vcreate_u8(scalar) + vget_lane_u32 round-trip), which is why it sat
+             at ~1x vs scalar on Neoverse-N1. The rewrite keeps `a` in a NEON
+             register across iterations:
+               - bpp=4: resolves TWO consecutive pixels per iteration via an
+                 in-register prefix add (vext_u8 shift + vadd_u8), one 8-byte
+                 vld1_u8 load and one 8-byte vst1_u8 store per 2 pixels; the
+                 0-or-1-pixel remainder uses the scalar formula.
+               - bpp=3: keeps the running reconstructed pixel in-register (drops
+                 the per-step scalar reload of `a`); still extracts a u32 for the
+                 3-byte store (a 3-byte SIMD store would overrun).
+
+harness:     examples/unfilter_bench.rs (new; measures the runtime-dispatched
+             SIMD __bench_unfilter_row path only — NOT a token-toggle bench, which
+             is x86-specific and truncates output on aarch64).
+command:     cargo build --release --example unfilter_bench --features _dev
+             ./target/release/examples/unfilter_bench <frymire-srgb.png>
+inputs:      bpp=3 seed = frymire-srgb RGB tiled to 1024x4096 (12.6 MB raw);
+             bpp=4 = synthetic RGBA 1024x4096 (16.8 MB raw)
+iters:       10 inner iterations + warmup per filter; 3 outer runs each side.
+
+# A/B method (apples-to-apples, same box, same session, same harness binary):
+#   1. optimized sub.rs in place -> build -> 3 runs
+#   2. baseline sub.rs (jj file show -r main src/simd/sub.rs) swapped in -> rebuild -> 3 runs
+#   3. optimized restored -> rebuild -> 3 runs (confirms stability)
+# The box is a `git archive` snapshot (no .git), so baseline was supplied by file
+# swap, not `git checkout`.
+
+# Measured (MB/s), median of 3 runs:
+#   Sub bpp=3: baseline 2716/2682  -> optimized 3258/3258/3517   => +20.0%
+#   Sub bpp=4: baseline 3088       -> optimized 4117             => +33.3%
+#   Up/Average/Paeth: code unchanged; deltas within run-to-run noise.
+
+# Correctness (byte-identical decode), proven ON the ARM box (cargo test
+# --release --features _dev --lib):
+#   - simd::sub::tests::sub_bpp4_all_tiers  PASS
+#   - simd::sub::tests::sub_bpp3_all_tiers  PASS
+#   - simd::sub::tests::sub_other_bpp_unchanged  PASS
+#   These use archmage for_each_token_permutation to assert the NEON output
+#   equals the scalar reference at lengths {0,4,8,12,16,20,24,28,100,4096,65536}
+#   (bpp=4) and {0,3,6,9,12,15,18,21,99,4095,65535} (bpp=3).
+#   - Full lib suite: 667 passed; 0 failed on aarch64.

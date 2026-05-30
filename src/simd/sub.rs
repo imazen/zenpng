@@ -4,6 +4,8 @@
 //! For bpp=4, process one 4-byte pixel per iteration using 128-bit registers.
 
 use archmage::prelude::*;
+#[cfg(target_arch = "aarch64")]
+use safe_unaligned_simd::aarch64::{vld1_u8, vst1_u8};
 #[cfg(target_arch = "wasm32")]
 use safe_unaligned_simd::wasm32::v128_load32_zero;
 #[cfg(target_arch = "x86_64")]
@@ -98,21 +100,56 @@ fn unfilter_sub_bpp4_impl_neon(_token: NeonToken, row: &mut [u8]) {
         return;
     }
 
-    // First 4 bytes are unchanged (left neighbor is implicitly 0).
-    // Initialize `a` with the first pixel as a u32.
-    let mut a = u32::from_le_bytes(<[u8; 4]>::try_from(&row[0..4]).unwrap());
+    // The recurrence `recon[x] = filt[x] + recon[x-4]` is sequential, but two
+    // consecutive 4-byte pixels fit in one 64-bit NEON register, so we resolve
+    // a 2-pixel batch entirely in-register and only carry the final pixel
+    // forward — avoiding the per-pixel scalar reload of `a` that capped the old
+    // loop at ~1x vs scalar on Neoverse-N1.
+    //
+    // For pixels [f0, f1] in one uint8x8_t and carry `a` (= recon[x-4]):
+    //   out0 = f0 + a
+    //   out1 = f1 + out0 = f1 + f0 + a
+    // Computed as:
+    //   t   = v + [a, 0]            -> [f0+a, f1]
+    //   out = t + [0, low4(t)]      -> [f0+a, f1 + (f0+a)] = [out0, out1]
+    // `a` carries the low 4 lanes of the previous result (out1) for the next batch.
+
+    // Carry starts as the first reconstructed pixel (row[0..4], identity).
+    // Broadcast it into the low 4 lanes; high lanes are zero.
+    let first = u32::from_le_bytes(<[u8; 4]>::try_from(&row[0..4]).unwrap());
+    let mut a = vreinterpret_u8_u32(vdup_n_u32(first)); // lanes 0-3 = pixel, 4-7 = copy
 
     let mut i = 4;
-    while i + 4 <= len {
-        let filt = u32::from_le_bytes(<[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
-        // Wrapping byte-wise add via NEON: load both into uint8x8_t, add, extract
-        let a_v = vcreate_u8(a as u64);
-        let f_v = vcreate_u8(filt as u64);
-        let result_v = vadd_u8(a_v, f_v);
-        let result = vget_lane_u32::<0>(vreinterpret_u32_u8(result_v));
-        row[i..i + 4].copy_from_slice(&result.to_le_bytes());
-        a = result;
-        i += 4;
+    // 2-pixel batched main loop.
+    while i + 8 <= len {
+        let v = vld1_u8(<&[u8; 8]>::try_from(&row[i..i + 8]).unwrap());
+
+        // [a, 0]: keep the carry in lanes 0-3, zero lanes 4-7.
+        let a_lo = vreinterpret_u8_u32(vset_lane_u32::<1>(0, vreinterpret_u32_u8(a)));
+        // t = [f0 + a, f1]
+        let t = vadd_u8(v, a_lo);
+
+        // Move (f0 + a) from lanes 0-3 into lanes 4-7, zero the low half.
+        // vext shifts the concatenation (zero:t) left by 4 bytes -> low4(t) lands high.
+        let zero = vdup_n_u8(0);
+        let t_shifted = vext_u8::<4>(zero, t);
+        // out = t + [0, f0+a] = [out0, out1]
+        let out = vadd_u8(t, t_shifted);
+
+        vst1_u8(<&mut [u8; 8]>::try_from(&mut row[i..i + 8]).unwrap(), out);
+
+        // Carry the high pixel (out1) down into lanes 0-3 for the next batch.
+        a = vext_u8::<4>(out, zero);
+        i += 8;
+    }
+
+    // Single-pixel remainder (at most one 4-byte pixel left after the 2-pixel
+    // batch loop). `len - 4` is a multiple of 4, so 0 or 4 bytes remain here.
+    // Resolve it with the scalar recurrence reading the already-reconstructed
+    // left neighbor from `row` — cheap and avoids a partial NEON store.
+    while i < len {
+        row[i] = row[i].wrapping_add(row[i - 4]);
+        i += 1;
     }
 }
 
@@ -127,19 +164,28 @@ fn unfilter_sub_bpp3_impl_neon(_token: NeonToken, row: &mut [u8]) {
         return;
     }
 
-    // First 3 bytes unchanged. Load first 4 bytes (3 pixel + 1 overlap) into a.
-    let mut a = u32::from_le_bytes(<[u8; 4]>::try_from(&row[0..4]).unwrap());
+    // Keep the running reconstructed pixel in a NEON register (low 3 lanes carry
+    // the previous 3-byte pixel) rather than reloading a scalar u32 every step.
+    // Each iteration still extracts a u32 for the 3-byte store (a 3-byte SIMD
+    // store would overrun), but the load is folded into the carry, so the
+    // recurrence chain is one `vadd_u8` per pixel instead of load+create+add+extract.
+    //
+    // `a` starts as the first reconstructed pixel (row[0..3], identity); load 4
+    // bytes (3 pixel + 1 overlap) — the overlap lane is never stored.
+    let mut a = vcreate_u8(u32::from_le_bytes(<[u8; 4]>::try_from(&row[0..4]).unwrap()) as u64);
 
     let mut i = 3;
     while i + 4 <= len {
+        // 4-byte load (3-pixel + 1 overlap) into low lanes of a uint8x8_t.
         let filt = u32::from_le_bytes(<[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
-        let a_v = vcreate_u8(a as u64);
-        let f_v = vcreate_u8(filt as u64);
-        let result_v = vadd_u8(a_v, f_v);
+        let f = vcreate_u8(filt as u64);
+        // recon = filt + a (byte-wise wrapping). Lanes 0-2 are the real pixel.
+        let result_v = vadd_u8(f, a);
+        // Store only 3 bytes (lane 3 is garbage from the 4-byte overlap load).
         let result = vget_lane_u32::<0>(vreinterpret_u32_u8(result_v));
-        // Store only 3 bytes (byte 3 is garbage from the 4-byte load)
         row[i..i + 3].copy_from_slice(&result.to_le_bytes()[..3]);
-        a = result;
+        // Carry the reconstructed pixel forward in-register (no scalar reload of `a`).
+        a = result_v;
         i += 3;
     }
 
@@ -229,7 +275,10 @@ mod tests {
     #[test]
     fn sub_bpp4_all_tiers() {
         let report = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| {
-            for &len in &[0, 4, 8, 12, 100, 4096, 65536] {
+            // Sizes cover the 2-pixel batch loop and single-pixel remainder:
+            // 16 = 4 + one batch + remainder, 20 = 4 + 2 batches + remainder,
+            // 28 = 4 + 3 batches, etc.
+            for &len in &[0, 4, 8, 12, 16, 20, 24, 28, 100, 4096, 65536] {
                 let filtered: Vec<u8> = (0..len).map(|i| (i * 3 + 5) as u8).collect();
 
                 let mut expected = filtered.clone();
@@ -247,7 +296,8 @@ mod tests {
     #[test]
     fn sub_bpp3_all_tiers() {
         let report = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| {
-            for &len in &[0, 3, 6, 9, 99, 4095, 65535] {
+            // Cover varied bpp=3 alignments against the 4-byte overlap loop.
+            for &len in &[0, 3, 6, 9, 12, 15, 18, 21, 99, 4095, 65535] {
                 let filtered: Vec<u8> = (0..len).map(|i| (i * 3 + 5) as u8).collect();
 
                 let mut expected = filtered.clone();
