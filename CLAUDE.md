@@ -49,8 +49,9 @@ Filters are per-row in PNG. `incant!` dispatches once per row to the highest ava
 (x86 figures above.) **ARM (Neoverse-N1) Sub unfilter:** the NEON Sub path keeps
 the running reconstructed pixel in a NEON register across iterations instead of
 reloading a scalar `u32` each step; bpp=4 resolves two pixels per iteration via an
-in-register prefix add. Measured (`examples/unfilter_bench.rs`, 2026-05-29):
-Sub bpp=4 +33% (3088 → 4117 MB/s), Sub bpp=3 +20% (2716 → 3258 MB/s). See
+in-register prefix add. Measured (`examples/unfilter_bench.rs`, 2026-05-29;
+back-to-back A/B, same box, median of 5): Sub bpp=3 +68% (981 → 1649 MB/s),
+Sub bpp=4 +24% (1260 → 1563 MB/s). See
 `benchmarks/zenpng_arm_sub_unfilter_2026-05-29.{tsv,meta}`.
 
 ### SIMD Tier Assignments
