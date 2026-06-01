@@ -10,7 +10,6 @@ keywords = ["png", "image", "encoder", "decoder", "codec"]
 repository = "https://github.com/imazen/zenpng"
 include = [
     "/src/**",
-    "/tests/**",
     "/examples/**",
     "/README.md",
     "/CHANGELOG.md",

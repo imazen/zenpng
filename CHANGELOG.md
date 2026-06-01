@@ -4,6 +4,9 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Changed
+- Exclude `tests/` from the published crate tarball; regression PNG fixtures and test source files were unnecessarily shipping to crates.io.
+
 ### Performance
 - Faster NEON (aarch64) Sub unfilter. The previous loop reloaded the running
   reconstructed pixel from a scalar `u32` every step; the rewrite keeps it in a
