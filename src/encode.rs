@@ -285,6 +285,16 @@ impl ColorType {
             ColorType::Rgba => 6,
         }
     }
+
+    /// Number of samples per pixel (color + alpha channels).
+    pub(crate) fn channels(self) -> u8 {
+        match self {
+            ColorType::Grayscale => 1,
+            ColorType::GrayscaleAlpha => 2,
+            ColorType::Rgb => 3,
+            ColorType::Rgba => 4,
+        }
+    }
 }
 
 /// PNG bit depth (internal).

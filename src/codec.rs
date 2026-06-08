@@ -352,6 +352,12 @@ static PNG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_exif(true)
     .with_xmp(true)
     .with_cicp(true)
+    // PNG `cICP` is a standardized, real-world-honored CICP carrier (valid
+    // carrier), but it is NOT safe as the *sole* color carrier — decoder
+    // support is still uneven, so an ICC must stay alongside it. Without these
+    // flags `resolve_color_emit` would treat PNG's cICP as invalid and drop it.
+    .with_cicp_is_valid_carrier(true)
+    .with_cicp_safe_sole_carrier(false)
     .with_stop(true)
     .with_animation(true)
     .with_lossless(true)
@@ -493,7 +499,11 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
     }
 
     fn animation_frame_encoder(self) -> Result<PngAnimationFrameEncoder, At<PngError>> {
-        let effective_meta = apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref());
+        // Frame pixel format isn't known until frames are pushed; the color-emit
+        // resolver still classifies gray/CMYK from the ICC color space, and
+        // APNG frames are RGB/RGBA, so a `None` channel count is correct here.
+        let effective_meta =
+            apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref(), None);
         let mut config = self.config.config.clone();
         if let Some(ref limits) = self.limits {
             apply_threading(&mut config, limits.threading());
@@ -665,8 +675,12 @@ impl PngEncoder {
         }
         let config = self.config_with_threading();
         let deadline = default_deadline();
-        // Apply encode policy to filter metadata
-        let effective_meta = apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref());
+        // Apply encode policy to filter metadata and resolve color emission.
+        let effective_meta = apply_encode_policy(
+            self.metadata.as_ref(),
+            self.policy.as_ref(),
+            Some(color_type.channels()),
+        );
         let meta_ref = effective_meta.as_ref();
         let data = crate::encode::encode_raw(
             bytes, w, h, color_type, bit_depth, meta_ref, &config, cancel, &deadline,
@@ -700,7 +714,11 @@ impl zencodec::encode::Encoder for PngEncoder {
         let h = pixels.rows();
         // Policy-filtered metadata for auto-indexed paths (used by auto-quantize paths)
         #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
-        let effective_meta = apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref());
+        let effective_meta = apply_encode_policy(
+            self.metadata.as_ref(),
+            self.policy.as_ref(),
+            Some(pixels.descriptor().channels() as u8),
+        );
         #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
         let meta_ref = effective_meta.as_ref();
 
@@ -2417,6 +2435,11 @@ fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
         zi = zi.with_icc_profile(icc.clone());
     }
     if let Some(ref exif) = info.exif {
+        // Report the stored EXIF Orientation tag. PNG never bakes pixels upright,
+        // so the orientation we surface is exactly what the eXIf blob carries.
+        if let Some(orientation) = zencodec::helpers::parse_exif_orientation(exif) {
+            zi = zi.with_orientation(orientation);
+        }
         zi = zi.with_exif(exif.clone());
     }
     if let Some(ref xmp) = info.xmp {
@@ -2436,28 +2459,97 @@ fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
     zi
 }
 
-/// Apply encode policy to filter metadata fields.
+/// Apply encode policy to filter metadata fields and resolve color emission.
 ///
-/// Returns a new `Metadata` with fields stripped according to the policy,
-/// or `None` if no metadata was provided.
+/// Returns a new `Metadata` with fields stripped according to the coarse
+/// `embed_*` gates, and with the color carriers (`cicp` / `icc_profile`)
+/// reconciled via [`zencodec::resolve_color_emit`] under the policy's
+/// [`ColorEmitPolicy`](zencodec::ColorEmitPolicy). Returns `None` if no
+/// metadata was provided.
+///
+/// `channel_count` is the channel count of the pixels being encoded (1 = gray,
+/// 3 = RGB, 4 = RGBA, etc.); it lets the resolver suppress cICP for grayscale
+/// where an RGB CICP would recolor the image. Pass `None` when the count is not
+/// yet known (the resolver still falls back to ICC color-space detection).
 fn apply_encode_policy(
     metadata: Option<&Metadata>,
     policy: Option<&zencodec::encode::EncodePolicy>,
+    channel_count: Option<u8>,
 ) -> Option<Metadata> {
     let meta = metadata?;
-    let Some(policy) = policy else {
-        return Some(meta.clone());
-    };
     let mut filtered = meta.clone();
-    if policy.embed_icc == Some(false) {
-        filtered.icc_profile = None;
+
+    // Coarse `embed_*` gates (best-effort legacy knobs) win first.
+    let mut embed_icc = true;
+    if let Some(policy) = policy {
+        if policy.embed_icc == Some(false) {
+            filtered.icc_profile = None;
+            embed_icc = false;
+        }
+        if policy.embed_exif == Some(false) {
+            filtered.exif = None;
+        }
+        if policy.embed_xmp == Some(false) {
+            filtered.xmp = None;
+        }
     }
-    if policy.embed_exif == Some(false) {
-        filtered.exif = None;
+
+    // Resolve color emission (ICC vs cICP) under the color policy. Build a
+    // `SourceColor` from the (already coarse-filtered) metadata and run the
+    // resolver against PNG's capabilities, then lower the plan back onto the
+    // metadata's color carriers.
+    let color_policy = policy
+        .map(|p| p.resolve_color(zencodec::ColorEmitPolicy::Balanced))
+        .unwrap_or(zencodec::ColorEmitPolicy::Balanced);
+
+    let mut src = zencodec::SourceColor::default();
+    if let Some(n) = channel_count {
+        src = src.with_channel_count(n);
     }
-    if policy.embed_xmp == Some(false) {
-        filtered.xmp = None;
+    if let Some(c) = filtered.cicp {
+        src = src
+            .with_cicp(c)
+            .with_color_authority(zencodec::ColorAuthority::Cicp);
     }
+    if let Some(icc) = &filtered.icc_profile {
+        src = src
+            .with_icc_profile(icc.clone())
+            .with_color_authority(zencodec::ColorAuthority::Icc);
+    }
+
+    let plan = zencodec::resolve_color_emit(&src, &PNG_ENCODE_CAPS, color_policy);
+
+    // Lower the plan: cICP carrier.
+    filtered.cicp = plan.cicp;
+    // Lower the plan: ICC disposition. The `embed_icc == Some(false)` coarse
+    // gate already cleared the ICC and forbids synthesizing a new one.
+    match plan.icc {
+        zencodec::IccDisposition::KeepSource => {
+            // Leave `filtered.icc_profile` as-is (already coarse-filtered).
+        }
+        zencodec::IccDisposition::SynthesizeFrom(cicp) => {
+            filtered.icc_profile = if embed_icc {
+                // Transfer-aware lowering: `synthesize_icc_for_cicp` matches the TRC
+                // (a BT.2020-PQ source never gets the SDR-TRC Rec.2020 profile).
+                // `Profile` → own a copy; `NotNeeded`/`NeedsCms`/`CmsUnsupported`
+                // → embed no ICC, leaving PNG's `cICP` chunk to carry the color.
+                use zenpixels_convert::icc_profiles::SynthesizedIcc;
+                match zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(cicp) {
+                    SynthesizedIcc::Profile(bytes) => Some(alloc::sync::Arc::from(bytes.as_ref())),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+        }
+        zencodec::IccDisposition::Drop => {
+            filtered.icc_profile = None;
+        }
+        // `IccDisposition` is #[non_exhaustive]; a future variant defaults to the
+        // conservative choice of preserving the source ICC unchanged.
+        _ => {}
+    }
+
     Some(filtered)
 }
 
@@ -2619,7 +2711,7 @@ impl TrueStreamingState {
         }
 
         // Build metadata
-        let effective_meta = apply_encode_policy(metadata, policy);
+        let effective_meta = apply_encode_policy(metadata, policy, Some(color_type.channels()));
         let mut write_meta = PngWriteMetadata::from_metadata(effective_meta.as_ref());
         write_meta.source_gamma = config.source_gamma;
         write_meta.srgb_intent = config.srgb_intent;
@@ -2792,7 +2884,7 @@ impl PreFilteredState {
         use crate::chunk::{PNG_SIGNATURE, write::write_chunk};
         use crate::encoder::{PngWriteMetadata, metadata_size_estimate, write_all_metadata};
 
-        let effective_meta = apply_encode_policy(metadata, policy);
+        let effective_meta = apply_encode_policy(metadata, policy, Some(color_type.channels()));
         let mut write_meta = PngWriteMetadata::from_metadata(effective_meta.as_ref());
         write_meta.source_gamma = config.source_gamma;
         write_meta.srgb_intent = config.srgb_intent;
@@ -4631,6 +4723,73 @@ mod tests {
     }
 
     #[test]
+    fn decode_reports_exif_orientation() {
+        // A PNG carrying an eXIf chunk whose Orientation tag is 6 (Rotate90) must
+        // be reported as `Orientation::Rotate90` on the zencodec decode path.
+        // PNG never bakes pixels upright, so the stored tag is surfaced verbatim.
+        use zencodec::{Metadata, Orientation};
+
+        // Minimal valid TIFF/EXIF blob: little-endian, one IFD0 entry holding the
+        // Orientation tag (0x0112) as a SHORT with value 6.
+        let exif: alloc::vec::Vec<u8> = alloc::vec![
+            b'I', b'I', 42, 0, 8, 0, 0, 0, // header: LE, magic 42, IFD0 @ offset 8
+            1, 0, // entry count = 1
+            0x12, 0x01, 3, 0, 1, 0, 0, 0, // tag 0x0112, type SHORT, count 1
+            6, 0, 0, 0, // value 6 (Rotate90)
+            0, 0, 0, 0, // next IFD = 0
+        ];
+        // Sanity: the helper itself recognizes this blob.
+        assert_eq!(
+            zencodec::helpers::parse_exif_orientation(&exif),
+            Some(Orientation::Rotate90),
+        );
+
+        let pixels = vec![Rgb::<u8> { r: 10, g: 20, b: 30 }; 4];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+        let meta = Metadata::none().with_exif(exif.as_slice());
+
+        let encoded = crate::encode::encode_rgb8(
+            img.as_ref(),
+            Some(&meta),
+            &EncodeConfig::default(),
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+
+        // Decode through the zencodec path so `convert_info` runs.
+        let decoded = PngDecoderConfig::new().decode(&encoded).unwrap();
+        assert_eq!(
+            decoded.info().orientation,
+            Orientation::Rotate90,
+            "decoder must surface the stored eXIf Orientation tag",
+        );
+        // The eXIf blob itself is preserved verbatim alongside.
+        assert_eq!(decoded.info().embedded_metadata.exif.as_deref(), Some(exif.as_slice()));
+    }
+
+    #[test]
+    fn decode_without_exif_reports_identity_orientation() {
+        // No eXIf chunk → orientation stays the default Identity.
+        use zencodec::Orientation;
+
+        let pixels = vec![Rgb::<u8> { r: 1, g: 2, b: 3 }; 4];
+        let img = imgref::ImgVec::new(pixels, 2, 2);
+
+        let encoded = crate::encode::encode_rgb8(
+            img.as_ref(),
+            None,
+            &EncodeConfig::default(),
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+
+        let decoded = PngDecoderConfig::new().decode(&encoded).unwrap();
+        assert_eq!(decoded.info().orientation, Orientation::Identity);
+    }
+
+    #[test]
     fn iccp_suppresses_srgb_gama_chrm() {
         // PNGv3 precedence: iCCP suppresses sRGB, gAMA, cHRM
         use crate::decode::PngChromaticities;
@@ -5587,7 +5746,9 @@ mod tests {
     fn encode_job_with_metadata() {
         let enc = PngEncoderConfig::new();
         let meta = Metadata::default();
-        let job = enc.job().with_metadata(meta);
+        let job = enc
+            .job()
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact);
         let encoder = job.encoder().unwrap();
         let pixels = vec![Rgb { r: 0u8, g: 0, b: 0 }; 4];
         let img = Img::new(pixels, 2, 2);
@@ -5606,6 +5767,45 @@ mod tests {
         let job = enc.job().with_canvas_size(8, 8).with_loop_count(Some(0));
         let frame_enc = job.animation_frame_encoder();
         assert!(frame_enc.is_ok());
+    }
+
+    /// End-to-end: a CICP-only Display P3 source synthesizes and embeds the
+    /// bundled Display P3 ICC. PNG's `cICP` is not a sole-safe carrier, so the
+    /// resolver keeps an ICC companion for viewers that ignore `cICP`. Exercises
+    /// the `SynthesizeFrom` → `synthesize_icc_for_cicp` lowering (the transfer-aware
+    /// switch) through a real encode + decode roundtrip.
+    #[test]
+    fn cicp_only_display_p3_synthesizes_icc() {
+        let enc = PngEncoderConfig::new();
+        let meta = Metadata::default().with_cicp(zenpixels::Cicp::DISPLAY_P3);
+        let job = enc
+            .job()
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact);
+        let encoder = job.encoder().unwrap();
+        let pixels = vec![Rgb { r: 10u8, g: 20, b: 30 }; 4];
+        let img = Img::new(pixels, 2, 2);
+        let out = encoder
+            .do_encode(
+                bytemuck::cast_slice(img.buf()),
+                2,
+                2,
+                crate::encode::ColorType::Rgb,
+            )
+            .unwrap();
+
+        let decoded =
+            crate::decode::decode(out.data(), &PngDecodeConfig::none(), &enough::Unstoppable)
+                .unwrap();
+        let embedded = decoded
+            .info
+            .icc_profile
+            .as_deref()
+            .expect("CICP-only Display P3 must synthesize + embed an ICC");
+        let expected = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+        assert_eq!(
+            embedded, expected,
+            "embedded ICC must be the bundled Display P3 profile synthesized from CICP"
+        );
     }
 
     // ── EncoderConfig trait ──

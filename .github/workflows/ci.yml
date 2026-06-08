@@ -36,6 +36,9 @@ jobs:
       - name: Test (default)
         run: cargo test
 
+      - name: Test (zencodec feature)
+        run: cargo test --features zencodec
+
       - name: Test (zopfli feature)
         run: cargo test --features zopfli
 
