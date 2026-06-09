@@ -4877,7 +4877,7 @@ mod tests {
 
     #[test]
     fn clli_mdcv_roundtrip() {
-        use zencodec::{ContentLightLevel, MasteringDisplay, Metadata};
+        use zencodec::{Cicp, ContentLightLevel, MasteringDisplay, Metadata};
 
         let pixels = vec![
             Rgb::<u8> {
@@ -4896,7 +4896,10 @@ mod tests {
             1000.0,                                           // max luminance (cd/m²)
             0.005,                                            // min luminance (cd/m²)
         );
+        // mDCV requires an accompanying cICP per PNG-3 §11.3.2.7, so tag the image
+        // as BT.2020 PQ — the canonical HDR10 pairing for mDCV + cLLi metadata.
         let meta = Metadata::none()
+            .with_cicp(Cicp::new(9, 16, 0, true))
             .with_content_light_level(clli)
             .with_mastering_display(mdcv);
         let config = crate::encode::EncodeConfig::default();
@@ -4926,6 +4929,12 @@ mod tests {
         assert_eq!(dm.white_point_xy, [0.3127, 0.3290]);
         assert_eq!(dm.max_luminance, 1000.0);
         assert_eq!(dm.min_luminance, 0.005);
+
+        // The accompanying cICP (required for a conformant mDCV) roundtrips too.
+        let dcicp = decoded.info.cicp.expect("cICP missing");
+        assert_eq!(dcicp.color_primaries, 9);
+        assert_eq!(dcicp.transfer_characteristics, 16);
+        assert_eq!(dcicp.matrix_coefficients, 0);
     }
 
     // ── Real-file roundtrip tests ────────────────────────────────────

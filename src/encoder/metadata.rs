@@ -75,8 +75,9 @@ impl<'a> PngWriteMetadata<'a> {
 /// iCCP is kept alongside cICP as a fallback since cICP decoder support
 /// is still limited.
 ///
-/// HDR metadata (mDCV, cLLi) always written — they complement cICP.
-/// eXIf and XMP always written — they are not color chunks.
+/// HDR metadata: mDCV is emitted only alongside cICP (PNG-3 §11.3.2.7 requires
+/// a cICP chunk to accompany mDCV); cLLi is emitted whenever present. eXIf and
+/// XMP always written — they are not color chunks.
 ///
 /// Per PNG spec: sRGB/gAMA/cHRM must come before PLTE and IDAT.
 /// iCCP must come before PLTE. cICP/mDCV/cLLi must come before IDAT.
@@ -124,12 +125,15 @@ pub(crate) fn write_all_metadata(
         write_cicp_chunk(out, cicp);
     }
 
-    // mDCV (mastering display color volume) — always written, complements cICP
-    if let Some(mdcv) = &meta.mastering_display {
+    // mDCV (mastering display color volume). PNG-3 §11.3.2.7: "a cICP chunk must
+    // accompany the use of mDCV" (cICP establishes the primaries/white point that
+    // mDCV refines), so suppress a naked mDCV when no cICP is present.
+    if has_cicp && let Some(mdcv) = &meta.mastering_display {
         write_mdcv_chunk(out, mdcv);
     }
 
-    // cLLi (content light level info) — always written, complements cICP
+    // cLLi (content light level info) — written whenever present. PNG-3 does not
+    // require cICP to accompany cLLi, so it is not gated on cICP.
     if let Some(clli) = &meta.content_light_level {
         write_clli_chunk(out, clli);
     }
@@ -198,11 +202,15 @@ fn write_chrm_chunk(out: &mut Vec<u8>, chrm: &PngChromaticities) {
 }
 
 fn write_cicp_chunk(out: &mut Vec<u8>, cicp: &Cicp) {
-    // cICP: 4 bytes — color_primaries, transfer_function, matrix_coefficients, full_range
+    // cICP: 4 bytes — color_primaries, transfer_function, matrix_coefficients, full_range.
+    // PNG-3 §11.3.2.6: "RGB is currently the only supported color model in PNG, and as
+    // such Matrix Coefficients shall be set to 0." PNG samples are always RGB (never
+    // Y′CbCr), so force the matrix-coefficients byte to 0 regardless of the source CICP —
+    // writing a non-zero value would mislabel the RGB samples and is non-conformant.
     let data = [
         cicp.color_primaries,
         cicp.transfer_characteristics,
-        cicp.matrix_coefficients,
+        0, // matrix coefficients: shall be 0 for PNG's RGB color model
         if cicp.full_range { 1 } else { 0 },
     ];
     write_chunk(out, b"cICP", &data);
@@ -347,7 +355,7 @@ pub(crate) fn metadata_size_estimate(meta: &PngWriteMetadata<'_>) -> usize {
     if has_cicp {
         size += 16; // cICP(4) + 12
     }
-    if meta.mastering_display.is_some() {
+    if has_cicp && meta.mastering_display.is_some() {
         size += 36;
     }
     if meta.content_light_level.is_some() {
@@ -363,4 +371,98 @@ pub(crate) fn metadata_size_estimate(meta: &PngWriteMetadata<'_>) -> usize {
         size += 12 + 7; // tIME
     }
     size
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Walk the length-prefixed chunk stream emitted by [`write_all_metadata`]
+    /// (each chunk is `[len:u32][type:4][data:len][crc:u32]`) and return the data
+    /// of the first chunk of type `ty`, if present. Proper walking avoids the false
+    /// positives a raw byte-window scan would hit on length/CRC bytes.
+    fn find_chunk<'a>(mut s: &'a [u8], ty: &[u8; 4]) -> Option<&'a [u8]> {
+        while s.len() >= 12 {
+            let len = u32::from_be_bytes(s[0..4].try_into().unwrap()) as usize;
+            if s.len() < 12 + len {
+                break;
+            }
+            if &s[4..8] == ty {
+                return Some(&s[8..8 + len]);
+            }
+            s = &s[12 + len..];
+        }
+        None
+    }
+
+    fn sample_mdcv() -> MasteringDisplay {
+        // BT.2020-ish primaries, D65 white, 1000 / 0.005 cd/m². The values are
+        // arbitrary; these tests assert chunk presence and the cICP bytes, not the
+        // mDCV scaling (which `decoder::mod` round-trip tests already cover).
+        MasteringDisplay::new(
+            [[0.708, 0.292], [0.170, 0.797], [0.131, 0.046]],
+            [0.3127, 0.3290],
+            1000.0,
+            0.005,
+        )
+    }
+
+    fn write(meta: &Metadata) -> Vec<u8> {
+        let wm = PngWriteMetadata::from_metadata(Some(meta));
+        let mut out = Vec::new();
+        write_all_metadata(&mut out, &wm).unwrap();
+        out
+    }
+
+    #[test]
+    fn mdcv_suppressed_without_cicp() {
+        // PNG-3 §11.3.2.7: mDCV requires an accompanying cICP. With no cICP, a
+        // mastering-display value must NOT produce a naked mDCV chunk.
+        let out = write(&Metadata::none().with_mastering_display(sample_mdcv()));
+        assert!(
+            find_chunk(&out, b"mDCV").is_none(),
+            "mDCV must be suppressed when no cICP is present"
+        );
+        assert!(find_chunk(&out, b"cICP").is_none());
+    }
+
+    #[test]
+    fn mdcv_written_with_cicp() {
+        // With cICP present, mDCV is emitted as before.
+        let out = write(
+            &Metadata::none()
+                .with_cicp(Cicp::new(9, 16, 0, true))
+                .with_mastering_display(sample_mdcv()),
+        );
+        assert!(find_chunk(&out, b"cICP").is_some());
+        assert!(
+            find_chunk(&out, b"mDCV").is_some(),
+            "mDCV must be written alongside cICP"
+        );
+    }
+
+    #[test]
+    fn clli_written_without_cicp() {
+        // cLLi does not require cICP and must still be written on its own.
+        let out =
+            write(&Metadata::none().with_content_light_level(ContentLightLevel::new(1000, 400)));
+        assert!(
+            find_chunk(&out, b"cLLI").is_some(),
+            "cLLi stands alone and must be written without cICP"
+        );
+    }
+
+    #[test]
+    fn cicp_matrix_coefficients_forced_to_zero() {
+        // PNG-3 §11.3.2.6: Matrix Coefficients shall be 0. A source CICP carrying a
+        // non-zero (Y′CbCr-style) matrix-coefficients value must be clamped to 0 in
+        // the written chunk; the other three fields are preserved verbatim.
+        let out = write(&Metadata::none().with_cicp(Cicp::new(9, 16, 9, true))); // MC = 9
+        let data = find_chunk(&out, b"cICP").expect("cICP must be written");
+        assert_eq!(data.len(), 4);
+        assert_eq!(data[0], 9, "color primaries preserved");
+        assert_eq!(data[1], 16, "transfer function preserved");
+        assert_eq!(data[2], 0, "matrix coefficients must be forced to 0");
+        assert_eq!(data[3], 1, "full-range flag preserved");
+    }
 }
