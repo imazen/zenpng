@@ -1661,7 +1661,10 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
         // doesn't have intrinsic alpha, then tRNS must be present.
         let intrinsic_alpha = info.color_type == 4 || info.color_type == 6;
         let has_trns = info.has_alpha && !intrinsic_alpha;
-        let native_format = native_output_descriptor(info.color_type, info.bit_depth, has_trns);
+        let native_format = enrich_descriptor_from_cicp(
+            native_output_descriptor(info.color_type, info.bit_depth, has_trns),
+            info.cicp,
+        );
         Ok(
             OutputInfo::full_decode(info.width, info.height, native_format)
                 .with_alpha(info.has_alpha),
@@ -1798,6 +1801,11 @@ impl zencodec::decode::Decode for PngDecoder<'_> {
         } else {
             negotiate_and_convert(result.pixels, &self.preferred)
         };
+        // Re-tag color signaling from cICP after negotiation: layout/depth
+        // conversion keeps the source's code-value encoding, so transfer and
+        // primaries carry through to whatever layout the caller asked for.
+        let enriched = enrich_descriptor_from_cicp(pixels.descriptor(), result.info.cicp);
+        let pixels = pixels.with_descriptor(enriched);
         let output = DecodeOutput::new(pixels, info).with_source_encoding_details(probe);
         Ok(output)
     }
@@ -1825,6 +1833,29 @@ fn native_output_descriptor(color_type: u8, bit_depth: u8, has_trns: bool) -> Pi
         (6, 8, _) => PixelDescriptor::RGBA8_SRGB,
         _ => PixelDescriptor::RGBA8_SRGB, // fallback
     }
+}
+
+/// Re-tag a native output descriptor with the transfer function and color
+/// primaries signaled by the cICP chunk, when present and recognized.
+///
+/// PNG pixels are emitted exactly as stored — cICP changes how the code
+/// values are *interpreted*, not the bytes — so an HDR (PQ/HLG) PNG keeps its
+/// native code values while the descriptor stops claiming sRGB. Downstream
+/// conversion (zenpixels-convert) then applies the right EOTF instead of the
+/// sRGB curve. Unrecognized code points leave the descriptor unchanged
+/// (sRGB-assumed, matching the color-emit resolver's fallback).
+fn enrich_descriptor_from_cicp(
+    mut desc: PixelDescriptor,
+    cicp: Option<zencodec::Cicp>,
+) -> PixelDescriptor {
+    let Some(c) = cicp else { return desc };
+    if let Some(tf) = zenpixels::TransferFunction::from_cicp(c.transfer_characteristics) {
+        desc = desc.with_transfer(tf);
+    }
+    if let Some(p) = zenpixels::ColorPrimaries::from_cicp(c.color_primaries) {
+        desc = desc.with_primaries(p);
+    }
+    desc
 }
 
 /// Native row-streaming push decoder. Decodes PNG rows one at a time
@@ -1881,6 +1912,10 @@ fn push_decoder_native<'a>(
     let mut reader = RowDecoder::new(data, &png_config)?;
     let ihdr = *reader.ihdr();
     let has_trns = reader.ancillary().trns.is_some();
+    let cicp = reader
+        .ancillary()
+        .cicp
+        .map(|c| zencodec::Cicp::new(c[0], c[1], c[2], c[3] != 0));
 
     let w = ihdr.width;
     let h = ihdr.height;
@@ -1890,7 +1925,10 @@ fn push_decoder_native<'a>(
         .check_dimensions(w, h)
         .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
 
-    let descriptor = native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns);
+    let descriptor = enrich_descriptor_from_cicp(
+        native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns),
+        cicp,
+    );
 
     sink.begin(w, h, descriptor).map_err(wrap_sink)?;
 
@@ -2067,7 +2105,10 @@ impl<'a> PngStreamingDecoder<'a> {
             .check_dimensions(w, h)
             .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
 
-        let descriptor = native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns);
+        let descriptor = enrich_descriptor_from_cicp(
+            native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns),
+            probe_info.cicp,
+        );
 
         let is_passthrough =
             !has_trns && ihdr.bit_depth == 8 && (ihdr.color_type == 6 || ihdr.color_type == 2);
@@ -7326,6 +7367,112 @@ mod tests {
             desc.pixel_format(),
             PixelDescriptor::BGRA8_SRGB.pixel_format()
         );
+    }
+
+    /// A cICP BT.2100-PQ source re-tags the decode descriptor: PQ transfer +
+    /// BT.2020 primaries instead of the sRGB default, at probe
+    /// (`output_info`), full-decode, and negotiated-layout level. The decoded
+    /// bytes are the stored code values either way — cICP changes the
+    /// interpretation, not the pixels — so downstream conversion applies the
+    /// PQ EOTF instead of the sRGB curve (native HDR rendering).
+    #[test]
+    fn decode_descriptor_carries_cicp_pq_hdr() {
+        use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
+        use zenpixels::{ChannelType, ColorPrimaries, TransferFunction};
+
+        let pixels = vec![
+            Rgb::<u16> {
+                r: 1000,
+                g: 20000,
+                b: 60000,
+            };
+            16
+        ];
+        let img = Img::new(pixels, 4, 4);
+        let meta = Metadata::none().with_cicp(zencodec::Cicp::BT2100_PQ);
+        let encoded = crate::encode::encode_rgb16(
+            img.as_ref(),
+            Some(&meta),
+            &crate::encode::EncodeConfig::default(),
+            &enough::Unstoppable,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+
+        // The cICP chunk survives the encode (guards the descriptor checks
+        // below: a missing chunk would silently degrade them to sRGB).
+        assert!(
+            encoded.windows(4).any(|w| w == b"cICP"),
+            "encoder dropped the cICP chunk"
+        );
+        let probed = crate::decode::probe(&encoded).unwrap();
+        // PNG normalizes matrix_coefficients to 0 (RGB is PNG's only color
+        // model), so the round-tripped CICP is the still-image RGB form.
+        assert_eq!(
+            probed.cicp,
+            Some(zencodec::Cicp::new(9, 16, 0, true)),
+            "probe did not surface the cICP chunk"
+        );
+
+        // Probe level: output_info's native format carries PQ + BT.2020.
+        let dec = PngDecoderConfig::new();
+        let oi = dec.clone().job().output_info(&encoded).unwrap();
+        assert_eq!(oi.native_format.transfer(), TransferFunction::Pq);
+        assert_eq!(oi.native_format.primaries, ColorPrimaries::Bt2020);
+        assert_eq!(oi.native_format.channel_type(), ChannelType::U16);
+
+        // Full decode (native format): buffer descriptor carries PQ + BT.2020.
+        let out = dec
+            .clone()
+            .job()
+            .decoder(alloc::borrow::Cow::Borrowed(encoded.as_slice()), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+        let desc = out.into_buffer().descriptor();
+        assert_eq!(desc.transfer(), TransferFunction::Pq);
+        assert_eq!(desc.primaries, ColorPrimaries::Bt2020);
+        assert_eq!(desc.channel_type(), ChannelType::U16);
+
+        // Negotiated layout conversion (RGB16 -> RGBA16) keeps the cICP
+        // signaling: depth/layout changes don't alter the code-value encoding.
+        let out = dec
+            .job()
+            .decoder(
+                alloc::borrow::Cow::Borrowed(encoded.as_slice()),
+                &[PixelDescriptor::RGBA16_SRGB],
+            )
+            .unwrap()
+            .decode()
+            .unwrap();
+        let desc = out.into_buffer().descriptor();
+        assert_eq!(desc.transfer(), TransferFunction::Pq);
+        assert_eq!(desc.primaries, ColorPrimaries::Bt2020);
+    }
+
+    /// An SDR PNG without cICP keeps the plain sRGB descriptor — the
+    /// enrichment is a no-op when no cICP chunk is present.
+    #[test]
+    fn decode_descriptor_without_cicp_stays_srgb() {
+        use zencodec::decode::{DecodeJob, DecoderConfig};
+        use zenpixels::{ColorPrimaries, TransferFunction};
+
+        let enc = PngEncoderConfig::new();
+        let pixels = vec![
+            Rgb {
+                r: 10u8,
+                g: 20,
+                b: 30,
+            };
+            16
+        ];
+        let img = Img::new(pixels, 4, 4);
+        let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
+
+        let dec = PngDecoderConfig::new();
+        let oi = dec.job().output_info(encoded.data()).unwrap();
+        assert_eq!(oi.native_format.transfer(), TransferFunction::Srgb);
+        assert_eq!(oi.native_format.primaries, ColorPrimaries::Bt709);
     }
 
     /// Decoding an RGBA source (with real alpha variation) keeps the

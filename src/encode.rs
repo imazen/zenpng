@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use imgref::ImgRef;
 use rgb::{Gray, Rgb, Rgba};
 
-use zencodec::Metadata;
+use zencodec::{Cicp, ContentLightLevel, MasteringDisplay, Metadata};
 
 use enough::Stop;
 
@@ -44,6 +44,16 @@ pub struct EncodeConfig {
     ///
     /// Suppressed in output when sRGB, iCCP, or cICP is present (PNGv3 precedence).
     pub chromaticities: Option<PngChromaticities>,
+    /// CICP color signaling for the `cICP` chunk (PNG-3). Set to
+    /// [`Cicp::BT2100_PQ`] / [`Cicp::BT2100_HLG`] for HDR renditions. Takes
+    /// precedence over gAMA/cHRM/sRGB per PNG-3; matrix-coefficients are forced
+    /// to 0 (PNG's RGB color model) by the chunk writer.
+    pub cicp: Option<Cicp>,
+    /// Content light level info for the `cLLI` chunk (PNG-3 HDR: MaxCLL/MaxFALL).
+    pub content_light_level: Option<ContentLightLevel>,
+    /// Mastering display color volume for the `mDCV` chunk (PNG-3 HDR). Written
+    /// only alongside a [`cicp`](Self::cicp) chunk (PNG-3 §11.3.2.7).
+    pub mastering_display: Option<MasteringDisplay>,
     /// Near-lossless: number of least-significant bits to round (0-4).
     ///
     /// When set to N > 0, each 8-bit sample has its lowest N bits rounded
@@ -202,6 +212,30 @@ impl EncodeConfig {
     #[must_use]
     pub fn with_chromaticities(mut self, chrm: Option<PngChromaticities>) -> Self {
         self.chromaticities = chrm;
+        self
+    }
+
+    /// Set CICP color signaling for the `cICP` chunk (PNG-3). Use
+    /// [`Cicp::BT2100_PQ`] / [`Cicp::BT2100_HLG`] for HDR. Per PNG-3 precedence
+    /// this suppresses gAMA/cHRM/sRGB in the output.
+    #[must_use]
+    pub fn with_cicp(mut self, cicp: Option<Cicp>) -> Self {
+        self.cicp = cicp;
+        self
+    }
+
+    /// Set content light level info for the `cLLI` chunk (PNG-3 HDR).
+    #[must_use]
+    pub fn with_content_light_level(mut self, clli: Option<ContentLightLevel>) -> Self {
+        self.content_light_level = clli;
+        self
+    }
+
+    /// Set mastering display color volume for the `mDCV` chunk (PNG-3 HDR).
+    /// Only emitted when [`with_cicp`](Self::with_cicp) is also set.
+    #[must_use]
+    pub fn with_mastering_display(mut self, mdcv: Option<MasteringDisplay>) -> Self {
+        self.mastering_display = mdcv;
         self
     }
 
@@ -501,6 +535,11 @@ pub(crate) fn encode_raw(
     write_meta.source_gamma = config.source_gamma;
     write_meta.srgb_intent = config.srgb_intent;
     write_meta.chromaticities = config.chromaticities;
+    // Builder values override the Metadata-derived ones, but only when set —
+    // `from_metadata` may already have populated these from `metadata`.
+    write_meta.cicp = config.cicp.or(write_meta.cicp);
+    write_meta.content_light_level = config.content_light_level.or(write_meta.content_light_level);
+    write_meta.mastering_display = config.mastering_display.or(write_meta.mastering_display);
     write_meta.pixels_per_unit_x = config.pixels_per_unit_x;
     write_meta.pixels_per_unit_y = config.pixels_per_unit_y;
     write_meta.phys_unit = config.phys_unit;
@@ -704,6 +743,11 @@ fn encode_raw_with_stats(
     write_meta.source_gamma = config.source_gamma;
     write_meta.srgb_intent = config.srgb_intent;
     write_meta.chromaticities = config.chromaticities;
+    // Builder values override the Metadata-derived ones, but only when set —
+    // `from_metadata` may already have populated these from `metadata`.
+    write_meta.cicp = config.cicp.or(write_meta.cicp);
+    write_meta.content_light_level = config.content_light_level.or(write_meta.content_light_level);
+    write_meta.mastering_display = config.mastering_display.or(write_meta.mastering_display);
     write_meta.pixels_per_unit_x = config.pixels_per_unit_x;
     write_meta.pixels_per_unit_y = config.pixels_per_unit_y;
     write_meta.phys_unit = config.phys_unit;
@@ -924,6 +968,13 @@ pub fn encode_apng(
     write_meta.source_gamma = config.encode.source_gamma;
     write_meta.srgb_intent = config.encode.srgb_intent;
     write_meta.chromaticities = config.encode.chromaticities;
+    // Builder values override the Metadata-derived ones, but only when set.
+    write_meta.cicp = config.encode.cicp.or(write_meta.cicp);
+    write_meta.content_light_level = config
+        .encode
+        .content_light_level
+        .or(write_meta.content_light_level);
+    write_meta.mastering_display = config.encode.mastering_display.or(write_meta.mastering_display);
     write_meta.pixels_per_unit_x = config.encode.pixels_per_unit_x;
     write_meta.pixels_per_unit_y = config.encode.pixels_per_unit_y;
     write_meta.phys_unit = config.encode.phys_unit;
@@ -2072,5 +2123,36 @@ mod tests {
         assert_eq!(decoded.frames.len(), 1);
         assert_eq!(decoded.info.width, w as u32);
         assert_eq!(decoded.num_plays, 0);
+    }
+
+    #[test]
+    fn png3_hdr_cicp_clli_mdcv_16bit_roundtrip() {
+        use zencodec::{Cicp, ContentLightLevel, MasteringDisplay};
+        // 4x4 16-bit RGB with HDR-range samples.
+        let (w, h) = (4usize, 4usize);
+        let pixels: Vec<Rgb<u16>> = (0..(w * h) as u16)
+            .map(|i| Rgb {
+                r: i.wrapping_mul(4096),
+                g: i.wrapping_mul(2048),
+                b: 60000u16.wrapping_sub(i.wrapping_mul(3000)),
+            })
+            .collect();
+        let img = Img::new(pixels, w, h);
+        let clli = ContentLightLevel::new(1000, 400);
+        let config = EncodeConfig::default()
+            .with_cicp(Some(Cicp::BT2100_PQ))
+            .with_content_light_level(Some(clli))
+            .with_mastering_display(Some(MasteringDisplay::HDR10_REFERENCE));
+        let encoded =
+            encode_rgb16(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap();
+        let decoded =
+            crate::decode(&encoded, &crate::PngDecodeConfig::default(), &Unstoppable).unwrap();
+        // 16-bit HDR samples preserved (no downcast).
+        assert_eq!(decoded.info.bit_depth, 16);
+        // BT.2100 PQ signaling survives; PNG forces matrix-coefficients = 0 (RGB model).
+        assert_eq!(decoded.info.cicp, Some(Cicp::new(9, 16, 0, true)));
+        // HDR light-level + mastering-display chunks wired through the public encode API.
+        assert_eq!(decoded.info.content_light_level, Some(clli));
+        assert!(decoded.info.mastering_display.is_some());
     }
 }
