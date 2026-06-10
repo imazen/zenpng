@@ -4785,7 +4785,14 @@ mod tests {
             Some(Orientation::Rotate90),
         );
 
-        let pixels = vec![Rgb::<u8> { r: 10, g: 20, b: 30 }; 4];
+        let pixels = vec![
+            Rgb::<u8> {
+                r: 10,
+                g: 20,
+                b: 30
+            };
+            4
+        ];
         let img = imgref::ImgVec::new(pixels, 2, 2);
         let meta = Metadata::none().with_exif(exif.as_slice());
 
@@ -4806,7 +4813,10 @@ mod tests {
             "decoder must surface the stored eXIf Orientation tag",
         );
         // The eXIf blob itself is preserved verbatim alongside.
-        assert_eq!(decoded.info().embedded_metadata.exif.as_deref(), Some(exif.as_slice()));
+        assert_eq!(
+            decoded.info().embedded_metadata.exif.as_deref(),
+            Some(exif.as_slice())
+        );
     }
 
     #[test]
@@ -5823,7 +5833,14 @@ mod tests {
             .job()
             .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact);
         let encoder = job.encoder().unwrap();
-        let pixels = vec![Rgb { r: 10u8, g: 20, b: 30 }; 4];
+        let pixels = vec![
+            Rgb {
+                r: 10u8,
+                g: 20,
+                b: 30
+            };
+            4
+        ];
         let img = Img::new(pixels, 2, 2);
         let out = encoder
             .do_encode(

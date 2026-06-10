@@ -538,7 +538,9 @@ pub(crate) fn encode_raw(
     // Builder values override the Metadata-derived ones, but only when set —
     // `from_metadata` may already have populated these from `metadata`.
     write_meta.cicp = config.cicp.or(write_meta.cicp);
-    write_meta.content_light_level = config.content_light_level.or(write_meta.content_light_level);
+    write_meta.content_light_level = config
+        .content_light_level
+        .or(write_meta.content_light_level);
     write_meta.mastering_display = config.mastering_display.or(write_meta.mastering_display);
     write_meta.pixels_per_unit_x = config.pixels_per_unit_x;
     write_meta.pixels_per_unit_y = config.pixels_per_unit_y;
@@ -746,7 +748,9 @@ fn encode_raw_with_stats(
     // Builder values override the Metadata-derived ones, but only when set —
     // `from_metadata` may already have populated these from `metadata`.
     write_meta.cicp = config.cicp.or(write_meta.cicp);
-    write_meta.content_light_level = config.content_light_level.or(write_meta.content_light_level);
+    write_meta.content_light_level = config
+        .content_light_level
+        .or(write_meta.content_light_level);
     write_meta.mastering_display = config.mastering_display.or(write_meta.mastering_display);
     write_meta.pixels_per_unit_x = config.pixels_per_unit_x;
     write_meta.pixels_per_unit_y = config.pixels_per_unit_y;
@@ -974,7 +978,10 @@ pub fn encode_apng(
         .encode
         .content_light_level
         .or(write_meta.content_light_level);
-    write_meta.mastering_display = config.encode.mastering_display.or(write_meta.mastering_display);
+    write_meta.mastering_display = config
+        .encode
+        .mastering_display
+        .or(write_meta.mastering_display);
     write_meta.pixels_per_unit_x = config.encode.pixels_per_unit_x;
     write_meta.pixels_per_unit_y = config.encode.pixels_per_unit_y;
     write_meta.phys_unit = config.encode.phys_unit;
