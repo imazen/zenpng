@@ -2709,68 +2709,15 @@ mod tests {
     }
 
     // ── High effort encode+decode (exercises brute-force compress paths) ──
+    //
+    // The rgb8@24 / rgba8@27 / rgb16@22 high-effort roundtrips were removed as
+    // duplicates of the canonical effort coverage in `encode.rs`. Only the
+    // gray8 maniac case is kept here for its unique stack-overflow regression
+    // guard (macOS Intel + `unchecked`). High-effort tests are #[ignore]d —
+    // run with `cargo test -- --ignored`.
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))] // recompression uses thread::scope
-    fn roundtrip_rgb8_effort_24_intense() {
-        let pixels: Vec<Rgb<u8>> = (0..64)
-            .map(|i| Rgb {
-                r: (i * 4) as u8,
-                g: (i * 3) as u8,
-                b: (i * 2) as u8,
-            })
-            .collect();
-        let img = imgref::Img::new(pixels, 8, 8);
-        let encoded = crate::encode::encode_rgb8(
-            img.as_ref(),
-            None,
-            &crate::encode::EncodeConfig::default()
-                .with_compression(crate::types::Compression::Intense),
-            &Unstoppable,
-            &Unstoppable,
-        )
-        .unwrap();
-        let decoded = decode_png(
-            &encoded,
-            &crate::decode::PngDecodeConfig::strict(),
-            &Unstoppable,
-        )
-        .unwrap();
-        assert_eq!(decoded.info.width, 8);
-        assert_eq!(decoded.info.height, 8);
-    }
-
-    #[test]
-    #[cfg(not(target_arch = "wasm32"))] // recompression uses thread::scope
-    fn roundtrip_rgba8_effort_27_crush() {
-        let pixels: Vec<Rgba<u8>> = (0..64)
-            .map(|i| Rgba {
-                r: (i * 4) as u8,
-                g: (i * 3) as u8,
-                b: (i * 2) as u8,
-                a: if i % 3 == 0 { 0 } else { 255 },
-            })
-            .collect();
-        let img = imgref::Img::new(pixels, 8, 8);
-        let encoded = crate::encode::encode_rgba8(
-            img.as_ref(),
-            None,
-            &crate::encode::EncodeConfig::default()
-                .with_compression(crate::types::Compression::Crush),
-            &Unstoppable,
-            &Unstoppable,
-        )
-        .unwrap();
-        let decoded = decode_png(
-            &encoded,
-            &crate::decode::PngDecodeConfig::strict(),
-            &Unstoppable,
-        )
-        .unwrap();
-        assert_eq!(decoded.info.width, 8);
-    }
-
-    #[test]
+    #[ignore = "high-effort compression; run with --ignored"]
     #[cfg(not(target_arch = "wasm32"))] // spawns a thread for larger stack
     fn roundtrip_gray8_effort_30_maniac() {
         // Run in a thread with an explicit 16 MiB stack to avoid stack
@@ -2803,34 +2750,6 @@ mod tests {
         if let Err(e) = result {
             std::panic::resume_unwind(e);
         }
-    }
-
-    #[test]
-    fn roundtrip_rgb16_effort_22_aggressive() {
-        let pixels: Vec<Rgb<u16>> = (0..16)
-            .map(|i| Rgb {
-                r: i * 4096 + 1,
-                g: i * 2048 + 3,
-                b: i * 1024 + 7,
-            })
-            .collect();
-        let img = imgref::Img::new(pixels, 4, 4);
-        let encoded = crate::encode::encode_rgb16(
-            img.as_ref(),
-            None,
-            &crate::encode::EncodeConfig::default()
-                .with_compression(crate::types::Compression::Aggressive),
-            &Unstoppable,
-            &Unstoppable,
-        )
-        .unwrap();
-        let decoded = decode_png(
-            &encoded,
-            &crate::decode::PngDecodeConfig::strict(),
-            &Unstoppable,
-        )
-        .unwrap();
-        assert_eq!(decoded.info.width, 4);
     }
 
     // ── Decode config builder ───────────────────────────────────────

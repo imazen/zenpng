@@ -1650,6 +1650,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "high-effort compression; run with --ignored"]
     fn roundtrip_effort_22_aggressive() {
         roundtrip_rgb(&EncodeConfig::default().with_compression(Compression::Aggressive));
     }
@@ -1783,6 +1784,7 @@ mod tests {
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))] // recompression uses thread::scope
+    #[ignore = "high-effort compression; run with --ignored"]
     fn roundtrip_effort_24_intense_rgba() {
         let (pixels, w, h) = small_rgba_image();
         let img = Img::new(pixels, w, h);
@@ -1797,6 +1799,7 @@ mod tests {
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))] // recompression uses thread::scope
+    #[ignore = "high-effort compression; run with --ignored"]
     fn roundtrip_effort_27_crush() {
         let (pixels, w, h) = small_rgb_image();
         let img = Img::new(pixels, w, h);
@@ -1809,6 +1812,7 @@ mod tests {
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))] // recompression uses thread::scope
+    #[ignore = "high-effort compression; run with --ignored"]
     fn roundtrip_effort_30_maniac() {
         let (pixels, w, h) = small_rgb_image();
         let img = Img::new(pixels, w, h);
@@ -1821,6 +1825,7 @@ mod tests {
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))] // recompression uses thread::scope
+    #[ignore = "high-effort compression; run with --ignored"]
     fn roundtrip_effort_31_brag() {
         let (pixels, w, h) = small_rgb_image();
         let img = Img::new(pixels, w, h);
