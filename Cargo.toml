@@ -45,6 +45,7 @@ flate2 = "1"
 miniz_oxide = "0.8"
 zopfli = "0.8"
 lodepng = "3.12.2"
+serde_json = "1.0.150"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 codec-corpus = "1.0.2"
