@@ -503,7 +503,7 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         // resolver still classifies gray/CMYK from the ICC color space, and
         // APNG frames are RGB/RGBA, so a `None` channel count is correct here.
         let effective_meta =
-            apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref(), None);
+            apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref(), None)?;
         let mut config = self.config.config.clone();
         if let Some(ref limits) = self.limits {
             apply_threading(&mut config, limits.threading());
@@ -680,7 +680,7 @@ impl PngEncoder {
             self.metadata.as_ref(),
             self.policy.as_ref(),
             Some(color_type.channels()),
-        );
+        )?;
         let meta_ref = effective_meta.as_ref();
         let data = crate::encode::encode_raw(
             bytes, w, h, color_type, bit_depth, meta_ref, &config, cancel, &deadline,
@@ -718,7 +718,7 @@ impl zencodec::encode::Encoder for PngEncoder {
             self.metadata.as_ref(),
             self.policy.as_ref(),
             Some(pixels.descriptor().channels() as u8),
-        );
+        )?;
         #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
         let meta_ref = effective_meta.as_ref();
 
@@ -2505,19 +2505,25 @@ fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
 /// Returns a new `Metadata` with fields stripped according to the coarse
 /// `embed_*` gates, and with the color carriers (`cicp` / `icc_profile`)
 /// reconciled via [`zencodec::resolve_color_emit`] under the policy's
-/// [`ColorEmitPolicy`](zencodec::ColorEmitPolicy). Returns `None` if no
+/// [`ColorEmitPolicy`](zencodec::ColorEmitPolicy). Returns `Ok(None)` if no
 /// metadata was provided.
 ///
 /// `channel_count` is the channel count of the pixels being encoded (1 = gray,
 /// 3 = RGB, 4 = RGBA, etc.); it lets the resolver suppress cICP for grayscale
 /// where an RGB CICP would recolor the image. Pass `None` when the count is not
 /// yet known (the resolver still falls back to ICC color-space detection).
+///
+/// Errors when the plan needs an ICC synthesized for the source CICP and this
+/// build can't produce one (see the `cms` feature): cICP is too new to be the
+/// sole color carrier, so encoding without the ICC would misrepresent the image.
 fn apply_encode_policy(
     metadata: Option<&Metadata>,
     policy: Option<&zencodec::encode::EncodePolicy>,
     channel_count: Option<u8>,
-) -> Option<Metadata> {
-    let meta = metadata?;
+) -> Result<Option<Metadata>, At<PngError>> {
+    let Some(meta) = metadata else {
+        return Ok(None);
+    };
     let mut filtered = meta.clone();
 
     // Coarse `embed_*` gates (best-effort legacy knobs) win first.
@@ -2572,12 +2578,28 @@ fn apply_encode_policy(
             filtered.icc_profile = if embed_icc {
                 // Transfer-aware lowering: `synthesize_icc_for_cicp` matches the TRC
                 // (a BT.2020-PQ source never gets the SDR-TRC Rec.2020 profile).
-                // `Profile` → own a copy; `NotNeeded`/`NeedsCms`/`CmsUnsupported`
-                // → embed no ICC, leaving PNG's `cICP` chunk to carry the color.
+                // `Profile` → own a copy; `NotNeeded` → nothing to embed.
+                //
+                // Every other outcome is an ERROR, not a silent skip: the plan
+                // asked for an ICC because PNG's cICP chunk (PNG 3.0, 2025) is
+                // too new to be the sole color carrier — most deployed decoders
+                // ignore it and would read the pixels as sRGB. Refusing beats
+                // misrepresenting the image. The `cms` feature (moxcms-backed
+                // synthesis) covers PQ/HLG and anything else moxcms can express.
                 use zenpixels_convert::icc_profiles::SynthesizedIcc;
                 match zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(cicp) {
                     SynthesizedIcc::Profile(bytes) => Some(alloc::sync::Arc::from(bytes.as_ref())),
-                    _ => None,
+                    SynthesizedIcc::NotNeeded => None,
+                    outcome => {
+                        return Err(at!(PngError::InvalidInput(alloc::format!(
+                            "this image's color (CICP primaries {} / transfer {}) needs a \
+                             synthesized ICC profile this build can't produce ({outcome:?}); \
+                             enable zenpng's `cms` feature, supply an ICC profile in the \
+                             metadata, or drop the CICP",
+                            cicp.color_primaries,
+                            cicp.transfer_characteristics
+                        ))));
+                    }
                 }
             } else {
                 None
@@ -2591,7 +2613,7 @@ fn apply_encode_policy(
         _ => {}
     }
 
-    Some(filtered)
+    Ok(Some(filtered))
 }
 
 /// Apply decode policy to control metadata extraction and strictness.
@@ -2752,7 +2774,7 @@ impl TrueStreamingState {
         }
 
         // Build metadata
-        let effective_meta = apply_encode_policy(metadata, policy, Some(color_type.channels()));
+        let effective_meta = apply_encode_policy(metadata, policy, Some(color_type.channels()))?;
         let mut write_meta = PngWriteMetadata::from_metadata(effective_meta.as_ref());
         write_meta.source_gamma = config.source_gamma;
         write_meta.srgb_intent = config.srgb_intent;
@@ -2925,7 +2947,7 @@ impl PreFilteredState {
         use crate::chunk::{PNG_SIGNATURE, write::write_chunk};
         use crate::encoder::{PngWriteMetadata, metadata_size_estimate, write_all_metadata};
 
-        let effective_meta = apply_encode_policy(metadata, policy, Some(color_type.channels()));
+        let effective_meta = apply_encode_policy(metadata, policy, Some(color_type.channels()))?;
         let mut write_meta = PngWriteMetadata::from_metadata(effective_meta.as_ref());
         write_meta.source_gamma = config.source_gamma;
         write_meta.srgb_intent = config.srgb_intent;
@@ -5863,6 +5885,88 @@ mod tests {
         assert_eq!(
             embedded, expected,
             "embedded ICC must be the bundled Display P3 profile synthesized from CICP"
+        );
+    }
+
+    /// A PQ (BT.2100) CICP-only source needs an ICC the bundled tables can't
+    /// produce. Without the `cms` feature that is an encode ERROR — cICP is too
+    /// new to be PNG's sole color carrier, and silently emitting without the
+    /// ICC would misrepresent the image as sRGB to most deployed decoders.
+    #[cfg(not(feature = "cms"))]
+    #[test]
+    fn cicp_pq_without_cms_is_an_encode_error() {
+        let enc = PngEncoderConfig::new();
+        let meta = Metadata::default().with_cicp(zenpixels::Cicp::BT2100_PQ);
+        let job = enc
+            .job()
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact);
+        let encoder = job.encoder().unwrap();
+        let pixels = vec![
+            Rgb {
+                r: 10u8,
+                g: 20,
+                b: 30
+            };
+            4
+        ];
+        let img = Img::new(pixels, 2, 2);
+        let err = encoder
+            .do_encode(
+                bytemuck::cast_slice(img.buf()),
+                2,
+                2,
+                crate::encode::ColorType::Rgb,
+            )
+            .expect_err("PQ CICP without cms must refuse, not mislabel");
+        let msg = alloc::format!("{err}");
+        assert!(
+            msg.contains("cms"),
+            "error must point at the `cms` feature: {msg}"
+        );
+    }
+
+    /// With the `cms` feature, the same PQ CICP-only source synthesizes a real
+    /// (moxcms-generated) ICC and the encode succeeds with both carriers.
+    #[cfg(feature = "cms")]
+    #[test]
+    fn cicp_pq_with_cms_synthesizes_icc() {
+        let enc = PngEncoderConfig::new();
+        let meta = Metadata::default().with_cicp(zenpixels::Cicp::BT2100_PQ);
+        let job = enc
+            .job()
+            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact);
+        let encoder = job.encoder().unwrap();
+        let pixels = vec![
+            Rgb {
+                r: 10u8,
+                g: 20,
+                b: 30
+            };
+            4
+        ];
+        let img = Img::new(pixels, 2, 2);
+        let out = encoder
+            .do_encode(
+                bytemuck::cast_slice(img.buf()),
+                2,
+                2,
+                crate::encode::ColorType::Rgb,
+            )
+            .expect("PQ CICP with cms must synthesize an ICC and succeed");
+
+        let decoded =
+            crate::decode::decode(out.data(), &PngDecodeConfig::none(), &enough::Unstoppable)
+                .unwrap();
+        let embedded = decoded
+            .info
+            .icc_profile
+            .as_deref()
+            .expect("cms build must embed a synthesized PQ ICC");
+        assert!(!embedded.is_empty());
+        // cICP rides alongside as the primary (new-decoder) carrier.
+        assert_eq!(
+            decoded.info.cicp,
+            Some(zenpixels::Cicp::new(9, 16, 0, true))
         );
     }
 

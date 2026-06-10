@@ -63,6 +63,11 @@ joint = ["quantize", "zenquant/joint"]
 unchecked = ["zenflate/unchecked"]
 zopfli = ["dep:zenzop"]
 zencodec = []
+# moxcms-backed ICC synthesis for the zencodec color-emit path: covers PQ/HLG
+# and any CICP moxcms can express (without it, only the bundled Display-P3 /
+# SDR BT.2020 / AdobeRGB profiles synthesize, and an unsynthesizable CICP is
+# an encode error — never a silently mislabeled image).
+cms = ["zenpixels-convert/cms-moxcms"]
 # zennode = ["dep:zennode"]
 _dev = ["archmage/testable_dispatch"]
 # Acknowledged by archmage's `incant!` cfg — kept always-on; no-op for users
