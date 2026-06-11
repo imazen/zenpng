@@ -53,6 +53,11 @@ mod optimize;
 mod quantize;
 mod simd;
 mod types;
+
+/// Sweep-plan construction over the encoder knob space (variant-
+/// generation playbook; see `zenjpeg/docs/VARIANT_GENERATION.md`).
+/// The entire curated space is trial-class (lossless).
+pub mod sweep;
 // #[cfg(feature = "zennode")]
 // pub mod zennode_defs;
 
