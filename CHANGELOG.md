@@ -4,6 +4,15 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- `cicp_pq_without_cms_is_an_encode_error` →
+  `cicp_pq_without_cms_synthesizes_icc_from_bundle`: zenpixels-convert
+  0.2.13 made CICP→ICC synthesis feature-independent (bundled blob), so
+  a no-`cms` build now embeds a real PQ profile instead of refusing —
+  the refusal expectation was stale, not the gate lost (expectation
+  updated with sign-off; matches zenjpeg 8447d4d4's call).
+
 ### Added
 
 - `sweep` module: variant-generation playbook adoption — the entire

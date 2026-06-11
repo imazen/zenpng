@@ -5892,10 +5892,19 @@ mod tests {
     /// A PQ (BT.2100) CICP-only source needs an ICC the bundled tables can't
     /// produce. Without the `cms` feature that is an encode ERROR — cICP is too
     /// new to be PNG's sole color carrier, and silently emitting without the
-    /// ICC would misrepresent the image as sRGB to most deployed decoders.
+    /// zenpixels-convert 0.2.13 made `synthesize_icc_for_cicp` feature-
+    /// independent (the full H.273 grid ships as a bundled LZ4 blob;
+    /// moxcms is build-time-only), so a no-`cms` build synthesizes the
+    /// same PQ ICC as a `cms` build and the encode SUCCEEDS with both
+    /// carriers. This test previously expected a refusal ("PQ CICP
+    /// without cms must refuse, not mislabel") — that expectation went
+    /// stale with the bundle migration (zenjpeg made the same call in
+    /// its 8447d4d4): the output is no longer mislabeled, it carries a
+    /// real PQ profile. Expectation updated 2026-06-11 with user
+    /// sign-off.
     #[cfg(not(feature = "cms"))]
     #[test]
-    fn cicp_pq_without_cms_is_an_encode_error() {
+    fn cicp_pq_without_cms_synthesizes_icc_from_bundle() {
         let enc = PngEncoderConfig::new();
         let meta = Metadata::default().with_cicp(zenpixels::Cicp::BT2100_PQ);
         let job = enc
@@ -5911,18 +5920,28 @@ mod tests {
             4
         ];
         let img = Img::new(pixels, 2, 2);
-        let err = encoder
+        let out = encoder
             .do_encode(
                 bytemuck::cast_slice(img.buf()),
                 2,
                 2,
                 crate::encode::ColorType::Rgb,
             )
-            .expect_err("PQ CICP without cms must refuse, not mislabel");
-        let msg = alloc::format!("{err}");
-        assert!(
-            msg.contains("cms"),
-            "error must point at the `cms` feature: {msg}"
+            .expect("PQ CICP must synthesize from the bundle and succeed without cms");
+
+        let decoded =
+            crate::decode::decode(out.data(), &PngDecodeConfig::none(), &enough::Unstoppable)
+                .unwrap();
+        let embedded = decoded
+            .info
+            .icc_profile
+            .as_deref()
+            .expect("no-cms build must embed the bundle-synthesized PQ ICC");
+        assert!(!embedded.is_empty());
+        // cICP rides alongside as the primary (new-decoder) carrier.
+        assert_eq!(
+            decoded.info.cicp,
+            Some(zenpixels::Cicp::new(9, 16, 0, true))
         );
     }
 
