@@ -2584,8 +2584,9 @@ fn apply_encode_policy(
                 // asked for an ICC because PNG's cICP chunk (PNG 3.0, 2025) is
                 // too new to be the sole color carrier — most deployed decoders
                 // ignore it and would read the pixels as sRGB. Refusing beats
-                // misrepresenting the image. The `cms` feature (moxcms-backed
-                // synthesis) covers PQ/HLG and anything else moxcms can express.
+                // misrepresenting the image. The `cms` feature (icc-db blob
+                // synthesis) covers the full ITU-T H.273 grid incl PQ/HLG,
+                // with no moxcms dependency.
                 use zenpixels_convert::icc_profiles::SynthesizedIcc;
                 match zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(cicp) {
                     SynthesizedIcc::Profile(bytes) => Some(alloc::sync::Arc::from(bytes.as_ref())),
