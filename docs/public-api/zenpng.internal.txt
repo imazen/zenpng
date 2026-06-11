@@ -1,0 +1,113 @@
+# zenpng public API — doc(hidden) items and excluded-feature surface
+# excluded features: _dev
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   pub modules                                 1
+#   pub types (struct/enum/trait/alias)         4
+#   pub consts/statics                          1
+#   free functions                             16
+#   inherent methods                           29
+#   struct fields                              12
+#   trait roster entries (type × trait)        31
+#   auto-trait-complete types                   2
+#
+# per-module pub lines:
+#   (root)                           29
+#   __bench_scan                     31
+#   detect                            3
+
+## items (63 lines)
+
+pub const fn __bench_scan::FusedRequest::all() -> Self
+pub fn ApngFrameInfo::assert_fields_are_eq(&self)
+pub fn Compression::assert_fields_are_eq(&self)
+pub fn DowncastFlags::assert_fields_are_eq(&self)
+pub fn Filter::assert_fields_are_eq(&self)
+pub fn PhaseStat::clone(&self) -> PhaseStat
+pub fn PhaseStat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn PhaseStats::clone(&self) -> PhaseStats
+pub fn PhaseStats::default() -> PhaseStats
+pub fn PhaseStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn PhysUnit::assert_fields_are_eq(&self)
+pub fn PngBackground::assert_fields_are_eq(&self)
+pub fn PngChromaticities::assert_fields_are_eq(&self)
+pub fn PngTime::assert_fields_are_eq(&self)
+pub fn PngWarning::assert_fields_are_eq(&self)
+pub fn SignificantBits::assert_fields_are_eq(&self)
+pub fn TextChunk::assert_fields_are_eq(&self)
+pub fn __bench_scan::FusedRequest::assert_fields_are_eq(&self)
+pub fn __bench_scan::FusedRequest::clone(&self) -> __bench_scan::FusedRequest
+pub fn __bench_scan::FusedRequest::default() -> __bench_scan::FusedRequest
+pub fn __bench_scan::FusedRequest::eq(&self, &__bench_scan::FusedRequest) -> bool
+pub fn __bench_scan::FusedRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn __bench_scan::FusedResult::assert_fields_are_eq(&self)
+pub fn __bench_scan::FusedResult::clone(&self) -> __bench_scan::FusedResult
+pub fn __bench_scan::FusedResult::default() -> __bench_scan::FusedResult
+pub fn __bench_scan::FusedResult::eq(&self, &__bench_scan::FusedResult) -> bool
+pub fn __bench_scan::FusedResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn __bench_scan::alpha_is_binary_rgba8(&[u8]) -> bool
+pub fn __bench_scan::bit_replication_lossless_be16(&[u8]) -> bool
+pub fn __bench_scan::fused_predicates_rgba8(&[u8], __bench_scan::FusedRequest) -> __bench_scan::FusedResult
+pub fn __bench_scan::fused_predicates_rgba8_cg(&[u8], __bench_scan::FusedRequest) -> __bench_scan::FusedResult
+pub fn __bench_scan::is_grayscale_rgb8(&[u8]) -> bool
+pub fn __bench_scan::is_grayscale_rgba8(&[u8]) -> bool
+pub fn __bench_scan::is_opaque_rgba8(&[u8]) -> bool
+pub fn __bench_scan::scalar_alpha_is_binary_rgba8(&[u8]) -> bool
+pub fn __bench_scan::scalar_bit_replication_lossless_be16(&[u8]) -> bool
+pub fn __bench_scan::scalar_fused_predicates_rgba8(&[u8], __bench_scan::FusedRequest) -> __bench_scan::FusedResult
+pub fn __bench_scan::scalar_is_grayscale_rgb8(&[u8]) -> bool
+pub fn __bench_scan::scalar_is_grayscale_rgba8(&[u8]) -> bool
+pub fn __bench_scan::scalar_is_opaque_rgba8(&[u8]) -> bool
+pub fn __bench_unfilter_row(u8, &mut [u8], &[u8], usize)
+pub fn detect::ColorType::assert_fields_are_eq(&self)
+pub fn detect::ProbeError::assert_fields_are_eq(&self)
+pub fn detect::Recommendation::assert_fields_are_eq(&self)
+pub fn encode_rgb8_with_stats(imgref::ImgRef<'_, rgb::formats::rgb::Rgb<u8>>, core::option::Option<&zencodec::metadata::Metadata>, &EncodeConfig, &dyn enough::Stop, &dyn enough::Stop) -> core::result::Result<(alloc::vec::Vec<u8>, PhaseStats), whereat::at::At<PngError>>
+pub fn encode_rgba8_with_stats(imgref::ImgRef<'_, rgb::formats::rgba::Rgba<u8>>, core::option::Option<&zencodec::metadata::Metadata>, &EncodeConfig, &dyn enough::Stop, &dyn enough::Stop) -> core::result::Result<(alloc::vec::Vec<u8>, PhaseStats), whereat::at::At<PngError>>
+pub mod __bench_scan
+pub struct PhaseStat
+pub struct PhaseStats
+pub struct __bench_scan::FusedRequest
+pub struct __bench_scan::FusedResult
+pub PhaseStat::best_size: usize
+pub PhaseStat::duration_ns: u64
+pub PhaseStat::evaluations: u32
+pub PhaseStat::name: alloc::string::String
+pub PhaseStats::phases: alloc::vec::Vec<PhaseStat>
+pub PhaseStats::raw_size: usize
+pub __bench_scan::FusedRequest::check_binary_alpha: bool
+pub __bench_scan::FusedRequest::check_grayscale: bool
+pub __bench_scan::FusedRequest::check_opaque: bool
+pub __bench_scan::FusedResult::is_binary_alpha: bool
+pub __bench_scan::FusedResult::is_grayscale: bool
+pub __bench_scan::FusedResult::is_opaque: bool
+
+## trait impls (16 types)
+
+ApngFrameInfo: TrivialClone
+ApngFrameInput<'a>: TrivialClone
+Compression: TrivialClone
+DowncastFlags: TrivialClone
+Filter: TrivialClone
+PhaseStat: Clone, Debug
+PhaseStats: Clone, Debug, Default
+PhysUnit: TrivialClone
+PngBackground: TrivialClone
+PngChromaticities: TrivialClone
+PngTime: TrivialClone
+QualityGate: TrivialClone
+SignificantBits: TrivialClone
+__bench_scan::FusedRequest: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
+__bench_scan::FusedResult: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
+detect::ColorType: TrivialClone
+
+## auto traits
+
+2 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe

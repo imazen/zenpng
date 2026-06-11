@@ -1,0 +1,16 @@
+# CI-free public-API snapshot runner — the only package depending on
+# zenutils-apidoc. The empty [workspace] table below makes this its own
+# workspace root (the root manifest is a single-package crate with no
+# [workspace] table to exclude from), so plain `cargo test` and every CI
+# job never compile the apidoc tree or run rustdoc. Regenerate via
+# `just api-doc`.
+[package]
+name = "zenpng-apidoc"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+zenutils-apidoc = "0.1.0"
+
+[workspace]

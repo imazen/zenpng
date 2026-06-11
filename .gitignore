@@ -53,6 +53,10 @@ Thumbs.db
 *.iml
 !fuzz/Cargo.lock
 
+# Public-API snapshot runner (standalone package; lockfile is committed)
+apidoc/target/
+!apidoc/Cargo.lock
+
 # Tooling noise
 .superwork/
 .claude/

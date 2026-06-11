@@ -1,0 +1,49 @@
+# zenpng public API — additions from non-default features
+# features: avx512,cms,imagequant,joint,quantette,quantize,unchecked,zencodec,zopfli
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   pub types (struct/enum/trait/alias)         2
+#   inherent methods                            8
+#   struct fields                               8
+#   trait roster entries (type × trait)         8
+#   auto-trait-complete types                   2
+#
+# per-module pub lines:
+#   (root)                           18
+
+## items (18 lines)
+
+pub struct ImagequantQuantizer
+pub ImagequantQuantizer::dithering: f32
+pub ImagequantQuantizer::max_colors: u16
+pub ImagequantQuantizer::max_quality: u8
+pub ImagequantQuantizer::speed: i32
+pub fn ImagequantQuantizer::with_dithering(self, f32) -> Self
+pub fn ImagequantQuantizer::with_max_colors(self, u16) -> Self
+pub fn ImagequantQuantizer::with_max_quality(self, u8) -> Self
+pub fn ImagequantQuantizer::with_speed(self, i32) -> Self
+pub struct QuantetteQuantizer
+pub QuantetteQuantizer::dithering: bool
+pub QuantetteQuantizer::kmeans: bool
+pub QuantetteQuantizer::max_colors: u16
+pub QuantetteQuantizer::sampling_factor: f32
+pub fn QuantetteQuantizer::with_dithering(self, bool) -> Self
+pub fn QuantetteQuantizer::with_kmeans(self, bool) -> Self
+pub fn QuantetteQuantizer::with_max_colors(self, u16) -> Self
+pub fn QuantetteQuantizer::with_sampling_factor(self, f32) -> Self
+
+## trait impls (2 types)
+
+ImagequantQuantizer: Clone, Debug, Default, Quantizer
+QuantetteQuantizer: Clone, Debug, Default, Quantizer
+
+## auto traits
+
+2 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
