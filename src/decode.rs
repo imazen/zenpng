@@ -207,7 +207,7 @@ pub struct PngDecodeOutput {
 /// Decode configuration for PNG operations.
 ///
 /// Controls resource limits and checksum leniency. The default is safe for
-/// general use: 100 MP pixel count, 4 GiB memory, strict checksums.
+/// general use: 120 MP pixel count, 4 GiB memory, strict checksums.
 ///
 /// By default, checksums (Adler-32 and CRC-32) are **not** verified for speed.
 /// Use [`PngDecodeConfig::strict()`] to enable checksum verification.
@@ -236,14 +236,15 @@ pub struct PngDecodeConfig {
 }
 
 impl PngDecodeConfig {
-    /// Default maximum pixel count: 100 million.
+    /// Default maximum pixel count: 120 million.
     ///
-    /// Covers all displays through 8K and most camera sensors.
-    pub const DEFAULT_MAX_PIXELS: u64 = 100_000_000;
+    /// Covers all displays through 8K and common large camera sensors
+    /// (108 MP phone photos are now common).
+    pub const DEFAULT_MAX_PIXELS: u64 = 120_000_000;
 
     /// Default maximum memory: 4 GiB.
     ///
-    /// 100 MP × RGBA8 = 400 MB, × RGBA16 = 800 MB — both well within this limit.
+    /// 120 MP × RGBA8 = 480 MB, × RGBA16 = 960 MB — both well within this limit.
     pub const DEFAULT_MAX_MEMORY: u64 = 4 * 1024 * 1024 * 1024;
 
     /// No resource limits, no checksum verification.
@@ -594,7 +595,7 @@ mod tests {
     #[test]
     fn default_skips_checksums() {
         let config = PngDecodeConfig::default();
-        assert_eq!(config.max_pixels, Some(100_000_000));
+        assert_eq!(config.max_pixels, Some(120_000_000));
         assert_eq!(config.max_memory_bytes, Some(4 * 1024 * 1024 * 1024));
         assert!(config.skip_decompression_checksum);
         assert!(config.skip_critical_chunk_crc);
