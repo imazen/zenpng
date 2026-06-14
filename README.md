@@ -13,6 +13,7 @@ support, auto-quantization, and full metadata roundtrip.
 ```rust
 use zenpng::{decode, encode_rgba8, EncodeConfig, Compression, PngDecodeConfig};
 use enough::Unstoppable;
+use zenpixels_convert::PixelBufferConvertTypedExt; // brings `.to_rgba8()` onto PixelBuffer
 
 // Decode
 // --- Decode to packed RGBA8 ---
@@ -22,7 +23,7 @@ println!("{}x{}, alpha={}", output.info.width, output.info.height, output.info.h
 
 // `output.pixels` is a `zenpixels::PixelBuffer` in the file's NATIVE color type
 // (grayscale / indexed / RGB / 16-bit ...). Normalize to RGBA8 with the
-// `zenpixels-convert` extension trait imported above:
+// the `PixelBufferConvertTypedExt` trait imported above (from `zenpixels-convert`):
 let rgba = output.pixels.to_rgba8();                        // PixelBuffer<rgb::Rgba<u8>>
 let rgba_bytes: Vec<u8> = rgba.copy_to_contiguous_bytes();  // width*height*4, packed R,G,B,A
 
@@ -42,7 +43,7 @@ crates, so add these alongside `zenpng`:
 
 ```toml
 zenpng = "0.1"
-zenpixels-convert = { version = "0.2", features = ["imgref"] } # .to_rgba8(), .as_imgref()
+zenpixels-convert = { version = "0.2", features = ["rgb", "imgref"] } # .to_rgba8(), .as_imgref()
 imgref = "1"   # ImgRef for encode input
 rgb = "0.8"    # rgb::Rgba<u8> + FromSlice::as_rgba
 enough = "0.4" # Unstoppable / cancellation tokens
