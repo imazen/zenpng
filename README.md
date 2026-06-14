@@ -51,8 +51,9 @@ enough = "0.4" # Unstoppable / cancellation tokens
 
 **Errors (for a server).** `decode`/`encode_*` return `Result<_, whereat::At<PngError>>`
 — the `At<…>` adds a build-time source location for logs. Unwrap it with
-`err.error()` (borrow) or `err.into_inner()` (owned), then match on the
-[`PngError`] enum (`LimitExceeded` → 413, `InvalidInput`/`Decode` → 400, etc.):
+`err.error()` (borrow) or `err.decompose().0` (owned), then match on the
+[`PngError`] enum (`LimitExceeded` → 413, `InvalidInput`/`Decode` → 400, etc.;
+it is `#[non_exhaustive]`, so keep a wildcard arm):
 
 ```rust
 match zenpng::decode(png_bytes, &PngDecodeConfig::default(), &enough::Unstoppable) {
