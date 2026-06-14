@@ -4,6 +4,22 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Added
+- **Calibrated resource-estimation module (`heuristics`).** New
+  `zenpng::heuristics` with `EncodeEstimate` (min/typical/max peak memory +
+  `time_ms` + `output_bytes`), `DecodeEstimate`, and
+  `estimate_encode(w,h,input_bpp,effort)` / `estimate_decode(w,h,output_bpp)`
+  — mirrors the zen per-codec pattern (`zenwebp::heuristics`). Calibrated
+  from real measurement: a new `examples/png_probe` measures the marginal
+  working set (`VmHWM` delta) + wall + user/sys CPU (`/proc/self/stat`,
+  `with_parallel(false)`), swept by `scripts/png_resource_calibrate.py` over
+  5 content classes × 256–1024 px × effort {1,6,13,19,24,27,30} × rgb/rgba ×
+  8/16-bit (`benchmarks/png_resource_*_2026-06-14.tsv`). The model captures
+  that the **compression level dominates BOTH time and memory**: encode time
+  spans 0.03 → ~125 µs/px (e1 → e30 Maniac, ~4000×) and working set 18 → 120
+  B/px, while decode is a near-free DEFLATE inflate (~5 B/px, 0.006 µs/px).
+  Alpha: +23 B/px, +35 % time. 16-bit: +16 B/px.
+
 ### Fixed
 
 - `cicp_pq_without_cms_is_an_encode_error` →
