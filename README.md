@@ -15,25 +15,59 @@ use zenpng::{decode, encode_rgba8, EncodeConfig, Compression, PngDecodeConfig};
 use enough::Unstoppable;
 
 // Decode
+// --- Decode to packed RGBA8 ---
 let png_bytes: &[u8] = &[/* ... */];
 let output = decode(png_bytes, &PngDecodeConfig::default(), &Unstoppable)?;
 println!("{}x{}, alpha={}", output.info.width, output.info.height, output.info.has_alpha);
 
-// Encode at default effort (Balanced, effort 13)
-let encoded = encode_rgba8(img.as_ref(), None, &EncodeConfig::default(), &Unstoppable, &Unstoppable)?;
+// `output.pixels` is a `zenpixels::PixelBuffer` in the file's NATIVE color type
+// (grayscale / indexed / RGB / 16-bit ...). Normalize to RGBA8 with the
+// `zenpixels-convert` extension trait imported above:
+let rgba = output.pixels.to_rgba8();                        // PixelBuffer<rgb::Rgba<u8>>
+let rgba_bytes: Vec<u8> = rgba.copy_to_contiguous_bytes();  // width*height*4, packed R,G,B,A
+
+// --- Encode RGBA8 back to PNG ---
+// The two trailing args are the cancellation token and the deadline; pass
+// `&Unstoppable` for both to opt out. `rgba.as_imgref()` reuses the buffer above;
+// to encode your OWN flat RGBA bytes, use `imgref::ImgRef::new(rgb::FromSlice::as_rgba(&bytes), w, h)`.
+let encoded = encode_rgba8(rgba.as_imgref(), None, &EncodeConfig::default(), &Unstoppable, &Unstoppable)?;
 
 // Encode with a specific preset
 let config = EncodeConfig::default().with_compression(Compression::High);
-let smaller = encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable)?;
+let smaller = encode_rgba8(rgba.as_imgref(), None, &config, &Unstoppable, &Unstoppable)?;
 ```
 
-Pixel buffers use [`imgref`](https://docs.rs/imgref) + [`rgb`](https://docs.rs/rgb).
-Cancellation and deadlines use [`enough::Stop`](https://docs.rs/enough) — pass
-`&Unstoppable` when you don't need either.
+**Dependencies.** `decode()`/`encode_rgba8()` work with types from a few small
+crates, so add these alongside `zenpng`:
+
+```toml
+zenpng = "0.1"
+zenpixels-convert = { version = "0.2", features = ["imgref"] } # .to_rgba8(), .as_imgref()
+imgref = "1"   # ImgRef for encode input
+rgb = "0.8"    # rgb::Rgba<u8> + FromSlice::as_rgba
+enough = "0.4" # Unstoppable / cancellation tokens
+```
+
+**Errors (for a server).** `decode`/`encode_*` return `Result<_, whereat::At<PngError>>`
+— the `At<…>` adds a build-time source location for logs. Unwrap it with
+`err.error()` (borrow) or `err.into_inner()` (owned), then match on the
+[`PngError`] enum (`LimitExceeded` → 413, `InvalidInput`/`Decode` → 400, etc.):
+
+```rust
+match zenpng::decode(png_bytes, &PngDecodeConfig::default(), &enough::Unstoppable) {
+    Ok(output) => { /* ... */ }
+    Err(e) => match e.error() {
+        zenpng::PngError::LimitExceeded(msg) => eprintln!("too large: {msg}"), // 413
+        zenpng::PngError::InvalidInput(msg) | zenpng::PngError::Decode(msg) => eprintln!("bad PNG: {msg}"), // 400
+        other => eprintln!("decode failed: {other:?}"),
+    },
+}
+```
 
 The encoder automatically optimizes color type and bit depth: RGBA→RGB when
 fully opaque, RGB→Grayscale when R==G==B, 16-bit→8-bit when samples fit, and
-truecolor→indexed when ≤256 unique colors. All lossless.
+truecolor→indexed when ≤256 unique colors. All lossless. (To force byte-for-byte
+RGBA8 output, set the downcast policy off via `EncodeConfig` — see its rustdoc.)
 
 ## Compression presets
 
