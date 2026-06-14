@@ -125,7 +125,7 @@ pub(crate) fn decode_interlaced(
         Cow::Borrowed(data),
         first_idat_pos,
         config.skip_critical_chunk_crc,
-    );
+    )?;
     let mut decompressor = zenflate::StreamDecompressor::zlib(source, capacity)
         .with_skip_checksum(config.skip_decompression_checksum);
 

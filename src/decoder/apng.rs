@@ -271,7 +271,7 @@ impl<'a> ApngDecoder<'a> {
             Cow::Borrowed(self.file_data),
             self.first_idat_pos,
             self.config.skip_critical_chunk_crc,
-        );
+        )?;
         let mut decompressor = zenflate::StreamDecompressor::zlib(source, stride * 2)
             .with_skip_checksum(self.config.skip_decompression_checksum);
 

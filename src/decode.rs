@@ -236,19 +236,32 @@ pub struct PngDecodeConfig {
 }
 
 impl PngDecodeConfig {
-    /// Default maximum pixel count: 100 million.
+    /// Default maximum pixel count: 120 million.
     ///
-    /// Covers all displays through 8K and most camera sensors.
-    pub const DEFAULT_MAX_PIXELS: u64 = 100_000_000;
+    /// Covers all displays through 8K and current camera sensors — 108 MP phone
+    /// cameras are common, so the cap is set above them (120 MP) rather than at
+    /// 100 MP, which would reject those photos.
+    pub const DEFAULT_MAX_PIXELS: u64 = 120_000_000;
 
     /// Default maximum memory: 4 GiB.
     ///
-    /// 100 MP × RGBA8 = 400 MB, × RGBA16 = 800 MB — both well within this limit.
+    /// 120 MP × RGBA8 = 480 MB, × RGBA16 = 960 MB — both well within this limit.
     pub const DEFAULT_MAX_MEMORY: u64 = 4 * 1024 * 1024 * 1024;
 
     /// No resource limits, no checksum verification.
     ///
-    /// Caller takes responsibility for resource management.
+    /// # Server safety — removes ALL DoS protection
+    ///
+    /// `max_pixels` and `max_memory_bytes` are `None`, so
+    /// [`decode`](crate::decode) / [`decode_apng`](crate::decode_apng) will try
+    /// to allocate whatever a (possibly malicious) IHDR advertises — bounded
+    /// only by `usize`-overflow rejection — and `decode_apng` accumulates up to
+    /// 65 535 canvas-sized frames with **no** cumulative cap (the per-frame
+    /// memory cap depends on `max_memory_bytes` being `Some`). **Do not hand
+    /// this config untrusted input.** Use [`default`](Self::default)
+    /// (120 MP / 4 GiB) for servers, or set
+    /// [`with_max_pixels`](Self::with_max_pixels) /
+    /// [`with_max_memory`](Self::with_max_memory) explicitly.
     #[must_use]
     pub const fn none() -> Self {
         Self {
@@ -261,7 +274,8 @@ impl PngDecodeConfig {
 
     /// Maximum permissiveness: no resource limits, skip all checksums.
     ///
-    /// Equivalent to [`PngDecodeConfig::none()`].
+    /// Equivalent to [`PngDecodeConfig::none()`] — and carries the same
+    /// **removes-all-DoS-protection** caveat. Not for untrusted input.
     #[must_use]
     pub const fn lenient() -> Self {
         Self::none()
@@ -269,7 +283,11 @@ impl PngDecodeConfig {
 
     /// Strict checksums: verifies both Adler-32 and CRC-32.
     ///
-    /// No resource limits. Use builder methods to add limits.
+    /// **Note:** "strict" refers only to checksum verification — this config
+    /// still has **no resource limits** (`max_pixels`/`max_memory_bytes` are
+    /// `None`). For untrusted input, start from [`default`](Self::default) or
+    /// add [`with_max_pixels`](Self::with_max_pixels) /
+    /// [`with_max_memory`](Self::with_max_memory).
     #[must_use]
     pub const fn strict() -> Self {
         Self {
@@ -594,7 +612,7 @@ mod tests {
     #[test]
     fn default_skips_checksums() {
         let config = PngDecodeConfig::default();
-        assert_eq!(config.max_pixels, Some(100_000_000));
+        assert_eq!(config.max_pixels, Some(120_000_000));
         assert_eq!(config.max_memory_bytes, Some(4 * 1024 * 1024 * 1024));
         assert!(config.skip_decompression_checksum);
         assert!(config.skip_critical_chunk_crc);
