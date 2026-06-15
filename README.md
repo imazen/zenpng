@@ -58,12 +58,34 @@ it is `#[non_exhaustive]`, so keep a wildcard arm):
 ```rust
 match zenpng::decode(png_bytes, &PngDecodeConfig::default(), &enough::Unstoppable) {
     Ok(output) => { /* ... */ }
-    Err(e) => match e.error() {
-        zenpng::PngError::LimitExceeded(msg) => eprintln!("too large: {msg}"), // 413
-        zenpng::PngError::InvalidInput(msg) | zenpng::PngError::Decode(msg) => eprintln!("bad PNG: {msg}"), // 400
-        other => eprintln!("decode failed: {other:?}"),
-    },
+    Err(e) => {
+        // `e.location()` is the whereat capture site (file:line) — log it for triage.
+        if let Some(loc) = e.location() {
+            eprintln!("decode failed at {}:{}", loc.file(), loc.line());
+        }
+        match e.error() {
+            zenpng::PngError::LimitExceeded(msg) => eprintln!("too large: {msg}"), // 413
+            zenpng::PngError::InvalidInput(msg) | zenpng::PngError::Decode(msg) => eprintln!("bad PNG: {msg}"), // 400
+            other => eprintln!("decode failed: {other:?}"),
+        }
+    }
 }
+```
+
+**Cancellation.** Every `decode`/`encode_*` takes a `&dyn enough::Stop`; `&enough::Unstoppable`
+opts out. For a real, thread-safe cancel/deadline token, use
+[`almost_enough::Stopper`](https://crates.io/crates/almost-enough) (`cargo add almost-enough`):
+
+```rust
+use almost_enough::Stopper;
+use std::sync::Arc;
+
+let stop = Arc::new(Stopper::new());
+let watcher = Arc::clone(&stop);
+// flip it from a request-deadline or client-disconnect watcher:
+std::thread::spawn(move || watcher.cancel());
+
+let output = zenpng::decode(png_bytes, &PngDecodeConfig::default(), &*stop)?;
 ```
 
 The encoder automatically optimizes color type and bit depth: RGBA→RGB when
