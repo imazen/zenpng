@@ -22,6 +22,17 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- docs(readme): document the `metadata: Option<&Metadata>` encode argument
+  (the 2nd positional arg of `encode_rgba8`/`encode_rgb8`/…, 5th of
+  `encode_apng`). Every example passed `None`, which silently writes no
+  ICC/EXIF/XMP — contradicting the "full metadata roundtrip" headline.
+  Added inline `None`-drops-metadata comments, a decode→encode
+  metadata-preserving example, the `zencodec::Metadata` dependency, the
+  `zenpng::PngError` import path, and the `At<PngError>: std::error::Error`
+  (`?`-to-`main`) fact; fixed the non-compiling `At::location()` server
+  snippet to `e.frames().next()…`. Found by an insulated external-developer
+  usability test.
+
 - `cicp_pq_without_cms_is_an_encode_error` →
   `cicp_pq_without_cms_synthesizes_icc_from_bundle`: zenpixels-convert
   0.2.13 made CICP→ICC synthesis feature-independent (bundled blob), so
