@@ -43,23 +43,43 @@ impl<'a> IdatSource<'a> {
     /// Create a new IDAT source positioned at the first IDAT chunk.
     /// `first_idat_pos` is the byte offset of the first IDAT chunk header.
     /// When `skip_crc` is true, IDAT CRC mismatches are tolerated.
-    pub fn new(data: Cow<'a, [u8]>, first_idat_pos: usize, skip_crc: bool) -> Self {
-        // Parse the first IDAT chunk inline
-        let length =
-            u32::from_be_bytes(data[first_idat_pos..first_idat_pos + 4].try_into().unwrap())
-                as usize;
+    pub fn new(
+        data: Cow<'a, [u8]>,
+        first_idat_pos: usize,
+        skip_crc: bool,
+    ) -> Result<Self, PngError> {
+        // Parse the first IDAT chunk inline. Bounds-checked and overflow-safe
+        // (mirrors `FdatSource::new`) so the IDAT path stays sound and
+        // 32-bit-clean even if a caller ever passes an unvalidated offset.
+        let length_bytes: [u8; 4] = data
+            .get(first_idat_pos..first_idat_pos + 4)
+            .ok_or_else(|| PngError::Decode("truncated IDAT chunk header (length)".into()))?
+            .try_into()
+            .unwrap(); // infallible: slice is exactly 4 bytes
+        let length = u32::from_be_bytes(length_bytes) as usize;
         let data_start = first_idat_pos + 8; // skip length + type
-        let data_end = data_start + length;
-        let next_pos = data_end + 4; // skip CRC
+        let data_end = data_start
+            .checked_add(length)
+            .ok_or_else(|| PngError::Decode("IDAT chunk length overflow".into()))?;
+        let next_pos = data_end
+            .checked_add(4)
+            .ok_or_else(|| PngError::Decode("IDAT chunk length overflow".into()))?; // skip CRC
 
-        Self {
+        if data_end > data.len() {
+            return Err(PngError::Decode("truncated IDAT chunk data".into()));
+        }
+        if next_pos > data.len() {
+            return Err(PngError::Decode("truncated IDAT chunk CRC".into()));
+        }
+
+        Ok(Self {
             data,
             chunk_pos: next_pos,
             current_range: (data_start, data_end),
             done: false,
             post_idat_pos: 0,
             skip_crc,
-        }
+        })
     }
 }
 
@@ -377,7 +397,7 @@ impl<'a> RowDecoder<'a> {
         let bpp = ihdr.filter_bpp();
 
         // Create IDAT source and decompressor — data is moved into IdatSource
-        let source = IdatSource::new(data, first_idat_pos, config.skip_critical_chunk_crc);
+        let source = IdatSource::new(data, first_idat_pos, config.skip_critical_chunk_crc)?;
         let decompressor = zenflate::StreamDecompressor::zlib(source, stride * 2)
             .with_skip_checksum(config.skip_decompression_checksum);
 
