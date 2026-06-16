@@ -226,7 +226,7 @@ use enough::Unstoppable;
 // Probe metadata without decoding pixels
 let info = probe(png_bytes)?;
 
-// Default: 100 MP limit, 4 GiB memory limit, checksums skipped
+// Default: 120 MP limit, 4 GiB memory limit, checksums skipped
 let output = decode(png_bytes, &PngDecodeConfig::default(), &Unstoppable)?;
 
 // No limits, no checksums
