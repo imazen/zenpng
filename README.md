@@ -28,10 +28,13 @@ let rgba = output.pixels.to_rgba8();                        // PixelBuffer<rgb::
 let rgba_bytes: Vec<u8> = rgba.copy_to_contiguous_bytes();  // width*height*4, packed R,G,B,A
 
 // --- Encode RGBA8 back to PNG ---
+// 2nd arg is `metadata: Option<&zencodec::Metadata>`: pass `Some(&meta)` to embed
+// ICC / EXIF / XMP / HDR chunks; `None` writes NO such metadata (see "Metadata" below).
 // The two trailing args are the cancellation token and the deadline; pass
 // `&Unstoppable` for both to opt out. `rgba.as_imgref()` reuses the buffer above;
 // to encode your OWN flat RGBA bytes, use `imgref::ImgRef::new(rgb::FromSlice::as_rgba(&bytes), w, h)`.
 let encoded = encode_rgba8(rgba.as_imgref(), None, &EncodeConfig::default(), &Unstoppable, &Unstoppable)?;
+//                                            ^^^^ None drops all ICC/EXIF/XMP — pass Some(&meta) to keep them.
 
 // Encode with a specific preset
 let config = EncodeConfig::default().with_compression(Compression::High);
@@ -47,20 +50,25 @@ zenpixels-convert = { version = "0.2", features = ["rgb", "imgref"] } # .to_rgba
 imgref = "1"   # ImgRef for encode input
 rgb = "0.8"    # rgb::Rgba<u8> + FromSlice::as_rgba
 enough = "0.4" # Unstoppable / cancellation tokens
+zencodec = "0.1" # zencodec::Metadata, for the `metadata` encode arg (see "Metadata")
 ```
 
 **Errors (for a server).** `decode`/`encode_*` return `Result<_, whereat::At<PngError>>`
-— the `At<…>` adds a build-time source location for logs. Unwrap it with
-`err.error()` (borrow) or `err.decompose().0` (owned), then match on the
-[`PngError`] enum (`LimitExceeded` → 413, `InvalidInput`/`Decode` → 400, etc.;
-it is `#[non_exhaustive]`, so keep a wildcard arm):
+where `PngError` is re-exported at the crate root (`use zenpng::PngError;`). The
+`At<…>` adds a build-time source location for logs. `At<PngError>` implements
+`std::error::Error`, so `?` bubbles it straight into a
+`fn main() -> Result<(), Box<dyn std::error::Error>>` or any `anyhow`/`eyre` chain
+— no manual conversion. To inspect it instead, unwrap with `err.error()` (borrow)
+or `err.decompose().0` (owned), then match on the `PngError` enum (`LimitExceeded`
+→ 413, `InvalidInput`/`Decode` → 400, etc.; it is `#[non_exhaustive]`, so keep a
+wildcard arm):
 
 ```rust
 match zenpng::decode(png_bytes, &PngDecodeConfig::default(), &enough::Unstoppable) {
     Ok(output) => { /* ... */ }
     Err(e) => {
-        // `e.location()` is the whereat capture site (file:line) — log it for triage.
-        if let Some(loc) = e.location() {
+        // The first trace frame is the whereat capture site (file:line) — log it for triage.
+        if let Some(loc) = e.frames().next().and_then(|f| f.location()) {
             eprintln!("decode failed at {}:{}", loc.file(), loc.line());
         }
         match e.error() {
@@ -151,6 +159,8 @@ let frames = vec![
 ];
 
 let config = ApngEncodeConfig::default();
+// 5th arg is `metadata: Option<&zencodec::Metadata>` — `None` drops all ICC/EXIF/XMP;
+// pass `Some(&meta)` to embed it (same as `encode_rgba8`, see "Metadata" below).
 let apng = encode_apng(&frames, width, height, &config, None, &Unstoppable, &Unstoppable)?;
 ```
 
@@ -237,8 +247,42 @@ interlaced and non-interlaced PNGs.
 
 ## Metadata
 
-ICC profiles, EXIF, and XMP are roundtripped through encode/decode. Color space
-chunks (gAMA, sRGB, cHRM, cICP) are preserved. Set them on `EncodeConfig`:
+ICC profiles, EXIF, and XMP roundtrip through encode/decode — **but only if you
+pass them.** They ride the `metadata: Option<&zencodec::Metadata>` argument (the
+2nd positional arg of `encode_rgba8` / `encode_rgb8` / … and the 5th of
+`encode_apng`). **`None` writes no ICC / EXIF / XMP at all** — there is no
+`EncodeConfig` setter for those three, so an `encode_*(…, None, …)` call silently
+drops them. To preserve metadata across a decode → encode roundtrip, build a
+`Metadata` from the decode `output.info` and pass `Some(&meta)`:
+
+```rust
+use zenpng::{EncodeConfig, PngDecodeConfig};
+use zencodec::Metadata;
+use enough::Unstoppable;
+use zenpixels_convert::PixelBufferConvertTypedExt; // .to_rgba8()
+
+let output = zenpng::decode(png_bytes, &PngDecodeConfig::default(), &Unstoppable)?;
+
+// Re-build a Metadata from the fields the decoder surfaced on `output.info`.
+// `with_icc`/`with_exif`/`with_xmp` accept `Vec<u8>`, `&[u8]`, or `Arc<[u8]>`.
+let mut meta = Metadata::none();
+if let Some(icc)  = output.info.icc_profile { meta = meta.with_icc(icc); }
+if let Some(exif) = output.info.exif        { meta = meta.with_exif(exif); }
+if let Some(xmp)  = output.info.xmp         { meta = meta.with_xmp(xmp); }
+if let Some(cicp) = output.info.cicp        { meta = meta.with_cicp(cicp); }
+
+let rgba = output.pixels.to_rgba8();
+let encoded = zenpng::encode_rgba8(
+    rgba.as_imgref(),
+    Some(&meta),                  // <-- carries ICC/EXIF/XMP through; `None` would drop them
+    &EncodeConfig::default(),
+    &Unstoppable,
+    &Unstoppable,
+)?;
+```
+
+The PNG color-space chunks gAMA, sRGB, and cHRM are set on `EncodeConfig` instead
+(they have no `Metadata` carrier):
 
 ```rust
 let config = EncodeConfig::default()
@@ -246,8 +290,9 @@ let config = EncodeConfig::default()
     .with_srgb_intent(Some(0));       // perceptual
 ```
 
-The decoder warns on conflicting color metadata (e.g., both sRGB and cICP present)
-via `PngWarning` variants.
+cICP and the HDR chunks (cLLI / mDCV) can be set on *either* side; when present on
+both, the `EncodeConfig` value wins. The decoder warns on conflicting color
+metadata (e.g., both sRGB and cICP present) via `PngWarning` variants.
 
 ## Feature flags
 
