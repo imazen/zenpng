@@ -1422,8 +1422,7 @@ impl PngAnimationFrameEncoder {
             self.metadata.as_ref(),
             cancel,
             &deadline,
-        )
-        .map_err(|e| e.decompose().0)?;
+        )?;
 
         Ok(EncodeOutput::new(data, ImageFormat::Png))
     }
