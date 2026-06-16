@@ -202,12 +202,16 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
     let mut palette_size: u16 = 0;
     let mut sequence = zencodec::ImageSequence::Single;
 
-    let mut pos = 8; // skip PNG signature
-    while pos + 12 <= data.len() {
+    let mut pos: usize = 8; // skip PNG signature
+    // `chunk_len` is an attacker-controlled u32; on 32-bit targets `pos`/
+    // `chunk_data_start + chunk_len` can overflow usize and wrap past these
+    // bounds. checked_add on the loop guard + saturating_add on the
+    // length-derived offsets keep the walk panic-free on i686/wasm32.
+    while pos.checked_add(12).is_some_and(|end| end <= data.len()) {
         let chunk_len = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
         let chunk_type = &data[pos + 4..pos + 8];
         let chunk_data_start = pos + 8;
-        let chunk_data_end = (chunk_data_start + chunk_len).min(data.len());
+        let chunk_data_end = chunk_data_start.saturating_add(chunk_len).min(data.len());
 
         match chunk_type {
             b"IDAT" | b"fdAT" => {
@@ -286,8 +290,10 @@ pub fn probe(data: &[u8]) -> Result<PngProbe, ProbeError> {
             _ => {}
         }
 
-        // Advance: length + type(4) + data(chunk_len) + crc(4)
-        pos = chunk_data_start + chunk_len + 4;
+        // Advance: length + type(4) + data(chunk_len) + crc(4).
+        // saturating_add: an oversized chunk_len saturates `pos`, and the
+        // checked loop guard above then ends the walk (no 32-bit overflow).
+        pos = chunk_data_start.saturating_add(chunk_len).saturating_add(4);
     }
 
     let has_alpha =

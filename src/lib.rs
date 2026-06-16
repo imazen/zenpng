@@ -47,6 +47,8 @@ mod encode;
 mod encoder;
 mod error;
 mod gamut;
+/// Calibrated encode/decode resource estimation (peak memory + time).
+pub mod heuristics;
 #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
 mod indexed;
 mod optimize;

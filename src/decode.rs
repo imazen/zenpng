@@ -207,7 +207,7 @@ pub struct PngDecodeOutput {
 /// Decode configuration for PNG operations.
 ///
 /// Controls resource limits and checksum leniency. The default is safe for
-/// general use: 100 MP pixel count, 4 GiB memory, strict checksums.
+/// general use: 120 MP pixel count, 4 GiB memory, strict checksums.
 ///
 /// By default, checksums (Adler-32 and CRC-32) are **not** verified for speed.
 /// Use [`PngDecodeConfig::strict()`] to enable checksum verification.

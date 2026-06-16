@@ -1,0 +1,11 @@
+# png_resource_calibrate
+commit: 975eebc
+host: lilith
+date: 2026-06-14
+bin: target/release/examples/png_probe
+sizes: [512, 1024]
+efforts: [13]
+alphas: ['rgb', 'rgba']
+depths: [8, 16]
+content_classes: ['ai-illustration', 'clipart', 'document', 'plot', 'screenshot']
+measure: png_probe VmHWM delta + wall (Instant) + user/sys (/proc/self/stat), with_parallel(false), one process per op.
