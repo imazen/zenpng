@@ -16,3 +16,6 @@ mod probe_parity;
 
 #[path = "integration/simd_consistency.rs"]
 mod simd_consistency;
+
+#[path = "integration/cicp_chunk_emit.rs"]
+mod cicp_chunk_emit;

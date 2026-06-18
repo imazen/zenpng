@@ -112,6 +112,31 @@ impl PngEncoderConfig {
         self
     }
 
+    /// Set the CICP color signal written to the PNG `cICP` chunk.
+    ///
+    /// Emitted directly (cICP-only) — this is the builder-level carrier that
+    /// `encode_raw` reads via `config.cicp`, the same path the `encode_*`
+    /// convenience methods use. It does **not** route through the color-emit
+    /// resolver (which may synthesize an ICC), so it lets the trait
+    /// [`Encoder::encode`](zencodec::encode::Encoder::encode) consume a
+    /// PixelBuffer/`PixelSlice` directly while emitting cICP without an ICC —
+    /// the right shape for HDR (`RGB16_BT2100_PQ`/HLG) renditions where the
+    /// cICP chunk is the canonical signal. For resolver-driven emission
+    /// (cICP + synthesized ICC), pass a [`Metadata`] via the job instead.
+    #[must_use]
+    pub fn with_cicp(mut self, cicp: Option<zencodec::Cicp>) -> Self {
+        self.config = self.config.with_cicp(cicp);
+        self
+    }
+
+    /// Set the content light level written to the PNG `cLLI` chunk
+    /// (emitted only alongside a [`with_cicp`](Self::with_cicp) signal).
+    #[must_use]
+    pub fn with_content_light_level(mut self, clli: Option<zencodec::ContentLightLevel>) -> Self {
+        self.config = self.config.with_content_light_level(clli);
+        self
+    }
+
     /// Set near-lossless bit rounding (0-4).
     ///
     /// Rounds least-significant bits of each 8-bit sample to improve
