@@ -5,6 +5,19 @@ All notable changes to zenpng are documented here.
 ## [Unreleased]
 
 ### Added
+- `sweep`: trained-scalar-head + compute-budget surface (variant-generation
+  playbook patterns 17–18). `sweep::compute_tier(&SweepVariant) -> u8` —
+  ordinal compute-cost proxy (PNG's single dial is the compression effort, so
+  the tier *is* `Compression::effort()` saturated into `u8`).
+  `SweepAxes::scalar_dense()` — the densest principled effort ladder
+  (default-first `Balanced`, then every standard tier plus the heavy `Crush`/
+  `Maniac` tiers `modes_full` excludes) so a scalar head sees the full
+  compute-vs-bytes curve. `sweep::plan_constrained(axes, compute_limit,
+  max_deviations)` — `plan()` plus an optional compute-tier ceiling (dropped
+  cells reported in the new `SweepPlan::compute_tier_skipped`, never silently
+  capped) and a deviation-scope filter (single-axis on PNG; present for
+  cross-codec API uniformity). `plan()` now delegates to
+  `plan_constrained(axes, None, None)` — behavior unchanged. All additive.
 - **Calibrated resource-estimation module (`heuristics`).** New
   `zenpng::heuristics` with `EncodeEstimate` (min/typical/max peak memory +
   `time_ms` + `output_bytes`), `DecodeEstimate`, and

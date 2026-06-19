@@ -6,27 +6,28 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpng.txt 383 lines (supported surface) | zenpng.features.txt 21 added (features: avx512,cms,imagequant,joint,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 80 lines (111 hidden + 0 excluded-feature)
+# files: zenpng.txt 404 lines (supported surface) | zenpng.features.txt 21 added (features: avx512,cms,imagequant,joint,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 82 lines (113 hidden + 0 excluded-feature)
 
 ## summary
 #
-#   pub modules                                 3
-#   pub types (struct/enum/trait/alias)        45
+#   pub modules                                 4
+#   pub types (struct/enum/trait/alias)        47
 #   pub consts/statics                          9
-#   free functions                             21
-#   inherent methods                           64
-#   struct fields                             138
+#   free functions                             25
+#   inherent methods                           67
+#   struct fields                             147
 #   enum variants                              54
-#   trait roster entries (type × trait)       142
-#   auto-trait-complete types                  37
+#   trait roster entries (type × trait)       148
+#   auto-trait-complete types                  39
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          274
+#   (root)                          277
 #   detect                           41
-#   sweep                            19
+#   heuristics                       12
+#   sweep                            23
 
-## items (334 lines)
+## items (353 lines)
 
 pub mod zenpng
 pub mod detect
@@ -71,11 +72,25 @@ pub fn detect::PngProbe::from_info(&PngInfo) -> Self
 pub fn detect::PngProbe::is_improvable(&self) -> bool
 pub fn detect::PngProbe::recommended_effort(&self) -> u32
 pub fn detect::probe(&[u8]) -> core::result::Result<detect::PngProbe, detect::ProbeError>
+pub mod heuristics
+#[non_exhaustive] pub struct heuristics::DecodeEstimate
+pub heuristics::DecodeEstimate::output_bytes: u64
+pub heuristics::DecodeEstimate::peak_memory_bytes: u64
+pub heuristics::DecodeEstimate::time_ms: f32
+#[non_exhaustive] pub struct heuristics::EncodeEstimate
+pub heuristics::EncodeEstimate::output_bytes: u64
+pub heuristics::EncodeEstimate::peak_memory_bytes: u64
+pub heuristics::EncodeEstimate::peak_memory_bytes_max: u64
+pub heuristics::EncodeEstimate::peak_memory_bytes_min: u64
+pub heuristics::EncodeEstimate::time_ms: f32
+pub fn heuristics::estimate_decode(u32, u32, u8) -> core::option::Option<heuristics::DecodeEstimate>
+pub fn heuristics::estimate_encode(u32, u32, u8, u32) -> core::option::Option<heuristics::EncodeEstimate>
 pub mod sweep
 pub struct sweep::SweepAxes
 pub sweep::SweepAxes::compression: alloc::vec::Vec<Compression>
 pub fn sweep::SweepAxes::modes_full() -> Self
 pub fn sweep::SweepAxes::rd_core() -> Self
+pub fn sweep::SweepAxes::scalar_dense() -> Self
 pub struct sweep::SweepCell
 pub sweep::SweepCell::aliases: alloc::vec::Vec<alloc::string::String>
 pub sweep::SweepCell::deviations: u8
@@ -84,12 +99,15 @@ pub sweep::SweepCell::id: alloc::string::String
 pub sweep::SweepCell::variant: sweep::SweepVariant
 pub struct sweep::SweepPlan
 pub sweep::SweepPlan::cells: alloc::vec::Vec<sweep::SweepCell>
+pub sweep::SweepPlan::compute_tier_skipped: alloc::vec::Vec<alloc::string::String>
 pub sweep::SweepPlan::duplicates_merged: usize
 pub struct sweep::SweepVariant
 pub sweep::SweepVariant::compression: Compression
 pub fn sweep::SweepVariant::build(&self) -> EncodeConfig
+pub fn sweep::compute_tier(&sweep::SweepVariant) -> u8
 pub fn sweep::fingerprint(&sweep::SweepVariant) -> u64
 pub fn sweep::plan(&sweep::SweepAxes) -> sweep::SweepPlan
+pub fn sweep::plan_constrained(&sweep::SweepAxes, core::option::Option<u8>, core::option::Option<u8>) -> sweep::SweepPlan
 pub fn sweep::variant_from_cell_id(&str) -> core::result::Result<sweep::SweepVariant, alloc::string::String>
 #[non_exhaustive] pub enum Compression
 pub Compression::Aggressive
@@ -283,7 +301,9 @@ pub fn PngEncoderConfig::encode_rgba16(&self, imgref::ImgRef<'_, rgb::formats::r
 pub fn PngEncoderConfig::encode_rgba8(&self, imgref::ImgRef<'_, rgb::formats::rgba::Rgba<u8>>) -> core::result::Result<zencodec::output::EncodeOutput, whereat::at::At<PngError>>
 pub fn PngEncoderConfig::encode_rgba_f32(&self, imgref::ImgRef<'_, rgb::formats::rgba::Rgba<f32>>) -> core::result::Result<zencodec::output::EncodeOutput, whereat::at::At<PngError>>
 pub fn PngEncoderConfig::new() -> Self
+pub fn PngEncoderConfig::with_cicp(self, core::option::Option<zenpixels::cicp::Cicp>) -> Self
 pub fn PngEncoderConfig::with_compression(self, Compression) -> Self
+pub fn PngEncoderConfig::with_content_light_level(self, core::option::Option<zenpixels::hdr::ContentLightLevel>) -> Self
 pub fn PngEncoderConfig::with_filter(self, Filter) -> Self
 pub fn PngEncoderConfig::with_near_lossless_bits(self, u8) -> Self
 #[non_exhaustive] pub struct PngInfo
@@ -363,7 +383,7 @@ pub fn probe(&[u8]) -> core::result::Result<PngInfo, whereat::at::At<PngError>>
 pub fn quantizer_by_name(&str) -> core::result::Result<alloc::boxed::Box<dyn Quantizer>, whereat::at::At<PngError>>
 pub type PngLimits = PngDecodeConfig
 
-## trait impls (42 types)
+## trait impls (44 types)
 
 ApngDecodeOutput: Debug
 ApngEncodeConfig: Clone, Debug, Default
@@ -403,6 +423,8 @@ detect::CompressionAssessment: Clone, Debug
 detect::PngProbe: Clone, Debug, zencodec::detect::SourceEncodingDetails
 detect::ProbeError: Clone, Debug, Display, Eq, Error, PartialEq
 detect::Recommendation: Clone, Debug, Eq, PartialEq
+heuristics::DecodeEstimate: Clone, Copy, Debug
+heuristics::EncodeEstimate: Clone, Copy, Debug
 sweep::SweepAxes: Clone, Debug
 sweep::SweepCell: Clone, Debug
 sweep::SweepPlan: Clone, Debug
@@ -410,7 +432,7 @@ sweep::SweepVariant: Clone, Debug
 
 ## auto traits
 
-37 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+39 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 ApngEncodeParams<'a>: !RefUnwindSafe !UnwindSafe
 PngAnimationFrameDecoder: !RefUnwindSafe !UnwindSafe
 PngDecodeJob: !RefUnwindSafe !UnwindSafe

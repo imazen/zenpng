@@ -15,7 +15,7 @@
 #   free functions                             16
 #   inherent methods                           29
 #   struct fields                              12
-#   trait roster entries (type × trait)        31
+#   trait roster entries (type × trait)        33
 #   auto-trait-complete types                   2
 #
 # per-module pub lines:
@@ -89,7 +89,7 @@ pub __bench_scan::FusedResult::is_binary_alpha: bool
 pub __bench_scan::FusedResult::is_grayscale: bool
 pub __bench_scan::FusedResult::is_opaque: bool
 
-## trait impls (16 types)
+## trait impls (18 types)
 
 ApngFrameInfo: TrivialClone
 ApngFrameInput<'a>: TrivialClone
@@ -107,6 +107,8 @@ SignificantBits: TrivialClone
 __bench_scan::FusedRequest: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
 __bench_scan::FusedResult: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
 detect::ColorType: TrivialClone
+heuristics::DecodeEstimate: TrivialClone
+heuristics::EncodeEstimate: TrivialClone
 
 ## auto traits
 
