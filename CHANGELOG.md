@@ -4,7 +4,19 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+<!-- Drop when zencodec 0.1.24 publishes. -->
+- Remove the `[patch.crates-io] zencodec = { git, rev }` and re-point the
+  `zencodec` dependency at the published `^0.1.24`. The patch pins zencodec to
+  the unreleased `estimate` API.
+
 ### Added
+- vCPU-aware resource estimation via zencodec's unified `estimate` API:
+  `PngEncoderConfig::estimate_encode_resources(&ImageCharacteristics, &ComputeEnvironment)`
+  (overrides the `zencodec::EncoderConfig` default) returns a core-adjusted
+  `ResourceEstimate`. `heuristics::encode_threading_info(effort)` now returns
+  the shared `zencodec::estimate::ThreadingInformation` (replacing the
+  short-lived local `ThreadingInfo` copy + `estimate_encode_threaded`).
 - `InternalParams` cross-codec bundle (`__expert`). `zenpng::internal_params::InternalParams`
   (`compression` + `parallel`, both `Option<_>`) + `EncodeConfig::with_internal_params`,
   gated behind the new pure-visibility `__expert` feature — mirrors `zenjpeg`'s bundle so

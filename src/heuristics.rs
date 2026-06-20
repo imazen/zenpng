@@ -176,89 +176,26 @@ pub fn estimate_encode(
     })
 }
 
-/// How an encode scales across CPU cores (measured, single-photo sparse fit,
-/// `benchmarks/vcpu_resource_sweep_2026-06-20.tsv`). zenpng parallelises over
-/// filter STRATEGIES (`std::thread::scope`), so wall time saturates at ~3× by
-/// just a few threads AND peak working-set grows with concurrent strategies —
-/// wall does NOT scale as `1/cores`. Use [`estimate_encode_threaded`].
-#[derive(Debug, Clone, Copy)]
-#[non_exhaustive]
-pub struct ThreadingInfo {
-    /// Whether the encode uses more than one core at all.
-    pub parallel: bool,
-    /// Threads beyond this yield no further speedup (the strategy count caps
-    /// it, ~4). 1 = serial.
-    pub max_useful_threads: u32,
-    /// Amdahl parallel fraction `p` fitted from measurement; peak speedup is
-    /// `1/(1-p)`. 0 = serial.
-    pub parallel_fraction: f32,
-    /// Extra peak working-set per added worker thread, bytes (the γ term —
-    /// each concurrent strategy holds filter+compress+verify buffers, so this
-    /// is large for zenpng; peak heap can ~double across cores).
-    pub mem_bytes_per_thread: u64,
-}
-
-impl ThreadingInfo {
-    /// Threads that actually do work given `cores` available.
-    #[must_use]
-    pub fn effective_threads(&self, cores: usize) -> u64 {
-        (cores.max(1) as u64).min(self.max_useful_threads.max(1) as u64)
-    }
-    /// Achieved wall-time speedup at `cores` (Amdahl, clamped). 1.0 = serial.
-    #[must_use]
-    pub fn speedup(&self, cores: usize) -> f32 {
-        let n = self.effective_threads(cores);
-        if !self.parallel || n <= 1 {
-            return 1.0;
-        }
-        let p = self.parallel_fraction as f64;
-        (1.0 / ((1.0 - p) + p / n as f64)) as f32
-    }
-}
-
-/// Threading characterisation for a zenpng encode. Parallel filter-strategy
-/// screening engages at effort ≥ 2 (multiple strategies); below that the
-/// encode is serial. Peak speedup ~3×, saturating by ~4 threads.
+/// How a zenpng encode scales across CPU cores (measured, single-photo sparse
+/// fit, `benchmarks/vcpu_resource_sweep_2026-06-20.tsv`), as the shared
+/// [`zencodec::estimate::ThreadingInformation`]. zenpng parallelises over
+/// filter STRATEGIES (`std::thread::scope`): wall time saturates at ~3× by ~4
+/// threads AND peak working-set grows with concurrent strategies — wall does
+/// NOT scale as `1/cores`. Parallel filter-strategy screening engages at
+/// effort ≥ 2; below that the encode is serial.
+///
+/// Feed the result to
+/// [`ResourceEstimate::at_cores`](zencodec::estimate::ResourceEstimate::at_cores),
+/// or call [`PngEncoderConfig::estimate_encode_resources`](crate::PngEncoderConfig)
+/// for the full core-adjusted estimate.
 #[must_use]
-pub fn encode_threading_info(effort: u32) -> ThreadingInfo {
+pub fn encode_threading_info(effort: u32) -> zencodec::estimate::ThreadingInformation {
     if effort >= 2 {
-        ThreadingInfo {
-            parallel: true,
-            max_useful_threads: 4,
-            parallel_fraction: 0.70,
-            mem_bytes_per_thread: 3_000_000,
-        }
+        // p = 0.70, saturates ~4 threads, ~3 MB/thread per-strategy working set.
+        zencodec::estimate::ThreadingInformation::parallel(4, 0.70, 3_000_000)
     } else {
-        ThreadingInfo {
-            parallel: false,
-            max_useful_threads: 1,
-            parallel_fraction: 0.0,
-            mem_bytes_per_thread: 0,
-        }
+        zencodec::estimate::ThreadingInformation::SERIAL
     }
-}
-
-/// [`estimate_encode`] adjusted for `cores` available CPU cores: `time_ms` is
-/// divided by the measured (saturating) speedup and the peak terms gain the
-/// per-strategy working-set. Returns `None` only on dimension overflow.
-#[must_use]
-pub fn estimate_encode_threaded(
-    width: u32,
-    height: u32,
-    input_bpp: u8,
-    effort: u32,
-    cores: usize,
-) -> Option<EncodeEstimate> {
-    let mut e = estimate_encode(width, height, input_bpp, effort)?;
-    let ti = encode_threading_info(effort);
-    e.time_ms = (e.time_ms as f64 / ti.speedup(cores) as f64) as f32;
-    let extra = ti
-        .mem_bytes_per_thread
-        .saturating_mul(ti.effective_threads(cores).saturating_sub(1));
-    e.peak_memory_bytes_min = e.peak_memory_bytes_min.saturating_add(extra);
-    e.peak_memory_bytes = e.peak_memory_bytes.saturating_add(extra);
-    e.peak_memory_bytes_max = e.peak_memory_bytes_max.saturating_add(extra);
-    Some(e)
 }
 
 /// Estimate peak memory / time for a PNG decode.

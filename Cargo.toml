@@ -22,7 +22,7 @@ rgb = { version = "0.8", default-features = false, features = ["as-bytes"] }
 imgref = "1.12"
 bytemuck = { version = "1.25", default-features = false, features = ["extern_crate_alloc"] }
 enough = "0.4.2"
-zencodec = { version = "0.1.21" }
+zencodec = { version = "0.1.24" }
 zenpixels = { version = "0.2.11", default-features = false, features = ["imgref"] }
 zenpixels-convert = { version = "0.2.13", features = ["imgref"] }
 zenquant = { version = "0.1.1", optional = true }
@@ -119,3 +119,8 @@ name = "scalar_vs_simd"
 harness = false
 required-features = ["_dev"]
 
+
+[patch.crates-io]
+# TEMPORARY: zencodec::estimate (unified resource-estimation API) is unpublished.
+# Pin to the git rev until zencodec 0.1.24 publishes, then drop this patch.
+zencodec = { git = "https://github.com/imazen/zencodec.git", rev = "0f71295" }
