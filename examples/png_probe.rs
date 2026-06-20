@@ -5,17 +5,21 @@
 //! user/sys CPU of a single encode OR decode call — isolated to the codec
 //! call (the PNG load / process startup are excluded). Encode and decode
 //! are separate invocations so `VmHWM` gives a clean per-op peak.
-//! Compression is pinned single-thread (`with_parallel(false)`) so wall ≈
-//! user (clean per-pixel CPU model).
+//! Compression is single-thread by default (`with_parallel(false)`) so wall ≈
+//! user (clean per-pixel CPU model); pass a thread count as the optional 7th
+//! arg for the vCPU resource sweep — zenpng parallelizes over filter
+//! STRATEGIES (`std::thread::scope`, capped by `max_threads`), so peak grows
+//! with concurrent strategies and wall drops until the strategy count caps it.
 //!
 //! Loads its input with the `png` dev-dependency (the source variants are
 //! 8-bit RGB); `rgba` synthesizes a high-entropy alpha (= green channel),
 //! `16` widens 8→16-bit, so the encoder exercises each path.
 //!
 //! Usage:
-//!   png_probe <png> encode <effort> <8|16> <rgb|rgba> <out.png>
+//!   png_probe <png> encode <effort> <8|16> <rgb|rgba> <out.png> [threads]
 //!   png_probe <png> decode <effort> <8|16> <rgb|rgba> <in.png>
-//! Prints: `delta_kb=<n> peak_kb=<n> wall_ms=<f> user_ms=<f> sys_ms=<f> bytes=<n>`
+//! Prints (encode): `delta_kb=<n> peak_kb=<n> wall_ms=<f> user_ms=<f> sys_ms=<f> \
+//!   bytes=<n> threads=<n> est_min_kb=<n> est_typ_kb=<n> est_max_kb=<n> est_time_ms=<f>`
 
 use std::fs;
 use std::time::Instant;
@@ -90,11 +94,33 @@ fn main() {
         &a[6],
     );
 
+    let threads: usize = a.get(7).and_then(|s| s.parse().ok()).unwrap_or(1);
+
     if mode == "encode" {
         let (rgb, w, h) = load_rgb8(path);
-        let cfg = EncodeConfig::default()
+        let mut cfg = EncodeConfig::default()
             .with_compression(Compression::Effort(effort))
-            .with_parallel(false);
+            .with_parallel(threads > 1);
+        cfg.max_threads = threads;
+
+        // Model prediction (thread-independent, calibrated single-thread).
+        let input_bpp: u8 = match (depth, alpha.as_str()) {
+            (16, "rgba") => 8,
+            (16, _) => 6,
+            (_, "rgba") => 4,
+            _ => 3,
+        };
+        let est = zenpng::heuristics::estimate_encode(w as u32, h as u32, input_bpp, effort);
+        let (est_min, est_typ, est_max, est_t) = est
+            .map(|e| {
+                (
+                    e.peak_memory_bytes_min / 1024,
+                    e.peak_memory_bytes / 1024,
+                    e.peak_memory_bytes_max / 1024,
+                    e.time_ms,
+                )
+            })
+            .unwrap_or((0, 0, 0, 0.0));
 
         let (b0, t0) = (vmhwm_kb(), Instant::now());
         let (cu0, cs0) = cpu_ticks();
@@ -182,13 +208,19 @@ fn main() {
         let enc = encoded.expect("encode failed");
         fs::write(outp, &enc).expect("write png");
         println!(
-            "delta_kb={} peak_kb={} wall_ms={:.1} user_ms={:.1} sys_ms={:.1} bytes={}",
+            "delta_kb={} peak_kb={} wall_ms={:.1} user_ms={:.1} sys_ms={:.1} bytes={} \
+             threads={} est_min_kb={} est_typ_kb={} est_max_kb={} est_time_ms={:.1}",
             peak.saturating_sub(b0),
             peak,
             wall.as_secs_f64() * 1000.0,
             (cu1 - cu0) as f64 * TICK_MS,
             (cs1 - cs0) as f64 * TICK_MS,
-            enc.len()
+            enc.len(),
+            threads,
+            est_min,
+            est_typ,
+            est_max,
+            est_t,
         );
     } else {
         let data = fs::read(outp).expect("read png");

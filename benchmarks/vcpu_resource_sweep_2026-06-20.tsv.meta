@@ -1,0 +1,32 @@
+# vCPU resource sweep — zenpng (peak mem / peak heap / wall vs THREAD COUNT)
+date: 2026-06-20
+host: lilith
+cpu: AMD Ryzen 9 7950X 16-Core Processor
+ram: 59 GiB
+base_commit: 7a6ee94 (origin/main)
+jj_change: wtukmnpypqrt
+bin: target/release/examples/png_probe
+source_image: imazen-26-png-v3/.../1000_general_red-convertible-car_4032x3024.sdr.png (1 photo, downscale-only Lanczos square ladder; same ladder as jxl sweep at /tmp/jxl_vcpu_imgs)
+grid: sizes {256,1024,2048}^2 (downscale-only) × effort {13 Balanced, 19 High} × threads {1,2,4,8,16,28}; 8-bit rgb, lossless
+threading: zenpng parallelizes over filter STRATEGIES via std::thread::scope, capped by EncodeConfig.max_threads (NOT rayon); png_probe sets with_parallel(threads>1)+max_threads=threads.
+measure: ONE PROCESS PER CELL, run-heavy (nice+ionice+cgroup MemoryMax 24G), SERIAL, GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072.
+  - clean run (6 thread points): VmHWM delta (marginal WS) + VmHWM peak (peak RSS) + wall/user/sys + est_* (heuristics::estimate_encode, thread-INDEPENDENT) in-row.
+  - heaptrack run (threads {1,8,28}): allocator PEAK_HEAP + peak RSS.
+reproducer:
+  cargo build --release --example png_probe
+  run-heavy --mem 24G -- bash scripts/vcpu_resource_sweep.sh target/release/examples/png_probe /tmp/jxl_vcpu_imgs benchmarks/vcpu_resource_sweep_2026-06-20.tsv
+  python3 scripts/vcpu_resource_fit.py benchmarks/vcpu_resource_sweep_2026-06-20.tsv
+columns: codec content_class src width height pixels path effort threads est_min_kb est_typ_kb est_max_kb est_time_ms meas_peak_heap_kb meas_peak_rss_kb meas_vmhwm_kb meas_delta_kb meas_wall_ms meas_user_ms meas_sys_ms bytes ok
+
+# --- FINDINGS (vCPU axis — the dimension estimate_encode does NOT model) ---
+# TIME: zenpng's strategy-parallelism SATURATES at ~3x by just 2 THREADS (e13: 2.8-3.3x@2T,
+#   then FLAT/noisy to 28T; e19 caps ~2.1x). efficiency collapses (140%@2T -> 10%@28T).
+#   The estimate doc's "divide by thread count" is wrong: real wall(N) ≈ wall(1)/min(N, ~3).
+# MEMORY grows STRONGLY with threads — the largest gamma of any zen codec measured:
+#   peak HEAP at 2048^2 e13: 253 MB (1T) -> 482 MB (8T) = +90% (per-strategy precompute_all_filters
+#   + compress/verify buffers, ~3*filtered_size per concurrent strategy). marginal VmHWM delta
+#   grows +10-32% (1->28T). zenpng TRADES ~1.5-2x peak heap for ~3x speedup — a real cost.
+#   => a vCPU-aware peak model MUST be per-codec: jxl lossless heap is thread-INVARIANT, zenpng ~doubles.
+# EST vs MEASURED: working_pred/measured-delta_t1 = 0.69-1.43x (good at >=1MP, intercept-noisy at 256^2);
+#   est_max UNDER-covers measured peak RSS at 256^2 e13 (0.89x) but OK (1.1-1.8x) at >=1MP and e19.
+#   Single photo — content axis (the multi-class spread) still needs the full sweep.
