@@ -5,6 +5,11 @@ All notable changes to zenpng are documented here.
 ## [Unreleased]
 
 ### Added
+- `InternalParams` cross-codec bundle (`__expert`). `zenpng::internal_params::InternalParams`
+  (`compression` + `parallel`, both `Option<_>`) + `EncodeConfig::with_internal_params`,
+  gated behind the new pure-visibility `__expert` feature — mirrors `zenjpeg`'s bundle so
+  one picker model drives every zen codec with the same Option-bundle shape. No new tunables
+  (fields route through existing public setters).
 - `sweep`: trained-scalar-head + compute-budget surface (variant-generation
   playbook patterns 17–18). `sweep::compute_tier(&SweepVariant) -> u8` —
   ordinal compute-cost proxy (PNG's single dial is the compression effort, so

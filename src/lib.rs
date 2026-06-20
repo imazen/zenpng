@@ -51,6 +51,13 @@ mod gamut;
 pub mod heuristics;
 #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
 mod indexed;
+/// Cross-codec uniformity bundle (`__expert`-gated). Mirrors
+/// `zenjpeg`'s `InternalParams` so external pipelines (calibration
+/// sweeps, picker training) can drive every codec the same way. See
+/// [`internal_params::InternalParams`] and
+/// [`EncodeConfig::with_internal_params`].
+#[cfg(feature = "__expert")]
+pub mod internal_params;
 mod optimize;
 mod quantize;
 mod simd;
@@ -84,6 +91,8 @@ pub use indexed::{
     ApngEncodeParams, AutoEncodeResult, QualityGate, encode_apng_auto, encode_apng_indexed,
     encode_auto, encode_indexed,
 };
+#[cfg(feature = "__expert")]
+pub use internal_params::InternalParams;
 #[cfg(feature = "imagequant")]
 pub use quantize::ImagequantQuantizer;
 #[cfg(feature = "quantette")]

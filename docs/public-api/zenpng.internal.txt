@@ -1,5 +1,5 @@
 # zenpng public API — doc(hidden) items and excluded-feature surface
-# excluded features: _dev
+# excluded features: __expert,_dev
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -9,26 +9,29 @@
 
 ## summary
 #
-#   pub modules                                 1
-#   pub types (struct/enum/trait/alias)         4
+#   pub modules                                 2
+#   pub types (struct/enum/trait/alias)         6
 #   pub consts/statics                          1
 #   free functions                             16
-#   inherent methods                           29
-#   struct fields                              12
-#   trait roster entries (type × trait)        33
-#   auto-trait-complete types                   2
+#   inherent methods                           33
+#   struct fields                              16
+#   trait roster entries (type × trait)        36
+#   auto-trait-complete types                   3
 #
 # per-module pub lines:
-#   (root)                           29
+#   (root)                           34
 #   __bench_scan                     31
 #   detect                            3
+#   internal_params                   6
 
-## items (63 lines)
+## items (73 lines)
 
+#[non_exhaustive] pub struct InternalParams [also: internal_params]
 pub const fn __bench_scan::FusedRequest::all() -> Self
 pub fn ApngFrameInfo::assert_fields_are_eq(&self)
 pub fn Compression::assert_fields_are_eq(&self)
 pub fn DowncastFlags::assert_fields_are_eq(&self)
+pub fn EncodeConfig::with_internal_params(self, internal_params::InternalParams) -> Self
 pub fn Filter::assert_fields_are_eq(&self)
 pub fn PhaseStat::clone(&self) -> PhaseStat
 pub fn PhaseStat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -71,11 +74,17 @@ pub fn detect::ProbeError::assert_fields_are_eq(&self)
 pub fn detect::Recommendation::assert_fields_are_eq(&self)
 pub fn encode_rgb8_with_stats(imgref::ImgRef<'_, rgb::formats::rgb::Rgb<u8>>, core::option::Option<&zencodec::metadata::Metadata>, &EncodeConfig, &dyn enough::Stop, &dyn enough::Stop) -> core::result::Result<(alloc::vec::Vec<u8>, PhaseStats), whereat::at::At<PngError>>
 pub fn encode_rgba8_with_stats(imgref::ImgRef<'_, rgb::formats::rgba::Rgba<u8>>, core::option::Option<&zencodec::metadata::Metadata>, &EncodeConfig, &dyn enough::Stop, &dyn enough::Stop) -> core::result::Result<(alloc::vec::Vec<u8>, PhaseStats), whereat::at::At<PngError>>
+pub fn internal_params::InternalParams::clone(&self) -> internal_params::InternalParams
+pub fn internal_params::InternalParams::default() -> internal_params::InternalParams
+pub fn internal_params::InternalParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub mod __bench_scan
+pub mod internal_params
 pub struct PhaseStat
 pub struct PhaseStats
 pub struct __bench_scan::FusedRequest
 pub struct __bench_scan::FusedResult
+pub InternalParams::compression: core::option::Option<Compression>
+pub InternalParams::parallel: core::option::Option<bool>
 pub PhaseStat::best_size: usize
 pub PhaseStat::duration_ns: u64
 pub PhaseStat::evaluations: u32
@@ -88,8 +97,10 @@ pub __bench_scan::FusedRequest::check_opaque: bool
 pub __bench_scan::FusedResult::is_binary_alpha: bool
 pub __bench_scan::FusedResult::is_grayscale: bool
 pub __bench_scan::FusedResult::is_opaque: bool
+pub internal_params::InternalParams::compression: core::option::Option<Compression>
+pub internal_params::InternalParams::parallel: core::option::Option<bool>
 
-## trait impls (18 types)
+## trait impls (19 types)
 
 ApngFrameInfo: TrivialClone
 ApngFrameInput<'a>: TrivialClone
@@ -109,7 +120,8 @@ __bench_scan::FusedResult: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialCl
 detect::ColorType: TrivialClone
 heuristics::DecodeEstimate: TrivialClone
 heuristics::EncodeEstimate: TrivialClone
+internal_params::InternalParams: Clone, Debug, Default
 
 ## auto traits
 
-2 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+3 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe

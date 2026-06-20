@@ -70,6 +70,12 @@ zencodec = []
 # off-grid CICP is an encode error — never a silently mislabeled image).
 cms = ["zenpixels-convert/icc-db"]
 # zennode = ["dep:zennode"]
+# Expert-only cross-codec uniformity knobs. Pure visibility gate (no deps):
+# exposes `InternalParams` + `EncodeConfig::with_internal_params`, mirroring
+# `zenjpeg`'s `__expert` feature so a single picker model can drive every zen
+# codec with one Option-bundle shape. No new tunables — the fields just route
+# through existing public builder setters.
+__expert = []
 _dev = ["archmage/testable_dispatch"]
 # Acknowledged by archmage's `incant!` cfg — kept always-on; no-op for users
 # (we always compile the AVX-512 path so V4x dispatch is available at runtime).
