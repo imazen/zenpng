@@ -455,9 +455,8 @@ impl zencodec::encode::EncoderConfig for PngEncoderConfig {
         let effort = self.config.compression.effort();
         let bpp = image.descriptor().bytes_per_pixel() as u8;
         match crate::heuristics::estimate_encode(image.width(), image.height(), bpp, effort) {
-            Some(e) => ResourceEstimate::new(e.peak_memory_bytes, e.time_ms)
-                .with_peak_range(e.peak_memory_bytes_min, e.peak_memory_bytes_max)
-                .with_output_bytes(e.output_bytes)
+            Some(e) => ResourceEstimate::new(e.peak_memory_bytes, e.time_ms as u64)
+                .with_peak_max(e.peak_memory_bytes_max)
                 .with_threading(crate::heuristics::encode_threading_info(effort))
                 .at_cores(compute.cores()),
             None => ResourceEstimate::conservative(image).at_cores(compute.cores()),

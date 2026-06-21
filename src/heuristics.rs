@@ -191,8 +191,8 @@ pub fn estimate_encode(
 #[must_use]
 pub fn encode_threading_info(effort: u32) -> zencodec::estimate::ThreadingInformation {
     if effort >= 2 {
-        // p = 0.70, saturates ~4 threads, ~3 MB/thread per-strategy working set.
-        zencodec::estimate::ThreadingInformation::parallel(4, 0.70, 3_000_000)
+        // Saturates ~4 threads (one per filter strategy in the screen phase).
+        zencodec::estimate::ThreadingInformation::parallel(4)
     } else {
         zencodec::estimate::ThreadingInformation::SERIAL
     }

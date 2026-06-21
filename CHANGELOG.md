@@ -4,11 +4,16 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
-### QUEUED BREAKING CHANGES
-<!-- Drop when zencodec 0.1.24 publishes. -->
-- Remove the `[patch.crates-io] zencodec = { git, rev }` and re-point the
-  `zencodec` dependency at the published `^0.1.24`. The patch pins zencodec to
-  the unreleased `estimate` API.
+### Changed
+- **deps: migrate to published `zencodec 0.1.24` estimate API; drop the temporary
+  git-rev patch.** Removed the `[patch.crates-io]` zencodec git-rev pin (0f71295)
+  now that `zencodec 0.1.24` is on crates.io. Updated the
+  `estimate_encode_resources` mapping for the refined `ResourceEstimate`:
+  `new(peak, wall_ms: u64)` (was `f32`), `with_peak_max(max)` (the `min` arg is
+  gone), dropped the removed `with_output_bytes`, and migrated
+  `heuristics::encode_threading_info` to the new 1-arg
+  `ThreadingInformation::parallel(max_efficient_threads)` (the `fraction` /
+  `mem-per-thread` args are gone).
 
 ### Added
 - vCPU-aware resource estimation via zencodec's unified `estimate` API:
