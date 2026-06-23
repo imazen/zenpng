@@ -361,6 +361,55 @@ fn quality_to_mpe(quality: f32) -> f32 {
     TABLE[last].1
 }
 
+/// Inverse of [`quality_to_mpe`]'s SSIM2 calibration: map a target SSIMULACRA2
+/// score to the zenpng quality dial that achieves it (per the libjpeg-turbo
+/// anchor table above). zenpng has no native SSIM2 loop, so a [`Fidelity`]
+/// SSIM2 target maps through this in a single pass and
+/// `resolved_target_fidelity` reports the resulting `codec_quality`.
+fn ssim2_to_quality(score: f32) -> f32 {
+    // (ssim2, quality) — the SSIM2 column of `quality_to_mpe`'s table, inverted
+    // and sorted ascending by SSIM2.
+    const TABLE: [(f32, f32); 11] = [
+        (59.2, 30.0),
+        (63.9, 40.0),
+        (68.4, 50.0),
+        (72.0, 60.0),
+        (75.3, 70.0),
+        (78.3, 75.0),
+        (81.2, 80.0),
+        (84.3, 85.0),
+        (87.7, 90.0),
+        (91.5, 95.0),
+        (95.9, 99.0),
+    ];
+    if score <= TABLE[0].0 {
+        return TABLE[0].1;
+    }
+    let last = TABLE.len() - 1;
+    if score >= TABLE[last].0 {
+        return 100.0;
+    }
+    for i in 0..last {
+        let (s_lo, q_lo) = TABLE[i];
+        let (s_hi, q_hi) = TABLE[i + 1];
+        if score <= s_hi {
+            let t = (score - s_lo) / (s_hi - s_lo);
+            return q_lo + t * (q_hi - q_lo);
+        }
+    }
+    100.0
+}
+
+/// Coarse, uncalibrated map from a butteraugli max-norm distance (lower is
+/// better) to the zenpng quality dial. zenpng has no native butteraugli model
+/// (its lossy path is palette quantization), so this exists only so a
+/// butteraugli [`Fidelity`] target is honored rather than dropped;
+/// `resolved_target_fidelity` reports the resulting `codec_quality`.
+fn butteraugli_to_quality(distance: f32) -> f32 {
+    // d≈0.5 (near-visually-lossless) → ~q95; +1.0 distance ≈ −10 quality.
+    (95.0 - (distance - 0.5) * 10.0).clamp(30.0, 100.0)
+}
+
 /// Apply threading policy to PNG encode config fields.
 fn apply_threading(config: &mut crate::encode::EncodeConfig, policy: zencodec::ThreadingPolicy) {
     if policy.is_parallel() {
@@ -444,6 +493,46 @@ impl zencodec::encode::EncoderConfig for PngEncoderConfig {
 
     fn is_lossless(&self) -> Option<bool> {
         Some(self.lossless)
+    }
+
+    /// Honor a [`Fidelity`](zencodec::encode::Fidelity) target as natively as
+    /// PNG allows.
+    ///
+    /// - `Lossless` → PNG's native lossless mode (the default).
+    /// - `Lossy(CodecSpecificQuality(q))` → the lossy palette quality dial.
+    /// - `Lossy(ApproxSsim2(s))` → mapped onto the quality dial via the
+    ///   inverse SSIM2 calibration ([`ssim2_to_quality`]).
+    /// - `Lossy(ApproxButteraugli(d))` → coarse-mapped via
+    ///   [`butteraugli_to_quality`] (no native PNG butteraugli model).
+    ///
+    /// The lossy path is palette quantization (feature-gated); with no
+    /// quantizer the quality is inert but the resolved report stays consistent.
+    /// `resolved_target_fidelity` reports a lossy target as `codec_quality`,
+    /// honest that no metric convergence happened.
+    fn with_fidelity(self, fidelity: zencodec::encode::Fidelity) -> Self {
+        use zencodec::encode::{Fidelity, LossyTarget};
+        match fidelity {
+            Fidelity::Lossless => self.with_lossless(true),
+            Fidelity::Lossy(LossyTarget::CodecSpecificQuality(q)) => {
+                self.with_lossless(false).with_generic_quality(q)
+            }
+            Fidelity::Lossy(LossyTarget::ApproxSsim2(s)) => self
+                .with_lossless(false)
+                .with_generic_quality(ssim2_to_quality(s)),
+            Fidelity::Lossy(LossyTarget::ApproxButteraugli(d)) => self
+                .with_lossless(false)
+                .with_generic_quality(butteraugli_to_quality(d)),
+            // `Fidelity` / `LossyTarget` are `#[non_exhaustive]`.
+            _ => self.with_lossless(false).with_generic_quality(85.0),
+        }
+    }
+
+    fn resolved_target_fidelity(&self) -> Option<zencodec::encode::Fidelity> {
+        use zencodec::encode::Fidelity;
+        if self.lossless {
+            return Some(Fidelity::Lossless);
+        }
+        self.quality.map(Fidelity::codec_quality)
     }
 
     fn estimate_encode_resources(
@@ -3687,6 +3776,40 @@ mod tests {
             desc.contains(&PixelDescriptor::BGRX8_SRGB),
             "BGRX8_SRGB must be in supported_descriptors"
         );
+    }
+
+    #[test]
+    fn fidelity_targets_roundtrip() {
+        use zencodec::encode::{EncoderConfig, Fidelity};
+
+        // PNG is lossless by default.
+        let ll = PngEncoderConfig::new().with_fidelity(Fidelity::Lossless);
+        assert_eq!(ll.resolved_target_fidelity(), Some(Fidelity::Lossless));
+        assert_eq!(ll.is_lossless(), Some(true));
+
+        // Codec quality dial round-trips as itself (and switches to lossy).
+        let cq = PngEncoderConfig::new().with_fidelity(Fidelity::codec_quality(70.0));
+        assert_eq!(
+            cq.resolved_target_fidelity(),
+            Some(Fidelity::codec_quality(70.0))
+        );
+        assert_eq!(cq.is_lossless(), Some(false));
+
+        // SSIM2 + butteraugli map onto the quality dial (no native loop) and are
+        // reported as the codec_quality they resolved to.
+        let s2 = PngEncoderConfig::new().with_fidelity(Fidelity::ssim2(85.0));
+        assert_eq!(
+            s2.resolved_target_fidelity(),
+            Some(Fidelity::codec_quality(ssim2_to_quality(85.0)))
+        );
+        assert_eq!(s2.is_lossless(), Some(false));
+
+        let bt = PngEncoderConfig::new().with_fidelity(Fidelity::butteraugli(1.5));
+        assert_eq!(
+            bt.resolved_target_fidelity(),
+            Some(Fidelity::codec_quality(butteraugli_to_quality(1.5)))
+        );
+        assert_eq!(bt.is_lossless(), Some(false));
     }
 
     #[test]
