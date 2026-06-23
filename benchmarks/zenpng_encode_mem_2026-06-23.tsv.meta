@@ -1,0 +1,11 @@
+zenpng encode peak-memory sweep (admission-safety recalibration)
+date_utc: 2026-06-23
+parent_commit: 246d7c2c7ecb9652af9842858e4e74e117dfc707
+host: lilith (WSL2, kernel 6.18.33.1-microsoft-standard-WSL2)
+probe: examples/mem_probe_encode.rs --release
+command: scripts (scratch) png_sweep.sh -> mem_probe_encode <bin> <w> <h> png <effort> 85 [est] <threads>
+env: GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072 ; flock /tmp/zen-build.lock run-heavy
+grid: size {256,512,1024,2048} x effort {1,6,13,19,24,30} x content {img,shot} x threads {1,4}, q85, RGB8 (96 cells)
+metric: VmHWM total + marginal; one process per cell
+corpus: photo (img_<S>.bin) + screenshot (shot_<S>.bin) raw RGB8 fixtures
+result: 29/96 cells under-predicted by the pre-fix model (4-thread band at e6-24 all sizes; Maniac e30 all sizes incl. single-thread). Recalibrated FIXED 6->8 MiB + raised anchors; 0 under after fit.

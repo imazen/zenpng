@@ -4,6 +4,26 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- **encode peak-memory estimate is now admission-gating-safe (never under-
+  predicts).** Admission control gates on `EncodeEstimate::peak_memory_bytes`
+  (the `typ` field), so it must be a safe upper bound. A VmHWM re-sweep
+  (`mem_probe_encode`, sizes {256,512,1024,2048} × effort {1,6,13,19,24,30} ×
+  {photo,screenshot} × {1,4} threads, RGB8) found the 2026-06-14 anchors under-
+  predicted **29 / 96 cells** in two bands: (1) the **default 4-thread** filter-
+  strategy screening added working set that `ResourceEstimate::at_cores` does NOT
+  fold into peak memory (worst `256² e13 4-thread` only 71 % covered), and (2)
+  **Maniac (e30)** zopfli/FullOptimal buffers under-predicted at every size, even
+  single-thread (`2048² e30` 510→ needs 522 MiB). Raised `ENCODE_FIXED_OVERHEAD`
+  6→8 MiB and `ENCODE_BPP_ANCHORS` to `(1,18)(6,57)(13,102)(19,124)(24,125)
+  (30,180)` with ~10 % margin: post-fit worst safety ratio 1.04, **0 cells
+  under-predicted**, loosest 2.26× (the est may be loose, never short). Added a
+  `typ_never_under_predicts_measured_peak` regression test pinned to the measured
+  VmHWM peaks. heaptrack corroborated peak-heap≈VmHWM on 3 cells. Provenance:
+  `benchmarks/zenpng_encode_mem_2026-06-23.tsv`. Also commits the
+  `examples/mem_probe_encode.rs` encode probe used for the sweep. `_max` (1.8×)
+  ceiling and the effort-anchor / alpha / 16-bit structure are unchanged.
+
 ### Changed
 - **deps: migrate to published `zencodec 0.1.24` estimate API; drop the temporary
   git-rev patch.** Removed the `[patch.crates-io]` zencodec git-rev pin (0f71295)

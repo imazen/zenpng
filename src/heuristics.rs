@@ -14,7 +14,7 @@
 //! ## Model
 //!
 //! ```text
-//! encode_peak = input + ENCODE_FIXED + encode_bpp(effort, alpha, depth) · pixels
+//! encode_peak = ENCODE_FIXED + input + encode_bpp(effort, alpha, depth) · pixels
 //! encode_time = encode_us_per_px(effort) · pixels   (× alpha factor)
 //! decode_peak = DECODE_FIXED + DECODE_BPP · pixels
 //! decode_time = DECODE_US_PER_PX · pixels
@@ -23,26 +23,49 @@
 //! Both `encode_bpp` and `encode_us_per_px` rise with effort and are
 //! interpolated from measured anchors.
 //!
-//! ## Calibration (2026-06-14)
+//! `peak_memory_bytes` (the `typ` field) is the **admission-gating** value, so
+//! it MUST be a safe upper bound that never under-predicts: an under-estimate
+//! admits a job that then OOMs. It is fine for it to be loose/conservative.
+//! The `_max` (1.8×) field is a looser ceiling and is NOT the gate.
 //!
-//! Measured marginal working set (`png_probe` `VmHWM` delta around the codec
-//! call) + wall + user/sys CPU (`/proc/self/stat`, `with_parallel(false)`),
-//! one process per op, over 5 PNG content classes × 256–1024 px × effort
-//! {1,6,13,19,24} (+ {27,30} anchors) × rgb/rgba × 8/16-bit. Provenance:
-//! `benchmarks/png_resource_{main,higheffort,alphadepth}_2026-06-14.tsv`;
-//! harness `scripts/png_resource_calibrate.py`.
+//! ## Calibration (2026-06-23, encode VmHWM re-sweep — admission-safety)
 //!
-//! Measured (8-bit RGB, single-thread; time is linear in pixels):
+//! The 2026-06-14 anchors were a single-thread, ≤1024 px fit and **under-
+//! predicted in two bands** — a [`zencodec`] `ResourceEstimate::at_cores` scales
+//! only *wall time*, NOT peak memory, so any per-thread working-set growth must
+//! live in this model directly:
+//!   1. **4-thread filter-strategy screening** (the default at effort ≥ 2) added
+//!      unmodeled working set at *every* size — worst `256² e13 t4` was only
+//!      71 % covered (a 64.1 B/px measured vs 63 modelled at 2048² was the tip).
+//!   2. **Maniac (e30)** zopfli/FullOptimal buffers under-predicted at all sizes,
+//!      even single-thread (`2048² e30 t1` measured 522 MiB vs 510 modelled).
+//! 29 / 96 swept cells under-predicted. The anchors + `ENCODE_FIXED_OVERHEAD`
+//! below were re-fit to be a safe upper bound over the **default (4-thread)
+//! peak** with a ~10 % margin: post-fit worst safety ratio 1.04, 0 cells under,
+//! loosest 2.26× (acceptable — the est may be loose, never short).
 //!
-//! | effort        | 1    | 6    | 13   | 19   | 24   | 27   | 30   |
-//! |---------------|------|------|------|------|------|------|------|
-//! | mem B/px      | 18   | 46   | 60   | 91   | 95   | ~95  | ~120 |
-//! | time µs/px    | 0.03 | 0.17 | 0.54 | 2.47 | 6.46 | ~10  | ~125 |
+//! Method: `mem_probe_encode` `VmHWM`-marginal + total, one process per cell,
+//! `GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072`, over sizes
+//! {256,512,1024,2048} × effort {1,6,13,19,24,30} × content {photo,screenshot}
+//! × threads {1,4}, q85. heaptrack corroborated peak heap ≈ `VmHWM` on 3 cells.
+//! Provenance: `benchmarks/zenpng_encode_mem_2026-06-23.tsv`. The older
+//! `benchmarks/png_resource_{main,higheffort,alphadepth}_2026-06-14.tsv` (single-
+//! thread, with the alpha/16-bit deltas) still backs the time + extra-channel
+//! terms.
+//!
+//! `bpp` here is the **total** `typ` B/px envelope over the swept grid (8-bit
+//! RGB; the binding cell per effort is small-size 4-thread, where near-fixed
+//! thread overhead inflates per-px). Time is single-thread, linear in pixels:
+//!
+//! | effort        | 1    | 6    | 13   | 19   | 24   | 30   |
+//! |---------------|------|------|------|------|------|------|
+//! | model B/px    | 18   | 57   | 102  | 124  | 125  | 180  |
+//! | time µs/px    | 0.03 | 0.17 | 0.54 | 2.47 | 6.46 | ~125 |
 //!
 //! Decode: ~5 B/px, ~0.006 µs/px. Alpha (4th channel): +23 B/px, +35 %
 //! encode time. 16-bit: +16 B/px (time ≈ unchanged). Efforts 31–200
-//! (`Brag`/`Minutes`) are much slower still and unmeasured — the e30 value
-//! is a lower bound there.
+//! (`Brag`/`Minutes`) are much slower/heavier still and unmeasured — the e30
+//! value is a lower bound there.
 
 /// Resource estimate for a PNG encode. `#[non_exhaustive]`.
 #[derive(Debug, Clone, Copy)]
@@ -74,18 +97,28 @@ pub struct DecodeEstimate {
     pub time_ms: f32,
 }
 
-// ── Calibrated constants (2026-06-14, png_probe marginal working set) ──
+// ── Calibrated constants (2026-06-23, encode VmHWM admission-safe re-sweep) ──
 
-const ENCODE_FIXED_OVERHEAD: u64 = 6 << 20;
-/// `(effort, B/px)` — encoder working set rises with compression level
-/// (more filter strategies + brute-force / Zopfli search buffers).
+/// Near-fixed encode overhead: process/lib baseline + the parallel filter-
+/// strategy screen's per-thread thread-stack + scratch setup that doesn't scale
+/// with pixels (exposed by the small-size 4-thread cells). Raised 6→8 MiB so the
+/// total `typ` covers the 256² 4-thread peak.
+const ENCODE_FIXED_OVERHEAD: u64 = 8 << 20;
+/// `(effort, B/px)` of the **total** `typ` working term — encoder working set
+/// rises with compression level (more filter strategies + brute-force / Zopfli
+/// search buffers) AND with the default 4-thread filter-strategy screening
+/// (which `at_cores` does NOT fold into peak memory — so it lives here). These
+/// are SAFE upper bounds over the swept `{256,512,1024,2048}px × {1,4}thread ×
+/// {photo,screenshot}` grid + ~10 % margin: the gate must never under-predict.
+/// (2026-06-23: raised from 18/46/60/91/95/120 — those under-predicted the
+/// 4-thread and Maniac peaks; see the module-level calibration note.)
 const ENCODE_BPP_ANCHORS: [(f64, f64); 6] = [
     (1.0, 18.0),
-    (6.0, 46.0),
-    (13.0, 60.0),
-    (19.0, 91.0),
-    (24.0, 95.0),
-    (30.0, 120.0),
+    (6.0, 57.0),
+    (13.0, 102.0),
+    (19.0, 124.0),
+    (24.0, 125.0),
+    (30.0, 180.0),
 ];
 /// `(effort, µs/px)` — single-thread encode time, linear in pixels.
 const ENCODE_TIME_ANCHORS: [(f64, f64); 7] = [
@@ -267,5 +300,47 @@ mod tests {
     fn overflow_returns_none() {
         assert!(estimate_encode(u32::MAX, u32::MAX, 8, 13).is_none());
         assert!(estimate_decode(u32::MAX, u32::MAX, 8).is_none());
+    }
+
+    /// Admission-safety gate: `peak_memory_bytes` (the `typ` field the gate
+    /// reads) MUST be a safe upper bound — it must never under-predict a real
+    /// encode peak, or admission would let an OOM job through.
+    ///
+    /// Anchors are the **measured `VmHWM`** worst-cell-per-`(size, effort)`
+    /// (max over content × {1,4}-thread) from the 2026-06-23 re-sweep —
+    /// `benchmarks/zenpng_encode_mem_2026-06-23.tsv`, `mem_probe_encode`,
+    /// 8-bit RGB. Several of these (the 4-thread + Maniac cells) under-predicted
+    /// before the recalibration; this test fails if a future change drops the
+    /// anchors back below them. These are recorded measurements, not invented
+    /// thresholds — do not "fix" a failure by raising the anchor here; raise the
+    /// model (and re-sweep) instead.
+    #[test]
+    fn typ_never_under_predicts_measured_peak() {
+        // (w, h, effort, measured_max_vmhwm_bytes)
+        const MEASURED: &[(u32, u32, u32, u64)] = &[
+            (256, 256, 6, 10_211_328),     // 4-thread, was 0.93× (under)
+            (256, 256, 13, 14_647_296),    // 4-thread, was 0.71× (worst under)
+            (256, 256, 19, 15_945_728),    // 4-thread, was 0.78× (under)
+            (256, 256, 24, 15_630_336),    // 4-thread, was 0.81× (under)
+            (256, 256, 30, 19_275_776),    // Maniac, was 0.74× (under)
+            (512, 512, 13, 28_991_488),    // 4-thread, was 0.79× (under)
+            (512, 512, 19, 37_847_040),    // 4-thread, was 0.82× (under)
+            (512, 512, 30, 42_430_464),    // Maniac t1, was 0.91× (under)
+            (1024, 1024, 6, 61_095_936),   // 4-thread, was 0.94× (under)
+            (1024, 1024, 13, 83_779_584),  // 4-thread, was 0.86× (under)
+            (1024, 1024, 30, 140_787_712), // Maniac t1, was 0.96× (under)
+            (2048, 2048, 6, 235_016_192),  // 4-thread, was 0.90× (under)
+            (2048, 2048, 13, 317_046_784), // 4-thread, was 0.85× (under)
+            (2048, 2048, 30, 535_117_824), // Maniac t1, was 0.98× (under)
+        ];
+        for &(w, h, effort, measured) in MEASURED {
+            let est = estimate_encode(w, h, 3, effort).unwrap().peak_memory_bytes;
+            assert!(
+                est >= measured,
+                "UNSAFE under-prediction: {w}×{h} effort {effort}: model typ {est} \
+                 < measured VmHWM {measured} (ratio {:.3})",
+                est as f64 / measured as f64,
+            );
+        }
     }
 }
