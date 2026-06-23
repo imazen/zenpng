@@ -1735,6 +1735,11 @@ impl zencodec::decode::DecoderConfig for PngDecoderConfig {
         let bpp = image.descriptor().bytes_per_pixel() as u8;
         match crate::heuristics::estimate_decode(image.width(), image.height(), bpp) {
             Some(e) => ResourceEstimate::new(e.peak_memory_bytes, e.time_ms as u64)
+                // A format negotiation that needs `pixels.convert_to(target)` (codec.rs)
+                // holds the native decode buffer AND the converted output concurrently —
+                // the conservative peak adds the output buffer. The common path
+                // (native == target, no conversion) is `typ`.
+                .with_peak_max(e.peak_memory_bytes.saturating_add(e.output_bytes))
                 .with_threading(ThreadingInformation::SERIAL)
                 .at_cores(compute.cores()),
             None => ResourceEstimate::conservative(image).at_cores(compute.cores()),
