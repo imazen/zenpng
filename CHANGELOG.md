@@ -16,6 +16,18 @@ All notable changes to zenpng are documented here.
   `mem-per-thread` args are gone).
 
 ### Added
+- honor `ResourceLimits::prefer_fallible_allocations` (`AllocPreference`, 3-mode
+  per-site) at untrusted decode allocations. Big, untrusted-sized full-image
+  buffers default to the fallible `try_reserve` path (graceful
+  `PngError::LimitExceeded` on OOM); small bounded per-row scratch defaults to
+  the faster infallible `vec!`. `Fallible`/`Infallible` force one path
+  everywhere; `CodecDefault` (the default) keeps each site's own default, so the
+  direct `decode()` API is unchanged. New internal `alloc_util` helpers
+  (`resolve_fallible` / `alloc_zeroed` / `vec_with_capacity`).
+- implement `estimate_decode_resources` on `PngDecoderConfig` (overrides the
+  `zencodec::DecoderConfig` default) — maps `heuristics::estimate_decode` to a
+  core-adjusted `ResourceEstimate` with `ThreadingInformation::SERIAL` (PNG
+  decode is a serial DEFLATE inflate).
 - vCPU-aware resource estimation via zencodec's unified `estimate` API:
   `PngEncoderConfig::estimate_encode_resources(&ImageCharacteristics, &ComputeEnvironment)`
   (overrides the `zencodec::EncoderConfig` default) returns a core-adjusted

@@ -6,7 +6,6 @@ pub(crate) mod postprocess;
 pub(crate) mod row;
 
 use alloc::borrow::Cow;
-use alloc::vec;
 use alloc::vec::Vec;
 
 use enough::Stop;
@@ -236,6 +235,7 @@ pub(crate) fn decode_png(
         // strip headers + copy + unfilter.
         let first_idat_pos = reader.first_idat_pos();
         let skip_crc = limits.skip_critical_chunk_crc;
+        let alloc_pref = limits.alloc_pref;
 
         let skip_adler = limits.skip_decompression_checksum;
         if let Some(all_pixels) = try_decode_stored(
@@ -247,6 +247,7 @@ pub(crate) fn decode_png(
             stride,
             raw_row_bytes,
             bpp,
+            alloc_pref,
             cancel,
         ) {
             let all_pixels = all_pixels?;
@@ -273,12 +274,14 @@ pub(crate) fn decode_png(
             });
         }
 
-        // Standard streaming path
-        let mut all_pixels = vec![0u8; total];
+        // Standard streaming path. The full-image buffer is sized from the
+        // (untrusted) IHDR → default fallible; the one-row scratch is bounded
+        // by the row width → default infallible (fast single calloc).
+        let mut all_pixels = crate::alloc_util::alloc_zeroed(alloc_pref, true, total)?;
 
-        // Row 0: prev is zeros (already zeroed by vec![0u8; total])
+        // Row 0: prev is zeros (already zeroed by alloc_zeroed)
         if h > 0 {
-            let zeros = vec![0u8; raw_row_bytes];
+            let zeros = crate::alloc_util::alloc_zeroed(alloc_pref, false, raw_row_bytes)?;
             match reader.next_raw_row_direct(&mut all_pixels[..raw_row_bytes], &zeros) {
                 Some(Ok(())) => {}
                 Some(Err(e)) => return Err(e),
@@ -341,13 +344,22 @@ pub(crate) fn decode_png(
     }
 
     // General path for all other formats
+    let alloc_pref = limits.alloc_pref;
     let fmt = OutputFormat::from_ihdr(&ihdr, reader.ancillary())?;
     let pixel_bytes = fmt.channels * fmt.bytes_per_channel;
     let out_row_bytes = w * pixel_bytes;
 
-    let mut all_pixels = Vec::with_capacity(out_row_bytes * h);
+    let out_total = out_row_bytes.checked_mul(h).ok_or_else(|| {
+        at!(PngError::InvalidInput(
+            "image too large for this platform".into()
+        ))
+    })?;
+    // Full-image accumulator sized from the (untrusted) IHDR → default
+    // fallible; the single raw-row copy is bounded by the row width → default
+    // infallible.
+    let mut all_pixels = crate::alloc_util::vec_with_capacity(alloc_pref, true, out_total)?;
     let mut row_buf = Vec::new();
-    let mut raw_copy = vec![0u8; ihdr.raw_row_bytes()?];
+    let mut raw_copy = crate::alloc_util::alloc_zeroed(alloc_pref, false, ihdr.raw_row_bytes()?)?;
 
     while let Some(result) = reader.next_raw_row() {
         let raw = result?;
@@ -414,6 +426,7 @@ fn try_decode_stored(
     stride: usize, // raw_row_bytes + 1 (filter byte)
     raw_row_bytes: usize,
     bpp: usize,
+    alloc_pref: zencodec::AllocPreference,
     cancel: &dyn Stop,
 ) -> Option<crate::error::Result<Vec<u8>>> {
     // Collect IDAT chunk payload slices (the zlib stream, possibly split across chunks).
@@ -461,14 +474,17 @@ fn try_decode_stored(
     let zlib: &[u8] = if idat_slices.len() == 1 {
         idat_slices[0]
     } else {
-        zlib_owned = {
-            let total: usize = idat_slices.iter().map(|s| s.len()).sum();
-            let mut v = Vec::with_capacity(total);
-            for s in &idat_slices {
-                v.extend_from_slice(s);
-            }
-            v
+        // Concatenated IDAT payloads — sized from (untrusted) chunk lengths →
+        // default fallible.
+        let total: usize = idat_slices.iter().map(|s| s.len()).sum();
+        let mut v = match crate::alloc_util::vec_with_capacity(alloc_pref, true, total) {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e)),
         };
+        for s in &idat_slices {
+            v.extend_from_slice(s);
+        }
+        zlib_owned = v;
         &zlib_owned
     };
 
@@ -554,11 +570,20 @@ fn try_decode_stored(
         )))));
     }
 
+    // Full-image buffer sized from (untrusted) IHDR dimensions → default
+    // fallible; the one-row `zeros` scratch is bounded by the row width →
+    // default infallible.
     let total_pixels = raw_row_bytes * height;
-    let mut all_pixels = vec![0u8; total_pixels];
+    let mut all_pixels = match crate::alloc_util::alloc_zeroed(alloc_pref, true, total_pixels) {
+        Ok(v) => v,
+        Err(e) => return Some(Err(e)),
+    };
 
     let mut cursor = SpanCursor::new(&spans);
-    let zeros = vec![0u8; raw_row_bytes];
+    let zeros = match crate::alloc_util::alloc_zeroed(alloc_pref, false, raw_row_bytes) {
+        Ok(v) => v,
+        Err(e) => return Some(Err(e)),
+    };
 
     for y in 0..height {
         // Read filter byte
@@ -673,6 +698,7 @@ mod tests {
     use crate::chunk::ihdr::Ihdr;
     use crate::decoder::postprocess::scale_to_8bit;
     use crate::decoder::row::unfilter_row;
+    use alloc::vec;
     use enough::Unstoppable;
     use imgref::ImgVec;
     use rgb::{Gray, Rgb, Rgba};

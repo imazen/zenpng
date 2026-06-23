@@ -1637,6 +1637,21 @@ impl zencodec::decode::DecoderConfig for PngDecoderConfig {
         &PNG_DECODE_CAPS
     }
 
+    fn estimate_decode_resources(
+        &self,
+        image: &zencodec::estimate::ImageCharacteristics,
+        compute: &zencodec::estimate::ComputeEnvironment,
+    ) -> zencodec::estimate::ResourceEstimate {
+        use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
+        let bpp = image.descriptor().bytes_per_pixel() as u8;
+        match crate::heuristics::estimate_decode(image.width(), image.height(), bpp) {
+            Some(e) => ResourceEstimate::new(e.peak_memory_bytes, e.time_ms as u64)
+                .with_threading(ThreadingInformation::SERIAL)
+                .at_cores(compute.cores()),
+            None => ResourceEstimate::conservative(image).at_cores(compute.cores()),
+        }
+    }
+
     fn job<'a>(self) -> Self::Job<'a> {
         PngDecodeJob {
             config: self,
@@ -1800,6 +1815,7 @@ impl PngDecoder<'_> {
             max_memory_bytes: limits.max_memory_bytes,
             skip_decompression_checksum: true,
             skip_critical_chunk_crc: true,
+            alloc_pref: limits.prefer_fallible_allocations,
         };
         apply_decode_policy(config, self.policy.as_ref())
     }
@@ -1941,6 +1957,7 @@ fn push_decoder_native<'a>(
         max_memory_bytes: limits.max_memory_bytes,
         skip_decompression_checksum: true,
         skip_critical_chunk_crc: true,
+        alloc_pref: limits.prefer_fallible_allocations,
     };
     let png_config = apply_decode_policy(png_config, job.policy.as_ref());
 
@@ -2126,6 +2143,7 @@ impl<'a> PngStreamingDecoder<'a> {
             max_memory_bytes: effective_limits.max_memory_bytes,
             skip_decompression_checksum: true,
             skip_critical_chunk_crc: true,
+            alloc_pref: effective_limits.prefer_fallible_allocations,
         };
         let png_config = apply_decode_policy(png_config, policy);
 
@@ -2280,6 +2298,7 @@ impl PngAnimationFrameDecoder {
             max_memory_bytes: config.limits.max_memory_bytes,
             skip_decompression_checksum: true,
             skip_critical_chunk_crc: true,
+            alloc_pref: config.limits.prefer_fallible_allocations,
         };
 
         // Create ApngDecoder once and save its state for O(1) resumption.
@@ -4140,6 +4159,88 @@ mod tests {
         fn assert_traits<T: Clone + Send + Sync>() {}
         assert_traits::<PngEncoderConfig>();
     }
+
+    /// Decoding with `AllocPreference::Fallible` (the `try_reserve` path)
+    /// must produce byte-identical pixels to the default infallible path.
+    #[test]
+    fn fallible_alloc_decode_matches_default() {
+        use zencodec::{AllocPreference, ResourceLimits};
+
+        let (w, h) = (64usize, 48usize);
+
+        // Decode `encoded` under the given AllocPreference and return the raw
+        // decoded bytes (format-agnostic).
+        let decode_bytes = |encoded: &[u8], pref: Option<AllocPreference>| -> Vec<u8> {
+            let job = PngDecoderConfig::new().job();
+            let job = match pref {
+                Some(p) => {
+                    job.with_limits(ResourceLimits::none().with_prefer_fallible_allocations(p))
+                }
+                None => job,
+            };
+            let out = job
+                .decoder(Cow::Borrowed(encoded), &[])
+                .unwrap()
+                .decode()
+                .unwrap();
+            assert_eq!(out.width(), w as u32);
+            assert_eq!(out.height(), h as u32);
+            out.into_buffer().copy_to_contiguous_bytes()
+        };
+
+        // All three modes must agree, for the same encoded input.
+        let assert_all_modes_agree = |encoded: &[u8]| {
+            let default = decode_bytes(encoded, None); // CodecDefault
+            let fallible = decode_bytes(encoded, Some(AllocPreference::Fallible));
+            let infallible = decode_bytes(encoded, Some(AllocPreference::Infallible));
+            assert_eq!(
+                default, fallible,
+                "Fallible decode must be byte-identical to the default decode"
+            );
+            assert_eq!(
+                default, infallible,
+                "Infallible decode must be byte-identical to the default decode"
+            );
+        };
+
+        // (1) RGB8, no tRNS → the passthrough fast path (big `alloc_zeroed`
+        //     buffer + per-row scratch).
+        let rgb8: Vec<Rgb<u8>> = (0..w * h)
+            .map(|i| Rgb {
+                r: (i % 251) as u8,
+                g: ((i * 7) % 253) as u8,
+                b: ((i * 13) % 249) as u8,
+            })
+            .collect();
+        let enc8 = PngEncoderConfig::new()
+            .encode_rgb8(imgref::ImgVec::new(rgb8, w, h).as_ref())
+            .unwrap();
+        assert_all_modes_agree(enc8.data());
+
+        // (2) RGB16 → the general path (`vec_with_capacity` accumulator +
+        //     per-row raw copy), distinct from the 8-bit passthrough.
+        let rgb16: Vec<Rgb<u16>> = (0..w * h)
+            .map(|i| Rgb {
+                r: ((i * 257) % 65521) as u16,
+                g: ((i * 1031) % 65519) as u16,
+                b: ((i * 2053) % 65497) as u16,
+            })
+            .collect();
+        let enc16 = PngEncoderConfig::new()
+            .encode_rgb16(imgref::ImgVec::new(rgb16, w, h).as_ref())
+            .unwrap();
+        assert_all_modes_agree(enc16.data());
+    }
+
+    // NOTE: an end-to-end "enormous IHDR under Fallible returns LimitExceeded"
+    // test is intentionally omitted here. PNG IHDR dimensions are u32, so the
+    // largest buffer a crafted header can demand is bounded
+    // (65535×65535×8 ≈ 34 GB) — small enough that a box with swap may actually
+    // satisfy the `try_reserve`, which would make the test flaky on this shared
+    // workstation. The graceful-OOM behaviour is instead covered
+    // deterministically at the helper level by
+    // `alloc_util::tests::alloc_zeroed_fallible_oom_returns_err`
+    // (requests `usize::MAX / 2`, which no allocator can satisfy).
 
     #[test]
     fn decoding_clone_send_sync() {

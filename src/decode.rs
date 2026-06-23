@@ -233,6 +233,15 @@ pub struct PngDecodeConfig {
     pub skip_decompression_checksum: bool,
     /// Skip CRC verification on critical chunks (IHDR, PLTE, IDAT).
     pub skip_critical_chunk_crc: bool,
+    /// Caller preference for allocation fallibility, applied per call site.
+    ///
+    /// Internal carrier (`pub(crate)`): the zencodec decode path sets it from
+    /// [`ResourceLimits::prefer_fallible_allocations`](zencodec::ResourceLimits::prefer_fallible_allocations);
+    /// the direct [`decode`] API leaves it
+    /// [`CodecDefault`](zencodec::AllocPreference::CodecDefault), so each
+    /// allocation site keeps its own default (big untrusted buffers fallible,
+    /// small bounded scratch infallible). See [`crate::alloc_util`].
+    pub(crate) alloc_pref: zencodec::AllocPreference,
 }
 
 impl PngDecodeConfig {
@@ -269,6 +278,7 @@ impl PngDecodeConfig {
             max_memory_bytes: None,
             skip_decompression_checksum: true,
             skip_critical_chunk_crc: true,
+            alloc_pref: zencodec::AllocPreference::CodecDefault,
         }
     }
 
@@ -295,6 +305,7 @@ impl PngDecodeConfig {
             max_memory_bytes: None,
             skip_decompression_checksum: false,
             skip_critical_chunk_crc: false,
+            alloc_pref: zencodec::AllocPreference::CodecDefault,
         }
     }
 
@@ -364,6 +375,7 @@ impl Default for PngDecodeConfig {
             max_memory_bytes: Some(Self::DEFAULT_MAX_MEMORY),
             skip_decompression_checksum: true,
             skip_critical_chunk_crc: true,
+            alloc_pref: zencodec::AllocPreference::CodecDefault,
         }
     }
 }

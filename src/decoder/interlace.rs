@@ -111,9 +111,15 @@ pub(crate) fn decode_interlaced(
     let width = ihdr.width;
     let height = ihdr.height;
 
-    // Allocate final output image
+    // Allocate final output image. Sized from the (untrusted) IHDR
+    // dimensions → default fallible.
     let out_row_bytes = width as usize * fmt.channels * fmt.bytes_per_channel;
-    let mut final_pixels = vec![0u8; out_row_bytes * height as usize];
+    let final_total = out_row_bytes.checked_mul(height as usize).ok_or_else(|| {
+        at!(PngError::InvalidInput(
+            "image too large for this platform".into()
+        ))
+    })?;
+    let mut final_pixels = crate::alloc_util::alloc_zeroed(config.alloc_pref, true, final_total)?;
 
     // Create IDAT source and decompressor.
     // The capacity must be at least as large as the widest pass stride,

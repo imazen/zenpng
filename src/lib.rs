@@ -37,6 +37,7 @@ extern crate std;
 
 whereat::define_at_crate_info!();
 
+mod alloc_util;
 mod chunk;
 mod codec;
 mod decode;
