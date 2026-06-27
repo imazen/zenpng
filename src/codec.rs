@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use whereat::{At, at};
 use zencodec::decode::{AnimationFrame, DecodeCapabilities, DecodeOutput, OutputInfo};
 use zencodec::encode::{EncodeCapabilities, EncodeOutput};
-use zencodec::{ImageFormat, ImageInfo, Metadata, ResourceLimits};
+use zencodec::{CodecError, ImageFormat, ImageInfo, Metadata, ResourceLimits};
 use zenpixels::{Pixel, PixelDescriptor, PixelSlice, PixelSliceMut};
 
 use crate::decode::PngDecodeConfig;
@@ -152,11 +152,11 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Rgb<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::EncoderConfig;
         self.clone()
             .job()
-            .encoder()?
-            .encode(PixelSlice::from(img).erase())
+            .into_png_encoder()
+            .encode_inner(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode RGBA8 pixels in one call.
@@ -164,11 +164,11 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Rgba<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::EncoderConfig;
         self.clone()
             .job()
-            .encoder()?
-            .encode(PixelSlice::from(img).erase())
+            .into_png_encoder()
+            .encode_inner(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode Gray8 pixels in one call.
@@ -176,11 +176,11 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Gray<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::EncoderConfig;
         self.clone()
             .job()
-            .encoder()?
-            .encode(PixelSlice::from(img).erase())
+            .into_png_encoder()
+            .encode_inner(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode RGB16 pixels in one call.
@@ -188,11 +188,11 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Rgb<u16>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::EncoderConfig;
         self.clone()
             .job()
-            .encoder()?
-            .encode(PixelSlice::from(img).erase())
+            .into_png_encoder()
+            .encode_inner(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode RGBA16 pixels in one call.
@@ -200,11 +200,11 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Rgba<u16>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::EncoderConfig;
         self.clone()
             .job()
-            .encoder()?
-            .encode(PixelSlice::from(img).erase())
+            .into_png_encoder()
+            .encode_inner(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode Gray16 pixels in one call.
@@ -212,11 +212,11 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Gray<u16>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::EncoderConfig;
         self.clone()
             .job()
-            .encoder()?
-            .encode(PixelSlice::from(img).erase())
+            .into_png_encoder()
+            .encode_inner(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode RGB F32 pixels in one call.
@@ -224,11 +224,11 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Rgb<f32>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::EncoderConfig;
         self.clone()
             .job()
-            .encoder()?
-            .encode(PixelSlice::from(img).erase())
+            .into_png_encoder()
+            .encode_inner(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode RGBA F32 pixels in one call.
@@ -236,11 +236,11 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Rgba<f32>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::EncoderConfig;
         self.clone()
             .job()
-            .encoder()?
-            .encode(PixelSlice::from(img).erase())
+            .into_png_encoder()
+            .encode_inner(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode Gray F32 pixels in one call.
@@ -248,11 +248,11 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, Gray<f32>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::EncoderConfig;
         self.clone()
             .job()
-            .encoder()?
-            .encode(PixelSlice::from(img).erase())
+            .into_png_encoder()
+            .encode_inner(PixelSlice::from(img).erase())
     }
 
     /// Convenience: encode BGRA8 pixels (swizzles to RGBA) in one call.
@@ -260,11 +260,11 @@ impl PngEncoderConfig {
         &self,
         img: imgref::ImgRef<'_, rgb::alt::BGRA<u8>>,
     ) -> Result<EncodeOutput, At<PngError>> {
-        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zencodec::encode::EncoderConfig;
         self.clone()
             .job()
-            .encoder()?
-            .encode(PixelSlice::from(img).erase())
+            .into_png_encoder()
+            .encode_inner(PixelSlice::from(img).erase())
     }
 }
 
@@ -448,7 +448,7 @@ static PNG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_threads_supported_range(1, 16);
 
 impl zencodec::encode::EncoderConfig for PngEncoderConfig {
-    type Error = At<PngError>;
+    type Error = At<CodecError>;
     type Job = PngEncodeJob;
 
     fn format() -> ImageFormat {
@@ -581,7 +581,7 @@ pub struct PngEncodeJob {
 }
 
 impl zencodec::encode::EncodeJob for PngEncodeJob {
-    type Error = At<PngError>;
+    type Error = At<CodecError>;
     type Enc = PngEncoder;
     type AnimationFrameEnc = PngAnimationFrameEncoder;
 
@@ -616,25 +616,17 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         self
     }
 
-    fn encoder(self) -> Result<PngEncoder, At<PngError>> {
-        Ok(PngEncoder {
-            config: self.config,
-            stop: self.stop,
-            metadata: self.metadata,
-            limits: self.limits,
-            policy: self.policy,
-            canvas_width: self.canvas_width,
-            canvas_height: self.canvas_height,
-            streaming: None,
-        })
+    fn encoder(self) -> Result<PngEncoder, At<CodecError>> {
+        Ok(self.into_png_encoder())
     }
 
-    fn animation_frame_encoder(self) -> Result<PngAnimationFrameEncoder, At<PngError>> {
+    fn animation_frame_encoder(self) -> Result<PngAnimationFrameEncoder, At<CodecError>> {
         // Frame pixel format isn't known until frames are pushed; the color-emit
         // resolver still classifies gray/CMYK from the ICC color space, and
         // APNG frames are RGB/RGBA, so a `None` channel count is correct here.
         let effective_meta =
-            apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref(), None)?;
+            apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref(), None)
+                .map_err(CodecError::of)?;
         let mut config = self.config.config.clone();
         if let Some(ref limits) = self.limits {
             apply_threading(&mut config, limits.threading());
@@ -648,6 +640,25 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         enc.loop_count = self.loop_count.unwrap_or(0);
         enc.limits = self.limits;
         Ok(enc)
+    }
+}
+
+impl PngEncodeJob {
+    /// Build the concrete [`PngEncoder`] (infallible). Shared by the
+    /// [`EncodeJob::encoder`](zencodec::encode::EncodeJob::encoder) trait method
+    /// (which returns the `At<CodecError>` envelope) and the codec's inherent
+    /// `encode_*` convenience API (which returns the rich `At<PngError>`).
+    fn into_png_encoder(self) -> PngEncoder {
+        PngEncoder {
+            config: self.config,
+            stop: self.stop,
+            metadata: self.metadata,
+            limits: self.limits,
+            policy: self.policy,
+            canvas_width: self.canvas_width,
+            canvas_height: self.canvas_height,
+            streaming: None,
+        }
     }
 }
 
@@ -787,7 +798,7 @@ impl PngEncoder {
         if let Some(ref limits) = self.limits {
             limits
                 .check_dimensions(w, h)
-                .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+                .map_err(|e| at!(PngError::Limit(e)))?;
             let channels: u64 = match color_type {
                 crate::encode::ColorType::Grayscale => 1,
                 crate::encode::ColorType::Rgb => 3,
@@ -802,7 +813,7 @@ impl PngEncoder {
             let estimated_mem = w as u64 * h as u64 * bpp;
             limits
                 .check_memory(estimated_mem)
-                .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+                .map_err(|e| at!(PngError::Limit(e)))?;
         }
         let config = self.config_with_threading();
         let deadline = default_deadline();
@@ -820,24 +831,38 @@ impl PngEncoder {
         if let Some(ref limits) = self.limits {
             limits
                 .check_output_size(data.len() as u64)
-                .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+                .map_err(|e| at!(PngError::Limit(e)))?;
         }
         Ok(EncodeOutput::new(data, ImageFormat::Png))
     }
 }
 
 impl zencodec::encode::Encoder for PngEncoder {
-    type Error = At<PngError>;
+    type Error = At<CodecError>;
 
-    fn reject(op: zencodec::UnsupportedOperation) -> At<PngError> {
-        at!(PngError::from(op))
+    fn reject(op: zencodec::UnsupportedOperation) -> At<CodecError> {
+        PngError::from(op).into()
     }
 
     fn preferred_strip_height(&self) -> u32 {
         1 // PNG uses row-at-a-time filtering
     }
 
-    fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<PngError>> {
+    fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<CodecError>> {
+        self.encode_inner(pixels).map_err(CodecError::of)
+    }
+
+    fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), At<CodecError>> {
+        self.push_rows_inner(rows).map_err(CodecError::of)
+    }
+
+    fn finish(self) -> Result<EncodeOutput, At<CodecError>> {
+        self.finish_inner().map_err(CodecError::of)
+    }
+}
+
+impl PngEncoder {
+    fn encode_inner(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<PngError>> {
         use linear_srgb::default::{linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice};
         use zenpixels::PixelFormat;
 
@@ -1010,7 +1035,7 @@ impl zencodec::encode::Encoder for PngEncoder {
         }
     }
 
-    fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), At<PngError>> {
+    fn push_rows_inner(&mut self, rows: PixelSlice<'_>) -> Result<(), At<PngError>> {
         use linear_srgb::default::{linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice};
         use zenpixels::PixelFormat;
 
@@ -1314,7 +1339,7 @@ impl zencodec::encode::Encoder for PngEncoder {
         Ok(())
     }
 
-    fn finish(mut self) -> Result<EncodeOutput, At<PngError>> {
+    fn finish_inner(mut self) -> Result<EncodeOutput, At<PngError>> {
         let mode = self.streaming.take().ok_or_else(|| {
             at!(PngError::InvalidInput(
                 "finish() called without any push_rows() calls".into()
@@ -1358,7 +1383,7 @@ impl zencodec::encode::Encoder for PngEncoder {
                 if let Some(ref limits) = self.limits {
                     limits
                         .check_output_size(data.len() as u64)
-                        .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+                        .map_err(|e| at!(PngError::Limit(e)))?;
                 }
                 Ok(EncodeOutput::new(data, ImageFormat::Png))
             }
@@ -1374,7 +1399,7 @@ impl zencodec::encode::Encoder for PngEncoder {
                 if let Some(ref limits) = self.limits {
                     limits
                         .check_output_size(data.len() as u64)
-                        .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+                        .map_err(|e| at!(PngError::Limit(e)))?;
                 }
                 Ok(EncodeOutput::new(data, ImageFormat::Png))
             }
@@ -1474,10 +1499,10 @@ impl PngAnimationFrameEncoder {
 }
 
 impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
-    type Error = At<PngError>;
+    type Error = At<CodecError>;
 
-    fn reject(op: zencodec::UnsupportedOperation) -> At<PngError> {
-        at!(PngError::from(op))
+    fn reject(op: zencodec::UnsupportedOperation) -> At<CodecError> {
+        PngError::from(op).into()
     }
 
     fn push_frame(
@@ -1485,19 +1510,19 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
         pixels: PixelSlice<'_>,
         duration_ms: u32,
         _stop: Option<&dyn enough::Stop>,
-    ) -> Result<(), At<PngError>> {
-        let rgba = Self::pixels_to_rgba8(&pixels)?;
+    ) -> Result<(), At<CodecError>> {
+        let rgba = Self::pixels_to_rgba8(&pixels).map_err(CodecError::of)?;
         // Check resource limits before accumulating
         if let Some(ref limits) = self.limits {
             // Check max_frames (new frame count = current + 1)
             limits
                 .check_frames(self.frames.len() as u32 + 1)
-                .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+                .map_err(|e| CodecError::of(at!(PngError::Limit(e))))?;
             // Check max_memory (cumulative pixel data size)
             let new_cumulative = self.cumulative_pixel_bytes + rgba.len() as u64;
             limits
                 .check_memory(new_cumulative)
-                .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+                .map_err(|e| CodecError::of(at!(PngError::Limit(e))))?;
         }
         self.cumulative_pixel_bytes += rgba.len() as u64;
         self.frames.push(AccumulatedFrame {
@@ -1507,8 +1532,8 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
         Ok(())
     }
 
-    fn finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, At<PngError>> {
-        self.do_finish(stop)
+    fn finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, At<CodecError>> {
+        self.do_finish(stop).map_err(CodecError::of)
     }
 }
 
@@ -1597,17 +1622,17 @@ impl PngDecoderConfig {
 
     /// Convenience: decode in one call (native format).
     pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, At<PngError>> {
-        use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
+        use zencodec::decode::DecoderConfig;
         self.clone()
             .job()
-            .decoder(Cow::Borrowed(data), &[])?
-            .decode()
+            .into_png_decoder(Cow::Borrowed(data), &[])
+            .decode_inner()
     }
 
     /// Convenience: probe image header.
     pub fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<PngError>> {
-        use zencodec::decode::{DecodeJob, DecoderConfig};
-        self.clone().job().probe(data)
+        use zencodec::decode::DecoderConfig;
+        self.clone().job().probe_inner(data)
     }
 
     /// Convenience: probe header (alias for backwards compatibility).
@@ -1711,7 +1736,7 @@ static PNG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_enforces_max_input_bytes(true);
 
 impl zencodec::decode::DecoderConfig for PngDecoderConfig {
-    type Error = At<PngError>;
+    type Error = At<CodecError>;
     type Job<'a> = PngDecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
@@ -1769,7 +1794,7 @@ pub struct PngDecodeJob {
 }
 
 impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
-    type Error = At<PngError>;
+    type Error = At<CodecError>;
     type Dec = PngDecoder<'a>;
     type StreamDec = PngStreamingDecoder<'a>;
     type AnimationFrameDec = PngAnimationFrameDecoder;
@@ -1794,18 +1819,12 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
         self
     }
 
-    fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<PngError>> {
-        let info = crate::decode::probe(data)?;
-        let mut image_info = convert_info(&info);
-        if let Ok(probe) = crate::detect::probe(data) {
-            image_info = image_info.with_source_encoding_details(probe);
-        }
-        apply_policy_to_info(&mut image_info, self.policy.as_ref());
-        Ok(image_info)
+    fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {
+        self.probe_inner(data).map_err(CodecError::of)
     }
 
-    fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<PngError>> {
-        let info = crate::decode::probe(data)?;
+    fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<CodecError>> {
+        let info = crate::decode::probe(data).map_err(CodecError::of)?;
         // Derive has_trns: has_alpha is set for color types 4/6 (intrinsic alpha)
         // or when a tRNS chunk is present. If has_alpha is true but color_type
         // doesn't have intrinsic alpha, then tRNS must be present.
@@ -1825,22 +1844,15 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
         self,
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
-    ) -> Result<PngDecoder<'a>, At<PngError>> {
-        Ok(PngDecoder {
-            config: self.config,
-            stop: self.stop,
-            limits: self.limits,
-            policy: self.policy,
-            data,
-            preferred: preferred.to_vec(),
-        })
+    ) -> Result<PngDecoder<'a>, At<CodecError>> {
+        Ok(self.into_png_decoder(data, preferred))
     }
 
     fn streaming_decoder(
         self,
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
-    ) -> Result<PngStreamingDecoder<'a>, At<PngError>> {
+    ) -> Result<PngStreamingDecoder<'a>, At<CodecError>> {
         PngStreamingDecoder::new(
             data,
             &self.config,
@@ -1849,26 +1861,27 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
             self.policy.as_ref(),
             preferred,
         )
+        .map_err(CodecError::of)
     }
 
     fn animation_frame_decoder(
         self,
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
-    ) -> Result<PngAnimationFrameDecoder, At<PngError>> {
+    ) -> Result<PngAnimationFrameDecoder, At<CodecError>> {
         // Reject animation when policy forbids it
         if let Some(ref policy) = self.policy
             && !policy.resolve_animation(true)
         {
-            return Err(at!(PngError::InvalidInput(
-                "animation rejected by decode policy".into()
-            )));
+            return Err(
+                PngError::InvalidInput("animation rejected by decode policy".into()).into(),
+            );
         }
         // Check input size limit
         let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
         effective_limits
             .check_input_size(data.len() as u64)
-            .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+            .map_err(|e| CodecError::of(at!(PngError::Limit(e))))?;
         PngAnimationFrameDecoder::new(
             &data,
             &self.config,
@@ -1877,6 +1890,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
             preferred,
             self.start_frame_index,
         )
+        .map_err(CodecError::of)
     }
 
     fn push_decoder(
@@ -1884,8 +1898,43 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
         data: Cow<'a, [u8]>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
         preferred: &[PixelDescriptor],
-    ) -> Result<OutputInfo, At<PngError>> {
+    ) -> Result<OutputInfo, At<CodecError>> {
         push_decoder_native(self, data, sink, preferred)
+    }
+}
+
+impl PngDecodeJob {
+    /// Build the concrete [`PngDecoder`] (infallible). Shared by the
+    /// [`DecodeJob::decoder`](zencodec::decode::DecodeJob::decoder) trait method
+    /// (which returns the `At<CodecError>` envelope) and the codec's inherent
+    /// `decode`/`decode_into_*` convenience API (which returns the rich
+    /// `At<PngError>`).
+    fn into_png_decoder<'a>(
+        self,
+        data: Cow<'a, [u8]>,
+        preferred: &[PixelDescriptor],
+    ) -> PngDecoder<'a> {
+        PngDecoder {
+            config: self.config,
+            stop: self.stop,
+            limits: self.limits,
+            policy: self.policy,
+            data,
+            preferred: preferred.to_vec(),
+        }
+    }
+
+    /// Probe the header, returning the rich `At<PngError>`. Backs both the
+    /// `DecodeJob::probe` trait method (wrapped into the envelope) and the
+    /// inherent `PngDecoderConfig::probe` convenience method.
+    fn probe_inner(&self, data: &[u8]) -> Result<ImageInfo, At<PngError>> {
+        let info = crate::decode::probe(data)?;
+        let mut image_info = convert_info(&info);
+        if let Ok(probe) = crate::detect::probe(data) {
+            image_info = image_info.with_source_encoding_details(probe);
+        }
+        apply_policy_to_info(&mut image_info, self.policy.as_ref());
+        Ok(image_info)
     }
 }
 
@@ -1916,9 +1965,15 @@ impl PngDecoder<'_> {
 }
 
 impl zencodec::decode::Decode for PngDecoder<'_> {
-    type Error = At<PngError>;
+    type Error = At<CodecError>;
 
-    fn decode(self) -> Result<DecodeOutput, At<PngError>> {
+    fn decode(self) -> Result<DecodeOutput, At<CodecError>> {
+        self.decode_inner().map_err(CodecError::of)
+    }
+}
+
+impl PngDecoder<'_> {
+    fn decode_inner(self) -> Result<DecodeOutput, At<PngError>> {
         let cancel: &dyn enough::Stop = match self.stop {
             Some(ref s) => s as &dyn enough::Stop,
             None => &enough::Unstoppable,
@@ -1930,12 +1985,12 @@ impl zencodec::decode::Decode for PngDecoder<'_> {
         let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
         effective_limits
             .check_input_size(self.data.len() as u64)
-            .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+            .map_err(|e| at!(PngError::Limit(e)))?;
         // Check max_width / max_height before decoding
         let probe_info = crate::decode::probe(&self.data)?;
         effective_limits
             .check_dimensions(probe_info.width, probe_info.height)
-            .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+            .map_err(|e| at!(PngError::Limit(e)))?;
         let png_config = self.effective_config();
         let result = crate::decode::decode(&self.data, &png_config, cancel)?;
         // Build the probe from decoder state instead of a second full-file
@@ -2020,29 +2075,46 @@ fn push_decoder_native<'a>(
     data: Cow<'a, [u8]>,
     sink: &mut dyn zencodec::decode::DecodeRowSink,
     preferred: &[PixelDescriptor],
-) -> Result<OutputInfo, At<PngError>> {
-    use crate::decoder::postprocess::post_process_row;
-    use crate::decoder::row::RowDecoder;
-
-    let wrap_sink = |e: zencodec::decode::SinkError| -> At<PngError> {
-        at!(PngError::InvalidInput(alloc::format!("sink error: {e}")))
-    };
-
+) -> Result<OutputInfo, At<CodecError>> {
     // Check progressive policy before decoding
-    check_progressive_policy(&data, job.policy.as_ref())?;
+    check_progressive_policy(&data, job.policy.as_ref()).map_err(CodecError::of)?;
 
     // Check input size limit
     let effective_limits = job.limits.as_ref().unwrap_or(&job.config.limits);
     effective_limits
         .check_input_size(data.len() as u64)
-        .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+        .map_err(|e| CodecError::of(at!(PngError::Limit(e))))?;
 
-    // Check for interlacing — fall back to full decode for Adam7
+    // Check for interlacing — fall back to full decode for Adam7. The shared
+    // helper drives the job's trait decode path, so it yields the
+    // `At<CodecError>` envelope directly.
     if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
         return zencodec::helpers::copy_decode_to_sink(job, data, sink, preferred, |e| {
-            at!(PngError::InvalidInput(alloc::format!("sink error: {e}")))
+            PngError::Io(alloc::format!("sink error: {e}")).into()
         });
     }
+
+    push_decoder_native_noninterlaced(job, data, sink, preferred).map_err(CodecError::of)
+}
+
+/// Non-interlaced native row-streaming decode into the sink, returning the rich
+/// `At<PngError>`; the caller ([`push_decoder_native`]) wraps it into the
+/// `At<CodecError>` envelope.
+fn push_decoder_native_noninterlaced<'a>(
+    job: PngDecodeJob,
+    data: Cow<'a, [u8]>,
+    sink: &mut dyn zencodec::decode::DecodeRowSink,
+    // Native row-streaming emits the PNG's native descriptor; format
+    // negotiation only applies to the interlaced full-decode fallback (handled
+    // by the caller), so the preference list is unused here.
+    _preferred: &[PixelDescriptor],
+) -> Result<OutputInfo, At<PngError>> {
+    use crate::decoder::postprocess::post_process_row;
+    use crate::decoder::row::RowDecoder;
+
+    let wrap_sink = |e: zencodec::decode::SinkError| -> At<PngError> {
+        at!(PngError::Io(alloc::format!("sink error: {e}")))
+    };
 
     // Build effective config (limits + policy)
     let limits = job.limits.as_ref().unwrap_or(&job.config.limits);
@@ -2075,7 +2147,7 @@ fn push_decoder_native<'a>(
     // Check max_width / max_height before allocating pixel buffers
     limits
         .check_dimensions(w, h)
-        .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+        .map_err(|e| at!(PngError::Limit(e)))?;
 
     let descriptor = enrich_descriptor_from_cicp(
         native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns),
@@ -2231,7 +2303,7 @@ impl<'a> PngStreamingDecoder<'a> {
         // Check input size limit
         effective_limits
             .check_input_size(data.len() as u64)
-            .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+            .map_err(|e| at!(PngError::Limit(e)))?;
         let png_config = PngDecodeConfig {
             max_pixels: effective_limits.max_pixels,
             max_memory_bytes: effective_limits.max_memory_bytes,
@@ -2256,7 +2328,7 @@ impl<'a> PngStreamingDecoder<'a> {
         // Check max_width / max_height before allocating pixel buffers
         effective_limits
             .check_dimensions(w, h)
-            .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+            .map_err(|e| at!(PngError::Limit(e)))?;
 
         let descriptor = enrich_descriptor_from_cicp(
             native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns),
@@ -2285,9 +2357,19 @@ impl<'a> PngStreamingDecoder<'a> {
 }
 
 impl zencodec::decode::StreamingDecode for PngStreamingDecoder<'_> {
-    type Error = At<PngError>;
+    type Error = At<CodecError>;
 
-    fn next_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, At<PngError>> {
+    fn next_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, At<CodecError>> {
+        self.next_batch_inner().map_err(CodecError::of)
+    }
+
+    fn info(&self) -> &ImageInfo {
+        &self.info
+    }
+}
+
+impl PngStreamingDecoder<'_> {
+    fn next_batch_inner(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, At<PngError>> {
         use crate::decoder::postprocess::post_process_row;
 
         if self.y >= self.height {
@@ -2340,10 +2422,6 @@ impl zencodec::decode::StreamingDecode for PngStreamingDecoder<'_> {
         .map_err(|e| at!(PngError::InvalidInput(alloc::format!("pixel slice: {e}"))))?;
 
         Ok(Some((y, slice)))
-    }
-
-    fn info(&self) -> &ImageInfo {
-        &self.info
     }
 }
 
@@ -2413,10 +2491,10 @@ impl PngAnimationFrameDecoder {
 }
 
 impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
-    type Error = At<PngError>;
+    type Error = At<CodecError>;
 
-    fn wrap_sink_error(err: zencodec::decode::SinkError) -> At<PngError> {
-        at!(PngError::InvalidInput(alloc::format!("sink error: {err}")))
+    fn wrap_sink_error(err: zencodec::decode::SinkError) -> At<CodecError> {
+        PngError::Io(alloc::format!("sink error: {err}")).into()
     }
 
     fn info(&self) -> &ImageInfo {
@@ -2435,14 +2513,14 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
         &mut self,
         stop: Option<&dyn enough::Stop>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
-    ) -> Result<Option<OutputInfo>, At<PngError>> {
+    ) -> Result<Option<OutputInfo>, At<CodecError>> {
         zencodec::helpers::copy_frame_to_sink(self, stop, sink)
     }
 
     fn render_next_frame(
         &mut self,
         stop: Option<&dyn enough::Stop>,
-    ) -> Result<Option<AnimationFrame<'_>>, At<PngError>> {
+    ) -> Result<Option<AnimationFrame<'_>>, At<CodecError>> {
         // Use per-call stop token, fall back to stored job-level token, then unstoppable.
         let cancel: &dyn enough::Stop = if let Some(s) = stop {
             s
@@ -2458,7 +2536,7 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
                 self.decoder_state.clone(),
             );
 
-            let raw = match decoder.next_frame(cancel)? {
+            let raw = match decoder.next_frame(cancel).map_err(CodecError::of)? {
                 Some(f) => f,
                 None => return Ok(None),
             };
@@ -2923,9 +3001,10 @@ impl TrueStreamingState {
 
         // PNG chunk lengths are u32. Reject images whose stored IDAT exceeds this.
         if idat_data_len > u32::MAX as usize {
-            return Err(at!(PngError::LimitExceeded(
-                "image too large for single IDAT chunk at effort 0".into(),
-            )));
+            return Err(at!(PngError::Limit(zencodec::LimitExceeded::OutputSize {
+                actual: idat_data_len as u64,
+                max: u32::MAX as u64,
+            })));
         }
 
         // Build metadata
@@ -3606,6 +3685,36 @@ mod tests {
     use rgb::{Gray, Rgb, Rgba};
     use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
     use zencodec::encode::{EncodeJob, EncoderConfig};
+
+    /// Pattern B forcing test: drive the zenpng decoder through the **dyn**
+    /// surface so its `At<CodecError>` is erased to `Box<dyn Error>` (the
+    /// `BoxedError` left after dyn dispatch), and assert a generic consumer
+    /// still recovers the [`ErrorCategory`](zencodec::ErrorCategory) *and* the
+    /// originating codec name. Under the old Pattern A (`type Error =
+    /// At<PngError>`) both would be `None` after erasure — there is no shared
+    /// concrete type to downcast to. This is the regression gate for the
+    /// envelope.
+    #[test]
+    fn envelope_category_survives_dyn_erasure() {
+        use zencodec::decode::DynDecoderConfig;
+        use zencodec::{CodecError, CodecErrorExt, ErrorCategory};
+
+        let cfg = PngDecoderConfig::new();
+        let dyn_cfg: &dyn DynDecoderConfig = &cfg;
+        let erased = dyn_cfg
+            .dyn_job()
+            .probe(b"not a PNG")
+            .expect_err("malformed input must fail to probe");
+
+        // `probe_png` rejects the bad signature with `PngError::Decode`, which
+        // the `CategorizedError` impl maps to `MalformedImage`; the envelope
+        // carries both that category and the codec name through erasure.
+        assert_eq!(erased.error_category(), Some(ErrorCategory::MalformedImage));
+        assert_eq!(
+            erased.codec_error().and_then(CodecError::codec),
+            Some("zenpng")
+        );
+    }
 
     #[test]
     fn encoding_rgb8() {
@@ -5708,12 +5817,16 @@ mod tests {
         use zencodec::encode::Encoder;
         let result = encoder.encode(slice.erase());
         assert!(result.is_err());
-        match result.unwrap_err().decompose().0 {
-            PngError::Stopped(reason) => {
-                assert_eq!(reason, StopReason::Cancelled);
-            }
-            other => panic!("expected PngError::Stopped, got: {other}"),
-        }
+        // Pattern B: `Encoder::encode` returns the `At<CodecError>` envelope, so
+        // the cancellation surfaces as the `Cancelled` category (the faithful
+        // equivalent of the old `PngError::Stopped(StopReason::Cancelled)`).
+        use zencodec::CategorizedError;
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.category(),
+            zencodec::ErrorCategory::Cancelled,
+            "expected a cancellation error, got: {err}"
+        );
     }
 
     #[test]
@@ -7631,12 +7744,15 @@ mod tests {
         // finish() with a cancelled stop token should fail
         let result = enc.finish(Some(&AlreadyCancelled));
         assert!(result.is_err(), "finish with cancelled stop should fail");
-        match result.unwrap_err().decompose().0 {
-            PngError::Stopped(reason) => {
-                assert_eq!(reason, StopReason::Cancelled);
-            }
-            other => panic!("expected PngError::Stopped, got: {other}"),
-        }
+        // Pattern B: `AnimationFrameEncoder::finish` returns the `At<CodecError>`
+        // envelope, so the cancellation surfaces as the `Cancelled` category.
+        use zencodec::CategorizedError;
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.category(),
+            zencodec::ErrorCategory::Cancelled,
+            "expected a cancellation error, got: {err}"
+        );
     }
 
     #[test]

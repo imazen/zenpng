@@ -241,10 +241,10 @@ impl PngAncillary {
                     return Err(at!(PngError::Decode("acTL: num_frames must be > 0".into())));
                 }
                 if num_frames > 65536 {
-                    return Err(at!(PngError::LimitExceeded(alloc::format!(
-                        "acTL: num_frames {} exceeds limit of 65536",
-                        num_frames
-                    ))));
+                    return Err(at!(PngError::Limit(zencodec::LimitExceeded::Frames {
+                        actual: num_frames,
+                        max: 65536,
+                    })));
                 }
                 self.actl = Some((num_frames, num_plays));
             }

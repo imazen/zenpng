@@ -452,7 +452,7 @@ impl OutputFormat {
                 }
             }
             _ => {
-                return Err(at!(PngError::Decode(alloc::format!(
+                return Err(at!(PngError::UnsupportedFeature(alloc::format!(
                     "unsupported color_type {} in IHDR",
                     ihdr.color_type
                 ))));
@@ -559,7 +559,7 @@ pub(crate) fn build_pixel_data(
             Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
                 .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))?)
         }
-        _ => Err(at!(PngError::Decode(alloc::format!(
+        _ => Err(at!(PngError::UnsupportedFeature(alloc::format!(
             "unsupported color_type={} bit_depth={}",
             ihdr.color_type,
             ihdr.bit_depth
