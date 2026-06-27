@@ -53,7 +53,7 @@ impl<'a> IdatSource<'a> {
         // 32-bit-clean even if a caller ever passes an unvalidated offset.
         let length_bytes: [u8; 4] = data
             .get(first_idat_pos..first_idat_pos + 4)
-            .ok_or_else(|| PngError::Decode("truncated IDAT chunk header (length)".into()))?
+            .ok_or_else(|| PngError::Truncated("truncated IDAT chunk header (length)".into()))?
             .try_into()
             .unwrap(); // infallible: slice is exactly 4 bytes
         let length = u32::from_be_bytes(length_bytes) as usize;
@@ -66,10 +66,10 @@ impl<'a> IdatSource<'a> {
             .ok_or_else(|| PngError::Decode("IDAT chunk length overflow".into()))?; // skip CRC
 
         if data_end > data.len() {
-            return Err(PngError::Decode("truncated IDAT chunk data".into()));
+            return Err(PngError::Truncated("truncated IDAT chunk data".into()));
         }
         if next_pos > data.len() {
-            return Err(PngError::Decode("truncated IDAT chunk CRC".into()));
+            return Err(PngError::Truncated("truncated IDAT chunk CRC".into()));
         }
 
         Ok(Self {
@@ -120,7 +120,7 @@ impl zenflate::InputSource for IdatSource<'_> {
             };
 
             if crc_end > self.data.len() {
-                return Err(PngError::Decode("truncated IDAT chunk".into()));
+                return Err(PngError::Truncated("truncated IDAT chunk".into()));
             }
 
             if chunk_type != *b"IDAT" {
@@ -182,7 +182,7 @@ impl<'a> FdatSource<'a> {
         // Parse the first fdAT chunk inline
         let length_bytes: [u8; 4] = data
             .get(first_fdat_pos..first_fdat_pos + 4)
-            .ok_or_else(|| PngError::Decode("truncated fdAT chunk header (length)".into()))?
+            .ok_or_else(|| PngError::Truncated("truncated fdAT chunk header (length)".into()))?
             .try_into()
             .unwrap(); // infallible: slice is exactly 4 bytes
         let length = u32::from_be_bytes(length_bytes) as usize;
@@ -195,10 +195,10 @@ impl<'a> FdatSource<'a> {
             .ok_or_else(|| PngError::Decode("fdAT chunk length overflow".into()))?;
 
         if data_end > data.len() {
-            return Err(PngError::Decode("truncated fdAT chunk data".into()));
+            return Err(PngError::Truncated("truncated fdAT chunk data".into()));
         }
         if next_pos > data.len() {
-            return Err(PngError::Decode("truncated fdAT chunk CRC".into()));
+            return Err(PngError::Truncated("truncated fdAT chunk CRC".into()));
         }
 
         // Skip the 4-byte sequence number to get to deflate data
@@ -256,7 +256,7 @@ impl<'a> zenflate::InputSource for FdatSource<'a> {
             };
 
             if crc_end > self.data.len() {
-                return Err(PngError::Decode("truncated fdAT chunk".into()));
+                return Err(PngError::Truncated("truncated fdAT chunk".into()));
             }
 
             if chunk_type != *b"fdAT" {
@@ -353,7 +353,7 @@ impl<'a> RowDecoder<'a> {
         // First chunk must be IHDR
         let ihdr_chunk = chunks
             .next()
-            .ok_or_else(|| at!(PngError::Decode("empty PNG (no chunks)".into())))??;
+            .ok_or_else(|| at!(PngError::Truncated("empty PNG (no chunks)".into())))??;
         if ihdr_chunk.chunk_type != *b"IHDR" {
             return Err(at!(PngError::Decode("first chunk is not IHDR".into())));
         }

@@ -282,7 +282,13 @@ fn parse_quantize_suffix<'a>(
                     "quantize color count {max_colors} out of range 2..=256 in {id:?}"
                 ));
             }
-            Ok((head, Some(QuantizeSpec { backend, max_colors })))
+            Ok((
+                head,
+                Some(QuantizeSpec {
+                    backend,
+                    max_colors,
+                }),
+            ))
         }
         // The trailing segment isn't a quantize stratum (e.g. nothing
         // here today, but keeps the grammar additive); treat the whole
@@ -763,7 +769,11 @@ mod tests {
         // Every quantize cell deviates by exactly one axis from the default.
         for c in &p.cells {
             if c.variant.quantize.is_some() {
-                assert_eq!(c.deviations, 1, "quantize cell {} should be 1 deviation", c.id);
+                assert_eq!(
+                    c.deviations, 1,
+                    "quantize cell {} should be 1 deviation",
+                    c.id
+                );
             }
         }
     }
@@ -779,7 +789,11 @@ mod tests {
                 continue;
             }
             let v = variant_from_cell_id(&c.id).unwrap_or_else(|e| panic!("{}: {e}", c.id));
-            assert_eq!(v.quantize, c.variant.quantize, "quantize drift for {}", c.id);
+            assert_eq!(
+                v.quantize, c.variant.quantize,
+                "quantize drift for {}",
+                c.id
+            );
             assert_eq!(fingerprint(&v), c.fingerprint, "fp drift for {}", c.id);
         }
         // Backend and color count both affect identity.

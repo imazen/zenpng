@@ -787,7 +787,7 @@ impl PngEncoder {
         if let Some(ref limits) = self.limits {
             limits
                 .check_dimensions(w, h)
-                .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+                .map_err(|e| at!(PngError::Limit(e)))?;
             let channels: u64 = match color_type {
                 crate::encode::ColorType::Grayscale => 1,
                 crate::encode::ColorType::Rgb => 3,
@@ -802,7 +802,7 @@ impl PngEncoder {
             let estimated_mem = w as u64 * h as u64 * bpp;
             limits
                 .check_memory(estimated_mem)
-                .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+                .map_err(|e| at!(PngError::Limit(e)))?;
         }
         let config = self.config_with_threading();
         let deadline = default_deadline();
@@ -820,7 +820,7 @@ impl PngEncoder {
         if let Some(ref limits) = self.limits {
             limits
                 .check_output_size(data.len() as u64)
-                .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+                .map_err(|e| at!(PngError::Limit(e)))?;
         }
         Ok(EncodeOutput::new(data, ImageFormat::Png))
     }
@@ -1358,7 +1358,7 @@ impl zencodec::encode::Encoder for PngEncoder {
                 if let Some(ref limits) = self.limits {
                     limits
                         .check_output_size(data.len() as u64)
-                        .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+                        .map_err(|e| at!(PngError::Limit(e)))?;
                 }
                 Ok(EncodeOutput::new(data, ImageFormat::Png))
             }
@@ -1374,7 +1374,7 @@ impl zencodec::encode::Encoder for PngEncoder {
                 if let Some(ref limits) = self.limits {
                     limits
                         .check_output_size(data.len() as u64)
-                        .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+                        .map_err(|e| at!(PngError::Limit(e)))?;
                 }
                 Ok(EncodeOutput::new(data, ImageFormat::Png))
             }
@@ -1492,12 +1492,12 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
             // Check max_frames (new frame count = current + 1)
             limits
                 .check_frames(self.frames.len() as u32 + 1)
-                .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+                .map_err(|e| at!(PngError::Limit(e)))?;
             // Check max_memory (cumulative pixel data size)
             let new_cumulative = self.cumulative_pixel_bytes + rgba.len() as u64;
             limits
                 .check_memory(new_cumulative)
-                .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+                .map_err(|e| at!(PngError::Limit(e)))?;
         }
         self.cumulative_pixel_bytes += rgba.len() as u64;
         self.frames.push(AccumulatedFrame {
@@ -1868,7 +1868,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
         let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
         effective_limits
             .check_input_size(data.len() as u64)
-            .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+            .map_err(|e| at!(PngError::Limit(e)))?;
         PngAnimationFrameDecoder::new(
             &data,
             &self.config,
@@ -1930,12 +1930,12 @@ impl zencodec::decode::Decode for PngDecoder<'_> {
         let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
         effective_limits
             .check_input_size(self.data.len() as u64)
-            .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+            .map_err(|e| at!(PngError::Limit(e)))?;
         // Check max_width / max_height before decoding
         let probe_info = crate::decode::probe(&self.data)?;
         effective_limits
             .check_dimensions(probe_info.width, probe_info.height)
-            .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+            .map_err(|e| at!(PngError::Limit(e)))?;
         let png_config = self.effective_config();
         let result = crate::decode::decode(&self.data, &png_config, cancel)?;
         // Build the probe from decoder state instead of a second full-file
@@ -2025,7 +2025,7 @@ fn push_decoder_native<'a>(
     use crate::decoder::row::RowDecoder;
 
     let wrap_sink = |e: zencodec::decode::SinkError| -> At<PngError> {
-        at!(PngError::InvalidInput(alloc::format!("sink error: {e}")))
+        at!(PngError::Io(alloc::format!("sink error: {e}")))
     };
 
     // Check progressive policy before decoding
@@ -2035,12 +2035,12 @@ fn push_decoder_native<'a>(
     let effective_limits = job.limits.as_ref().unwrap_or(&job.config.limits);
     effective_limits
         .check_input_size(data.len() as u64)
-        .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+        .map_err(|e| at!(PngError::Limit(e)))?;
 
     // Check for interlacing — fall back to full decode for Adam7
     if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
         return zencodec::helpers::copy_decode_to_sink(job, data, sink, preferred, |e| {
-            at!(PngError::InvalidInput(alloc::format!("sink error: {e}")))
+            at!(PngError::Io(alloc::format!("sink error: {e}")))
         });
     }
 
@@ -2075,7 +2075,7 @@ fn push_decoder_native<'a>(
     // Check max_width / max_height before allocating pixel buffers
     limits
         .check_dimensions(w, h)
-        .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+        .map_err(|e| at!(PngError::Limit(e)))?;
 
     let descriptor = enrich_descriptor_from_cicp(
         native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns),
@@ -2231,7 +2231,7 @@ impl<'a> PngStreamingDecoder<'a> {
         // Check input size limit
         effective_limits
             .check_input_size(data.len() as u64)
-            .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+            .map_err(|e| at!(PngError::Limit(e)))?;
         let png_config = PngDecodeConfig {
             max_pixels: effective_limits.max_pixels,
             max_memory_bytes: effective_limits.max_memory_bytes,
@@ -2256,7 +2256,7 @@ impl<'a> PngStreamingDecoder<'a> {
         // Check max_width / max_height before allocating pixel buffers
         effective_limits
             .check_dimensions(w, h)
-            .map_err(|e| at!(PngError::LimitExceeded(alloc::format!("{e}"))))?;
+            .map_err(|e| at!(PngError::Limit(e)))?;
 
         let descriptor = enrich_descriptor_from_cicp(
             native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns),
@@ -2416,7 +2416,7 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
     type Error = At<PngError>;
 
     fn wrap_sink_error(err: zencodec::decode::SinkError) -> At<PngError> {
-        at!(PngError::InvalidInput(alloc::format!("sink error: {err}")))
+        at!(PngError::Io(alloc::format!("sink error: {err}")))
     }
 
     fn info(&self) -> &ImageInfo {
@@ -2923,9 +2923,10 @@ impl TrueStreamingState {
 
         // PNG chunk lengths are u32. Reject images whose stored IDAT exceeds this.
         if idat_data_len > u32::MAX as usize {
-            return Err(at!(PngError::LimitExceeded(
-                "image too large for single IDAT chunk at effort 0".into(),
-            )));
+            return Err(at!(PngError::Limit(zencodec::LimitExceeded::OutputSize {
+                actual: idat_data_len as u64,
+                max: u32::MAX as u64,
+            })));
         }
 
         // Build metadata

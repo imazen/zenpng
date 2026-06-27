@@ -121,9 +121,7 @@ fn main() {
                 e.time_ms,
                 e.peak_memory_bytes as f64 / pixels as f64,
             ),
-            None => println!(
-                "{w}\t{h}\t{pixels}\t{mode}\t{effort}\t{quality}\tEST\toverflow",
-            ),
+            None => println!("{w}\t{h}\t{pixels}\t{mode}\t{effort}\t{quality}\tEST\toverflow",),
         }
         return;
     }

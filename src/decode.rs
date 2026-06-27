@@ -351,17 +351,19 @@ impl PngDecodeConfig {
         if let Some(max_px) = self.max_pixels {
             let pixels = width as u64 * height as u64;
             if pixels > max_px {
-                return Err(at!(PngError::LimitExceeded(
-                    "pixel count exceeds limit".into()
-                )));
+                return Err(at!(PngError::Limit(zencodec::LimitExceeded::Pixels {
+                    actual: pixels,
+                    max: max_px,
+                })));
             }
         }
         if let Some(max_mem) = self.max_memory_bytes {
             let estimated = width as u64 * height as u64 * bytes_per_pixel as u64;
             if estimated > max_mem {
-                return Err(at!(PngError::LimitExceeded(
-                    "estimated memory exceeds limit".into(),
-                )));
+                return Err(at!(PngError::Limit(zencodec::LimitExceeded::Memory {
+                    actual: estimated,
+                    max: max_mem,
+                })));
             }
         }
         Ok(())
@@ -580,8 +582,8 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(err.error(), PngError::LimitExceeded(_)),
-            "expected LimitExceeded, got: {err:?}"
+            matches!(err.error(), PngError::Limit(_)),
+            "expected Limit, got: {err:?}"
         );
     }
 
@@ -592,7 +594,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            !matches!(err.error(), PngError::LimitExceeded(_)),
+            !matches!(err.error(), PngError::Limit(_)),
             "expected non-limits error, got: {err:?}"
         );
     }
@@ -603,10 +605,7 @@ mod tests {
         let config = PngDecodeConfig::none().with_max_pixels(5_000);
         let result = decode(&png, &config, &enough::Unstoppable);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err().error(),
-            PngError::LimitExceeded(_)
-        ));
+        assert!(matches!(result.unwrap_err().error(), PngError::Limit(_)));
     }
 
     #[test]
@@ -615,10 +614,7 @@ mod tests {
         let config = PngDecodeConfig::none().with_max_memory(20_000);
         let result = decode(&png, &config, &enough::Unstoppable);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err().error(),
-            PngError::LimitExceeded(_)
-        ));
+        assert!(matches!(result.unwrap_err().error(), PngError::Limit(_)));
     }
 
     #[test]

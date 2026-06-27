@@ -5,6 +5,24 @@ All notable changes to zenpng are documented here.
 ## [Unreleased]
 
 ### Added
+- **Codec-agnostic error taxonomy (`zencodec::CategorizedError`).** `PngError`
+  and the caller-facing `detect::ProbeError` now implement
+  `zencodec::CategorizedError` (`codec_name() = Some("zenpng")` + total `category()`), so
+  a consumer can route on the coarse `ErrorCategory` (HTTP status, retry policy,
+  logging) without matching the enum. The stringly variants were split into
+  discrete, category-named ones: new `Truncated` (→ `UnexpectedEof`),
+  `UnsupportedFeature` (→ `UnsupportedImageFeature`), `Unsupported(UnsupportedOperation)`
+  (delegates — `PixelFormat` → `UnsupportedPixelFormat`), `Io` (→ `Io`), and
+  `Limit(zencodec::LimitExceeded)` (delegates, **carries the `LimitKind`**). The
+  16 truncation/EOF decode sites, the 3 output-sink sites, and every configured-
+  limit site (encoder `check_*`, decoder pixel/memory caps, APNG cumulative-
+  memory + `acTL` frame cap, the >u32 IDAT guard) were rewired to construct the
+  precise variant. The kept variants narrowed in meaning: `Decode` →
+  `MalformedImage`, `InvalidInput` → `InvalidParameters`, `LimitExceeded` →
+  `OutOfMemory` (now only allocation-failure / address-space-overflow sites).
+  `Quantize` maps to `Internal` (delegating would need zenquant to impl
+  `CategorizedError` — a follow-up). All additive on `#[non_exhaustive]`; no
+  public variant removed or renamed.
 - **Palette/quantize axis on the sweep plan (`sweep::QuantizeSpec` +
   `QuantBackend`).** `SweepVariant` gains an optional `quantize` stratum:
   `None` = truecolor lossless (unchanged), `Some(spec)` = palette-reduce to
@@ -21,6 +39,14 @@ All notable changes to zenpng are documented here.
   PNG picker needs to choose palette quantization.
 
 ### Fixed
+- **`sweep_cells_decode_exactly_and_steps_are_live` no longer panics on feature
+  subsets.** The plan always carries every quantize cell (per
+  `modes_full_has_all_eight_quantize_cells`), but a cell can only be *encoded*
+  when its backend feature is compiled in; the test now filters cells to the
+  available backends (gated by `cfg!(feature = ...)`, controlled by the CI
+  feature matrix) instead of `.unwrap()`-ing the clean "needs the `imagequant`
+  feature" error. Fixes the pre-existing red `cargo test` (default / no-default /
+  `zencodec`-only) jobs on `main`.
 - **encode peak-memory estimate is now admission-gating-safe (never under-
   predicts).** Admission control gates on `EncodeEstimate::peak_memory_bytes`
   (the `typ` field), so it must be a safe upper bound. A VmHWM re-sweep
