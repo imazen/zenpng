@@ -1,13 +1,17 @@
 //! Empirical validation of the curated sweep axes (`zenpng::sweep`) —
 //! playbook patterns 6 + 14 + 15 (`zenjpeg/docs/VARIANT_GENERATION.md`).
 //!
-//! PNG is lossless, so no perceptual metric is involved: the gates are
-//! per-cell decodability (pattern 14), EXACT pixel roundtrip
-//! (zero-tolerance as a hard gate), and step liveness (every curated
-//! tier must change output bytes vs the default somewhere). The corpus
-//! is synthetic (noise / checkerboard / palette-ish bands / tiny) plus
-//! an odd 509×381 leg — PNG has no block grid, but odd widths exercise
-//! the per-scanline filter/bpp edge paths (pattern 15's spirit).
+//! The **compression** axis is lossless, so its gates are: per-cell
+//! decodability (pattern 14), EXACT pixel roundtrip (zero-tolerance as a
+//! hard gate), and step liveness (every curated tier must change output
+//! bytes vs the default somewhere). The **quantize** axis is the one
+//! lossy axis — those cells palette-reduce the image, so they are NOT
+//! held to exact roundtrip; their gates are decodability + liveness
+//! (they must produce different bytes from the truecolor default).
+//!
+//! The corpus is synthetic (noise / checkerboard / palette-ish bands /
+//! tiny) plus an odd 509×381 leg — PNG has no block grid, but odd widths
+//! exercise the per-scanline filter/bpp edge paths (pattern 15's spirit).
 
 use imgref::ImgRef;
 use rgb::Rgb;
@@ -113,28 +117,43 @@ fn sweep_cells_decode_exactly_and_steps_are_live() {
     let mut bytes: Vec<Vec<usize>> = Vec::new();
 
     for cell in &p.cells {
-        // Downcasting (RGB -> gray/palette when representable) changes the
-        // decoded buffer FORMAT, not the pixels; disable it so the exact-
-        // roundtrip comparison stays byte-shaped. (The sweep variant's
-        // own identity is unaffected — downcast is content-dependent
-        // output negotiation, not a curated axis.)
-        let cfg = cell.variant.build().with_downcast(DowncastFlags::none());
+        let is_lossy = cell.variant.quantize.is_some();
         let mut row = Vec::new();
         for img in &images {
             let pixels: &[Rgb<u8>] = bytemuck::cast_slice(&img.rgb);
             let imgr = ImgRef::new(pixels, img.w, img.h);
-            let png = encode_rgb8(imgr, None, &cfg, &enough::Unstoppable, &enough::Unstoppable)
-                .unwrap_or_else(|e| panic!("encode {} on {}: {e:?}", cell.id, img.name));
+            let png = if is_lossy {
+                // Quantize cells palette-reduce the image (lossy). Encode
+                // via the variant's own path so the quantizer runs.
+                cell.variant
+                    .encode_png(imgr, &enough::Unstoppable, &enough::Unstoppable)
+                    .unwrap_or_else(|e| panic!("encode {} on {}: {e:?}", cell.id, img.name))
+            } else {
+                // Truecolor (lossless) cells. Downcasting (RGB -> gray/
+                // palette when representable) changes the decoded buffer
+                // FORMAT, not the pixels; disable it so the exact-roundtrip
+                // comparison stays byte-shaped. (The sweep variant's own
+                // identity is unaffected — downcast is content-dependent
+                // output negotiation, not a curated axis.)
+                let cfg = cell.variant.build().with_downcast(DowncastFlags::none());
+                encode_rgb8(imgr, None, &cfg, &enough::Unstoppable, &enough::Unstoppable)
+                    .unwrap_or_else(|e| panic!("encode {} on {}: {e:?}", cell.id, img.name))
+            };
             // Pattern 14: every cell must decode…
             let out = decode(&png, &PngDecodeConfig::default(), &enough::Unstoppable)
                 .unwrap_or_else(|e| panic!("UNDECODABLE {} on {}: {e:?}", cell.id, img.name));
-            // …and roundtrip EXACTLY (zero-tolerance rule as a gate).
-            let decoded = out.pixels.copy_to_contiguous_bytes();
-            if decoded != img.rgb {
-                failures.push(format!(
-                    "LOSSLESS ROUNDTRIP MISMATCH: {} on {}",
-                    cell.id, img.name
-                ));
+            // …and the LOSSLESS cells must roundtrip EXACTLY (zero-
+            // tolerance rule as a gate). Quantize cells are lossy by
+            // construction, so the exact gate does not apply to them —
+            // they only need to decode (above) and be live (below).
+            if !is_lossy {
+                let decoded = out.pixels.copy_to_contiguous_bytes();
+                if decoded != img.rgb {
+                    failures.push(format!(
+                        "LOSSLESS ROUNDTRIP MISMATCH: {} on {}",
+                        cell.id, img.name
+                    ));
+                }
             }
             row.push(png.len());
         }

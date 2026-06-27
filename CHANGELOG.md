@@ -4,6 +4,22 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Added
+- **Palette/quantize axis on the sweep plan (`sweep::QuantizeSpec` +
+  `QuantBackend`).** `SweepVariant` gains an optional `quantize` stratum:
+  `None` = truecolor lossless (unchanged), `Some(spec)` = palette-reduce to
+  `max_colors` via `Imagequant` (feature `imagequant`) or `Zenquant` (feature
+  `quantize`). The axis is a **union**, not a cross — `SweepAxes::modes_full`
+  and `scalar_dense` now carry the lossless compression cells PLUS 8 mandatory
+  quantize cells (both backends × `{256,128,64,32}` colors) at the default
+  `Balanced` compression, so `modes_full` is **17 cells** (9 truecolor + 8
+  palette). Cell ids suffix `-iq{N}` / `-zq{N}` (e.g. `png-balanced-iq256`),
+  roundtrip through `variant_from_cell_id`, and fingerprint distinctly (backend
+  + color count fold into the hash). New `SweepVariant::encode_png` performs the
+  encode (truecolor or indexed); the quantize arms are feature-gated and error
+  (never silently truecolor) when the backend feature is off. This is the data a
+  PNG picker needs to choose palette quantization.
+
 ### Fixed
 - **encode peak-memory estimate is now admission-gating-safe (never under-
   predicts).** Admission control gates on `EncodeEstimate::peak_memory_bytes`
