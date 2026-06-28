@@ -8,10 +8,11 @@ description = "PNG encoding and decoding with zencodec trait integration"
 categories = ["multimedia::images", "multimedia::encoding"]
 keywords = ["png", "image", "encoder", "decoder", "codec"]
 repository = "https://github.com/imazen/zenpng"
+readme = "README.crates.md"
 include = [
     "/src/**",
     "/examples/**",
-    "/README.md",
+    "/README.crates.md",
     "/CHANGELOG.md",
     "/LICENSE*",
 ]

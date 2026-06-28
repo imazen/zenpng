@@ -1,4 +1,6 @@
-# zenpng [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenpng/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenpng/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/zenpng?style=flat-square)](https://crates.io/crates/zenpng) [![lib.rs](https://img.shields.io/crates/v/zenpng?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zenpng) [![docs.rs](https://img.shields.io/docsrs/zenpng?style=flat-square)](https://docs.rs/zenpng) [![MSRV](https://img.shields.io/badge/MSRV-1.93-blue?style=flat-square)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field) [![license](https://img.shields.io/crates/l/zenpng?style=flat-square)](#license)
+<!-- GENERATED FROM README.md by zenutils gen-readme-crates.sh — DO NOT EDIT. -->
+
+# zenpng
 
 PNG encoder and decoder in pure, safe Rust (`#![forbid(unsafe_code)]`).
 SIMD-accelerated unfiltering, a progressive 4-phase compression engine with 31
@@ -368,25 +370,6 @@ automatically adjusts to the effort level. See the
 [benchmark charts](https://github.com/imazen/zenpng/tree/main/benchmarks) for the
 compression-vs-time tradeoff across all 31 standard effort presets.
 
-<!-- crates.io:skip-start -->
-## Benchmarks
-
-Compression vs. encode time across all 31 standard effort presets, on a 100-image
-representative corpus:
-
-![Compression vs Encode Time — Fast Range](https://github.com/imazen/zenpng/raw/main/effort_curve_fast.svg)
-![Compression vs Encode Time — Detail Range](https://github.com/imazen/zenpng/raw/main/effort_curve_detail.svg)
-
-At maximum effort (`Brag` / effort 31, with the `zopfli` feature) zenpng's DEFLATE
-output is competitive with the strongest PNG optimizers: on a 13-image still
-corpus its aggregate bytes land within ~0.1% of ECT `-9`, ahead of zopflipng and
-oxipng `-omax`. The corpus is small — treat the margin as a rough indicator, not a
-guarantee.
-
-Methodology, environment, exact commands, and the committed raw data live in
-[benchmarks/](https://github.com/imazen/zenpng/tree/main/benchmarks) (see
-[benchmarks/README.md](https://github.com/imazen/zenpng/blob/main/benchmarks/README.md)).
-<!-- crates.io:skip-end -->
 
 ## MSRV
 

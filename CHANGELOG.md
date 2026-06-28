@@ -20,6 +20,13 @@ All notable changes to zenpng are documented here.
   (never silently truecolor) when the backend feature is off. This is the data a
   PNG picker needs to choose palette quantization.
 
+### Changed
+- Docs: split README into a GitHub surface (`README.md`) and a generated
+  crates.io surface (`README.crates.md`, no badges); refreshed for the
+  `heuristics` resource-estimation, `detect` source-analysis, `cms`/`unchecked`,
+  and native `zencodec` Fidelity APIs; added `benchmarks/README.md` and the
+  canonical crosslink footer.
+
 ### Fixed
 - **encode peak-memory estimate is now admission-gating-safe (never under-
   predicts).** Admission control gates on `EncodeEstimate::peak_memory_bytes`
