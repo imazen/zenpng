@@ -9,6 +9,45 @@ reduction by [zenquant](https://github.com/imazen/zenquant).
 
 ## Quick start
 
+The one-shot path needs only `zenpng` + `zenpixels`: wrap your pixels in a
+self-describing `PixelSlice` (it carries the pixel format, dimensions, and row
+stride) and encode to a PNG, then decode any PNG back to packed RGBA8 +
+dimensions — each in a single call.
+
+```toml
+[dependencies]
+zenpng = "0.1"
+zenpixels = "0.2"
+```
+
+```rust
+use zenpng::{encode, decode_rgba8};
+use zenpixels::{PixelSlice, PixelDescriptor};
+
+// 2×2 RGBA, tightly packed — dims + stride + format ride with the pixels.
+let (width, height) = (2u32, 2u32);
+let rgba = vec![
+    255, 0, 0, 255,    0, 255, 0, 255,
+    0, 0, 255, 255,    255, 255, 255, 255,
+];
+let img = PixelSlice::new(&rgba, width, height, width as usize * 4, PixelDescriptor::RGBA8_SRGB)?;
+
+let png = encode(img)?; // no separate width/height arguments
+let (pixels, w, h) = decode_rgba8(&png)?;
+
+assert_eq!((w, h), (width, height));
+assert_eq!(pixels, rgba); // PNG is lossless — exact round-trip
+```
+
+`encode` accepts any `PixelSlice` format (RGB8, grayscale, 16-bit, …) — the
+descriptor rides with the pixels. `decode_rgba8` normalizes grayscale / indexed
+/ RGB / 16-bit sources to 8-bit RGBA (opaque sources get `A = 255`). For a
+specific filter/effort, embedded ICC/EXIF/XMP, 16-bit / grayscale / indexed I/O,
+resource limits, or cooperative cancellation, drop down to the typed builder API
+below.
+
+### Power API — builder & typed buffers
+
 ```toml
 [dependencies]
 zenpng = "0.1"

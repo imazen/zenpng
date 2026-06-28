@@ -108,6 +108,115 @@ pub use quantize::{
 
 pub use types::{Compression, Filter};
 
+// ---------------------------------------------------------------------------
+// One-shot convenience functions
+//
+// The shortest path for the two most common jobs — encode a self-describing
+// pixel slice to a PNG, and decode any PNG back to tightly-packed RGBA8 +
+// dimensions — with sane defaults, for someone who hasn't read the rest of the
+// docs. Both are purely additive wrappers over the builder/config path.
+//
+// The encode input is a [`zenpixels::PixelSlice`]: it carries the pixel format,
+// width, height, and row stride, so the dimensions ride *with* the pixels —
+// there is no separate width/height to keep in sync and no buffer-length
+// mismatch to guard against. Reach for [`PngEncoderConfig`] / [`EncodeConfig`]
+// (a specific filter/effort, embedded ICC/EXIF/XMP, resource limits,
+// cancellation) or [`decode`] / [`PngDecodeConfig`] (16-bit output, the native
+// pixel buffer, decode warnings, strict checksums) when you need more control.
+// ---------------------------------------------------------------------------
+
+/// Encode a [`zenpixels::PixelSlice`] to a PNG in one call.
+///
+/// The slice is self-describing: it carries the pixel format (RGBA8, RGB8,
+/// grayscale, 16-bit, …), the dimensions, and the row stride, so there is no
+/// separate `width`/`height` argument to keep in sync and no buffer-length
+/// mismatch to guard against — strided slices are handled directly. Uses the
+/// default [`PngEncoderConfig`] (balanced lossless compression, no embedded
+/// metadata). For a specific filter/effort, embedded ICC/EXIF/XMP, or resource
+/// limits / cancellation, build a [`PngEncoderConfig`] / [`EncodeConfig`] and
+/// drive the encode job directly.
+///
+/// # Errors
+/// Returns a [`PngError`] if the slice's pixel format is not supported by the
+/// PNG encoder, plus any encode error bubbled up from the underlying pipeline.
+///
+/// ```
+/// use zenpng::{encode, decode_rgba8};
+/// use zenpixels::{PixelSlice, PixelDescriptor};
+///
+/// // 2×2 RGBA, tightly packed — dims + stride + format ride with the pixels.
+/// let (width, height) = (2u32, 2u32);
+/// let rgba = vec![
+///     255, 0, 0, 255,    0, 255, 0, 255,
+///     0, 0, 255, 255,    255, 255, 255, 255,
+/// ];
+/// let img = PixelSlice::new(&rgba, width, height, width as usize * 4, PixelDescriptor::RGBA8_SRGB)?;
+///
+/// let png = encode(img)?; // no separate width/height arguments
+/// let (pixels, w, h) = decode_rgba8(&png)?;
+///
+/// assert_eq!((w, h), (width, height));
+/// assert_eq!(pixels, rgba); // PNG is lossless — exact round-trip
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn encode(img: zenpixels::PixelSlice<'_>) -> crate::error::Result<Vec<u8>> {
+    use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+    let output = crate::PngEncoderConfig::default()
+        .job()
+        .encoder()?
+        .encode(img)?;
+    Ok(output.into_vec())
+}
+
+/// Decode a PNG (any color type / bit depth) to tightly-packed 8-bit RGBA in
+/// one call.
+///
+/// Returns `(rgba, width, height)` where `rgba` is exactly `width * height * 4`
+/// bytes (`R, G, B, A` per pixel, no stride padding). Grayscale, indexed, RGB
+/// and 16-bit sources are all normalized to 8-bit RGBA; opaque sources get
+/// `A = 255`. Uses the default [`PngDecodeConfig`] (checksums skipped for
+/// speed, default resource limits). For 16-bit output, the native pixel buffer,
+/// decode warnings, or strict checksum verification, use [`decode`] /
+/// [`PngDecodeConfig`].
+///
+/// # Errors
+/// Returns a [`PngError`] if `png` is not a valid PNG or a resource limit is
+/// exceeded.
+///
+/// ```
+/// use zenpng::{encode, decode_rgba8};
+/// use zenpixels::{PixelSlice, PixelDescriptor};
+///
+/// // 2×2 RGBA, tightly packed — dims + stride + format ride with the pixels.
+/// let (width, height) = (2u32, 2u32);
+/// let rgba = vec![
+///     255, 0, 0, 255,    0, 255, 0, 255,
+///     0, 0, 255, 255,    255, 255, 255, 255,
+/// ];
+/// let img = PixelSlice::new(&rgba, width, height, width as usize * 4, PixelDescriptor::RGBA8_SRGB)?;
+///
+/// let png = encode(img)?;
+/// let (pixels, w, h) = decode_rgba8(&png)?;
+///
+/// assert_eq!((w, h), (width, height));
+/// assert_eq!(pixels, rgba); // PNG is lossless — exact round-trip
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn decode_rgba8(png: &[u8]) -> crate::error::Result<(Vec<u8>, u32, u32)> {
+    use zenpixels_convert::PixelBufferConvertTypedExt as _;
+    let output = crate::decode::decode(
+        png,
+        &crate::PngDecodeConfig::default(),
+        &enough::Unstoppable,
+    )?;
+    let width = output.info.width;
+    let height = output.info.height;
+    // `to_rgba8()` normalizes any native color type to RGBA8;
+    // `copy_to_contiguous_bytes()` strips any stride padding.
+    let rgba = output.pixels.to_rgba8().copy_to_contiguous_bytes();
+    Ok((rgba, width, height))
+}
+
 #[cfg(feature = "_dev")]
 #[doc(hidden)]
 pub use crate::encode::{encode_rgb8_with_stats, encode_rgba8_with_stats};

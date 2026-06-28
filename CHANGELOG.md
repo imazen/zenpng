@@ -5,6 +5,17 @@ All notable changes to zenpng are documented here.
 ## [Unreleased]
 
 ### Added
+- **One-shot convenience functions: `encode` + `decode_rgba8`.** Purely-additive
+  top-level free functions for the two most common jobs in a single call:
+  `encode(img: zenpixels::PixelSlice<'_>) -> Result<Vec<u8>>` encodes a
+  self-describing pixel slice (format, dimensions, and row stride ride *with* the
+  pixels — no separate `width`/`height` args and no buffer-length-mismatch class
+  of bug) at the default `PngEncoderConfig`, and
+  `decode_rgba8(&png) -> Result<(Vec<u8>, u32, u32)>` decodes any PNG to packed
+  RGBA8 + dimensions (normalizing grayscale / indexed / RGB / 16-bit sources to
+  8-bit RGBA). Both wrap the existing builder path, so the full power API (custom
+  filter/effort, metadata, 16-bit, cancellation) is unchanged. README quick-start
+  leads with these; each fn carries the round-trip as a runnable doctest.
 - **Palette/quantize axis on the sweep plan (`sweep::QuantizeSpec` +
   `QuantBackend`).** `SweepVariant` gains an optional `quantize` stratum:
   `None` = truecolor lossless (unchanged), `Some(spec)` = palette-reduce to
