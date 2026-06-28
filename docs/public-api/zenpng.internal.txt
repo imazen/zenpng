@@ -13,9 +13,9 @@
 #   pub types (struct/enum/trait/alias)         6
 #   pub consts/statics                          1
 #   free functions                             16
-#   inherent methods                           33
+#   inherent methods                           35
 #   struct fields                              16
-#   trait roster entries (type × trait)        36
+#   trait roster entries (type × trait)        38
 #   auto-trait-complete types                   3
 #
 # per-module pub lines:
@@ -23,8 +23,9 @@
 #   __bench_scan                     31
 #   detect                            3
 #   internal_params                   6
+#   sweep                             2
 
-## items (73 lines)
+## items (75 lines)
 
 #[non_exhaustive] pub struct InternalParams [also: internal_params]
 pub const fn __bench_scan::FusedRequest::all() -> Self
@@ -77,6 +78,8 @@ pub fn encode_rgba8_with_stats(imgref::ImgRef<'_, rgb::formats::rgba::Rgba<u8>>,
 pub fn internal_params::InternalParams::clone(&self) -> internal_params::InternalParams
 pub fn internal_params::InternalParams::default() -> internal_params::InternalParams
 pub fn internal_params::InternalParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn sweep::QuantBackend::assert_fields_are_eq(&self)
+pub fn sweep::QuantizeSpec::assert_fields_are_eq(&self)
 pub mod __bench_scan
 pub mod internal_params
 pub struct PhaseStat
@@ -100,7 +103,7 @@ pub __bench_scan::FusedResult::is_opaque: bool
 pub internal_params::InternalParams::compression: core::option::Option<Compression>
 pub internal_params::InternalParams::parallel: core::option::Option<bool>
 
-## trait impls (19 types)
+## trait impls (21 types)
 
 ApngFrameInfo: TrivialClone
 ApngFrameInput<'a>: TrivialClone
@@ -121,6 +124,8 @@ detect::ColorType: TrivialClone
 heuristics::DecodeEstimate: TrivialClone
 heuristics::EncodeEstimate: TrivialClone
 internal_params::InternalParams: Clone, Debug, Default
+sweep::QuantBackend: TrivialClone
+sweep::QuantizeSpec: TrivialClone
 
 ## auto traits
 
