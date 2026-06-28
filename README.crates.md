@@ -11,38 +11,6 @@ reduction by [zenquant](https://github.com/imazen/zenquant).
 
 ## Quick start
 
-The one-shot path needs nothing but `zenpng`: encode tightly-packed RGBA8 bytes
-to a PNG, and decode any PNG back to RGBA8 + dimensions, each in a single call.
-
-```toml
-[dependencies]
-zenpng = "0.1"
-```
-
-```rust
-use zenpng::{encode_rgba8_bytes, decode_rgba8};
-
-// 2×2 RGBA, tightly packed (width * height * 4 bytes)
-let (width, height) = (2u32, 2u32);
-let rgba = vec![
-    255, 0, 0, 255,    0, 255, 0, 255,
-    0, 0, 255, 255,    255, 255, 255, 255,
-];
-
-let png = encode_rgba8_bytes(&rgba, width, height)?;
-let (pixels, w, h) = decode_rgba8(&png)?;
-
-assert_eq!((w, h), (width, height));
-assert_eq!(pixels, rgba); // PNG is lossless — exact round-trip
-```
-
-`decode_rgba8` normalizes grayscale / indexed / RGB / 16-bit sources to 8-bit
-RGBA (opaque sources get `A = 255`). For a specific filter/effort, embedded
-ICC/EXIF/XMP, 16-bit / grayscale / indexed I/O, resource limits, or cooperative
-cancellation, drop down to the typed builder API below.
-
-### Power API — builder & typed buffers
-
 ```toml
 [dependencies]
 zenpng = "0.1"
