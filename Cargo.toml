@@ -62,7 +62,6 @@ quantette = ["dep:quantette"]
 joint = ["quantize", "zenquant/joint"]
 unchecked = ["zenflate/unchecked"]
 zopfli = ["dep:zenzop"]
-zencodec = []
 # ICC synthesis for the zencodec color-emit path, via zenpixels-convert's
 # `icc-db` feature: a bundled LZ4 profile blob + pure-Rust lz4_flex decoder —
 # no moxcms. Covers the full ITU-T H.273 grid incl PQ/HLG (without it, only

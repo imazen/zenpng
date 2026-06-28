@@ -38,6 +38,18 @@ All notable changes to zenpng are documented here.
   (never silently truecolor) when the backend feature is off. This is the data a
   PNG picker needs to choose palette quantization.
 
+### Changed
+- **`zencodec` is now a required (non-optional) dependency; the empty `zencodec`
+  marker cargo feature is removed.** The trait integration
+  (`PngEncoderConfig: EncoderConfig`, `PngDecoderConfig: DecoderConfig`, the
+  `CategorizedError` impls on `PngError` / `ProbeError`, and the
+  color-emit / orientation / metadata flow) was already compiled
+  unconditionally — the `zencodec = []` feature gated nothing — so this drop
+  only removes the no-op flag and the redundant `--features zencodec` /
+  `zencodec`-only CI steps. The integration adds no `std`-only code (`zencodec`
+  is `#![no_std] + alloc`), so the `wasm32-wasip1`, `wasm32-unknown-unknown`,
+  and `--no-default-features` builds are unaffected.
+
 ### Fixed
 - **`sweep_cells_decode_exactly_and_steps_are_live` no longer panics on feature
   subsets.** The plan always carries every quantize cell (per
