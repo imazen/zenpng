@@ -15,7 +15,7 @@
 
 use imgref::ImgRef;
 use rgb::Rgb;
-use zenpng::sweep::{SweepAxes, plan};
+use zenpng::sweep::{QuantBackend, SweepAxes, plan};
 use zenpng::{DowncastFlags, PngDecodeConfig, decode, encode_rgb8};
 
 struct Image {
@@ -111,12 +111,26 @@ fn corpus() -> Vec<Image> {
 fn sweep_cells_decode_exactly_and_steps_are_live() {
     let p = plan(&SweepAxes::modes_full());
     assert_eq!(p.cells[0].id, "png-balanced");
+    // The plan always carries every quantize cell (see
+    // `modes_full_has_all_eight_quantize_cells`), but a cell can only be
+    // *encoded* when its backend's feature is compiled in. Drop the cells whose
+    // backend is absent in this build so the matrix below stays aligned; the CI
+    // feature matrix exercises every backend in the jobs where it is enabled.
+    let cells: Vec<_> = p
+        .cells
+        .iter()
+        .filter(|c| match c.variant.quantize.as_ref().map(|q| q.backend) {
+            None => true,
+            Some(QuantBackend::Imagequant) => cfg!(feature = "imagequant"),
+            Some(QuantBackend::Zenquant) => cfg!(feature = "quantize"),
+        })
+        .collect();
     let images = corpus();
     let mut failures: Vec<String> = Vec::new();
     // bytes[cell][image]
     let mut bytes: Vec<Vec<usize>> = Vec::new();
 
-    for cell in &p.cells {
+    for cell in &cells {
         let is_lossy = cell.variant.quantize.is_some();
         let mut row = Vec::new();
         for img in &images {
@@ -162,7 +176,7 @@ fn sweep_cells_decode_exactly_and_steps_are_live() {
 
     // Step liveness: every non-default tier must change bytes vs the
     // default somewhere in the corpus.
-    for (ci, cell) in p.cells.iter().enumerate().skip(1) {
+    for (ci, cell) in cells.iter().enumerate().skip(1) {
         if bytes[ci] == bytes[0] {
             failures.push(format!(
                 "INERT STEP: {} byte-matched png-balanced on every image",
@@ -173,7 +187,7 @@ fn sweep_cells_decode_exactly_and_steps_are_live() {
     // Soft sanity, hard-checked at the extremes: None is the largest
     // tier everywhere; Intense never loses to Fastest on compressible
     // content.
-    let idx = |id: &str| p.cells.iter().position(|c| c.id == id).unwrap();
+    let idx = |id: &str| cells.iter().position(|c| c.id == id).unwrap();
     let (none_i, fastest_i, intense_i) = (idx("png-none"), idx("png-fastest"), idx("png-intense"));
     for (ii, img) in images.iter().enumerate() {
         if bytes[none_i][ii] < bytes[fastest_i][ii] {

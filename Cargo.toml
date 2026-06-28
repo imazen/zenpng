@@ -118,3 +118,9 @@ required-features = ["_dev"]
 name = "scalar_vs_simd"
 harness = false
 required-features = ["_dev"]
+
+[patch.crates-io]
+# TEMP: until zencodec 0.1.26 ships (PR #103) — provides the unreleased
+# `CategorizedError` taxonomy (trait + `ErrorCategory` + `LimitKind`). Remove
+# this patch and bump the `zencodec` version dependency once 0.1.26 is published.
+zencodec = { git = "https://github.com/imazen/zencodec", branch = "cancellation-classification-99" }

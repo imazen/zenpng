@@ -70,7 +70,7 @@ impl<'a> Iterator for ChunkIter<'a> {
 
             // Need at least 12 bytes: length(4) + type(4) + crc(4) (data can be 0)
             if self.pos + 12 > self.data.len() {
-                return Some(Err(PngError::Decode("truncated chunk header".into())));
+                return Some(Err(PngError::Truncated("truncated chunk header".into())));
             }
 
             let length =
