@@ -5,6 +5,24 @@ All notable changes to zenpng are documented here.
 ## [Unreleased]
 
 ### Added
+- **Codec-agnostic error taxonomy (`zencodec::CategorizedError`).** `PngError`
+  and the caller-facing `detect::ProbeError` now implement
+  `zencodec::CategorizedError` (`codec_name() = Some("zenpng")` + total `category()`), so
+  a consumer can route on the coarse `ErrorCategory` (HTTP status, retry policy,
+  logging) without matching the enum. The stringly variants were split into
+  discrete, category-named ones: new `Truncated` (→ `UnexpectedEof`),
+  `UnsupportedFeature` (→ `UnsupportedImageFeature`), `Unsupported(UnsupportedOperation)`
+  (delegates — `PixelFormat` → `UnsupportedPixelFormat`), `Io` (→ `Io`), and
+  `Limit(zencodec::LimitExceeded)` (delegates, **carries the `LimitKind`**). The
+  16 truncation/EOF decode sites, the 3 output-sink sites, and every configured-
+  limit site (encoder `check_*`, decoder pixel/memory caps, APNG cumulative-
+  memory + `acTL` frame cap, the >u32 IDAT guard) were rewired to construct the
+  precise variant. The kept variants narrowed in meaning: `Decode` →
+  `MalformedImage`, `InvalidInput` → `InvalidParameters`, `LimitExceeded` →
+  `OutOfMemory` (now only allocation-failure / address-space-overflow sites).
+  `Quantize` maps to `Internal` (delegating would need zenquant to impl
+  `CategorizedError` — a follow-up). All additive on `#[non_exhaustive]`; no
+  public variant removed or renamed.
 - **Palette/quantize axis on the sweep plan (`sweep::QuantizeSpec` +
   `QuantBackend`).** `SweepVariant` gains an optional `quantize` stratum:
   `None` = truecolor lossless (unchanged), `Some(spec)` = palette-reduce to
@@ -26,8 +44,47 @@ All notable changes to zenpng are documented here.
   `heuristics` resource-estimation, `detect` source-analysis, `cms`/`unchecked`,
   and native `zencodec` Fidelity APIs; added `benchmarks/README.md` and the
   canonical crosslink footer.
+- **The `zencodec` trait impls now return the `At<zencodec::CodecError>`
+  envelope (Pattern B), not `At<PngError>`.** Every encode/decode trait impl —
+  `PngEncoderConfig` / `PngEncodeJob` / `PngEncoder` / `PngAnimationFrameEncoder`
+  and `PngDecoderConfig` / `PngDecodeJob` / `PngDecoder` / `PngStreamingDecoder`
+  / `PngAnimationFrameDecoder` — sets `type Error = At<CodecError>` and wraps its
+  native error in the shared envelope (`CodecError::of` for already-located
+  errors, the new `From<PngError> for At<CodecError>` bridge for bare ones). A
+  generic consumer can now recover the `ErrorCategory` **and** the codec name
+  (`"zenpng"`) *through `Dyn*` dispatch*: once the error is erased to
+  `Box<dyn Error>`, the envelope downcasts back, where the previous
+  `At<PngError>` left no shared concrete type to recover (both were lost). The
+  internal logic is unchanged — each trait method delegates to a private
+  `At<PngError>` body and converts once at the boundary. `PngError` (and
+  `detect::ProbeError`) are untouched and remain the typed **detail** + category
+  source inside the envelope. The codec's inherent rich-error API — the free
+  `zenpng::decode` / `encode_*` functions and the `PngDecoderConfig::decode` /
+  `probe` / `decode_into_*` + `PngEncoderConfig::encode_*` convenience methods —
+  still returns `At<PngError>`, so direct PNG callers keep ergonomic enum
+  matching. Regression gate: `codec::tests::envelope_category_survives_dyn_erasure`
+  drives the decoder through `DynDecoderConfig` and asserts category + codec name
+  survive `Box<dyn Error>` erasure.
+- **`zencodec` is now a required (non-optional) dependency; the empty `zencodec`
+  marker cargo feature is removed.** The trait integration
+  (`PngEncoderConfig: EncoderConfig`, `PngDecoderConfig: DecoderConfig`, the
+  `CategorizedError` impls on `PngError` / `ProbeError`, and the
+  color-emit / orientation / metadata flow) was already compiled
+  unconditionally — the `zencodec = []` feature gated nothing — so this drop
+  only removes the no-op flag and the redundant `--features zencodec` /
+  `zencodec`-only CI steps. The integration adds no `std`-only code (`zencodec`
+  is `#![no_std] + alloc`), so the `wasm32-wasip1`, `wasm32-unknown-unknown`,
+  and `--no-default-features` builds are unaffected.
 
 ### Fixed
+- **`sweep_cells_decode_exactly_and_steps_are_live` no longer panics on feature
+  subsets.** The plan always carries every quantize cell (per
+  `modes_full_has_all_eight_quantize_cells`), but a cell can only be *encoded*
+  when its backend feature is compiled in; the test now filters cells to the
+  available backends (gated by `cfg!(feature = ...)`, controlled by the CI
+  feature matrix) instead of `.unwrap()`-ing the clean "needs the `imagequant`
+  feature" error. Fixes the pre-existing red `cargo test` (default / no-default /
+  `zencodec`-only) jobs on `main`.
 - **encode peak-memory estimate is now admission-gating-safe (never under-
   predicts).** Admission control gates on `EncodeEstimate::peak_memory_bytes`
   (the `typ` field), so it must be a safe upper bound. A VmHWM re-sweep

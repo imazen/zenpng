@@ -93,7 +93,7 @@ impl<'a> ApngDecoder<'a> {
 
         // Parse IHDR
         let (_, ihdr_type, ihdr_data_start, ihdr_crc_end) = read_chunk_header(data, 8)
-            .ok_or_else(|| at!(PngError::Decode("truncated IHDR chunk".into())))?;
+            .ok_or_else(|| at!(PngError::Truncated("truncated IHDR chunk".into())))?;
         if ihdr_type != *b"IHDR" {
             return Err(at!(PngError::Decode("first chunk is not IHDR".into())));
         }
@@ -295,7 +295,7 @@ impl<'a> ApngDecoder<'a> {
                     break;
                 }
                 if decompressor.is_done() {
-                    return Err(at!(PngError::Decode("APNG: truncated IDAT data".into())));
+                    return Err(at!(PngError::Truncated("APNG: truncated IDAT data".into())));
                 }
                 decompressor.fill().map_err(|e| {
                     at!(PngError::Decode(alloc::format!(
@@ -412,7 +412,7 @@ impl<'a> ApngDecoder<'a> {
                     break;
                 }
                 if decompressor.is_done() {
-                    return Err(at!(PngError::Decode("APNG: truncated fdAT data".into())));
+                    return Err(at!(PngError::Truncated("APNG: truncated fdAT data".into())));
                 }
                 decompressor.fill().map_err(|e| {
                     at!(PngError::Decode(alloc::format!(
@@ -534,9 +534,10 @@ pub(crate) fn decode_apng_composed(
         if let Some(max_mem) = config.max_memory_bytes {
             total_frame_bytes = total_frame_bytes.saturating_add(per_frame_bytes);
             if total_frame_bytes > max_mem {
-                return Err(at!(PngError::LimitExceeded(
-                    "cumulative APNG frame memory exceeds limit".into(),
-                )));
+                return Err(at!(PngError::Limit(zencodec::LimitExceeded::Memory {
+                    actual: total_frame_bytes,
+                    max: max_mem,
+                })));
             }
         }
 

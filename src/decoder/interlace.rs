@@ -72,7 +72,7 @@ pub(crate) fn decode_interlaced(
     // Parse IHDR
     let ihdr_chunk = chunks
         .next()
-        .ok_or_else(|| at!(PngError::Decode("empty PNG".into())))??;
+        .ok_or_else(|| at!(PngError::Truncated("empty PNG".into())))??;
     if ihdr_chunk.chunk_type != *b"IHDR" {
         return Err(at!(PngError::Decode("first chunk is not IHDR".into())));
     }
@@ -115,7 +115,7 @@ pub(crate) fn decode_interlaced(
     // dimensions → default fallible.
     let out_row_bytes = width as usize * fmt.channels * fmt.bytes_per_channel;
     let final_total = out_row_bytes.checked_mul(height as usize).ok_or_else(|| {
-        at!(PngError::InvalidInput(
+        at!(PngError::LimitExceeded(
             "image too large for this platform".into()
         ))
     })?;

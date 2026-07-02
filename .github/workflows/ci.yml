@@ -36,11 +36,8 @@ jobs:
       - name: Test (default)
         run: cargo test
 
-      - name: Test (zencodec feature)
-        run: cargo test --features zencodec
-
-      - name: Test (zencodec + cms features)
-        run: cargo test --features zencodec,cms
+      - name: Test (cms feature)
+        run: cargo test --features cms
 
       - name: Test (zopfli feature)
         run: cargo test --features zopfli
@@ -121,11 +118,8 @@ jobs:
       - name: Test (no default features)
         run: cargo test --no-default-features
 
-      - name: Test (zencodec)
-        run: cargo test --no-default-features --features zencodec
-
-      - name: Test (quantize + zencodec)
-        run: cargo test --features "quantize,zencodec"
+      - name: Test (quantize)
+        run: cargo test --features quantize
 
       - name: Test (zopfli)
         run: cargo test --features zopfli
@@ -140,7 +134,7 @@ jobs:
         run: cargo test --features quantette
 
       - name: Test (all features except _dev)
-        run: cargo test --features "quantize,imagequant,quantette,joint,unchecked,zopfli,zencodec"
+        run: cargo test --features "quantize,imagequant,quantette,joint,unchecked,zopfli"
 
   clippy:
     name: Clippy
@@ -153,10 +147,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy (all features)
-        run: cargo clippy --all-targets --features "quantize,imagequant,quantette,joint,unchecked,zopfli,zencodec" -- -D warnings
+        run: cargo clippy --all-targets --features "quantize,imagequant,quantette,joint,unchecked,zopfli" -- -D warnings
 
-      - name: Clippy (zencodec only)
-        run: cargo clippy --all-targets --no-default-features --features zencodec -- -D warnings
+      - name: Clippy (no default features)
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
 
   fmt:
     name: Format

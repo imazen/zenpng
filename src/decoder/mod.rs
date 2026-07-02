@@ -147,7 +147,7 @@ pub(crate) fn probe_png(data: &[u8]) -> crate::error::Result<PngInfo> {
 
     let ihdr_chunk = chunks
         .next()
-        .ok_or_else(|| at!(PngError::Decode("empty PNG".into())))??;
+        .ok_or_else(|| at!(PngError::Truncated("empty PNG".into())))??;
     if ihdr_chunk.chunk_type != *b"IHDR" {
         return Err(at!(PngError::Decode("first chunk is not IHDR".into())));
     }
@@ -223,7 +223,7 @@ pub(crate) fn decode_png(
     if is_passthrough {
         let raw_row_bytes = ihdr.raw_row_bytes()?;
         let total = raw_row_bytes.checked_mul(h).ok_or_else(|| {
-            at!(PngError::InvalidInput(
+            at!(PngError::LimitExceeded(
                 "image too large for this platform".into()
             ))
         })?;
@@ -350,7 +350,7 @@ pub(crate) fn decode_png(
     let out_row_bytes = w * pixel_bytes;
 
     let out_total = out_row_bytes.checked_mul(h).ok_or_else(|| {
-        at!(PngError::InvalidInput(
+        at!(PngError::LimitExceeded(
             "image too large for this platform".into()
         ))
     })?;
@@ -511,7 +511,9 @@ fn try_decode_stored(
 
     loop {
         if zpos >= zlib_end {
-            return Some(Err(at!(PngError::Decode("truncated stored block".into()))));
+            return Some(Err(at!(PngError::Truncated(
+                "truncated stored block".into()
+            ))));
         }
         let bfinal = zlib[zpos] & 0x01;
         let btype = (zlib[zpos] >> 1) & 0x03;
