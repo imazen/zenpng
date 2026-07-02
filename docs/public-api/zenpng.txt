@@ -6,14 +6,14 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpng.txt 417 lines (supported surface) | zenpng.features.txt 21 added (features: avx512,cms,imagequant,joint,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 97 lines (117 hidden + 34 excluded-feature)
+# files: zenpng.txt 419 lines (supported surface) | zenpng.features.txt 21 added (features: avx512,cms,imagequant,joint,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 97 lines (117 hidden + 34 excluded-feature)
 
 ## summary
 #
 #   pub modules                                 4
 #   pub types (struct/enum/trait/alias)        49
 #   pub consts/statics                          9
-#   free functions                             27
+#   free functions                             29
 #   inherent methods                           68
 #   struct fields                             151
 #   enum variants                              56
@@ -22,12 +22,12 @@
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          277
+#   (root)                          279
 #   detect                           41
 #   heuristics                       13
 #   sweep                            33
 
-## items (364 lines)
+## items (366 lines)
 
 pub mod zenpng
 pub mod detect
@@ -378,7 +378,9 @@ pub fn Quantizer::with_quality_metrics(&self) -> core::option::Option<alloc::box
 pub fn available_backends() -> &'static [&'static str]
 pub fn decode(&[u8], &PngDecodeConfig, &dyn enough::Stop) -> core::result::Result<PngDecodeOutput, whereat::at::At<PngError>>
 pub fn decode_apng(&[u8], &PngDecodeConfig, &dyn enough::Stop) -> core::result::Result<ApngDecodeOutput, whereat::at::At<PngError>>
+pub fn decode_rgba8(&[u8]) -> core::result::Result<(alloc::vec::Vec<u8>, u32, u32), whereat::at::At<PngError>>
 pub fn default_quantizer() -> alloc::boxed::Box<dyn Quantizer>
+pub fn encode(zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<PngError>>
 pub fn encode_apng(&[ApngFrameInput<'_>], u32, u32, &ApngEncodeConfig, core::option::Option<&zencodec::metadata::Metadata>, &dyn enough::Stop, &dyn enough::Stop) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<PngError>>
 pub fn encode_apng_auto(&ApngEncodeParams<'_>, QualityGate) -> core::result::Result<AutoEncodeResult, whereat::at::At<PngError>>
 pub fn encode_apng_indexed(&ApngEncodeParams<'_>) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<PngError>>
