@@ -7,6 +7,12 @@ Interpretable, zero-load CART pickers for the zenpng lossless config space, dept
 - `zenpng_lossless_cart_zensim_2026-06-28.rs` — picker fit against zensim quality.
 - `zenpng_lossless_cart_ssim2_2026-06-28.rs` — picker fit against SSIMULACRA2.
 
+Both `.rs` files are >30 KB, so per house rule 7b they are **not committed
+in-repo** — each is relocated to `/mnt/v/zen/picker-training/zenpng-2026-06-28/`
+with a tracked `<name>.pointer.md` (path + sha256 + provenance) in this
+directory. Fetch from block storage to regenerate/inspect; this README
+documents their shape without needing the bytes in-tree.
+
 Each file is a standalone, auto-generated decision tree: `pick_zenpng_lossless_heuristic(feats: &[f32], zq: f32) -> u16` returns a sweep-cell id (an index into the 17-cell list below) from the 469 zenanalyze image features and a target quality `zq` in 0..100. No model file, no runtime, no dependencies — just nested f64 comparisons that match sklearn exactly. Each file also carries a `main()` that byte-exact-verifies the tree against a `*_cases.bin` fixture. These are reference artifacts; they are not wired into the crate build.
 
 Unlike webp lossless, the zenpng metric is not degenerate: several cells are lossy palette-quantize variants (imagequant `iq*`, zenquant `zq*`), so zensim and ssim2 produce different trees.
