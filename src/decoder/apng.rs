@@ -88,7 +88,7 @@ impl<'a> ApngDecoder<'a> {
     /// Create a new APNG decoder from PNG file bytes.
     pub fn new(data: &'a [u8], config: &PngDecodeConfig) -> crate::error::Result<Self> {
         if data.len() < 8 || data[..8] != PNG_SIGNATURE {
-            return Err(at!(PngError::Decode("not a PNG file".into())));
+            return Err(at!(PngError::NotPng("missing PNG signature".into())));
         }
 
         // Parse IHDR

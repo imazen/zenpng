@@ -64,7 +64,7 @@ pub(crate) fn decode_interlaced(
 > {
     // Validate signature
     if data.len() < 8 || data[..8] != PNG_SIGNATURE {
-        return Err(at!(PngError::Decode("not a PNG file".into())));
+        return Err(at!(PngError::NotPng("missing PNG signature".into())));
     }
 
     let mut chunks = ChunkIter::new_with_config(data, config.skip_critical_chunk_crc);

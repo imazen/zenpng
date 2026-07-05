@@ -28,6 +28,14 @@ pub enum PngError {
     #[error("unexpected end of PNG data: {0}")]
     Truncated(alloc::string::String),
 
+    /// Data does not begin with the PNG signature — this isn't a PNG file at
+    /// all, as opposed to a recognized-but-corrupt PNG (that's
+    /// [`Decode`](Self::Decode)). Maps to [`ErrorCategory::UnsupportedImageType`].
+    ///
+    /// [`ErrorCategory::UnsupportedImageType`]: zencodec::ErrorCategory::UnsupportedImageType
+    #[error("not a PNG file: {0}")]
+    NotPng(alloc::string::String),
+
     /// A structurally-valid PNG feature this codec does not implement
     /// (unknown filter type, unsupported color-type/bit-depth combination).
     /// Maps to [`ErrorCategory::UnsupportedImageFeature`].
@@ -43,6 +51,16 @@ pub enum PngError {
     /// [`ErrorCategory::InvalidParameters`]: zencodec::ErrorCategory::InvalidParameters
     #[error("invalid input: {0}")]
     InvalidInput(alloc::string::String),
+
+    /// The input is valid and could be processed, but a configured decode
+    /// policy declined it (e.g. animation forbidden, progressive/interlaced
+    /// content forbidden). The request was understood and *declined*, so it
+    /// is neither malformed nor unsupported. Maps to
+    /// [`ErrorCategory::PolicyRejected`].
+    ///
+    /// [`ErrorCategory::PolicyRejected`]: zencodec::ErrorCategory::PolicyRejected
+    #[error("rejected by policy: {0}")]
+    PolicyRejected(alloc::string::String),
 
     /// An unsupported operation, including pixel-format negotiation failures.
     /// Delegates its category to the wrapped [`zencodec::UnsupportedOperation`]
@@ -131,11 +149,17 @@ impl zencodec::CategorizedError for PngError {
             // Truncated input / unexpected end of data.
             PngError::Truncated(_) => C::UnexpectedEof,
 
+            // Missing/incorrect PNG signature — this isn't a PNG at all.
+            PngError::NotPng(_) => C::UnsupportedImageType,
+
             // A valid PNG feature we don't implement.
             PngError::UnsupportedFeature(_) => C::UnsupportedImageFeature,
 
             // Bad caller parameters / configuration / usage.
             PngError::InvalidInput(_) => C::InvalidParameters,
+
+            // Understood and declined by a configured decode policy.
+            PngError::PolicyRejected(_) => C::PolicyRejected,
 
             // Output sink / I/O failures.
             PngError::Io(_) => C::Io(zencodec::CodecIoKind::opaque()),
@@ -269,12 +293,20 @@ mod tests {
         assert_eq!(PngError::Decode("x".into()).category(), C::MalformedImage);
         assert_eq!(PngError::Truncated("x".into()).category(), C::UnexpectedEof);
         assert_eq!(
+            PngError::NotPng("x".into()).category(),
+            C::UnsupportedImageType
+        );
+        assert_eq!(
             PngError::UnsupportedFeature("x".into()).category(),
             C::UnsupportedImageFeature
         );
         assert_eq!(
             PngError::InvalidInput("x".into()).category(),
             C::InvalidParameters
+        );
+        assert_eq!(
+            PngError::PolicyRejected("x".into()).category(),
+            C::PolicyRejected
         );
         assert_eq!(
             PngError::Io("x".into()).category(),

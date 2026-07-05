@@ -1874,7 +1874,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
             && !policy.resolve_animation(true)
         {
             return Err(
-                PngError::InvalidInput("animation rejected by decode policy".into()).into(),
+                PngError::PolicyRejected("animation rejected by decode policy".into()).into(),
             );
         }
         // Check input size limit
@@ -2902,7 +2902,7 @@ fn check_progressive_policy(
     }
     // IHDR interlace byte is at offset 28 in a valid PNG file
     if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
-        return Err(at!(PngError::InvalidInput(
+        return Err(at!(PngError::PolicyRejected(
             "interlaced (progressive) PNG rejected by decode policy".into()
         )));
     }
@@ -3706,10 +3706,14 @@ mod tests {
             .probe(b"not a PNG")
             .expect_err("malformed input must fail to probe");
 
-        // `probe_png` rejects the bad signature with `PngError::Decode`, which
-        // the `CategorizedError` impl maps to `MalformedImage`; the envelope
-        // carries both that category and the codec name through erasure.
-        assert_eq!(erased.error_category(), Some(ErrorCategory::MalformedImage));
+        // `probe_png` rejects the bad signature with `PngError::NotPng`, which
+        // the `CategorizedError` impl maps to `UnsupportedImageType` (this data
+        // isn't a PNG at all, as opposed to a recognized-but-corrupt PNG); the
+        // envelope carries both that category and the codec name through erasure.
+        assert_eq!(
+            erased.error_category(),
+            Some(ErrorCategory::UnsupportedImageType)
+        );
         assert_eq!(
             erased.codec_error().and_then(CodecError::codec),
             Some("zenpng")

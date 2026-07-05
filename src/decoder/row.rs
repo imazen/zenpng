@@ -345,7 +345,7 @@ impl<'a> RowDecoder<'a> {
     ) -> crate::error::Result<Self> {
         // Validate signature
         if data.len() < 8 || data[..8] != crate::chunk::PNG_SIGNATURE {
-            return Err(at!(PngError::Decode("not a PNG file".into())));
+            return Err(at!(PngError::NotPng("missing PNG signature".into())));
         }
 
         let mut chunks = ChunkIter::new_with_config(&data, config.skip_critical_chunk_crc);

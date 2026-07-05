@@ -140,7 +140,7 @@ pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &PngAncillary) -> PngInfo {
 /// Probe PNG metadata without decoding pixels.
 pub(crate) fn probe_png(data: &[u8]) -> crate::error::Result<PngInfo> {
     if data.len() < 8 || data[..8] != PNG_SIGNATURE {
-        return Err(at!(PngError::Decode("not a PNG file".into())));
+        return Err(at!(PngError::NotPng("missing PNG signature".into())));
     }
 
     let mut chunks = ChunkIter::new(data);
