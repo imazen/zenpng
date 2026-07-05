@@ -330,7 +330,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 [[package]]
 name = "zencodec"
 version = "0.1.25"
-source = "git+https://github.com/imazen/zencodec?branch=cancellation-classification-99#fde07d075711ab1f9a02a935f61e1d3cc655c3a3"
+source = "git+https://github.com/imazen/zencodec?rev=fde07d075711ab1f9a02a935f61e1d3cc655c3a3#fde07d075711ab1f9a02a935f61e1d3cc655c3a3"
 dependencies = [
  "almost-enough",
  "enough",
@@ -382,7 +382,7 @@ dependencies = [
 
 [[package]]
 name = "zenpng"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "almost-enough",
  "archmage",

@@ -4,6 +4,34 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+<!-- Breaking changes that will ship together in the next release. Do NOT
+     ship these piecemeal — batch them. -->
+- `Cargo.toml` version was **defensively pre-bumped 0.1.4 → 0.2.0** (no tag,
+  no publish, no GitHub release yet — those steps still need explicit
+  owner sign-off) because the breaking changes below already landed on
+  `main` while the crate version stayed at 0.1.4, so a `cargo publish` run
+  today would have shipped a semver break as a patch release.
+- Every `zencodec` trait impl's associated `Error` type changed from
+  `At<PngError>` to `At<CodecError>` (Pattern B, d6ff72d): source-breaking
+  for any downstream code that names or matches on the associated type
+  through `zencodec::encode::{EncoderConfig,EncodeJob,Encoder,
+  AnimationFrameEncoder}` / `zencodec::decode::{DecoderConfig,Decode,
+  StreamingDecode,AnimationFrameDecoder}` for `zenpng`'s types. `cargo
+  semver-checks` (rustdoc-JSON diff against published 0.1.4) reports **0
+  breaking findings** here — a known tool blind spot: it does not model
+  associated-type-value changes inside impls of a *foreign* trait. Manually
+  verified via direct diff against the published 0.1.4 source
+  (`cargo read zenpng` → every `type Error = At<PngError>` site is now
+  `type Error = At<CodecError>`).
+- The `zencodec` cargo feature (a no-op stub in 0.1.4, gating nothing) was
+  removed outright when `zencodec` became a required dependency (d6ff72d).
+  Downstream `Cargo.toml`s pinning `zenpng = { features = ["zencodec"] }`
+  (e.g. zenpipe/zencodecs) hard-error with "Package 'zenpng' does not have
+  feature 'zencodec'" against that main commit. Restored as a deprecated
+  no-op stub in the pre-bump commit (see "Added" below) so
+  `--features zencodec` keeps resolving for one release cycle.
+
 ### Added
 - **Codec-agnostic error taxonomy (`zencodec::CategorizedError`).** `PngError`
   and the caller-facing `detect::ProbeError` now implement
@@ -22,7 +50,21 @@ All notable changes to zenpng are documented here.
   `OutOfMemory` (now only allocation-failure / address-space-overflow sites).
   `Quantize` maps to `Internal` (delegating would need zenquant to impl
   `CategorizedError` — a follow-up). All additive on `#[non_exhaustive]`; no
-  public variant removed or renamed.
+  public variant removed or renamed. (d6ff72d)
+- **Taxonomy mapping corrections** (additive — 2 new `PngError` variants):
+  the four "missing PNG signature" decode-entry checks (`decoder::mod::probe_png`,
+  `decoder::interlace::decode_interlaced`, `decoder::row::IdatSource::new`,
+  `decoder::apng::ApngDecoder::new`) previously raised `PngError::Decode`
+  (→ `MalformedImage`); they now raise the new `PngError::NotPng` (→
+  `UnsupportedImageType`), matching `detect::ProbeError::NotPng`'s existing
+  mapping and zencodec's own doc example for the category ("e.g. 'not a
+  PNG'"). The two decode-policy rejections (`animation_frame_decoder`'s
+  animation-forbidden check, `check_progressive_policy`'s interlace-forbidden
+  check) previously raised `PngError::InvalidInput` (→ `InvalidParameters`);
+  they now raise the new `PngError::PolicyRejected` (→ `PolicyRejected`) —
+  the request was understood and declined, not malformed input. Updated the
+  `envelope_category_survives_dyn_erasure` regression test, which pinned the
+  old (incorrect) `MalformedImage` mapping for the "not a PNG" probe path.
 - **Palette/quantize axis on the sweep plan (`sweep::QuantizeSpec` +
   `QuantBackend`).** `SweepVariant` gains an optional `quantize` stratum:
   `None` = truecolor lossless (unchanged), `Some(spec)` = palette-reduce to
@@ -36,14 +78,37 @@ All notable changes to zenpng are documented here.
   + color count fold into the hash). New `SweepVariant::encode_png` performs the
   encode (truecolor or indexed); the quantize arms are feature-gated and error
   (never silently truecolor) when the backend feature is off. This is the data a
-  PNG picker needs to choose palette quantization.
+  PNG picker needs to choose palette quantization. (a821f50)
+- Depth-refined CART code-heuristic pickers for the zenpng lossless config
+  space, codegen'd from the 2026-06-28 dual-model fan-out:
+  `benchmarks/pickers/zenpng_lossless_cart_{zensim,ssim2}_2026-06-28.rs`
+  (`pick_zenpng_lossless_heuristic(feats, zq) -> u16`, depth 8, 200/207
+  leaves). Reference artifacts, not wired into the crate build; both files
+  are >30 KB so per house rule 7b they are relocated to
+  `/mnt/v/zen/picker-training/zenpng-2026-06-28/` with tracked
+  `benchmarks/pickers/*.pointer.md` sidecars (path + sha256 + provenance).
+  (61f1c10)
+- Deprecated no-op `zencodec = []` cargo feature stub, restored for one
+  release cycle so downstream `--features zencodec` (e.g. zenpipe/zencodecs)
+  keeps resolving instead of hard-erroring after `zencodec` became a
+  required dependency and the feature was dropped outright. See "QUEUED
+  BREAKING CHANGES" above.
+
+### Fixed
+- Fuzz CI (red daily since 2026-07-02): `fuzz/Cargo.toml` is its own cargo
+  workspace, so it did not inherit the root `[patch.crates-io]` zencodec
+  git-branch override and its `fuzz/Cargo.lock` had drifted to registry
+  zencodec 0.1.22 (missing the `CategorizedError`/`CodecError` taxonomy).
+  Mirrored the same patch into `fuzz/Cargo.toml` (matching zenavif-parse's
+  fix for the identical issue, commit 79551cf5) and regenerated
+  `fuzz/Cargo.lock`.
 
 ### Changed
 - Docs: split README into a GitHub surface (`README.md`) and a generated
   crates.io surface (`README.crates.md`, no badges); refreshed for the
   `heuristics` resource-estimation, `detect` source-analysis, `cms`/`unchecked`,
   and native `zencodec` Fidelity APIs; added `benchmarks/README.md` and the
-  canonical crosslink footer.
+  canonical crosslink footer. (ad69bdb)
 - **The `zencodec` trait impls now return the `At<zencodec::CodecError>`
   envelope (Pattern B), not `At<PngError>`.** Every encode/decode trait impl —
   `PngEncoderConfig` / `PngEncodeJob` / `PngEncoder` / `PngAnimationFrameEncoder`
@@ -64,7 +129,7 @@ All notable changes to zenpng are documented here.
   still returns `At<PngError>`, so direct PNG callers keep ergonomic enum
   matching. Regression gate: `codec::tests::envelope_category_survives_dyn_erasure`
   drives the decoder through `DynDecoderConfig` and asserts category + codec name
-  survive `Box<dyn Error>` erasure.
+  survive `Box<dyn Error>` erasure. (d6ff72d)
 - **`zencodec` is now a required (non-optional) dependency; the empty `zencodec`
   marker cargo feature is removed.** The trait integration
   (`PngEncoderConfig: EncoderConfig`, `PngDecoderConfig: DecoderConfig`, the
@@ -74,7 +139,9 @@ All notable changes to zenpng are documented here.
   only removes the no-op flag and the redundant `--features zencodec` /
   `zencodec`-only CI steps. The integration adds no `std`-only code (`zencodec`
   is `#![no_std] + alloc`), so the `wasm32-wasip1`, `wasm32-unknown-unknown`,
-  and `--no-default-features` builds are unaffected.
+  and `--no-default-features` builds are unaffected. **Restored as a
+  deprecated no-op stub** in a later commit (see "Added" above) after this
+  broke downstream `--features zencodec` builds. (d6ff72d)
 
 ### Fixed
 - **`sweep_cells_decode_exactly_and_steps_are_live` no longer panics on feature
@@ -84,7 +151,7 @@ All notable changes to zenpng are documented here.
   available backends (gated by `cfg!(feature = ...)`, controlled by the CI
   feature matrix) instead of `.unwrap()`-ing the clean "needs the `imagequant`
   feature" error. Fixes the pre-existing red `cargo test` (default / no-default /
-  `zencodec`-only) jobs on `main`.
+  `zencodec`-only) jobs on `main`. (a821f50)
 - **encode peak-memory estimate is now admission-gating-safe (never under-
   predicts).** Admission control gates on `EncodeEstimate::peak_memory_bytes`
   (the `typ` field), so it must be a safe upper bound. A VmHWM re-sweep
@@ -102,7 +169,7 @@ All notable changes to zenpng are documented here.
   VmHWM peaks. heaptrack corroborated peak-heap≈VmHWM on 3 cells. Provenance:
   `benchmarks/zenpng_encode_mem_2026-06-23.tsv`. Also commits the
   `examples/mem_probe_encode.rs` encode probe used for the sweep. `_max` (1.8×)
-  ceiling and the effort-anchor / alpha / 16-bit structure are unchanged.
+  ceiling and the effort-anchor / alpha / 16-bit structure are unchanged. (26ca5d3)
 
 ### Changed
 - **deps: migrate to published `zencodec 0.1.24` estimate API; drop the temporary
@@ -113,7 +180,7 @@ All notable changes to zenpng are documented here.
   gone), dropped the removed `with_output_bytes`, and migrated
   `heuristics::encode_threading_info` to the new 1-arg
   `ThreadingInformation::parallel(max_efficient_threads)` (the `fraction` /
-  `mem-per-thread` args are gone).
+  `mem-per-thread` args are gone). (7bce0e3)
 
 ### Added
 - honor `ResourceLimits::prefer_fallible_allocations` (`AllocPreference`, 3-mode

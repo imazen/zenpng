@@ -1,6 +1,6 @@
 [package]
 name = "zenpng"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.93"
 license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
@@ -63,6 +63,12 @@ quantette = ["dep:quantette"]
 joint = ["quantize", "zenquant/joint"]
 unchecked = ["zenflate/unchecked"]
 zopfli = ["dep:zenzop"]
+# Deprecated no-op stub: `zencodec` has been a required (always-on) dependency
+# since 0.2.0, so this feature gates nothing. Kept for one release cycle so
+# downstream `--features zencodec` (e.g. zenpipe/zencodecs) still resolves
+# instead of hard-erroring with "Package 'zenpng' does not have feature
+# 'zencodec'". Remove once those consumers drop the explicit feature request.
+zencodec = []
 # ICC synthesis for the zencodec color-emit path, via zenpixels-convert's
 # `icc-db` feature: a bundled LZ4 profile blob + pure-Rust lz4_flex decoder —
 # no moxcms. Covers the full ITU-T H.273 grid incl PQ/HLG (without it, only
@@ -123,4 +129,7 @@ required-features = ["_dev"]
 # TEMP: until zencodec 0.1.26 ships (PR #103) — provides the unreleased
 # `CategorizedError` taxonomy (trait + `ErrorCategory` + `LimitKind`). Remove
 # this patch and bump the `zencodec` version dependency once 0.1.26 is published.
-zencodec = { git = "https://github.com/imazen/zencodec", branch = "cancellation-classification-99" }
+# Pinned to a commit rev (not the branch tip) for reproducible builds — the
+# branch name can move out from under a plain `branch = "..."` reference;
+# bump the rev deliberately if the taxonomy PR gets amended.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "fde07d075711ab1f9a02a935f61e1d3cc655c3a3" }
