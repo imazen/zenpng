@@ -48,5 +48,5 @@ bench = false
 # the branch tip) for reproducible builds — keep this in sync with the root
 # Cargo.toml's rev.
 [patch.crates-io]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "fde07d075711ab1f9a02a935f61e1d3cc655c3a3" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "c3220d51d2ef8ec16e8328ada2d5a04c7e6750ee" }
 

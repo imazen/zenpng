@@ -19,3 +19,6 @@ mod simd_consistency;
 
 #[path = "integration/cicp_chunk_emit.rs"]
 mod cicp_chunk_emit;
+
+#[path = "integration/truncation_series.rs"]
+mod truncation_series;
