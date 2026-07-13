@@ -65,6 +65,37 @@ All notable changes to zenpng are documented here.
   the request was understood and declined, not malformed input. Updated the
   `envelope_category_survives_dyn_erasure` regression test, which pinned the
   old (incorrect) `MalformedImage` mapping for the "not a PNG" probe path.
+- **Two-level origin-first `ErrorCategory` (zencodec PR #116).** Bumped the
+  unpublished zencodec `[patch.crates-io]` rev from `c3220d51` to `2427387f`,
+  which reshapes `ErrorCategory` from the flat 17-variant enum above into
+  `Image(ImageError)` / `Request(RequestError)` / `Resource(ResourceError)` /
+  `Policy(PolicyKind)` / `Lifecycle(enough::StopReason)` / `Io(CodecIoKind)` /
+  `Internal(InternalKind)`. Neither shape has ever been published, so this
+  isn't a break of released API. Rewired every `category()` arm and closed 3
+  more audit findings: split `InvalidInput` (previously a catch-all → always
+  `Request(Invalid(Parameters))`) by reading every construction site —
+  new `InvalidBuffer` (pixel/palette/index buffer geometry) and `InvalidState`
+  (streaming/animation call-sequence violations); the APNG pixel-format
+  mismatch now routes through the existing `Unsupported(PixelFormat)` path;
+  zenflate/zenzop/imagequant dependency failures and 2 broken-invariant sites
+  (an internally-derived color type our own encoder can't handle; a
+  decoder's own row-buffer construction) now route through a new
+  `Internal(InternalKind)` variant (`Bug` vs `Dependency`); a CICP/ICC
+  synthesis gap now routes through a new `CmsRequired` variant. Fixed a
+  `Limit`/`LimitExceeded` name inversion from the prior entry above — the
+  wrapper around `zencodec::LimitExceeded` (a configured cap) was named
+  `Limit` while the allocator-failure/address-space-overflow variant was
+  named `LimitExceeded`, backwards from what either name suggests; renamed
+  to `LimitExceeded(zencodec::LimitExceeded)` and `OutOfMemory(String)` (the
+  categories they map to are unchanged, only the names now match). Split
+  `zenquant::QuantizeError`'s mapping instead of the acknowledged blanket
+  `Internal`: `ZeroDimension`/`InvalidMaxColors` → `Parameters`,
+  `DimensionMismatch` → `Buffer`, `QualityNotMet` → unclassified
+  `Internal(Dependency)`. `PolicyRejected` now carries `zencodec::PolicyKind`
+  (`Decode`/`Encode`) instead of one hardcoded category. All additive or
+  renaming still-unreleased variants (none of `Limit`/`LimitExceeded`/
+  `PolicyRejected` have ever been published); no released API broken.
+  (f6f511f8)
 - **Palette/quantize axis on the sweep plan (`sweep::QuantizeSpec` +
   `QuantBackend`).** `SweepVariant` gains an optional `quantize` stratum:
   `None` = truecolor lossless (unchanged), `Some(spec)` = palette-reduce to
