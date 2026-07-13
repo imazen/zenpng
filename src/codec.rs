@@ -5865,7 +5865,7 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(
             err.category(),
-            zencodec::ErrorCategory::Lifecycle(enough::StopReason::Cancelled),
+            zencodec::ErrorCategory::Stopped(enough::StopReason::Cancelled),
             "expected a cancellation error, got: {err}"
         );
     }
@@ -7791,7 +7791,7 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(
             err.category(),
-            zencodec::ErrorCategory::Lifecycle(enough::StopReason::Cancelled),
+            zencodec::ErrorCategory::Stopped(enough::StopReason::Cancelled),
             "expected a cancellation error, got: {err}"
         );
     }

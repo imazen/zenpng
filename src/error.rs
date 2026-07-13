@@ -147,9 +147,9 @@ pub enum PngError {
 
     /// Operation stopped by cooperative cancellation. Delegates its category
     /// to the wrapped [`enough::StopReason`] — always
-    /// [`ErrorCategory::Lifecycle`]`(reason)`, no lossy collapse.
+    /// [`ErrorCategory::Stopped`]`(reason)`, no lossy collapse.
     ///
-    /// [`ErrorCategory::Lifecycle`]: zencodec::ErrorCategory::Lifecycle
+    /// [`ErrorCategory::Stopped`]: zencodec::ErrorCategory::Stopped
     #[error("stopped: {0}")]
     Stopped(enough::StopReason),
 
@@ -198,7 +198,7 @@ impl From<zencodec::LimitExceeded> for PngError {
 }
 
 // Codec-agnostic error taxonomy (zencodec's origin-first two-level
-// ErrorCategory: Image/Request/Resource/Policy/Lifecycle/Io/Internal). Maps
+// ErrorCategory: Image/Request/Resource/Policy/Stopped/Io/Internal). Maps
 // every `PngError` variant to exactly one coarse `ErrorCategory` so consumers
 // can route on the category without naming this enum. `zencodec` is a
 // non-optional dependency, so this impl is unconditional.
@@ -466,11 +466,11 @@ mod tests {
         );
         assert_eq!(
             PngError::Stopped(enough::StopReason::Cancelled).category(),
-            C::Lifecycle(enough::StopReason::Cancelled)
+            C::Stopped(enough::StopReason::Cancelled)
         );
         assert_eq!(
             PngError::Stopped(enough::StopReason::TimedOut).category(),
-            C::Lifecycle(enough::StopReason::TimedOut)
+            C::Stopped(enough::StopReason::TimedOut)
         );
     }
 

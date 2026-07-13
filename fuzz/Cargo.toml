@@ -48,5 +48,5 @@ bench = false
 # is published. Pinned to a commit rev (not the branch tip) for reproducible
 # builds — keep this in sync with the root Cargo.toml's rev.
 [patch.crates-io]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "2427387f86c77fdf773ae2fa219926a49cd32d99" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "44ca79279b265ba7dfe01a2b31ef74788429509a" }
 
