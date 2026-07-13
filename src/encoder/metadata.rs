@@ -258,12 +258,17 @@ fn write_iccp_chunk(out: &mut Vec<u8>, icc_profile: &[u8]) -> crate::error::Resu
     let mut compressor = Compressor::new(level);
     let bound = Compressor::zlib_compress_bound(icc_profile.len());
     let mut compressed = vec![0u8; bound];
+    // `bound` came from zenflate's own `zlib_compress_bound`, and `Unstoppable`
+    // means this can never be `Stopped` — a failure here is an unclassified
+    // zenflate-side contract violation, not something zenpng's own logic
+    // (or the caller's request) got wrong.
     let compressed_len = compressor
         .zlib_compress(icc_profile, &mut compressed, Unstoppable)
         .map_err(|e| {
-            at!(PngError::InvalidInput(alloc::format!(
-                "ICC compression failed: {e}"
-            )))
+            at!(PngError::Internal(
+                zencodec::InternalKind::Dependency,
+                alloc::format!("ICC compression failed: {e}")
+            ))
         })?;
 
     let mut chunk_data = Vec::with_capacity(keyword.len() + 1 + compressed_len);

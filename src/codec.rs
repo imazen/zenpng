@@ -798,7 +798,7 @@ impl PngEncoder {
         if let Some(ref limits) = self.limits {
             limits
                 .check_dimensions(w, h)
-                .map_err(|e| at!(PngError::Limit(e)))?;
+                .map_err(|e| at!(PngError::LimitExceeded(e)))?;
             let channels: u64 = match color_type {
                 crate::encode::ColorType::Grayscale => 1,
                 crate::encode::ColorType::Rgb => 3,
@@ -813,7 +813,7 @@ impl PngEncoder {
             let estimated_mem = w as u64 * h as u64 * bpp;
             limits
                 .check_memory(estimated_mem)
-                .map_err(|e| at!(PngError::Limit(e)))?;
+                .map_err(|e| at!(PngError::LimitExceeded(e)))?;
         }
         let config = self.config_with_threading();
         let deadline = default_deadline();
@@ -831,7 +831,7 @@ impl PngEncoder {
         if let Some(ref limits) = self.limits {
             limits
                 .check_output_size(data.len() as u64)
-                .map_err(|e| at!(PngError::Limit(e)))?;
+                .map_err(|e| at!(PngError::LimitExceeded(e)))?;
         }
         Ok(EncodeOutput::new(data, ImageFormat::Png))
     }
@@ -1114,7 +1114,7 @@ impl PngEncoder {
 
         // Width must be consistent across calls.
         if w != self.canvas_width && self.canvas_width > 0 {
-            return Err(at!(PngError::InvalidInput(alloc::format!(
+            return Err(at!(PngError::InvalidState(alloc::format!(
                 "push_rows: width {} does not match canvas width {}",
                 w,
                 self.canvas_width
@@ -1128,7 +1128,7 @@ impl PngEncoder {
             StreamingMode::Buffered(state) => {
                 // Check for overflow
                 if self.canvas_height > 0 && state.rows_pushed + h > self.canvas_height {
-                    return Err(at!(PngError::InvalidInput(alloc::format!(
+                    return Err(at!(PngError::InvalidState(alloc::format!(
                         "push_rows: would exceed canvas height {} (already pushed {}, pushing {})",
                         self.canvas_height,
                         state.rows_pushed,
@@ -1194,7 +1194,7 @@ impl PngEncoder {
             StreamingMode::TrueStreaming(state) => {
                 // Check for overflow
                 if state.rows_pushed + h > self.canvas_height {
-                    return Err(at!(PngError::InvalidInput(alloc::format!(
+                    return Err(at!(PngError::InvalidState(alloc::format!(
                         "push_rows: would exceed canvas height {} (already pushed {}, pushing {})",
                         self.canvas_height,
                         state.rows_pushed,
@@ -1267,7 +1267,7 @@ impl PngEncoder {
             StreamingMode::PreFiltered(state) => {
                 // Check for overflow
                 if state.rows_pushed + h > self.canvas_height {
-                    return Err(at!(PngError::InvalidInput(alloc::format!(
+                    return Err(at!(PngError::InvalidState(alloc::format!(
                         "push_rows: would exceed canvas height {} (already pushed {}, pushing {})",
                         self.canvas_height,
                         state.rows_pushed,
@@ -1341,7 +1341,7 @@ impl PngEncoder {
 
     fn finish_inner(mut self) -> Result<EncodeOutput, At<PngError>> {
         let mode = self.streaming.take().ok_or_else(|| {
-            at!(PngError::InvalidInput(
+            at!(PngError::InvalidState(
                 "finish() called without any push_rows() calls".into()
             ))
         })?;
@@ -1352,19 +1352,25 @@ impl PngEncoder {
                 let w = self.canvas_width;
 
                 if w == 0 || h == 0 {
-                    return Err(at!(PngError::InvalidInput("no pixel data pushed".into())));
+                    return Err(at!(PngError::InvalidState("no pixel data pushed".into())));
                 }
 
-                // Validate total data size
+                // Validate total data size. `pixel_data` is accumulated entirely
+                // by our own `push_rows` (never caller-supplied directly), so a
+                // mismatch here is a broken invariant in our own accounting, not
+                // a caller-request fault.
                 let expected = state.row_bytes * h as usize;
                 if state.pixel_data.len() != expected {
-                    return Err(at!(PngError::InvalidInput(alloc::format!(
-                        "finish: pixel data size {} does not match expected {} ({}×{} rows)",
-                        state.pixel_data.len(),
-                        expected,
-                        state.row_bytes,
-                        h
-                    ))));
+                    return Err(at!(PngError::Internal(
+                        zencodec::InternalKind::Bug,
+                        alloc::format!(
+                            "finish: pixel data size {} does not match expected {} ({}×{} rows)",
+                            state.pixel_data.len(),
+                            expected,
+                            state.row_bytes,
+                            h
+                        )
+                    )));
                 }
 
                 self.do_encode_with_depth(
@@ -1377,19 +1383,19 @@ impl PngEncoder {
             }
             StreamingMode::TrueStreaming(state) => {
                 if state.rows_pushed == 0 {
-                    return Err(at!(PngError::InvalidInput("no pixel data pushed".into())));
+                    return Err(at!(PngError::InvalidState("no pixel data pushed".into())));
                 }
                 let data = state.finish();
                 if let Some(ref limits) = self.limits {
                     limits
                         .check_output_size(data.len() as u64)
-                        .map_err(|e| at!(PngError::Limit(e)))?;
+                        .map_err(|e| at!(PngError::LimitExceeded(e)))?;
                 }
                 Ok(EncodeOutput::new(data, ImageFormat::Png))
             }
             StreamingMode::PreFiltered(state) => {
                 if state.rows_pushed == 0 {
-                    return Err(at!(PngError::InvalidInput("no pixel data pushed".into())));
+                    return Err(at!(PngError::InvalidState("no pixel data pushed".into())));
                 }
                 let cancel: &dyn enough::Stop = match self.stop {
                     Some(ref s) => s as &dyn enough::Stop,
@@ -1399,7 +1405,7 @@ impl PngEncoder {
                 if let Some(ref limits) = self.limits {
                     limits
                         .check_output_size(data.len() as u64)
-                        .map_err(|e| at!(PngError::Limit(e)))?;
+                        .map_err(|e| at!(PngError::LimitExceeded(e)))?;
                 }
                 Ok(EncodeOutput::new(data, ImageFormat::Png))
             }
@@ -1489,11 +1495,13 @@ impl PngAnimationFrameEncoder {
                 let src = contiguous_bytes(pixels);
                 Ok(src.iter().flat_map(|&g| [g, g, g, 255]).collect())
             }
-            _ => Err(at!(PngError::InvalidInput(alloc::format!(
-                "APNG frame encoder: unsupported pixel format {:?}; \
-                 supported formats are RGBA8, BGRA8, RGB8, and Gray8",
-                desc
-            )))),
+            // A well-formed request for a pixel format this codec doesn't
+            // negotiate — the caller-request `UnsupportedOperation` axis, not a
+            // malformed buffer. Matches the same `PixelFormat` routing used by
+            // `push_rows` elsewhere in this file.
+            _ => Err(at!(PngError::from(
+                zencodec::UnsupportedOperation::PixelFormat
+            ))),
         }
     }
 }
@@ -1517,12 +1525,12 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
             // Check max_frames (new frame count = current + 1)
             limits
                 .check_frames(self.frames.len() as u32 + 1)
-                .map_err(|e| CodecError::of(at!(PngError::Limit(e))))?;
+                .map_err(|e| CodecError::of(at!(PngError::LimitExceeded(e))))?;
             // Check max_memory (cumulative pixel data size)
             let new_cumulative = self.cumulative_pixel_bytes + rgba.len() as u64;
             limits
                 .check_memory(new_cumulative)
-                .map_err(|e| CodecError::of(at!(PngError::Limit(e))))?;
+                .map_err(|e| CodecError::of(at!(PngError::LimitExceeded(e))))?;
         }
         self.cumulative_pixel_bytes += rgba.len() as u64;
         self.frames.push(AccumulatedFrame {
@@ -1543,7 +1551,7 @@ impl PngAnimationFrameEncoder {
         cancel.check().map_err(|e| at!(PngError::from(e)))?;
 
         if self.frames.is_empty() {
-            return Err(at!(PngError::InvalidInput(
+            return Err(at!(PngError::InvalidState(
                 "APNG frame encoder: no frames pushed".into(),
             )));
         }
@@ -1873,15 +1881,17 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
         if let Some(ref policy) = self.policy
             && !policy.resolve_animation(true)
         {
-            return Err(
-                PngError::PolicyRejected("animation rejected by decode policy".into()).into(),
-            );
+            return Err(PngError::PolicyRejected(
+                zencodec::PolicyKind::Decode,
+                "animation rejected by decode policy".into(),
+            )
+            .into());
         }
         // Check input size limit
         let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
         effective_limits
             .check_input_size(data.len() as u64)
-            .map_err(|e| CodecError::of(at!(PngError::Limit(e))))?;
+            .map_err(|e| CodecError::of(at!(PngError::LimitExceeded(e))))?;
         PngAnimationFrameDecoder::new(
             &data,
             &self.config,
@@ -1985,12 +1995,12 @@ impl PngDecoder<'_> {
         let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
         effective_limits
             .check_input_size(self.data.len() as u64)
-            .map_err(|e| at!(PngError::Limit(e)))?;
+            .map_err(|e| at!(PngError::LimitExceeded(e)))?;
         // Check max_width / max_height before decoding
         let probe_info = crate::decode::probe(&self.data)?;
         effective_limits
             .check_dimensions(probe_info.width, probe_info.height)
-            .map_err(|e| at!(PngError::Limit(e)))?;
+            .map_err(|e| at!(PngError::LimitExceeded(e)))?;
         let png_config = self.effective_config();
         let result = crate::decode::decode(&self.data, &png_config, cancel)?;
         // Build the probe from decoder state instead of a second full-file
@@ -2083,7 +2093,7 @@ fn push_decoder_native<'a>(
     let effective_limits = job.limits.as_ref().unwrap_or(&job.config.limits);
     effective_limits
         .check_input_size(data.len() as u64)
-        .map_err(|e| CodecError::of(at!(PngError::Limit(e))))?;
+        .map_err(|e| CodecError::of(at!(PngError::LimitExceeded(e))))?;
 
     // Check for interlacing — fall back to full decode for Adam7. The shared
     // helper drives the job's trait decode path, so it yields the
@@ -2147,7 +2157,7 @@ fn push_decoder_native_noninterlaced<'a>(
     // Check max_width / max_height before allocating pixel buffers
     limits
         .check_dimensions(w, h)
-        .map_err(|e| at!(PngError::Limit(e)))?;
+        .map_err(|e| at!(PngError::LimitExceeded(e)))?;
 
     let descriptor = enrich_descriptor_from_cicp(
         native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns),
@@ -2303,7 +2313,7 @@ impl<'a> PngStreamingDecoder<'a> {
         // Check input size limit
         effective_limits
             .check_input_size(data.len() as u64)
-            .map_err(|e| at!(PngError::Limit(e)))?;
+            .map_err(|e| at!(PngError::LimitExceeded(e)))?;
         let png_config = PngDecodeConfig {
             max_pixels: effective_limits.max_pixels,
             max_memory_bytes: effective_limits.max_memory_bytes,
@@ -2328,7 +2338,7 @@ impl<'a> PngStreamingDecoder<'a> {
         // Check max_width / max_height before allocating pixel buffers
         effective_limits
             .check_dimensions(w, h)
-            .map_err(|e| at!(PngError::Limit(e)))?;
+            .map_err(|e| at!(PngError::LimitExceeded(e)))?;
 
         let descriptor = enrich_descriptor_from_cicp(
             native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns),
@@ -2411,6 +2421,9 @@ impl PngStreamingDecoder<'_> {
             self.row_buf = tmp;
         }
 
+        // `row_buf`/`stride`/`descriptor` are all internal state this decoder
+        // set up itself (not caller-supplied), so a construction failure here
+        // is a broken invariant in our own row-buffer sizing, not a caller fault.
         let stride = self.width as usize * self.descriptor.bytes_per_pixel();
         let slice = PixelSlice::new(
             &self.row_buf[..stride],
@@ -2419,7 +2432,12 @@ impl PngStreamingDecoder<'_> {
             stride,
             self.descriptor,
         )
-        .map_err(|e| at!(PngError::InvalidInput(alloc::format!("pixel slice: {e}"))))?;
+        .map_err(|e| {
+            at!(PngError::Internal(
+                zencodec::InternalKind::Bug,
+                alloc::format!("pixel slice: {e}")
+            ))
+        })?;
 
         Ok(Some((y, slice)))
     }
@@ -2824,7 +2842,11 @@ fn apply_encode_policy(
                     SynthesizedIcc::Profile(bytes) => Some(alloc::sync::Arc::from(bytes.as_ref())),
                     SynthesizedIcc::NotNeeded => None,
                     outcome => {
-                        return Err(at!(PngError::InvalidInput(alloc::format!(
+                        // CMS is the caller's job: we won't perform this transform
+                        // ourselves, and are saying so instead of misrepresenting
+                        // the image — the caller must supply the ICC profile, drop
+                        // the CICP, or enable the `cms` feature.
+                        return Err(at!(PngError::CmsRequired(alloc::format!(
                             "this image's color (CICP primaries {} / transfer {}) needs a \
                              synthesized ICC profile this build can't produce ({outcome:?}); \
                              enable zenpng's `cms` feature, supply an ICC profile in the \
@@ -2903,6 +2925,7 @@ fn check_progressive_policy(
     // IHDR interlace byte is at offset 28 in a valid PNG file
     if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
         return Err(at!(PngError::PolicyRejected(
+            zencodec::PolicyKind::Decode,
             "interlaced (progressive) PNG rejected by decode policy".into()
         )));
     }
@@ -3001,10 +3024,12 @@ impl TrueStreamingState {
 
         // PNG chunk lengths are u32. Reject images whose stored IDAT exceeds this.
         if idat_data_len > u32::MAX as usize {
-            return Err(at!(PngError::Limit(zencodec::LimitExceeded::OutputSize {
-                actual: idat_data_len as u64,
-                max: u32::MAX as u64,
-            })));
+            return Err(at!(PngError::LimitExceeded(
+                zencodec::LimitExceeded::OutputSize {
+                    actual: idat_data_len as u64,
+                    max: u32::MAX as u64,
+                }
+            )));
         }
 
         // Build metadata
@@ -3302,7 +3327,14 @@ impl PreFilteredState {
             .zlib_compress(&filtered_data, &mut compressed, cancel)
             .map_err(|e| match e {
                 zenflate::CompressionError::Stopped(reason) => PngError::Stopped(reason),
-                other => PngError::InvalidInput(alloc::format!("compression failed: {other}")),
+                // `bound` came from zenflate's own `zlib_compress_bound`, so a
+                // non-Stopped failure here (currently only `InsufficientSpace`)
+                // is an unclassified zenflate-side contract violation, not
+                // something zenpng's own logic got wrong.
+                other => PngError::Internal(
+                    zencodec::InternalKind::Dependency,
+                    alloc::format!("compression failed: {other}"),
+                ),
             })?;
         compressed.truncate(len);
 
@@ -3697,7 +3729,9 @@ mod tests {
     #[test]
     fn envelope_category_survives_dyn_erasure() {
         use zencodec::decode::DynDecoderConfig;
-        use zencodec::{CodecError, CodecErrorExt, ErrorCategory};
+        use zencodec::{
+            CodecError, CodecErrorExt, ErrorCategory, ImageError, UnsupportedImageKind,
+        };
 
         let cfg = PngDecoderConfig::new();
         let dyn_cfg: &dyn DynDecoderConfig = &cfg;
@@ -3707,12 +3741,15 @@ mod tests {
             .expect_err("malformed input must fail to probe");
 
         // `probe_png` rejects the bad signature with `PngError::NotPng`, which
-        // the `CategorizedError` impl maps to `UnsupportedImageType` (this data
-        // isn't a PNG at all, as opposed to a recognized-but-corrupt PNG); the
-        // envelope carries both that category and the codec name through erasure.
+        // the `CategorizedError` impl maps to `Image(Unsupported(Type))` (this
+        // data isn't a PNG at all, as opposed to a recognized-but-corrupt PNG);
+        // the envelope carries both that category and the codec name through
+        // erasure.
         assert_eq!(
             erased.error_category(),
-            Some(ErrorCategory::UnsupportedImageType)
+            Some(ErrorCategory::Image(ImageError::Unsupported(
+                UnsupportedImageKind::Type
+            )))
         );
         assert_eq!(
             erased.codec_error().and_then(CodecError::codec),
@@ -5828,7 +5865,7 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(
             err.category(),
-            zencodec::ErrorCategory::Cancelled,
+            zencodec::ErrorCategory::Lifecycle(enough::StopReason::Cancelled),
             "expected a cancellation error, got: {err}"
         );
     }
@@ -7754,7 +7791,7 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(
             err.category(),
-            zencodec::ErrorCategory::Cancelled,
+            zencodec::ErrorCategory::Lifecycle(enough::StopReason::Cancelled),
             "expected a cancellation error, got: {err}"
         );
     }
@@ -7818,14 +7855,22 @@ mod tests {
         let img = imgref::ImgVec::new(pixels, 4, 4);
         let result = enc.push_frame(PixelSlice::from(img.as_ref()).erase(), 100, None);
         assert!(result.is_err(), "16-bit RGBA should be rejected");
-        let msg = alloc::format!("{}", result.unwrap_err());
-        assert!(
-            msg.contains("unsupported pixel format"),
-            "error should mention unsupported pixel format, got: {msg}"
+        let err = result.unwrap_err();
+        // A well-formed request for a pixel format this encoder doesn't
+        // negotiate is the caller-request `UnsupportedOperation` axis, not a
+        // malformed buffer — matches the same `PixelFormat` routing used by
+        // `push_rows` elsewhere in this codec.
+        use zencodec::CategorizedError;
+        assert_eq!(
+            err.category(),
+            zencodec::ErrorCategory::Request(zencodec::RequestError::Unsupported(
+                zencodec::UnsupportedOperation::PixelFormat
+            ))
         );
+        let msg = alloc::format!("{err}");
         assert!(
-            msg.contains("RGBA8") || msg.contains("supported formats"),
-            "error should list supported formats, got: {msg}"
+            msg.contains("pixel_format") || msg.contains("unsupported operation"),
+            "error should mention the unsupported pixel_format operation, got: {msg}"
         );
     }
 

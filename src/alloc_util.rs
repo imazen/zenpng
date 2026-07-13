@@ -60,7 +60,7 @@ pub(crate) fn alloc_zeroed(
     if resolve_fallible(pref, site_default_fallible) {
         let mut v = Vec::new();
         v.try_reserve_exact(n).map_err(|_| {
-            at!(PngError::LimitExceeded(alloc::format!(
+            at!(PngError::OutOfMemory(alloc::format!(
                 "out of memory allocating {n} bytes"
             )))
         })?;
@@ -90,7 +90,7 @@ pub(crate) fn vec_with_capacity(
     if resolve_fallible(pref, site_default_fallible) {
         let mut v = Vec::new();
         v.try_reserve_exact(cap).map_err(|_| {
-            at!(PngError::LimitExceeded(alloc::format!(
+            at!(PngError::OutOfMemory(alloc::format!(
                 "out of memory allocating {cap} bytes"
             )))
         })?;
@@ -158,13 +158,13 @@ mod tests {
         // return Err (mapped to LimitExceeded) rather than abort.
         let r = alloc_zeroed(AllocPreference::Fallible, true, usize::MAX);
         assert!(r.is_err());
-        assert!(matches!(r.unwrap_err().error(), PngError::LimitExceeded(_)));
+        assert!(matches!(r.unwrap_err().error(), PngError::OutOfMemory(_)));
     }
 
     #[test]
     fn vec_with_capacity_fallible_oom_returns_err() {
         let r = vec_with_capacity(AllocPreference::Fallible, true, usize::MAX);
         assert!(r.is_err());
-        assert!(matches!(r.unwrap_err().error(), PngError::LimitExceeded(_)));
+        assert!(matches!(r.unwrap_err().error(), PngError::OutOfMemory(_)));
     }
 }

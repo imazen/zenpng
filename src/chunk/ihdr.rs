@@ -110,7 +110,7 @@ impl Ihdr {
         match row_bytes {
             Some(bytes) if usize::try_from(bytes).is_ok() => {}
             _ => {
-                return Err(at!(PngError::LimitExceeded(alloc::format!(
+                return Err(at!(PngError::OutOfMemory(alloc::format!(
                     "IHDR: row size overflow for {}x{} color_type={} bit_depth={} \
                      (row bytes would exceed platform address space)",
                     self.width,
@@ -154,7 +154,7 @@ impl Ihdr {
             .checked_mul(self.channels() as u64)
             .and_then(|v| v.checked_mul(self.bit_depth as u64))
             .ok_or_else(|| {
-                at!(PngError::LimitExceeded(alloc::format!(
+                at!(PngError::OutOfMemory(alloc::format!(
                     "bits_per_row overflow for width={} channels={} bit_depth={}",
                     self.width,
                     self.channels(),
@@ -162,12 +162,12 @@ impl Ihdr {
                 )))
             })?;
         let row_bytes = bits_per_row.checked_add(7).map(|v| v / 8).ok_or_else(|| {
-            at!(PngError::LimitExceeded(
+            at!(PngError::OutOfMemory(
                 "row_bytes overflow during rounding".into()
             ))
         })?;
         usize::try_from(row_bytes).map_err(|_| {
-            at!(PngError::LimitExceeded(alloc::format!(
+            at!(PngError::OutOfMemory(alloc::format!(
                 "row_bytes {} exceeds platform address space",
                 row_bytes
             )))
@@ -181,7 +181,7 @@ impl Ihdr {
     pub fn stride(&self) -> crate::error::Result<usize> {
         self.raw_row_bytes()?
             .checked_add(1)
-            .ok_or_else(|| at!(PngError::LimitExceeded("stride overflow".into())))
+            .ok_or_else(|| at!(PngError::OutOfMemory("stride overflow".into())))
     }
 
     /// Whether the image uses sub-8-bit depth (1, 2, or 4).

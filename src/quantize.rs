@@ -93,7 +93,7 @@ pub trait Quantizer: Send + Sync {
         let mut concat: Vec<[u8; 4]> = Vec::with_capacity(pixels_per_frame * frames.len());
         for frame in frames {
             if frame.len() < pixels_per_frame {
-                return Err(PngError::InvalidInput(format!(
+                return Err(PngError::InvalidBuffer(format!(
                     "frame has {} pixels, expected {}",
                     frame.len(),
                     pixels_per_frame
@@ -105,11 +105,18 @@ pub trait Quantizer: Send + Sync {
         let result = self.quantize_rgba(&concat, width, total_height)?;
         let expected_indices = concat.len();
         if result.indices.len() < expected_indices {
-            return Err(PngError::InvalidInput(format!(
-                "quantize_rgba returned {} indices, expected {}",
-                result.indices.len(),
-                expected_indices
-            )));
+            // `self.quantize_rgba` is a `Quantizer` trait call — its own
+            // implementation (built-in or caller-supplied) violated the
+            // documented output contract, not something the top-level PNG
+            // encode caller did wrong.
+            return Err(PngError::Internal(
+                zencodec::InternalKind::Dependency,
+                format!(
+                    "quantize_rgba returned {} indices, expected {}",
+                    result.indices.len(),
+                    expected_indices
+                ),
+            ));
         }
         let n = frames.len();
         let mut frame_indices = Vec::with_capacity(n);
@@ -312,7 +319,7 @@ mod zenquant_backend {
                 Vec::with_capacity(frames.len());
             for (i, f) in frames.iter().enumerate() {
                 if f.len() < pixels_per_frame {
-                    return Err(PngError::InvalidInput(format!(
+                    return Err(PngError::InvalidBuffer(format!(
                         "frame {} has {} pixels, expected {}",
                         i,
                         f.len(),
@@ -454,19 +461,28 @@ mod imagequant_backend {
                 .map(|p| imagequant::RGBA::new(p[0], p[1], p[2], p[3]))
                 .collect();
 
+            // Pixel buffer / dimensions mismatch (rgba_pixels.len() vs width*height).
             let mut img = attr
                 .new_image(rgba_pixels, width, height, 0.0)
-                .map_err(|e| PngError::InvalidInput(format!("imagequant image: {e}")))?;
-            let mut result = attr
-                .quantize(&mut img)
-                .map_err(|e| PngError::InvalidInput(format!("imagequant quantize: {e}")))?;
+                .map_err(|e| PngError::InvalidBuffer(format!("imagequant image: {e}")))?;
+            // The quantization algorithm itself failing, not a caller-supplied
+            // parameter or buffer — an unclassified imagequant-side failure.
+            let mut result = attr.quantize(&mut img).map_err(|e| {
+                PngError::Internal(
+                    zencodec::InternalKind::Dependency,
+                    format!("imagequant quantize: {e}"),
+                )
+            })?;
             result
                 .set_dithering_level(self.dithering)
                 .map_err(|e| PngError::InvalidInput(format!("imagequant dithering: {e}")))?;
 
-            let (palette, indices) = result
-                .remapped(&mut img)
-                .map_err(|e| PngError::InvalidInput(format!("imagequant remap: {e}")))?;
+            let (palette, indices) = result.remapped(&mut img).map_err(|e| {
+                PngError::Internal(
+                    zencodec::InternalKind::Dependency,
+                    format!("imagequant remap: {e}"),
+                )
+            })?;
 
             let palette_rgba: Vec<[u8; 4]> = palette.iter().map(|c| [c.r, c.g, c.b, c.a]).collect();
 
@@ -562,8 +578,9 @@ mod quantette_backend {
             let srgb_pixels: Vec<Srgb<u8>> =
                 pixels.iter().map(|p| Srgb::new(p[0], p[1], p[2])).collect();
 
+            // Pixel buffer / dimensions mismatch (srgb_pixels.len() vs width*height).
             let image = ImageBuf::new(width as u32, height as u32, srgb_pixels)
-                .map_err(|e| PngError::InvalidInput(format!("quantette image: {e}")))?;
+                .map_err(|e| PngError::InvalidBuffer(format!("quantette image: {e}")))?;
 
             let method = if self.kmeans {
                 use quantette::kmeans::KmeansOptions;

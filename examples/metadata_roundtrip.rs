@@ -190,14 +190,11 @@ fn reencode(
             let imgref = pixels.try_as_imgref::<rgb::Gray<u16>>().unwrap();
             zenpng::encode_gray16(imgref, meta, config, u, u)
         }
-        (ChannelLayout::GrayAlpha, _) => {
-            Err(zenpng::PngError::InvalidInput("GrayAlpha not supported".into()).into())
-        }
-        _ => Err(zenpng::PngError::InvalidInput(format!(
-            "unsupported pixel format for re-encode: {:?}",
-            desc
-        ))
-        .into()),
+        // A well-formed request for a pixel format this example's re-encode
+        // dispatch doesn't negotiate (including GrayAlpha) — the caller-request
+        // `UnsupportedOperation` axis, matching how the library itself routes
+        // pixel-format mismatches.
+        _ => Err(zenpng::PngError::from(zencodec::UnsupportedOperation::PixelFormat).into()),
     }
 }
 

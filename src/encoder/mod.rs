@@ -72,12 +72,12 @@ pub(crate) fn write_indexed_png(
     let n_colors = palette_rgb.len() / 3;
 
     if n_colors == 0 || n_colors > 256 {
-        return Err(at!(PngError::InvalidInput(alloc::format!(
+        return Err(at!(PngError::InvalidBuffer(alloc::format!(
             "palette must have 1-256 entries, got {n_colors}"
         ))));
     }
     if indices.len() < w * h {
-        return Err(at!(PngError::InvalidInput(
+        return Err(at!(PngError::InvalidBuffer(
             "index buffer too small for dimensions".to_string(),
         )));
     }
@@ -159,7 +159,7 @@ pub(crate) fn write_truecolor_png(
         // pixel_bytes has one byte per sample (pre-scaled to bit_depth range)
         let expected_samples = w * h;
         if pixel_bytes.len() < expected_samples {
-            return Err(at!(PngError::InvalidInput(alloc::format!(
+            return Err(at!(PngError::InvalidBuffer(alloc::format!(
                 "pixel buffer too small: need {expected_samples} samples, got {}",
                 pixel_bytes.len()
             ))));
@@ -199,10 +199,15 @@ pub(crate) fn write_truecolor_png(
         2 => 3, // RGB
         4 => 2, // GrayscaleAlpha
         6 => 4, // RGBA
+        // `color_type` is always internally derived from a strongly-typed
+        // `ColorType`/`OptimalEncoding` enum by every caller in this crate
+        // (never a raw caller-supplied byte) — reaching this arm means our own
+        // code computed an invalid value, not a caller-request fault.
         _ => {
-            return Err(at!(PngError::InvalidInput(alloc::format!(
-                "unsupported PNG color type: {color_type}"
-            ))));
+            return Err(at!(PngError::Internal(
+                zencodec::InternalKind::Bug,
+                alloc::format!("unsupported PNG color type: {color_type}")
+            )));
         }
     };
     let bytes_per_channel = bit_depth as usize / 8;
@@ -211,7 +216,7 @@ pub(crate) fn write_truecolor_png(
 
     let expected_len = row_bytes * h;
     if pixel_bytes.len() < expected_len {
-        return Err(at!(PngError::InvalidInput(alloc::format!(
+        return Err(at!(PngError::InvalidBuffer(alloc::format!(
             "pixel buffer too small: need {expected_len}, got {}",
             pixel_bytes.len()
         ))));
@@ -333,7 +338,7 @@ pub(crate) fn write_truecolor_png_with_stats(
     if color_type == 0 && bit_depth < 8 {
         let expected_samples = w * h;
         if pixel_bytes.len() < expected_samples {
-            return Err(at!(PngError::InvalidInput(alloc::format!(
+            return Err(at!(PngError::InvalidBuffer(alloc::format!(
                 "pixel buffer too small: need {expected_samples} samples, got {}",
                 pixel_bytes.len()
             ))));
@@ -371,10 +376,15 @@ pub(crate) fn write_truecolor_png_with_stats(
         2 => 3,
         4 => 2,
         6 => 4,
+        // `color_type` is always internally derived from a strongly-typed
+        // `ColorType`/`OptimalEncoding` enum by every caller in this crate
+        // (never a raw caller-supplied byte) — reaching this arm means our own
+        // code computed an invalid value, not a caller-request fault.
         _ => {
-            return Err(at!(PngError::InvalidInput(alloc::format!(
-                "unsupported PNG color type: {color_type}"
-            ))));
+            return Err(at!(PngError::Internal(
+                zencodec::InternalKind::Bug,
+                alloc::format!("unsupported PNG color type: {color_type}")
+            )));
         }
     };
     let bytes_per_channel = bit_depth as usize / 8;
@@ -383,7 +393,7 @@ pub(crate) fn write_truecolor_png_with_stats(
 
     let expected_len = row_bytes * h;
     if pixel_bytes.len() < expected_len {
-        return Err(at!(PngError::InvalidInput(alloc::format!(
+        return Err(at!(PngError::InvalidBuffer(alloc::format!(
             "pixel buffer too small: need {expected_len}, got {}",
             pixel_bytes.len()
         ))));

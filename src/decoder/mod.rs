@@ -223,7 +223,7 @@ pub(crate) fn decode_png(
     if is_passthrough {
         let raw_row_bytes = ihdr.raw_row_bytes()?;
         let total = raw_row_bytes.checked_mul(h).ok_or_else(|| {
-            at!(PngError::LimitExceeded(
+            at!(PngError::OutOfMemory(
                 "image too large for this platform".into()
             ))
         })?;
@@ -350,7 +350,7 @@ pub(crate) fn decode_png(
     let out_row_bytes = w * pixel_bytes;
 
     let out_total = out_row_bytes.checked_mul(h).ok_or_else(|| {
-        at!(PngError::LimitExceeded(
+        at!(PngError::OutOfMemory(
             "image too large for this platform".into()
         ))
     })?;

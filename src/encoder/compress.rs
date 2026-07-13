@@ -745,9 +745,13 @@ pub(crate) fn try_compress(
                 return Err(at!(PngError::from(reason)));
             }
             Err(e) => {
-                return Err(at!(PngError::InvalidInput(alloc::format!(
-                    "compression failed: {e}"
-                ))));
+                // `compress_buf` is sized from zenflate's own bound function, so
+                // a non-Stopped failure is an unclassified zenflate-side
+                // contract violation, not our own or the caller's fault.
+                return Err(at!(PngError::Internal(
+                    zencodec::InternalKind::Dependency,
+                    alloc::format!("compression failed: {e}")
+                )));
             }
         };
 
@@ -934,8 +938,12 @@ pub(crate) fn compress_filtered(
 
     // Early return: screen-only modes don't need refinement, or deadline hit.
     if params.screen_is_final || opts.deadline.should_stop() {
+        // `strategies` is always a non-empty compile-time-fixed set, so ending
+        // up with no `best_compressed` is a broken invariant in our own
+        // screening loop, not a caller-request fault.
         return state.best_compressed.ok_or_else(|| {
-            at!(PngError::InvalidInput(
+            at!(PngError::Internal(
+                zencodec::InternalKind::Bug,
                 "no filter strategies tried".to_string()
             ))
         });
@@ -972,8 +980,11 @@ pub(crate) fn compress_filtered(
         stats,
     )?;
 
+    // Same invariant as the early-return above: `strategies` is always
+    // non-empty by construction.
     state.best_compressed.ok_or_else(|| {
-        at!(PngError::InvalidInput(
+        at!(PngError::Internal(
+            zencodec::InternalKind::Bug,
             "no filter strategies tried".to_string()
         ))
     })
@@ -1231,9 +1242,12 @@ fn screen_serial(
                 return Err(at!(PngError::from(reason)));
             }
             Err(e) => {
-                return Err(at!(PngError::InvalidInput(alloc::format!(
-                    "compression failed: {e}"
-                ))));
+                // Same reasoning as `try_compress` above: an unclassified
+                // zenflate-side contract violation, not ours.
+                return Err(at!(PngError::Internal(
+                    zencodec::InternalKind::Dependency,
+                    alloc::format!("compression failed: {e}")
+                )));
             }
         };
 
@@ -1986,7 +2000,10 @@ fn recompress_one(data: &[u8], cancel: &dyn Stop) -> crate::error::Result<Vec<u8
         .zlib_compress(data, &mut output, cancel)
         .map_err(|e| match e {
             zenflate::CompressionError::Stopped(reason) => PngError::Stopped(reason),
-            other => PngError::InvalidInput(alloc::format!("zenflate recompress failed: {other}")),
+            other => PngError::Internal(
+                zencodec::InternalKind::Dependency,
+                alloc::format!("zenflate recompress failed: {other}"),
+            ),
         })?;
     output.truncate(len);
     Ok(output)
@@ -2053,9 +2070,10 @@ fn full_optimal_recompress_one(
         .zlib_compress(data, &mut output, cancel)
         .map_err(|e| match e {
             zenflate::CompressionError::Stopped(reason) => PngError::Stopped(reason),
-            other => PngError::InvalidInput(alloc::format!(
-                "zenflate FullOptimal recompress failed: {other}"
-            )),
+            other => PngError::Internal(
+                zencodec::InternalKind::Dependency,
+                alloc::format!("zenflate FullOptimal recompress failed: {other}"),
+            ),
         })?;
     output.truncate(len);
     Ok(output)
@@ -2232,7 +2250,14 @@ fn zenzop_err(e: std::io::Error, stop: &dyn Stop) -> PngError {
     if let Err(reason) = stop.check() {
         return PngError::Stopped(reason);
     }
-    PngError::InvalidInput(alloc::format!("zopfli compression failed: {e}"))
+    // Per the doc comment above, zenzop only errors for a Cancelled stop —
+    // which is already handled — so reaching here means an io::Error surfaced
+    // that we can't attribute to a stop signal: an unclassified zenzop-side
+    // failure.
+    PngError::Internal(
+        zencodec::InternalKind::Dependency,
+        alloc::format!("zopfli compression failed: {e}"),
+    )
 }
 
 /// Best-effort CPU count for parallel zopfli.

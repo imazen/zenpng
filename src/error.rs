@@ -15,62 +15,94 @@ pub type Result<T> = core::result::Result<T, At<PngError>>;
 #[non_exhaustive]
 pub enum PngError {
     /// Corrupt or invalid PNG bitstream content (bad chunk, CRC mismatch,
-    /// invalid structure). Maps to [`ErrorCategory::MalformedImage`].
+    /// invalid structure). Maps to
+    /// [`ErrorCategory::Image`]`(`[`ImageError::Malformed`]`)`.
     ///
-    /// [`ErrorCategory::MalformedImage`]: zencodec::ErrorCategory::MalformedImage
+    /// [`ErrorCategory::Image`]: zencodec::ErrorCategory::Image
+    /// [`ImageError::Malformed`]: zencodec::ImageError::Malformed
     #[error("PNG decode error: {0}")]
     Decode(alloc::string::String),
 
     /// Input ended before a needed field/chunk was complete (truncated stream,
-    /// missing IDAT, empty PNG). Maps to [`ErrorCategory::UnexpectedEof`].
+    /// missing IDAT, empty PNG). Maps to
+    /// [`ErrorCategory::Image`]`(`[`ImageError::UnexpectedEof`]`)`.
     ///
-    /// [`ErrorCategory::UnexpectedEof`]: zencodec::ErrorCategory::UnexpectedEof
+    /// [`ErrorCategory::Image`]: zencodec::ErrorCategory::Image
+    /// [`ImageError::UnexpectedEof`]: zencodec::ImageError::UnexpectedEof
     #[error("unexpected end of PNG data: {0}")]
     Truncated(alloc::string::String),
 
     /// Data does not begin with the PNG signature — this isn't a PNG file at
     /// all, as opposed to a recognized-but-corrupt PNG (that's
-    /// [`Decode`](Self::Decode)). Maps to [`ErrorCategory::UnsupportedImageType`].
+    /// [`Decode`](Self::Decode)). Maps to
+    /// [`ErrorCategory::Image`]`(ImageError::Unsupported(`[`UnsupportedImageKind::Type`]`))`.
     ///
-    /// [`ErrorCategory::UnsupportedImageType`]: zencodec::ErrorCategory::UnsupportedImageType
+    /// [`ErrorCategory::Image`]: zencodec::ErrorCategory::Image
+    /// [`UnsupportedImageKind::Type`]: zencodec::UnsupportedImageKind::Type
     #[error("not a PNG file: {0}")]
     NotPng(alloc::string::String),
 
     /// A structurally-valid PNG feature this codec does not implement
     /// (unknown filter type, unsupported color-type/bit-depth combination).
-    /// Maps to [`ErrorCategory::UnsupportedImageFeature`].
+    /// Maps to
+    /// [`ErrorCategory::Image`]`(ImageError::Unsupported(`[`UnsupportedImageKind::Feature`]`))`.
     ///
-    /// [`ErrorCategory::UnsupportedImageFeature`]: zencodec::ErrorCategory::UnsupportedImageFeature
+    /// [`ErrorCategory::Image`]: zencodec::ErrorCategory::Image
+    /// [`UnsupportedImageKind::Feature`]: zencodec::UnsupportedImageKind::Feature
     #[error("unsupported PNG feature: {0}")]
     UnsupportedFeature(alloc::string::String),
 
-    /// Invalid caller-supplied parameters or configuration (bad dimensions,
-    /// inconsistent streaming usage, quantizer config, mismatched buffer size).
-    /// Maps to [`ErrorCategory::InvalidParameters`].
+    /// Invalid caller-supplied parameters or configuration (bad quantizer
+    /// backend name/config, invalid frame count, dimensions that don't fit an
+    /// operation). Maps to
+    /// [`ErrorCategory::Request`]`(RequestError::Invalid(`[`InvalidKind::Parameters`]`))`.
     ///
-    /// [`ErrorCategory::InvalidParameters`]: zencodec::ErrorCategory::InvalidParameters
+    /// [`ErrorCategory::Request`]: zencodec::ErrorCategory::Request
+    /// [`InvalidKind::Parameters`]: zencodec::InvalidKind::Parameters
     #[error("invalid input: {0}")]
     InvalidInput(alloc::string::String),
 
-    /// The input is valid and could be processed, but a configured decode
-    /// policy declined it (e.g. animation forbidden, progressive/interlaced
-    /// content forbidden). The request was understood and *declined*, so it
-    /// is neither malformed nor unsupported. Maps to
-    /// [`ErrorCategory::PolicyRejected`].
+    /// A caller-supplied pixel buffer has an invalid layout — wrong size for
+    /// the declared dimensions (palette, index buffer, frame data, row bytes).
+    /// Maps to
+    /// [`ErrorCategory::Request`]`(RequestError::Invalid(`[`InvalidKind::Buffer`]`))`.
     ///
-    /// [`ErrorCategory::PolicyRejected`]: zencodec::ErrorCategory::PolicyRejected
-    #[error("rejected by policy: {0}")]
-    PolicyRejected(alloc::string::String),
+    /// [`ErrorCategory::Request`]: zencodec::ErrorCategory::Request
+    /// [`InvalidKind::Buffer`]: zencodec::InvalidKind::Buffer
+    #[error("invalid pixel buffer: {0}")]
+    InvalidBuffer(alloc::string::String),
+
+    /// The streaming/animation encoder API was called out of sequence — e.g.
+    /// `push_rows` with a width that doesn't match an already-established
+    /// canvas width, more rows pushed than the declared canvas height,
+    /// `finish()` before any rows/frames were pushed, or a pixel-data size
+    /// that doesn't match what was accumulated. Maps to
+    /// [`ErrorCategory::Request`]`(RequestError::Invalid(`[`InvalidKind::State`]`))`.
+    ///
+    /// [`ErrorCategory::Request`]: zencodec::ErrorCategory::Request
+    /// [`InvalidKind::State`]: zencodec::InvalidKind::State
+    #[error("invalid state: {0}")]
+    InvalidState(alloc::string::String),
 
     /// An unsupported operation, including pixel-format negotiation failures.
     /// Delegates its category to the wrapped [`zencodec::UnsupportedOperation`]
-    /// (`PixelFormat` → [`ErrorCategory::UnsupportedPixelFormat`], otherwise
-    /// [`ErrorCategory::UnsupportedOperation`]).
+    /// — always
+    /// [`ErrorCategory::Request`]`(RequestError::Unsupported(op))`, carrying
+    /// which operation (`PixelFormat` included, no longer split out).
     ///
-    /// [`ErrorCategory::UnsupportedPixelFormat`]: zencodec::ErrorCategory::UnsupportedPixelFormat
-    /// [`ErrorCategory::UnsupportedOperation`]: zencodec::ErrorCategory::UnsupportedOperation
+    /// [`ErrorCategory::Request`]: zencodec::ErrorCategory::Request
     #[error("unsupported operation: {0}")]
     Unsupported(zencodec::UnsupportedOperation),
+
+    /// The encode target's color needs a synthesized ICC/CMS transform this
+    /// build will not perform itself — e.g. a CICP profile with no ICC
+    /// synthesis available for it (enable the `cms` feature), and no ICC
+    /// profile supplied in the metadata. CMS is the caller's job. Maps to
+    /// [`ErrorCategory::Request`]`(RequestError::CmsRequired)`.
+    ///
+    /// [`ErrorCategory::Request`]: zencodec::ErrorCategory::Request
+    #[error("colour-management transform required: {0}")]
+    CmsRequired(alloc::string::String),
 
     /// Output sink / I/O write failure. Maps to [`ErrorCategory::Io`].
     ///
@@ -78,34 +110,68 @@ pub enum PngError {
     #[error("I/O error: {0}")]
     Io(alloc::string::String),
 
-    /// A configured resource limit was exceeded. Wraps the typed
-    /// [`zencodec::LimitExceeded`] so the [`LimitKind`](zencodec::LimitKind) is
-    /// preserved; delegates its category to
-    /// [`ErrorCategory::LimitsExceeded`]`(kind)`.
+    /// A configured resource limit was (or would be) exceeded. Wraps the
+    /// typed [`zencodec::LimitExceeded`] so the
+    /// [`LimitKind`](zencodec::LimitKind) is preserved; delegates its
+    /// category to
+    /// [`ErrorCategory::Resource`]`(ResourceError::Limits(kind))`. Distinct
+    /// from [`OutOfMemory`](Self::OutOfMemory) — this is a configured cap the
+    /// caller can raise, not genuine allocation exhaustion.
     ///
-    /// [`ErrorCategory::LimitsExceeded`]: zencodec::ErrorCategory::LimitsExceeded
+    /// [`ErrorCategory::Resource`]: zencodec::ErrorCategory::Resource
     #[error("resource limit exceeded: {0}")]
-    Limit(zencodec::LimitExceeded),
+    LimitExceeded(zencodec::LimitExceeded),
 
-    /// Memory acquisition failed: a fallible allocation returned an error, or a
-    /// size computation overflowed the platform's address space (so the buffer
-    /// can never be allocated). Maps to [`ErrorCategory::OutOfMemory`].
+    /// Memory acquisition failed: a fallible allocation returned an error, or
+    /// a size computation overflowed the platform's address space (so the
+    /// buffer can never be allocated). Distinct from
+    /// [`LimitExceeded`](Self::LimitExceeded) — this is genuine allocation
+    /// exhaustion, not a configured cap. Maps to
+    /// [`ErrorCategory::Resource`]`(ResourceError::OutOfMemory)`.
     ///
-    /// [`ErrorCategory::OutOfMemory`]: zencodec::ErrorCategory::OutOfMemory
-    #[error("limit exceeded: {0}")]
-    LimitExceeded(alloc::string::String),
+    /// [`ErrorCategory::Resource`]: zencodec::ErrorCategory::Resource
+    #[error("out of memory: {0}")]
+    OutOfMemory(alloc::string::String),
 
-    /// Operation stopped by cooperative cancellation. Delegates its category to
-    /// the wrapped [`enough::StopReason`] (`TimedOut` →
-    /// [`ErrorCategory::TimedOut`], otherwise [`ErrorCategory::Cancelled`]).
+    /// The input is valid and could be processed, but a configured
+    /// [`DecodePolicy`](zencodec::decode::DecodePolicy) /
+    /// [`EncodePolicy`](zencodec::encode::EncodePolicy) declined it (e.g.
+    /// animation forbidden, progressive/interlaced content forbidden). The
+    /// request was understood and *declined*, so it is neither malformed nor
+    /// unsupported. Carries which policy family rejected it (the call site
+    /// already knows). Maps to [`ErrorCategory::Policy`]`(kind)`.
     ///
-    /// [`ErrorCategory::TimedOut`]: zencodec::ErrorCategory::TimedOut
-    /// [`ErrorCategory::Cancelled`]: zencodec::ErrorCategory::Cancelled
+    /// [`ErrorCategory::Policy`]: zencodec::ErrorCategory::Policy
+    #[error("rejected by policy: {1}")]
+    PolicyRejected(zencodec::PolicyKind, alloc::string::String),
+
+    /// Operation stopped by cooperative cancellation. Delegates its category
+    /// to the wrapped [`enough::StopReason`] — always
+    /// [`ErrorCategory::Lifecycle`]`(reason)`, no lossy collapse.
+    ///
+    /// [`ErrorCategory::Lifecycle`]: zencodec::ErrorCategory::Lifecycle
     #[error("stopped: {0}")]
     Stopped(enough::StopReason),
 
-    /// Quantization error (zenquant backend). Maps to
-    /// [`ErrorCategory::Internal`].
+    /// An internal failure not attributable to the input or the request:
+    /// either a broken invariant in zenpng's own logic
+    /// ([`InternalKind::Bug`](zencodec::InternalKind::Bug) — e.g. an
+    /// internally-derived color type our own encoder failed to handle), or an
+    /// unclassified error surfaced from a sub-component
+    /// ([`InternalKind::Dependency`](zencodec::InternalKind::Dependency) — a
+    /// zenflate/zenzop compression call returning something other than
+    /// cancellation). The call site already knows which. Maps to
+    /// [`ErrorCategory::Internal`]`(kind)`.
+    ///
+    /// [`ErrorCategory::Internal`]: zencodec::ErrorCategory::Internal
+    #[error("{0}: {1}")]
+    Internal(zencodec::InternalKind, alloc::string::String),
+
+    /// Quantization error (zenquant backend). Most of zenquant's own variants
+    /// are themselves caller-request faults (bad dimensions, out-of-range
+    /// config) or a cancellation; the rest are an unclassified
+    /// zenquant-internal failure. See the [`CategorizedError`] impl below for
+    /// the full split — it is not a blanket [`ErrorCategory::Internal`].
     ///
     /// [`ErrorCategory::Internal`]: zencodec::ErrorCategory::Internal
     #[cfg(feature = "quantize")]
@@ -127,56 +193,81 @@ impl From<zencodec::UnsupportedOperation> for PngError {
 
 impl From<zencodec::LimitExceeded> for PngError {
     fn from(limit: zencodec::LimitExceeded) -> Self {
-        PngError::Limit(limit)
+        PngError::LimitExceeded(limit)
     }
 }
 
-// Codec-agnostic error taxonomy (zencodec PR #103). Maps every `PngError`
-// variant to exactly one coarse `ErrorCategory` so consumers can route on the
-// category without naming this enum. `zencodec` is a non-optional dependency, so
-// this impl is unconditional.
+// Codec-agnostic error taxonomy (zencodec's origin-first two-level
+// ErrorCategory: Image/Request/Resource/Policy/Lifecycle/Io/Internal). Maps
+// every `PngError` variant to exactly one coarse `ErrorCategory` so consumers
+// can route on the category without naming this enum. `zencodec` is a
+// non-optional dependency, so this impl is unconditional.
 impl zencodec::CategorizedError for PngError {
     fn codec_name(&self) -> Option<&'static str> {
         Some("zenpng")
     }
 
     fn category(&self) -> zencodec::ErrorCategory {
-        use zencodec::ErrorCategory as C;
+        use zencodec::{
+            ErrorCategory as C, ImageError, InvalidKind, RequestError, ResourceError,
+            UnsupportedImageKind,
+        };
         match self {
-            // Corrupt / invalid bitstream content.
-            PngError::Decode(_) => C::MalformedImage,
+            // Image-bytes-origin: corrupt / truncated / unrecognized / an
+            // implemented-format-but-unimplemented-feature.
+            PngError::Decode(_) => ImageError::Malformed.into(),
+            PngError::Truncated(_) => ImageError::UnexpectedEof.into(),
+            PngError::NotPng(_) => UnsupportedImageKind::Type.into(),
+            PngError::UnsupportedFeature(_) => UnsupportedImageKind::Feature.into(),
 
-            // Truncated input / unexpected end of data.
-            PngError::Truncated(_) => C::UnexpectedEof,
-
-            // Missing/incorrect PNG signature — this isn't a PNG at all.
-            PngError::NotPng(_) => C::UnsupportedImageType,
-
-            // A valid PNG feature we don't implement.
-            PngError::UnsupportedFeature(_) => C::UnsupportedImageFeature,
-
-            // Bad caller parameters / configuration / usage.
-            PngError::InvalidInput(_) => C::InvalidParameters,
-
-            // Understood and declined by a configured decode policy.
-            PngError::PolicyRejected(_) => C::PolicyRejected,
+            // Caller-request-origin: bad parameters / bad buffer geometry / bad
+            // call sequence / a CMS transform we won't perform ourselves.
+            PngError::InvalidInput(_) => InvalidKind::Parameters.into(),
+            PngError::InvalidBuffer(_) => InvalidKind::Buffer.into(),
+            PngError::InvalidState(_) => InvalidKind::State.into(),
+            PngError::CmsRequired(_) => C::Request(RequestError::CmsRequired),
 
             // Output sink / I/O failures.
             PngError::Io(_) => C::Io(zencodec::CodecIoKind::opaque()),
 
-            // Memory acquisition failure (alloc failed or address-space overflow).
-            PngError::LimitExceeded(_) => C::OutOfMemory,
+            // Memory acquisition failure (alloc failed or address-space
+            // overflow) — distinct from a configured `LimitExceeded` cap.
+            PngError::OutOfMemory(_) => C::Resource(ResourceError::OutOfMemory),
+
+            // Understood and declined by a configured decode/encode policy.
+            PngError::PolicyRejected(kind, _) => C::Policy(*kind),
+
+            // A broken invariant in our own logic, or an unclassified error
+            // from a sub-component (zenflate/zenzop) — the call site already
+            // picked which.
+            PngError::Internal(kind, _) => C::Internal(*kind),
 
             // Delegate to the wrapped zencodec cause types — they carry their
-            // own `CategorizedError` impl (kind / pixel-format / stop-reason).
+            // own `CategorizedError` impl (operation / limit-kind / stop-reason).
             PngError::Unsupported(op) => op.category(),
-            PngError::Limit(limit) => limit.category(),
+            PngError::LimitExceeded(limit) => limit.category(),
             PngError::Stopped(reason) => reason.category(),
 
-            // Quantizer backend failure. Delegating would need zenquant itself
-            // to impl `CategorizedError` (out of scope here); treat as internal.
+            // Quantizer backend failure (zenquant 0.1.3). zenquant's own error
+            // enum already carries enough detail to route most of it as a
+            // caller-request fault instead of dumping everything into
+            // `Internal` (the 13-codec audit flagged the old blanket mapping
+            // as "acknowledged out-of-scope" — this closes that gap).
             #[cfg(feature = "quantize")]
-            PngError::Quantize(_) => C::Internal,
+            PngError::Quantize(e) => match e {
+                // Bad caller-supplied config/dimensions.
+                zenquant::QuantizeError::ZeroDimension
+                | zenquant::QuantizeError::InvalidMaxColors(_) => InvalidKind::Parameters.into(),
+                // Pixel buffer length doesn't match the declared dimensions.
+                zenquant::QuantizeError::DimensionMismatch { .. } => InvalidKind::Buffer.into(),
+                // `QualityNotMet` (couldn't hit the quality gate) — and any
+                // future `#[non_exhaustive]` variant — is zenquant's own
+                // algorithm failing to satisfy its contract, not something the
+                // top-level PNG API caller did wrong: an unclassified
+                // sub-component failure, not a permanent home (see
+                // `InternalKind::Dependency`'s docs).
+                _ => C::Internal(zencodec::InternalKind::Dependency),
+            },
         }
     }
 }
@@ -192,12 +283,12 @@ impl zencodec::CategorizedError for crate::detect::ProbeError {
 
     fn category(&self) -> zencodec::ErrorCategory {
         use crate::detect::ProbeError;
-        use zencodec::ErrorCategory as C;
+        use zencodec::{ImageError, UnsupportedImageKind};
         match self {
             // Not enough bytes yet / structure cut short → need more input.
-            ProbeError::TooShort | ProbeError::Truncated => C::UnexpectedEof,
+            ProbeError::TooShort | ProbeError::Truncated => ImageError::UnexpectedEof.into(),
             // Signature absent → this isn't a PNG at all.
-            ProbeError::NotPng => C::UnsupportedImageType,
+            ProbeError::NotPng => UnsupportedImageKind::Type.into(),
         }
     }
 }
@@ -228,7 +319,10 @@ impl From<PngError> for At<zencodec::CodecError> {
 mod tests {
     use super::*;
     use whereat::at;
-    use zencodec::{CategorizedError, ErrorCategory as C, LimitKind as L};
+    use zencodec::{
+        CategorizedError, ErrorCategory as C, ImageError, InternalKind, InvalidKind,
+        LimitKind as L, PolicyKind, RequestError, ResourceError, UnsupportedImageKind,
+    };
 
     #[test]
     fn error_display_decode() {
@@ -243,8 +337,8 @@ mod tests {
     }
 
     #[test]
-    fn error_display_limit_exceeded() {
-        let e = PngError::LimitExceeded("too big".into());
+    fn error_display_out_of_memory() {
+        let e = PngError::OutOfMemory("too big".into());
         assert!(e.to_string().contains("too big"));
     }
 
@@ -267,7 +361,7 @@ mod tests {
     fn error_from_limit_exceeded() {
         let limit = zencodec::LimitExceeded::Pixels { actual: 9, max: 4 };
         let e: PngError = limit.into();
-        assert!(matches!(e, PngError::Limit(_)));
+        assert!(matches!(e, PngError::LimitExceeded(_)));
     }
 
     #[test]
@@ -290,57 +384,93 @@ mod tests {
     fn error_category_mapping() {
         assert_eq!(PngError::Decode("x".into()).codec_name(), Some("zenpng"));
 
-        assert_eq!(PngError::Decode("x".into()).category(), C::MalformedImage);
-        assert_eq!(PngError::Truncated("x".into()).category(), C::UnexpectedEof);
+        assert_eq!(
+            PngError::Decode("x".into()).category(),
+            C::Image(ImageError::Malformed)
+        );
+        assert_eq!(
+            PngError::Truncated("x".into()).category(),
+            C::Image(ImageError::UnexpectedEof)
+        );
         assert_eq!(
             PngError::NotPng("x".into()).category(),
-            C::UnsupportedImageType
+            C::Image(ImageError::Unsupported(UnsupportedImageKind::Type))
         );
         assert_eq!(
             PngError::UnsupportedFeature("x".into()).category(),
-            C::UnsupportedImageFeature
+            C::Image(ImageError::Unsupported(UnsupportedImageKind::Feature))
         );
         assert_eq!(
             PngError::InvalidInput("x".into()).category(),
-            C::InvalidParameters
+            C::Request(RequestError::Invalid(InvalidKind::Parameters))
         );
         assert_eq!(
-            PngError::PolicyRejected("x".into()).category(),
-            C::PolicyRejected
+            PngError::InvalidBuffer("x".into()).category(),
+            C::Request(RequestError::Invalid(InvalidKind::Buffer))
+        );
+        assert_eq!(
+            PngError::InvalidState("x".into()).category(),
+            C::Request(RequestError::Invalid(InvalidKind::State))
+        );
+        assert_eq!(
+            PngError::CmsRequired("x".into()).category(),
+            C::Request(RequestError::CmsRequired)
+        );
+        assert_eq!(
+            PngError::PolicyRejected(PolicyKind::Decode, "x".into()).category(),
+            C::Policy(PolicyKind::Decode)
+        );
+        assert_eq!(
+            PngError::PolicyRejected(PolicyKind::Encode, "x".into()).category(),
+            C::Policy(PolicyKind::Encode)
         );
         assert_eq!(
             PngError::Io("x".into()).category(),
             C::Io(zencodec::CodecIoKind::opaque())
         );
         assert_eq!(
-            PngError::LimitExceeded("x".into()).category(),
-            C::OutOfMemory
+            PngError::OutOfMemory("x".into()).category(),
+            C::Resource(ResourceError::OutOfMemory)
+        );
+        assert_eq!(
+            PngError::Internal(InternalKind::Bug, "x".into()).category(),
+            C::Internal(InternalKind::Bug)
+        );
+        assert_eq!(
+            PngError::Internal(InternalKind::Dependency, "x".into()).category(),
+            C::Internal(InternalKind::Dependency)
         );
 
         // Delegated arms.
         assert_eq!(
             PngError::Unsupported(zencodec::UnsupportedOperation::PixelFormat).category(),
-            C::UnsupportedPixelFormat
+            C::Request(RequestError::Unsupported(
+                zencodec::UnsupportedOperation::PixelFormat
+            ))
         );
         assert_eq!(
             PngError::Unsupported(zencodec::UnsupportedOperation::RowLevelEncode).category(),
-            C::UnsupportedOperation
+            C::Request(RequestError::Unsupported(
+                zencodec::UnsupportedOperation::RowLevelEncode
+            ))
         );
         assert_eq!(
-            PngError::Limit(zencodec::LimitExceeded::Memory { actual: 9, max: 4 }).category(),
-            C::LimitsExceeded(L::Memory)
+            PngError::LimitExceeded(zencodec::LimitExceeded::Memory { actual: 9, max: 4 })
+                .category(),
+            C::Resource(ResourceError::Limits(L::Memory))
         );
         assert_eq!(
-            PngError::Limit(zencodec::LimitExceeded::Frames { actual: 9, max: 4 }).category(),
-            C::LimitsExceeded(L::Frames)
+            PngError::LimitExceeded(zencodec::LimitExceeded::Frames { actual: 9, max: 4 })
+                .category(),
+            C::Resource(ResourceError::Limits(L::Frames))
         );
         assert_eq!(
             PngError::Stopped(enough::StopReason::Cancelled).category(),
-            C::Cancelled
+            C::Lifecycle(enough::StopReason::Cancelled)
         );
         assert_eq!(
             PngError::Stopped(enough::StopReason::TimedOut).category(),
-            C::TimedOut
+            C::Lifecycle(enough::StopReason::TimedOut)
         );
     }
 
@@ -348,16 +478,49 @@ mod tests {
     #[test]
     fn error_category_through_at() {
         let err: At<PngError> = at!(PngError::Truncated("eof".into()));
-        assert_eq!(err.category(), C::UnexpectedEof);
+        assert_eq!(err.category(), C::Image(ImageError::UnexpectedEof));
         assert_eq!(err.codec_name(), Some("zenpng"));
     }
 
+    // zenquant's own error variants (0.1.3: ZeroDimension, DimensionMismatch,
+    // InvalidMaxColors, QualityNotMet) split across Request/Internal instead
+    // of collapsing to a blanket `Internal`.
     #[test]
     #[cfg(feature = "quantize")]
-    fn error_quantize_is_internal() {
+    fn error_quantize_category_split() {
         let e: PngError = zenquant::QuantizeError::ZeroDimension.into();
         assert!(matches!(e, PngError::Quantize(_)));
-        assert_eq!(e.category(), C::Internal);
+        assert_eq!(
+            e.category(),
+            C::Request(RequestError::Invalid(InvalidKind::Parameters))
+        );
+
+        let e: PngError = zenquant::QuantizeError::InvalidMaxColors(9999).into();
+        assert_eq!(
+            e.category(),
+            C::Request(RequestError::Invalid(InvalidKind::Parameters))
+        );
+
+        let e: PngError = zenquant::QuantizeError::DimensionMismatch {
+            len: 1,
+            width: 2,
+            height: 2,
+        }
+        .into();
+        assert_eq!(
+            e.category(),
+            C::Request(RequestError::Invalid(InvalidKind::Buffer))
+        );
+
+        // `QualityNotMet` — and any future `#[non_exhaustive]` variant — is
+        // zenquant's own algorithm failing to satisfy its contract, not a
+        // caller-request fault: an unclassified sub-component failure.
+        let e: PngError = zenquant::QuantizeError::QualityNotMet {
+            min_ssim2: 90.0,
+            achieved_ssim2: 80.0,
+        }
+        .into();
+        assert_eq!(e.category(), C::Internal(InternalKind::Dependency));
     }
 
     // ProbeError categories.
@@ -365,8 +528,17 @@ mod tests {
     fn probe_error_category_mapping() {
         use crate::detect::ProbeError;
         assert_eq!(ProbeError::TooShort.codec_name(), Some("zenpng"));
-        assert_eq!(ProbeError::TooShort.category(), C::UnexpectedEof);
-        assert_eq!(ProbeError::Truncated.category(), C::UnexpectedEof);
-        assert_eq!(ProbeError::NotPng.category(), C::UnsupportedImageType);
+        assert_eq!(
+            ProbeError::TooShort.category(),
+            C::Image(ImageError::UnexpectedEof)
+        );
+        assert_eq!(
+            ProbeError::Truncated.category(),
+            C::Image(ImageError::UnexpectedEof)
+        );
+        assert_eq!(
+            ProbeError::NotPng.category(),
+            C::Image(ImageError::Unsupported(UnsupportedImageKind::Type))
+        );
     }
 }

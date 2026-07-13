@@ -491,7 +491,7 @@ pub(crate) fn decode_apng_composed(
     let canvas_bytes = canvas_w
         .checked_mul(canvas_h)
         .and_then(|v| v.checked_mul(bpp))
-        .ok_or_else(|| at!(PngError::LimitExceeded("canvas size overflow".into())))?;
+        .ok_or_else(|| at!(PngError::OutOfMemory("canvas size overflow".into())))?;
 
     let num_frames = decoder.num_frames;
     let num_plays = decoder.num_plays;
@@ -534,10 +534,12 @@ pub(crate) fn decode_apng_composed(
         if let Some(max_mem) = config.max_memory_bytes {
             total_frame_bytes = total_frame_bytes.saturating_add(per_frame_bytes);
             if total_frame_bytes > max_mem {
-                return Err(at!(PngError::Limit(zencodec::LimitExceeded::Memory {
-                    actual: total_frame_bytes,
-                    max: max_mem,
-                })));
+                return Err(at!(PngError::LimitExceeded(
+                    zencodec::LimitExceeded::Memory {
+                        actual: total_frame_bytes,
+                        max: max_mem,
+                    }
+                )));
             }
         }
 

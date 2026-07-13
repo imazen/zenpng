@@ -115,7 +115,7 @@ pub(crate) fn decode_interlaced(
     // dimensions → default fallible.
     let out_row_bytes = width as usize * fmt.channels * fmt.bytes_per_channel;
     let final_total = out_row_bytes.checked_mul(height as usize).ok_or_else(|| {
-        at!(PngError::LimitExceeded(
+        at!(PngError::OutOfMemory(
             "image too large for this platform".into()
         ))
     })?;

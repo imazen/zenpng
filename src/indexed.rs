@@ -624,7 +624,7 @@ fn validate_apng_frames(
     let expected_len = w * h * 4;
     for (i, frame) in frames.iter().enumerate() {
         if frame.pixels.len() < expected_len {
-            return Err(at!(PngError::InvalidInput(alloc::format!(
+            return Err(at!(PngError::InvalidBuffer(alloc::format!(
                 "frame {i}: pixel buffer too small: need {expected_len}, got {}",
                 frame.pixels.len()
             ))));

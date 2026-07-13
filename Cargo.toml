@@ -50,7 +50,7 @@ lodepng = "3.12.2"
 # SAME zencodec rev as the [patch.crates-io] below so both resolve to one
 # unified zencodec. Provides check_decode_truncation_series (EOF/truncation).
 # Drop for a crates.io version dep once zencodec 0.1.26 + testkit publish.
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "c3220d51d2ef8ec16e8328ada2d5a04c7e6750ee" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "2427387f86c77fdf773ae2fa219926a49cd32d99" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 codec-corpus = "1.0.2"
@@ -131,11 +131,12 @@ harness = false
 required-features = ["_dev"]
 
 [patch.crates-io]
-# TEMP: until zencodec 0.1.26 ships (PR #103) — provides the unreleased
-# `CategorizedError` taxonomy (trait + `ErrorCategory` + `LimitKind`) plus the
-# zencodec-testkit `check_decode_truncation_series` conformance check. Remove
-# this patch and bump the `zencodec` version dependency once 0.1.26 is published.
-# Pinned to a commit rev (not the branch tip) for reproducible builds, and to the
-# SAME rev as the `zencodec-testkit` dev-dep so both resolve to one unified
-# zencodec; bump the rev deliberately.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "c3220d51d2ef8ec16e8328ada2d5a04c7e6750ee" }
+# TEMP: until zencodec 0.1.26 ships (PR #103, superseded by PR #116's two-level
+# reshape) — provides the unreleased `CategorizedError` taxonomy (trait +
+# origin-first `ErrorCategory` + `LimitKind`) plus the zencodec-testkit
+# `check_decode_truncation_series` conformance check. Remove this patch and
+# bump the `zencodec` version dependency once 0.1.26 is published. Pinned to a
+# commit rev (not the branch tip) for reproducible builds, and to the SAME rev
+# as the `zencodec-testkit` dev-dep so both resolve to one unified zencodec;
+# bump the rev deliberately.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "2427387f86c77fdf773ae2fa219926a49cd32d99" }
