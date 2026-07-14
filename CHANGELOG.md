@@ -141,16 +141,18 @@ All notable changes to zenpng are documented here.
   `[patch.crates-io]` zencodec pin entirely and regenerated `fuzz/Cargo.lock`
   — the fuzz crate has no `zencodec-testkit` dependency, so nothing there
   needs source unification, and it now resolves `zencodec` straight from
-  crates.io. The root `[patch.crates-io]` patch is **kept** (rev bumped to the
-  `v0.1.26` tag, `998edf5`) rather than removed outright: it no longer exists
-  for the taxonomy API (that shipped in 0.1.26), but `zencodec-testkit`
-  (dev-dependency, still unpublished) path-deps its own `zencodec` sibling
-  from the same git checkout, and dropping the patch would leave two distinct
-  `zencodec` instances in the graph (crates.io 0.1.26 direct vs. git via
-  testkit) — `tests/integration/truncation_series.rs` passes zenpng's own
+  crates.io. The root `[patch.crates-io]` patch is **kept** rather than
+  removed outright: it no longer exists for the taxonomy API (that shipped in
+  0.1.26), but `zencodec-testkit` (dev-dependency, still unpublished)
+  path-deps its own `zencodec` sibling from the same git checkout, and
+  dropping the patch would leave two distinct `zencodec` instances in the
+  graph (crates.io 0.1.26 direct vs. git via testkit) —
+  `tests/integration/truncation_series.rs` passes zenpng's own
   `PngDecoderConfig` into testkit's `check_decode_truncation_series<D:
   DecoderConfig>`, which would fail to typecheck across two non-identical
-  `DecoderConfig` traits. (798e919)
+  `DecoderConfig` traits (E0277). Both the patch and the `zencodec-testkit`
+  dev-dep now pin via `tag = "v0.1.26"` (commit `998edf5`, byte-identical to
+  the published crate) instead of a bare rev, for readability. (798e919)
 - Docs: split README into a GitHub surface (`README.md`) and a generated
   crates.io surface (`README.crates.md`, no badges); refreshed for the
   `heuristics` resource-estimation, `detect` source-analysis, `cms`/`unchecked`,
