@@ -23,7 +23,7 @@ rgb = { version = "0.8", default-features = false, features = ["as-bytes"] }
 imgref = "1.12"
 bytemuck = { version = "1.25", default-features = false, features = ["extern_crate_alloc"] }
 enough = "0.4.2"
-zencodec = { version = "0.1.25" }
+zencodec = { version = "0.1.26" }
 zenpixels = { version = "0.2.11", default-features = false, features = ["imgref"] }
 zenpixels-convert = { version = "0.2.13", features = ["imgref"] }
 zenquant = { version = "0.1.1", optional = true }
@@ -49,8 +49,9 @@ lodepng = "3.12.2"
 # zencodec conformance harness (unpublished companion crate). Git-pinned to the
 # SAME zencodec rev as the [patch.crates-io] below so both resolve to one
 # unified zencodec. Provides check_decode_truncation_series (EOF/truncation).
-# Drop for a crates.io version dep once zencodec 0.1.26 + testkit publish.
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "44ca79279b265ba7dfe01a2b31ef74788429509a" }
+# Drop for a crates.io version dep once zencodec-testkit itself publishes
+# (zencodec 0.1.26 already shipped; this rev now just tracks the v0.1.26 tag).
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "998edf5f5152f675bbe3b4e959470dffe1536c36" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 codec-corpus = "1.0.2"
@@ -131,12 +132,17 @@ harness = false
 required-features = ["_dev"]
 
 [patch.crates-io]
-# TEMP: until zencodec 0.1.26 ships (PR #103, superseded by PR #116's two-level
-# reshape) — provides the unreleased `CategorizedError` taxonomy (trait +
-# origin-first `ErrorCategory` + `LimitKind`) plus the zencodec-testkit
-# `check_decode_truncation_series` conformance check. Remove this patch and
-# bump the `zencodec` version dependency once 0.1.26 is published. Pinned to a
-# commit rev (not the branch tip) for reproducible builds, and to the SAME rev
-# as the `zencodec-testkit` dev-dep so both resolve to one unified zencodec;
-# bump the rev deliberately.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "44ca79279b265ba7dfe01a2b31ef74788429509a" }
+# zencodec 0.1.26 is published (see the `[dependencies]` version above) — the
+# taxonomy/API reason for this patch is gone. It stays ONLY because
+# `zencodec-testkit` (dev-dependency, above) is an unpublished companion crate
+# that path-deps its own `zencodec` sibling from the same git checkout; without
+# this patch, Cargo would resolve two distinct `zencodec` instances (crates.io
+# 0.1.26 here vs. git here-via-testkit), and `tests/integration/truncation_series.rs`
+# (which passes zenpng's own `PngDecoderConfig` into testkit's
+# `check_decode_truncation_series<D: DecoderConfig>`) would fail to typecheck
+# across the two instances. Remove this patch once zencodec-testkit itself
+# publishes to crates.io (or zenpng drops the testkit dev-dependency). Pinned
+# to a commit rev (not the branch tip) for reproducible builds, and to the
+# SAME rev as the `zencodec-testkit` dev-dep above — currently the v0.1.26 tag
+# — so both resolve to one unified zencodec; bump the rev deliberately.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "998edf5f5152f675bbe3b4e959470dffe1536c36" }

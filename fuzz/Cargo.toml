@@ -42,11 +42,3 @@ test = false
 doc = false
 bench = false
 
-# TEMP mirror of the workspace-root [patch.crates-io]: the fuzz crate is its own
-# workspace, so it does NOT inherit the parent patch. Drop both together when
-# zencodec 0.1.26 (PR #103 taxonomy, superseded by PR #116's two-level reshape)
-# is published. Pinned to a commit rev (not the branch tip) for reproducible
-# builds — keep this in sync with the root Cargo.toml's rev.
-[patch.crates-io]
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "44ca79279b265ba7dfe01a2b31ef74788429509a" }
-
