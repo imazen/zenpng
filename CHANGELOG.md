@@ -135,6 +135,22 @@ All notable changes to zenpng are documented here.
   `fuzz/Cargo.lock`.
 
 ### Changed
+- **deps: migrate to published `zencodec 0.1.26`; drop the fuzz-crate git-rev
+  patch.** `[dependencies] zencodec` is now `"0.1.26"` (was the unreleased-
+  taxonomy `"0.1.25"` + git-rev patch). Removed `fuzz/Cargo.toml`'s
+  `[patch.crates-io]` zencodec pin entirely and regenerated `fuzz/Cargo.lock`
+  — the fuzz crate has no `zencodec-testkit` dependency, so nothing there
+  needs source unification, and it now resolves `zencodec` straight from
+  crates.io. The root `[patch.crates-io]` patch is **kept** (rev bumped to the
+  `v0.1.26` tag, `998edf5`) rather than removed outright: it no longer exists
+  for the taxonomy API (that shipped in 0.1.26), but `zencodec-testkit`
+  (dev-dependency, still unpublished) path-deps its own `zencodec` sibling
+  from the same git checkout, and dropping the patch would leave two distinct
+  `zencodec` instances in the graph (crates.io 0.1.26 direct vs. git via
+  testkit) — `tests/integration/truncation_series.rs` passes zenpng's own
+  `PngDecoderConfig` into testkit's `check_decode_truncation_series<D:
+  DecoderConfig>`, which would fail to typecheck across two non-identical
+  `DecoderConfig` traits. (798e919)
 - Docs: split README into a GitHub surface (`README.md`) and a generated
   crates.io surface (`README.crates.md`, no badges); refreshed for the
   `heuristics` resource-estimation, `detect` source-analysis, `cms`/`unchecked`,
