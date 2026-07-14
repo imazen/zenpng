@@ -33,6 +33,13 @@ All notable changes to zenpng are documented here.
   `--features zencodec` keeps resolving for one release cycle.
 
 ### Added
+- **`zenpng` reference CLI (`src/bin/zenpng.rs`).** Three subcommands:
+  `normalize <in> <out>` (decode + re-encode pixels-only, stripping all
+  ancillary chunks), `crop <in> <out> <side>` (centered square crop, clamped),
+  and `compare <a> <b>` (exact pixel-equality gate, prints `EXACT`/`DIFFER`).
+  SDR/8-bit only (16-bit rejected loudly, never silently truncated). Built as
+  the dogfood replacement for OpenCV/cv2 in the jxl-encoder codec scoreboard:
+  zenpng decodes Display-P3 / EXIF captures that crash libjxl 0.12's PNG reader.
 - **Codec-agnostic error taxonomy (`zencodec::CategorizedError`).** `PngError`
   and the caller-facing `detect::ProbeError` now implement
   `zencodec::CategorizedError` (`codec_name() = Some("zenpng")` + total `category()`), so
