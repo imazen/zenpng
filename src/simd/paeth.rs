@@ -10,6 +10,15 @@ use safe_unaligned_simd::wasm32::v128_load32_zero;
 use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_paeth(row: &mut [u8], prev: &[u8], bpp: usize) {
+    // aarch64: measured SLOWER than the scalar path. NEON is baseline on
+    // AArch64, so LLVM autovectorises the scalar body and the hand-written
+    // kernel competes with the autovectoriser, not with scalar code.
+    // Measured on a 1920-px row (benches/unfilter_tiers.rs): paeth/rgb8 22.10us vs 17.30us (0.78x); paeth/rgba8 21.60us vs 19.40us (0.90x).
+    // Unfiltering is exact integer arithmetic so the paths are identical by
+    // construction — verified 0 mismatching bytes across all filters, bpp and
+    // widths (1920/641/17/5/1).
+    #[cfg(target_arch = "aarch64")]
+    return unfilter_paeth_scalar_any(row, prev, bpp);
     match bpp {
         3 => incant!(
             unfilter_paeth_bpp3_impl(row, prev),

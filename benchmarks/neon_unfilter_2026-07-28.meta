@@ -1,0 +1,60 @@
+# zenpng inverse filters (PNG decode hot path) — up to 2.45x faster on aarch64
+date:  2026-07-28
+host:  Apple M4 Pro (12 core), macOS, aarch64
+build: release, NO -C target-cpu=native
+bench: cargo bench --bench unfilter_tiers --features _dev   (1920-px rows)
+
+## The gap: the decode hot path had never been benchmarked
+
+zenpng's three existing benches all cover the SCAN PREDICATES (is_opaque,
+is_grayscale, ...), which measure 3.6-7.7x on NEON. The INVERSE FILTERS — where
+PNG decode time actually goes — had no bench at all, even though
+`__bench_unfilter_row` was already exported under `_dev` for exactly that
+purpose and nothing used it. So the four filter kernels had never been compared
+against their own scalar fallback on any architecture.
+
+## Result: most of them were SLOWER than scalar
+
+| filter / format | NEON (was) | scalar  | ratio |
+|-----------------|------------|---------|-------|
+| sub / rgb8      |   2.30us   | 10.90us | 4.74x |  <- the one clear win
+| avg / rgb8      |  14.80us   | 14.80us | 1.00x |
+| paeth / rgba8   |  21.60us   | 19.40us | 0.90x |
+| up / rgba8      |   0.30us   |  0.22us | 0.71x |
+| up / rgb8       |   0.24us   |  0.18us | 0.72x |
+| paeth / rgb8    |  22.10us   | 17.30us | 0.78x |
+| sub / rgba8     |   4.90us   |  2.10us | 0.43x |
+| avg / rgba8     |  12.30us   |  6.30us | 0.51x |
+
+Same cause as elsewhere in this sweep: NEON is BASELINE on AArch64, so LLVM
+autovectorises the scalar body — the hand-written kernels are competing with
+the autovectoriser, not with scalar code, and mostly losing. Sub/rgb8 is the
+exception and keeps its NEON path.
+
+## Fix and result
+
+Each losing (filter, bpp) now takes the scalar path on aarch64:
+
+| filter / format | before   | after    | speedup |
+|-----------------|----------|----------|---------|
+| sub / rgba8     |  4.90us  |  2.00us  |  2.45x  |
+| avg / rgba8     | 12.30us  |  6.10us  |  2.02x  |
+| up / rgba8      |  0.30us  |  0.20us  |  1.47x  |
+| up / rgb8       |  0.24us  |  0.17us  |  1.41x  |
+| paeth / rgb8    | 22.10us  | 16.90us  |  1.31x  |
+| paeth / rgba8   | 21.60us  | 17.80us  |  1.21x  |
+| avg / rgb8      | 14.80us  | 14.40us  |  1.03x  |
+| sub / rgb8      |  2.30us  |  2.30us  |  1.00x  |  (kept NEON)
+
+Safe by construction: unfiltering is exact integer arithmetic, so any correct
+implementation gives identical bytes. Verified anyway — 0 mismatching bytes
+across all four filters x bpp 3/4 x widths 1920/641/17/5/1.
+
+## Gotcha worth recording
+
+The first attempt routed avg/bpp4 to `unfilter_avg_scalar_any` (the generic
+any-bpp loop) and made it WORSE: 12.30 -> 15.90us. The 6.30us "scalar" reading
+came from the magetypes SCALAR TIER of the bpp4 kernel
+(`unfilter_avg_bpp4_impl_scalar`) — a specialised body LLVM autovectorises —
+not from the generic fallback. When disabling a tier, dispatch to that tier's
+own scalar variant, not to whatever generic scalar function is nearby.

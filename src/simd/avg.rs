@@ -10,6 +10,25 @@ use safe_unaligned_simd::wasm32::v128_load32_zero;
 use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_avg(row: &mut [u8], prev: &[u8], bpp: usize) {
+    // aarch64: measured SLOWER than the scalar path. NEON is baseline on
+    // AArch64, so LLVM autovectorises the scalar body and the hand-written
+    // kernel competes with the autovectoriser, not with scalar code.
+    // Measured on a 1920-px row (benches/unfilter_tiers.rs): avg/rgba8 12.30us NEON vs 6.30us scalar (0.51x).
+    // Unfiltering is exact integer arithmetic so the paths are identical by
+    // construction — verified 0 mismatching bytes across all filters, bpp and
+    // widths (1920/641/17/5/1).
+    // Route to the magetypes SCALAR TIER of the bpp4 kernel, not the generic
+    // unfilter_avg_scalar_any — the specialised scalar body is what LLVM
+    // autovectorises (6.30us); the generic one is 15.90us.
+    #[cfg(target_arch = "aarch64")]
+    if bpp == 4 {
+        use archmage::SimdToken;
+        return unfilter_avg_bpp4_impl_scalar(
+            ScalarToken::summon().expect("scalar token is infallible"),
+            row,
+            prev,
+        );
+    }
     match bpp {
         4 => incant!(
             unfilter_avg_bpp4_impl(row, prev),

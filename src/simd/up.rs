@@ -14,7 +14,23 @@ use safe_unaligned_simd::x86_64::{
 };
 
 pub(crate) fn unfilter_up(row: &mut [u8], prev: &[u8]) {
-    incant!(unfilter_up_impl(row, prev), [v3, v1, neon, wasm128, scalar])
+    // aarch64: measured SLOWER than the scalar path. NEON is baseline on
+    // AArch64, so LLVM autovectorises the scalar body and the hand-written
+    // kernel competes with the autovectoriser, not with scalar code.
+    // Measured on a 1920-px row (benches/unfilter_tiers.rs): up/rgb8 0.24us vs 0.18us (0.72x); up/rgba8 0.30us vs 0.22us (0.71x).
+    // Unfiltering is exact integer arithmetic so the paths are identical by
+    // construction — verified 0 mismatching bytes across all filters, bpp and
+    // widths (1920/641/17/5/1).
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken;
+        return unfilter_up_impl_scalar(
+            ScalarToken::summon().expect("scalar token is infallible"),
+            row,
+            prev,
+        );
+    }
+        incant!(unfilter_up_impl(row, prev), [v3, v1, neon, wasm128, scalar])
 }
 
 #[cfg(target_arch = "x86_64")]
