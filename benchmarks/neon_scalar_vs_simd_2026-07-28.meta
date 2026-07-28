@@ -1,0 +1,37 @@
+# zenpng scalar-vs-SIMD on aarch64 (NEON) — first ARM run of this bench
+date:    2026-07-28
+host:    Apple M4 Pro (12 core), macOS, aarch64
+command: cargo bench --bench scalar_vs_simd --features _dev
+build:   release, NO -C target-cpu=native
+size:    large_4096x4096 (16 MP)
+
+zenpng already had this bench and the `_dev` feature wiring
+(archmage/testable_dispatch); it had simply never been recorded on ARM. On
+aarch64 the `simd_512` rows dispatch to the NEON variants that magetypes
+generates, so this is a NEON-vs-scalar comparison.
+
+| predicate               | scalar     | SIMD (NEON) | speedup |
+|-------------------------|------------|-------------|---------|
+| fused_three_checks      | 19.068ms   |  2.483ms    |  7.68x  |
+| bit_replication_be16    | 16.948ms   |  2.692ms    |  6.30x  |
+| is_grayscale_rgb8       |  5.479ms   |  0.825ms    |  6.64x  |
+| is_grayscale_rgba8      |  4.943ms   |  1.085ms    |  4.55x  |
+| alpha_is_binary_rgba8   |  4.893ms   |  1.340ms    |  3.65x  |
+| is_opaque_rgba8         |  99.6ns    |  146.1ns    |  see below |
+
+The bench's own ship criterion is "beat scalar by >=10%". Every predicate that
+does real work clears it by a wide margin — this is among the strongest NEON
+payoffs measured across the zen crates, comparable to linear-srgb (3.3-6.6x)
+and zenresize's linear path (4.0-4.3x).
+
+`is_opaque_rgba8` is NOT a regression to act on: it is an early-exit predicate
+that bails on the first non-opaque pixel, so at 16 MP it completes in ~100 ns
+and the measurement is dominated by dispatch and timer overhead — zenbench
+reports CV=46-51% on those two rows, i.e. noise. Reading a 0.68x "slowdown" out
+of two 100ns samples with 50% variance would be exactly the kind of unverified
+claim the neighbouring benchmark records warn about. If this path ever matters,
+measure it with an input that has no early exit.
+
+The `95% CI vs base` column shows absurd percentages (+2851853%) because
+zenbench compares every row against the first row in the group, which is the
+~100ns is_opaque baseline. Compare the mean column, not that one.

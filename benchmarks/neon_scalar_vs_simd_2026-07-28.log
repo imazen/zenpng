@@ -1,0 +1,264 @@
+    Updating git repository `https://github.com/imazen/zencodec`
+    Updating crates.io index
+     Locking 149 packages to latest Rust 1.93 compatible versions
+      Adding miniz_oxide v0.8.9 (available: v0.9.1)
+      Adding quantette v0.5.1 (available: v0.6.0)
+      Adding zenflate v0.3.6 (available: v0.4.0)
+ Downloading crates ...
+  Downloaded libdeflater v1.25.2
+  Downloaded zlib-rs v0.6.6
+  Downloaded lodepng v3.12.2
+  Downloaded libdeflate-sys v1.25.2
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling libc v0.2.189
+   Compiling bitflags v2.13.1
+   Compiling libm v0.2.16
+   Compiling safe_unaligned_simd v0.2.5
+   Compiling autocfg v1.5.1
+   Compiling rustversion v1.0.23
+   Compiling cfg-if v1.0.4
+   Compiling rustix v1.1.4
+   Compiling num-traits v0.2.19
+   Compiling imgref v1.12.2
+   Compiling enough v0.4.4
+   Compiling paste v1.0.15
+   Compiling simd-adler32 v0.3.10
+   Compiling memchr v2.8.3
+   Compiling crc32fast v1.5.0
+   Compiling whereat v0.1.5
+   Compiling serde_core v1.0.229
+   Compiling syn v2.0.119
+   Compiling syn v3.0.3
+   Compiling errno v0.3.14
+   Compiling find-msvc-tools v0.1.9
+   Compiling utf8parse v0.2.2
+   Compiling thiserror v2.0.19
+   Compiling shlex v2.0.1
+   Compiling zmij v1.0.23
+   Compiling cc v1.4.0
+   Compiling anstyle-parse v1.0.0
+   Compiling almost-enough v0.4.4
+   Compiling anstyle-query v1.1.5
+   Compiling adler2 v2.0.1
+   Compiling serde_json v1.0.151
+   Compiling colorchoice v1.0.5
+   Compiling anstyle v1.0.14
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling serde v1.0.229
+   Compiling miniz_oxide v0.8.9
+   Compiling anstream v1.0.0
+   Compiling libdeflate-sys v1.25.2
+   Compiling objc2-core-foundation v0.3.2
+   Compiling bytemuck_derive v1.11.0
+   Compiling archmage-macros v0.9.28
+   Compiling thiserror-impl v2.0.19
+   Compiling serde_derive v1.0.229
+   Compiling option-ext v0.2.0
+   Compiling zlib-rs v0.6.6
+   Compiling once_cell v1.21.4
+   Compiling strsim v0.11.1
+   Compiling clap_lex v1.1.0
+   Compiling lz4_flex v0.13.1
+   Compiling bytemuck v1.25.2
+   Compiling heck v0.5.0
+   Compiling itoa v1.0.18
+   Compiling clap_derive v4.6.4
+   Compiling clap_builder v4.6.2
+   Compiling archmage v0.9.28
+   Compiling rgb v0.8.53
+   Compiling objc2-io-kit v0.3.2
+   Compiling zenpixels v0.2.16
+   Compiling dirs-sys v0.5.0
+   Compiling magetypes v0.9.28
+   Compiling zencodec v0.1.26 (https://github.com/imazen/zencodec?tag=v0.1.26#998edf5f)
+   Compiling garb v0.2.8
+   Compiling flate2 v1.1.9
+   Compiling zenflate v0.3.6
+   Compiling clap v4.6.4
+   Compiling dirs v6.0.0
+   Compiling sysinfo v0.36.1
+   Compiling fs4 v1.1.0
+   Compiling terminal_size v0.4.4
+   Compiling linear-srgb v0.6.12
+   Compiling fd-lock v4.0.4
+   Compiling fdeflate v0.3.7
+   Compiling log v0.4.33
+   Compiling bumpalo v3.20.3
+   Compiling codec-corpus v1.1.0
+   Compiling png v0.18.1
+   Compiling zenpixels-convert v0.2.16
+   Compiling zenquant v0.1.3
+   Compiling zenbench v0.1.9
+   Compiling zenpng v0.2.0 (/Users/lilith/work/zen/zenpng)
+   Compiling zopfli v0.8.3
+   Compiling libdeflater v1.25.2
+   Compiling lodepng v3.12.2
+   Compiling zencodec-testkit v0.1.0 (https://github.com/imazen/zencodec?tag=v0.1.26#998edf5f)
+    Finished `bench` profile [optimized] target(s) in 12.46s
+     Running benches/scalar_vs_simd.rs (target/release/deps/scalar_vs_simd-bba8f815fcf323e3)
+[zenbench] calibration: int=0.30ns/iter mem_bw=106.1GiB/s mem_lat=7.4ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.22ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /var/folders/sc/m9jbk0qj0jz4w09h7gg8v3p80000gn/T/zenbench/zenbench-1785244489-4636.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1785244489-4636
+  git: 760574a2adecc6dd44d405577af6bd489dc895bb
+═══════════════════════════════════════════════════════════════
+
+  tiny_64x64_4Kpx  30 rounds × 1K calls
+                                  mean ±mad ns  95% CI vs base               px/s
+  ├─ is_opaque_rgba8
+  │  ├─ scalar                    0.37 ±0.06ns  [0.34–0.41]ns              10979G [1]
+  │  ╰─ simd_512                  1.56 ±0.18ns  [+182652.8%–+193855.2%]     2621G
+  ├─ is_grayscale_rgba8
+  │  ├─ scalar               1222.96 ±102.91ns  [1192.03–1255.23]ns         3.35G
+  │  ╰─ simd_512               272.49 ±14.68ns  [+182652.8%–+193855.2%]     15.0G
+  ├─ alpha_is_binary_rgba8
+  │  ├─ scalar                1145.13 ±88.57ns  [1095.47–1207.20]ns         3.58G
+  │  ╰─ simd_512               342.10 ±29.74ns  [+182652.8%–+193855.2%]     12.0G
+  ├─ is_grayscale_rgb8
+  │  ├─ scalar               1238.86 ±112.41ns  [1200.78–1279.77]ns         3.31G
+  │  ╰─ simd_512               303.16 ±34.45ns  [+182652.8%–+193855.2%]     13.5G
+  ├─ bit_replication_be16
+  │  ├─ scalar               4379.70 ±425.66ns  [4270.13–4497.24]ns          935M
+  │  ╰─ simd_512               702.23 ±76.10ns  [+182652.8%–+193855.2%]     5.83G
+  ╰─ fused_three_checks
+     ├─ scalar               4923.26 ±472.87ns  [4800.34–5052.62]ns          832M
+     ├─ simd_runtime           664.05 ±71.29ns  [+172993.9%–+182710.5%]     6.17G
+     ╰─ simd_const_generic     639.42 ±70.70ns  [+166464.3%–+176131.3%]     6.41G
+
+  scalar              ██████████████████████████████████████████████ 10979 Gpx/s
+  simd_512            ███████████ 2621 Gpx/s
+  simd_512            █ 15.0 Gpx/s
+  simd_512            █ 13.5 Gpx/s
+  simd_512            █ 12.0 Gpx/s
+  simd_const_generic  █ 6.41 Gpx/s
+  simd_runtime        █ 6.17 Gpx/s
+  simd_512            █ 5.83 Gpx/s
+  scalar              █ 3.58 Gpx/s
+  scalar              █ 3.35 Gpx/s
+  scalar              █ 3.31 Gpx/s
+  scalar              █ 935 Mpx/s
+  scalar              █ 832 Mpx/s
+  [1] CV=24%
+
+  small_256x256_64Kpx  100 rounds × 105 calls
+                                    mean ±mad ns  95% CI vs base                 px/s
+  ├─ is_opaque_rgba8
+  │  ├─ scalar                      1.01 ±0.48ns  [0.87–1.15]ns                65115G [1]
+  │  ╰─ simd_512                    4.52 ±0.95ns  [+1064474.0%–+1097645.5%]    14504G [2]
+  ├─ is_grayscale_rgba8
+  │  ├─ scalar               19580.51 ±1661.97ns  [19230.94–19982.05]ns         3.35G
+  │  ╰─ simd_512               4437.52 ±447.78ns  [+1064474.0%–+1097645.5%]     14.8G
+  ├─ alpha_is_binary_rgba8
+  │  ├─ scalar               18870.55 ±1536.15ns  [18389.79–19410.36]ns         3.47G
+  │  ╰─ simd_512               5498.80 ±559.26ns  [+1064474.0%–+1097645.5%]     11.9G
+  ├─ is_grayscale_rgb8
+  │  ├─ scalar               19389.11 ±1531.13ns  [19105.86–19685.53]ns         3.38G
+  │  ╰─ simd_512               3544.49 ±391.35ns  [+1064474.0%–+1097645.5%]     18.5G
+  ├─ bit_replication_be16
+  │  ├─ scalar               70544.08 ±7038.13ns  [69508.29–71596.06]ns          929M
+  │  ╰─ simd_512              10879.50 ±635.20ns  [+1064474.0%–+1097645.5%]     6.02G
+  ╰─ fused_three_checks
+     ├─ scalar               79328.74 ±6898.33ns  [78293.76–80363.02]ns          826M
+     ├─ simd_runtime         10398.92 ±1149.45ns  [+1016623.5%–+1049637.5%]     6.30G
+     ╰─ simd_const_generic    9949.83 ±1095.44ns  [+971914.8%–+1004979.7%]      6.59G
+
+  scalar              ██████████████████████████████████████████████ 65115 Gpx/s
+  simd_512            ██████████ 14504 Gpx/s
+  simd_512            █ 18.5 Gpx/s
+  simd_512            █ 14.8 Gpx/s
+  simd_512            █ 11.9 Gpx/s
+  simd_const_generic  █ 6.59 Gpx/s
+  simd_runtime        █ 6.30 Gpx/s
+  simd_512            █ 6.02 Gpx/s
+  scalar              █ 3.47 Gpx/s
+  scalar              █ 3.38 Gpx/s
+  scalar              █ 3.35 Gpx/s
+  scalar              █ 929 Mpx/s
+  scalar              █ 826 Mpx/s
+  [1] CV=70%
+  [2] CV=36%
+
+  medium_1024x1024_1MP  88 rounds × 30 calls
+                                       mean ±mad ns  95% CI vs base                  px/s
+  ├─ is_opaque_rgba8
+  │  ├─ scalar                         6.46 ±3.21ns  [5.83–7.09]ns                162266G [1]
+  │  ╰─ simd_512                      10.90 ±2.36ns  [+2486240.0%–+2489438.5%]     96192G [2]
+  ├─ is_grayscale_rgba8
+  │  ├─ scalar                363021.25 ±30397.50ns  [351823.94–373960.30]ns        2.89G
+  │  ╰─ simd_512                 67585.54 ±322.13ns  [+2486240.0%–+2489438.5%]      15.5G
+  ├─ alpha_is_binary_rgba8
+  │  ├─ scalar                 304915.00 ±1813.22ns  [296599.11–313661.99]ns        3.44G
+  │  ╰─ simd_512                 83877.05 ±485.23ns  [+2486240.0%–+2489438.5%]      12.5G
+  ├─ is_grayscale_rgb8
+  │  ├─ scalar                 296906.20 ±1170.78ns  [293271.62–301127.15]ns        3.53G
+  │  ╰─ simd_512                 51922.10 ±412.63ns  [+2486240.0%–+2489438.5%]      20.2G
+  ├─ bit_replication_be16
+  │  ├─ scalar               1054577.35 ±10979.60ns  [1049417.01–1060317.52]ns       994M
+  │  ╰─ simd_512                170104.30 ±657.34ns  [+2486240.0%–+2489438.5%]      6.16G
+  ╰─ fused_three_checks
+     ├─ scalar                1186259.22 ±5716.14ns  [1178441.40–1194703.61]ns       884M
+     ├─ simd_runtime           156783.36 ±1230.79ns  [+2386754.5%–+2468624.7%]      6.69G
+     ╰─ simd_const_generic      152916.16 ±925.99ns  [+2306067.7%–+2358499.3%]      6.86G
+
+  scalar              █████████████████████████████████████████████ 162266 Gpx/s
+  simd_512            ███████████████████████████ 96192 Gpx/s
+  simd_512            █ 20.2 Gpx/s
+  simd_512            █ 15.5 Gpx/s
+  simd_512            █ 12.5 Gpx/s
+  simd_const_generic  █ 6.86 Gpx/s
+  simd_runtime        █ 6.69 Gpx/s
+  simd_512            █ 6.16 Gpx/s
+  scalar              █ 3.53 Gpx/s
+  scalar              █ 3.44 Gpx/s
+  scalar              █ 2.89 Gpx/s
+  scalar              █ 994 Mpx/s
+  scalar              █ 884 Mpx/s
+  [1] CV=46%
+  [2] CV=27%
+
+  large_4096x4096_16MP  81 rounds × 2 calls
+                                       mean ±mad ns  95% CI vs base                  px/s
+  ├─ is_opaque_rgba8
+  │  ├─ scalar                         99.6 ±61.5ns  [88.5–110.6]ns               168511G [1]
+  │  ╰─ simd_512                      146.1 ±31.1ns  [+2851853.7%–+2858017.5%]    114830G [2]
+  ├─ is_grayscale_rgba8
+  │  ├─ scalar                 4942515.5 ±23130.0ns  [4821720.9–5078153.8]ns        3.39G
+  │  ╰─ simd_512                1085329.7 ±3967.4ns  [+2851853.7%–+2858017.5%]      15.5G
+  ├─ alpha_is_binary_rgba8
+  │  ├─ scalar                 4892601.9 ±58696.1ns  [4748882.1–5047127.6]ns        3.43G
+  │  ╰─ simd_512                1339714.6 ±3997.8ns  [+2851853.7%–+2858017.5%]      12.5G
+  ├─ is_grayscale_rgb8
+  │  ├─ scalar                 5478698.1 ±81659.4ns  [5248412.7–5723498.7]ns        3.06G [3]
+  │  ╰─ simd_512                 824824.4 ±4416.7ns  [+2851853.7%–+2858017.5%]      20.3G
+  ├─ bit_replication_be16
+  │  ├─ scalar                16948029.3 ±80594.9ns  [16847174.3–17073765.1]ns       990M
+  │  ╰─ simd_512               2692006.1 ±12169.9ns  [+2851853.7%–+2858017.5%]      6.23G
+  ╰─ fused_three_checks
+     ├─ scalar               19067792.9 ±190573.4ns  [18912840.2–19245353.6]ns       880M
+     ├─ simd_runtime           2483235.5 ±20041.8ns  [+2406916.4%–+2418099.6%]      6.76G
+     ╰─ simd_const_generic     2445610.9 ±19146.3ns  [+2352803.7%–+2371651.3%]      6.86G
+
+  scalar              █████████████████████████████████████████████ 168511 Gpx/s
+  simd_512            ███████████████████████████████ 114830 Gpx/s
+  simd_512            █ 20.3 Gpx/s
+  simd_512            █ 15.5 Gpx/s
+  simd_512            █ 12.5 Gpx/s
+  simd_const_generic  █ 6.86 Gpx/s
+  simd_runtime        █ 6.76 Gpx/s
+  simd_512            █ 6.23 Gpx/s
+  scalar              █ 3.43 Gpx/s
+  scalar              █ 3.39 Gpx/s
+  scalar              █ 3.06 Gpx/s
+  scalar              █ 990 Mpx/s
+  scalar              █ 880 Mpx/s
+  [1] CV=51%
+  [2] CV=27%
+  [3] CV=20%
+
+  total: 78.2s  (1 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
