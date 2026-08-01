@@ -810,7 +810,17 @@ impl PngEncoder {
                 crate::encode::BitDepth::Sixteen => 2,
             };
             let bpp = channels * depth_bytes;
-            let estimated_mem = w as u64 * h as u64 * bpp;
+            // Honest pre-flight: gate on the calibrated peak-memory estimate
+            // (fixed overhead + input buffer + the effort-dependent encoder
+            // working set — 18..180 B/px per `heuristics::ENCODE_BPP_ANCHORS`),
+            // not just the `w*h*bpp` input buffer, which under-states the real
+            // peak by an order of magnitude at high effort. The estimate's
+            // `peak_memory_bytes` is the admission-gating field: a calibrated
+            // safe upper bound over the measured default (4-thread) peak.
+            // `None` (dimension overflow) can never fit a finite budget.
+            let effort = self.config.config.compression.effort();
+            let estimated_mem = crate::heuristics::estimate_encode(w, h, bpp as u8, effort)
+                .map_or(u64::MAX, |e| e.peak_memory_bytes);
             limits
                 .check_memory(estimated_mem)
                 .map_err(|e| at!(PngError::LimitExceeded(e)))?;
@@ -6746,6 +6756,82 @@ mod tests {
             msg.contains("limit exceeded") || msg.contains("memory"),
             "expected memory limit error, got: {msg}"
         );
+    }
+
+    /// The encode memory pre-flight gates on the CALIBRATED peak estimate
+    /// (`heuristics::estimate_encode`), not the raw `w*h*bpp` input buffer.
+    /// 512×512 RGB8 at the default effort (Balanced = e13): the input buffer
+    /// is 768 KiB — the old input-buffer check ADMITTED it under a 4 MiB cap —
+    /// but the measured encode peak is ~28 MiB (2026-06-23 VmHWM sweep; model
+    /// typ ≈ 36 MiB), which would blow straight through the budget. The honest
+    /// check must reject up front with `LimitExceeded::Memory`.
+    #[test]
+    fn encode_memory_preflight_rejects_calibrated_peak_over_budget() {
+        let cap: u64 = 4 * 1024 * 1024;
+        let (w, h) = (512u32, 512u32);
+        let input_bytes = w as u64 * h as u64 * 3;
+        assert!(
+            input_bytes < cap,
+            "input buffer must fit the cap (the old check admitted this size)"
+        );
+        let est = crate::heuristics::estimate_encode(w, h, 3, crate::Compression::default().effort())
+            .unwrap()
+            .peak_memory_bytes;
+        assert!(est > cap, "calibrated peak must exceed the cap for this test");
+
+        let limits = ResourceLimits::none().with_max_memory(cap);
+        let encoder = PngEncoderConfig::new()
+            .job()
+            .with_limits(limits)
+            .encoder()
+            .unwrap();
+        let bytes = vec![128u8; (w * h * 3) as usize];
+        let err = encoder
+            .do_encode(&bytes, w, h, crate::encode::ColorType::Rgb)
+            .unwrap_err();
+        match err.error() {
+            PngError::LimitExceeded(zencodec::LimitExceeded::Memory { actual, max }) => {
+                assert_eq!(*max, cap);
+                assert_eq!(
+                    *actual, est,
+                    "rejection must carry the calibrated peak estimate"
+                );
+            }
+            other => panic!("expected LimitExceeded::Memory, got: {other:?}"),
+        }
+    }
+
+    /// A budget that covers the calibrated peak admits the encode and it
+    /// completes (moderate 64 MiB cap ≥ the ~36 MiB modeled peak for
+    /// 512×512 RGB8 at the default effort).
+    #[test]
+    fn encode_memory_preflight_admits_within_budget() {
+        use zencodec::encode::Encoder as _;
+        let (w, h) = (512usize, 512usize);
+        let cap: u64 = 64 * 1024 * 1024;
+        let est =
+            crate::heuristics::estimate_encode(w as u32, h as u32, 3, crate::Compression::default().effort())
+                .unwrap()
+                .peak_memory_bytes;
+        assert!(est <= cap, "modeled peak {est} must fit the moderate cap {cap}");
+
+        let limits = ResourceLimits::none().with_max_memory(cap);
+        let pixels: Vec<Rgb<u8>> = (0..w * h)
+            .map(|i| Rgb {
+                r: (i % 251) as u8,
+                g: (i / 7 % 253) as u8,
+                b: (i / 13 % 255) as u8,
+            })
+            .collect();
+        let img = imgref::ImgVec::new(pixels, w, h);
+        let out = PngEncoderConfig::new()
+            .job()
+            .with_limits(limits)
+            .encoder()
+            .unwrap()
+            .encode(PixelSlice::from(img.as_ref()).erase())
+            .unwrap();
+        assert!(!out.data().is_empty());
     }
 
     #[test]
