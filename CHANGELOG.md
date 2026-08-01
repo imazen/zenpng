@@ -142,6 +142,22 @@ All notable changes to zenpng are documented here.
   `fuzz/Cargo.lock`.
 
 ### Changed
+- **Encode memory pre-flight now gates on the calibrated peak estimate
+  (db6c5b7a).** With `ResourceLimits::max_memory_bytes` set, encode admission
+  compares the budget against `heuristics::estimate_encode(..)`'s
+  `peak_memory_bytes` (fixed overhead + input + the effort-dependent working
+  set, a measured safe upper bound over the default 4-thread peak) instead of
+  just the `w*h*bpp` input buffer, which under-stated the real peak by an
+  order of magnitude at high effort (512×512 RGB8 e13: 768 KiB claimed vs
+  ~28 MiB measured). Encodes near a tight budget that previously slipped
+  through now fail up front with `LimitExceeded::Memory`; raise
+  `max_memory_bytes` if the new honest estimate rejects a budget you know is
+  sufficient. Covers one-shot encode and the buffered `push_rows`/`finish`
+  path. No thread-count cap from the memory budget: the calibrated model
+  bakes thread cost into its flat B/px envelope (fit over the {1,4}-thread
+  grid) and exposes no separable per-thread memory term, so `max_threads`
+  reduction has no defensible basis in the current model — re-sweep with a
+  thread axis before adding one.
 - **deps: migrate to published `zencodec 0.1.26`; drop the fuzz-crate git-rev
   patch.** `[dependencies] zencodec` is now `"0.1.26"` (was the unreleased-
   taxonomy `"0.1.25"` + git-rev patch). Removed `fuzz/Cargo.toml`'s
