@@ -321,7 +321,6 @@ fn filter_image_brute(
 /// This produces better filter choices than context-based brute-force because
 /// it uses actual DEFLATE state (hash tables, frequency counters, match history)
 /// rather than a limited raw context window.
-#[allow(clippy::too_many_arguments)]
 fn filter_image_brute_fork(
     packed_rows: &[u8],
     row_bytes: usize,
