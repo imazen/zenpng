@@ -850,6 +850,55 @@ type ScreenResults = Vec<(usize, Vec<u8>)>;
 /// its filtered byte stream, fed into the Phase 4 recompressor.
 type RecompressCandidates = Vec<(usize, Vec<u8>)>;
 
+/// Layout of the packed rows handed to [`compress_filtered`].
+///
+/// Carries the PNG filter distance (`bpp`) together with the one fact the
+/// transparent-pixel zeroing needs: whether the rows are 8-bit RGBA. Keying
+/// that decision on `bpp == 4` alone is wrong — 16-bit gray+alpha is also
+/// 4 bytes per pixel (`[G_hi, G_lo, A_hi, A_lo]`), and treating it as
+/// `[R, G, B, A]` wipes the gray and the alpha high byte of every pixel
+/// whose alpha low byte is 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RowFormat {
+    /// Bytes per complete pixel, rounded up to 1 for sub-byte / indexed rows.
+    /// This is the PNG filter distance.
+    pub(crate) bpp: usize,
+    /// True only for 8-bit RGBA rows — the sole layout where RGB under
+    /// `alpha == 0` is zeroed before filtering.
+    pub(crate) rgba8: bool,
+}
+
+impl RowFormat {
+    /// Indexed / packed sub-byte rows: filter distance 1, never zeroed.
+    pub(crate) const INDEXED: Self = Self {
+        bpp: 1,
+        rgba8: false,
+    };
+
+    /// Derive from a PNG `IHDR` color type (0/2/4/6) and bit depth (1..=16).
+    pub(crate) fn from_png(color_type: u8, bit_depth: u8) -> Self {
+        let channels: usize = match color_type {
+            2 => 3,
+            4 => 2,
+            6 => 4,
+            _ => 1,
+        };
+        Self {
+            bpp: (channels * usize::from(bit_depth) / 8).max(1),
+            rgba8: color_type == 6 && bit_depth == 8,
+        }
+    }
+
+    /// 8-bit RGB (`bpp == 3`) or RGBA (`bpp == 4`) rows, as used by the
+    /// APNG truecolor path (which always writes bit depth 8).
+    pub(crate) const fn truecolor8(bpp: usize) -> Self {
+        Self {
+            bpp,
+            rgba8: bpp == 4,
+        }
+    }
+}
+
 /// Progressive adaptive compression engine.
 ///
 /// Instead of a flat loop over all strategies × all levels, works in phases:
@@ -872,11 +921,12 @@ pub(crate) fn compress_filtered(
     packed_rows: &[u8],
     row_bytes: usize,
     height: usize,
-    bpp: usize,
+    format: RowFormat,
     effort: u32,
     opts: super::CompressOptions<'_>,
     mut stats: Option<&mut PhaseStats>,
 ) -> crate::error::Result<Vec<u8>> {
+    let bpp = format.bpp;
     let params = EffortParams::from_effort_and_bpp(effort, bpp);
     let filtered_size = (row_bytes + 1) * height;
 
@@ -892,9 +942,11 @@ pub(crate) fn compress_filtered(
     }
 
     // Zero RGB of fully-transparent RGBA8 pixels — invisible noise defeats
-    // both PNG filtering and DEFLATE; zeroing produces long runs.
+    // both PNG filtering and DEFLATE; zeroing produces long runs. Keyed on
+    // the declared layout, NOT on `bpp == 4`: GA16 rows are also 4 bytes
+    // per pixel and must pass through untouched.
     let owned_rows;
-    let packed_rows = if bpp == 4 && has_any_transparent_pixel(packed_rows) {
+    let packed_rows = if format.rgba8 && has_any_transparent_pixel(packed_rows) {
         owned_rows = zero_transparent_rgba8(packed_rows);
         &owned_rows
     } else {
@@ -2390,6 +2442,35 @@ mod tests {
         }
     }
 
+    // ---- RowFormat: zeroing eligibility keyed on layout, not bpp ----
+
+    #[test]
+    fn row_format_only_rgba8_is_zeroable() {
+        // (color_type, bit_depth) -> (bpp, rgba8)
+        let cases: &[(u8, u8, usize, bool)] = &[
+            (6, 8, 4, true),   // RGBA8: the only zeroable layout
+            (4, 16, 4, false), // GA16: same bpp as RGBA8, must NOT be zeroed
+            (6, 16, 8, false), // RGBA16
+            (4, 8, 2, false),  // GA8
+            (2, 8, 3, false),  // RGB8
+            (2, 16, 6, false), // RGB16
+            (0, 8, 1, false),  // Gray8
+            (0, 16, 2, false), // Gray16
+            (0, 4, 1, false),  // Gray4 (packed)
+            (0, 1, 1, false),  // Gray1 (packed)
+            (3, 8, 1, false),  // Indexed8
+            (3, 2, 1, false),  // Indexed2 (packed)
+        ];
+        for &(ct, bd, bpp, rgba8) in cases {
+            let f = RowFormat::from_png(ct, bd);
+            assert_eq!(f.bpp, bpp, "bpp for color_type={ct} bit_depth={bd}");
+            assert_eq!(f.rgba8, rgba8, "rgba8 for color_type={ct} bit_depth={bd}");
+        }
+        assert_eq!(RowFormat::INDEXED, RowFormat::from_png(3, 8));
+        assert!(RowFormat::truecolor8(4).rgba8);
+        assert!(!RowFormat::truecolor8(3).rgba8);
+    }
+
     // ---- from_effort_and_bpp content-aware adjustment ----
 
     #[test]
@@ -2521,7 +2602,8 @@ mod tests {
             remaining_ns: None,
             max_threads: 0,
         };
-        let result = compress_filtered(&data, 12, 4, 3, 0, opts, None).unwrap();
+        let result =
+            compress_filtered(&data, 12, 4, RowFormat::truecolor8(3), 0, opts, None).unwrap();
         let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();
         // 4 rows × (1 filter byte + 12 data bytes) = 52 bytes
         assert_eq!(decompressed.len(), 52);
@@ -2537,7 +2619,8 @@ mod tests {
             remaining_ns: None,
             max_threads: 0,
         };
-        let result = compress_filtered(&data, 12, 4, 3, 1, opts, None).unwrap();
+        let result =
+            compress_filtered(&data, 12, 4, RowFormat::truecolor8(3), 1, opts, None).unwrap();
         // Should produce valid zlib
         let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();
         assert_eq!(decompressed.len(), 52);
@@ -2554,7 +2637,16 @@ mod tests {
             max_threads: 0,
         };
         let mut stats = PhaseStats::default();
-        let result = compress_filtered(&data, 12, 4, 3, 10, opts, Some(&mut stats)).unwrap();
+        let result = compress_filtered(
+            &data,
+            12,
+            4,
+            RowFormat::truecolor8(3),
+            10,
+            opts,
+            Some(&mut stats),
+        )
+        .unwrap();
         let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();
         assert_eq!(decompressed.len(), 52);
         // Should have at least screen + refine phases
@@ -2577,7 +2669,8 @@ mod tests {
             remaining_ns: None,
             max_threads: 0,
         };
-        let result = compress_filtered(&data, 12, 4, 3, 7, opts, None).unwrap();
+        let result =
+            compress_filtered(&data, 12, 4, RowFormat::truecolor8(3), 7, opts, None).unwrap();
         let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();
         assert_eq!(decompressed.len(), 52);
     }
@@ -2599,7 +2692,8 @@ mod tests {
             remaining_ns: None,
             max_threads: 0,
         };
-        let result = compress_filtered(&data, 16, 4, 4, 2, opts, None).unwrap();
+        let result =
+            compress_filtered(&data, 16, 4, RowFormat::truecolor8(4), 2, opts, None).unwrap();
         let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&result).unwrap();
         assert_eq!(decompressed.len(), 4 * (1 + 16));
     }

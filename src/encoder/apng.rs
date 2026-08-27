@@ -13,7 +13,7 @@ use crate::error::PngError;
 use whereat::at;
 
 use super::CompressOptions;
-use super::compress::compress_filtered;
+use super::compress::{RowFormat, compress_filtered};
 
 // APNG dispose/blend operation constants
 const DISPOSE_NONE: u8 = 0;
@@ -119,7 +119,15 @@ fn trial_compress_size(
         remaining_ns: None,
         max_threads: 0,
     };
-    let compressed = compress_filtered(subframe, row_bytes, height, bpp, 2, opts, None)?;
+    let compressed = compress_filtered(
+        subframe,
+        row_bytes,
+        height,
+        RowFormat::truecolor8(bpp),
+        2,
+        opts,
+        None,
+    )?;
     Ok(compressed.len())
 }
 
@@ -1145,8 +1153,15 @@ pub(crate) fn encode_apng_truecolor(
                 remaining_ns: None,
                 max_threads: 0,
             };
-            let compressed =
-                compress_filtered(sub_data, sub_row_bytes, sub_height, bpp, effort, opts, None)?;
+            let compressed = compress_filtered(
+                sub_data,
+                sub_row_bytes,
+                sub_height,
+                RowFormat::truecolor8(bpp),
+                effort,
+                opts,
+                None,
+            )?;
 
             if i == 0 {
                 write_chunk(&mut out, b"IDAT", &compressed);
@@ -1182,8 +1197,15 @@ pub(crate) fn encode_apng_truecolor(
             remaining_ns: None,
             max_threads: 0,
         };
-        let compressed0 =
-            compress_filtered(frame_data[0], row_bytes, height, bpp, effort, opts, None)?;
+        let compressed0 = compress_filtered(
+            frame_data[0],
+            row_bytes,
+            height,
+            RowFormat::truecolor8(bpp),
+            effort,
+            opts,
+            None,
+        )?;
         write_chunk(&mut out, b"IDAT", &compressed0);
 
         // Frames 1+: fcTL + fdAT with delta regions
@@ -1233,7 +1255,7 @@ pub(crate) fn encode_apng_truecolor(
                 &subframe,
                 sub_row_bytes,
                 sub_height,
-                bpp,
+                RowFormat::truecolor8(bpp),
                 effort,
                 opts,
                 None,
@@ -1459,8 +1481,15 @@ pub(crate) fn encode_apng_indexed_from_indices(
                 remaining_ns: None,
                 max_threads: 0,
             };
-            let compressed =
-                compress_filtered(&packed, row_bytes, region_h as usize, 1, effort, opts, None)?;
+            let compressed = compress_filtered(
+                &packed,
+                row_bytes,
+                region_h as usize,
+                RowFormat::INDEXED,
+                effort,
+                opts,
+                None,
+            )?;
 
             if i == 0 {
                 write_chunk(&mut out, b"IDAT", &compressed);
@@ -1529,8 +1558,15 @@ pub(crate) fn encode_apng_indexed_from_indices(
                 remaining_ns: None,
                 max_threads: 0,
             };
-            let compressed =
-                compress_filtered(&packed, row_bytes, region_h as usize, 1, effort, opts, None)?;
+            let compressed = compress_filtered(
+                &packed,
+                row_bytes,
+                region_h as usize,
+                RowFormat::INDEXED,
+                effort,
+                opts,
+                None,
+            )?;
 
             if i == 0 {
                 write_chunk(&mut out, b"IDAT", &compressed);

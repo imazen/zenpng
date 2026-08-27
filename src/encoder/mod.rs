@@ -17,7 +17,7 @@ use crate::error::PngError;
 #[allow(unused_imports)]
 use whereat::at;
 
-pub(crate) use self::compress::compress_filtered;
+pub(crate) use self::compress::{RowFormat, compress_filtered};
 pub(crate) use self::metadata::{PngWriteMetadata, metadata_size_estimate, write_all_metadata};
 
 /// Compression options passed through the pipeline.
@@ -88,7 +88,15 @@ pub(crate) fn write_indexed_png(
     let row_bytes = packed_row_bytes(w, bit_depth);
 
     // Compress with multi-strategy filter selection (bpp=1 for indexed)
-    let compressed = compress_filtered(&packed_rows, row_bytes, h, 1, effort, opts, None)?;
+    let compressed = compress_filtered(
+        &packed_rows,
+        row_bytes,
+        h,
+        RowFormat::INDEXED,
+        effort,
+        opts,
+        None,
+    )?;
 
     // Assemble PNG
     let trns_data = truncate_trns(palette_alpha);
@@ -168,7 +176,15 @@ pub(crate) fn write_truecolor_png(
         let packed = pack_all_rows(pixel_bytes, w, h, bit_depth);
         let row_bytes = packed_row_bytes(w, bit_depth);
 
-        let compressed = compress_filtered(&packed, row_bytes, h, 1, effort, opts, None)?;
+        let compressed = compress_filtered(
+            &packed,
+            row_bytes,
+            h,
+            RowFormat::INDEXED,
+            effort,
+            opts,
+            None,
+        )?;
 
         let trns_size = trns.map_or(0, |t| 12 + t.len());
         let est =
@@ -275,7 +291,7 @@ pub(crate) fn write_truecolor_png(
         &pixel_bytes[..expected_len],
         row_bytes,
         h,
-        bpp,
+        RowFormat::from_png(color_type, bit_depth),
         effort,
         opts,
         None,
@@ -347,7 +363,15 @@ pub(crate) fn write_truecolor_png_with_stats(
         let packed = pack_all_rows(pixel_bytes, w, h, bit_depth);
         let row_bytes = packed_row_bytes(w, bit_depth);
 
-        let compressed = compress_filtered(&packed, row_bytes, h, 1, effort, opts, Some(stats))?;
+        let compressed = compress_filtered(
+            &packed,
+            row_bytes,
+            h,
+            RowFormat::INDEXED,
+            effort,
+            opts,
+            Some(stats),
+        )?;
 
         let trns_size = trns.map_or(0, |t| 12 + t.len());
         let est =
@@ -404,7 +428,7 @@ pub(crate) fn write_truecolor_png_with_stats(
         &pixel_bytes[..expected_len],
         row_bytes,
         h,
-        bpp,
+        RowFormat::from_png(color_type, bit_depth),
         effort,
         opts,
         Some(stats),
@@ -827,6 +851,108 @@ mod tests {
             default_opts(),
         );
         assert!(result.is_ok());
+    }
+
+    /// Build a 16-bit gray+alpha image (big-endian PNG byte order) whose
+    /// alpha values have a zero LOW byte but a non-zero HIGH byte, plus
+    /// non-zero gray under fully-transparent alpha. Returns
+    /// `(png_bytes, native_endian_expected)`.
+    fn ga16_alpha_low_byte_zero_fixture() -> (Vec<(u16, u16)>, Vec<u8>) {
+        let alphas = [0x0100u16, 0x8000, 0xFF00, 0x0000, 0xFFFF, 0x00FF];
+        let pixels: Vec<(u16, u16)> = (0..32u16)
+            .map(|i| {
+                let gray = 0x1234u16.wrapping_add(i.wrapping_mul(0x0301));
+                (gray, alphas[usize::from(i) % alphas.len()])
+            })
+            .collect();
+        let be: Vec<u8> = pixels
+            .iter()
+            .flat_map(|&(g, a)| [g.to_be_bytes(), a.to_be_bytes()].concat())
+            .collect();
+        (pixels, be)
+    }
+
+    /// Regression gate: 16-bit gray+alpha rows are 4 bytes per pixel, the
+    /// same `bpp` as RGBA8. The transparent-pixel zeroing must key on the
+    /// actual pixel layout (RGBA8) and never treat a GA16 pixel
+    /// `[G_hi, G_lo, A_hi, A_lo]` as `[R, G, B, A]` — otherwise any pixel
+    /// whose alpha low byte is 0 (e.g. alpha 0xFF00) has its gray and alpha
+    /// high byte wiped to 0.
+    #[test]
+    fn truecolor_png_ga16_alpha_low_byte_zero_roundtrips_byte_exact() {
+        let (pixels, be) = ga16_alpha_low_byte_zero_fixture();
+        let expected: Vec<u8> = pixels
+            .iter()
+            .flat_map(|&(g, a)| [g.to_ne_bytes(), a.to_ne_bytes()].concat())
+            .collect();
+        for effort in [1u32, 7, 13] {
+            let png = write_truecolor_png(
+                &be,
+                8,
+                4,
+                4,  // GrayscaleAlpha
+                16, // 16-bit
+                None,
+                &PngWriteMetadata::from_metadata(None),
+                effort,
+                default_opts(),
+            )
+            .unwrap();
+            let decoded =
+                crate::decode(&png, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+            assert_eq!(decoded.info.width, 8);
+            let raw = decoded.pixels.copy_to_contiguous_bytes();
+            assert_eq!(
+                raw, expected,
+                "GA16 round-trip is not byte-exact at effort {effort}"
+            );
+        }
+    }
+
+    /// RGBA16 is 8 bytes per pixel so it never matched the old `bpp == 4`
+    /// gate; keep it pinned so a future layout change cannot regress it.
+    #[test]
+    fn truecolor_png_rgba16_alpha_low_byte_zero_roundtrips_byte_exact() {
+        let alphas = [0x0100u16, 0x8000, 0xFF00, 0x0000];
+        let pixels: Vec<[u16; 4]> = (0..32u16)
+            .map(|i| {
+                [
+                    0x1234u16.wrapping_add(i.wrapping_mul(0x0301)),
+                    0x5678u16.wrapping_add(i.wrapping_mul(0x0107)),
+                    0x9ABCu16.wrapping_add(i.wrapping_mul(0x0503)),
+                    alphas[usize::from(i) % alphas.len()],
+                ]
+            })
+            .collect();
+        let be: Vec<u8> = pixels
+            .iter()
+            .flat_map(|p| p.iter().flat_map(|v| v.to_be_bytes()).collect::<Vec<u8>>())
+            .collect();
+        let expected: Vec<u8> = pixels
+            .iter()
+            .flat_map(|p| p.iter().flat_map(|v| v.to_ne_bytes()).collect::<Vec<u8>>())
+            .collect();
+        for effort in [1u32, 13] {
+            let png = write_truecolor_png(
+                &be,
+                8,
+                4,
+                6,  // RGBA
+                16, // 16-bit
+                None,
+                &PngWriteMetadata::from_metadata(None),
+                effort,
+                default_opts(),
+            )
+            .unwrap();
+            let decoded =
+                crate::decode(&png, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
+            let raw = decoded.pixels.copy_to_contiguous_bytes();
+            assert_eq!(
+                raw, expected,
+                "RGBA16 round-trip is not byte-exact at effort {effort}"
+            );
+        }
     }
 
     #[test]

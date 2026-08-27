@@ -217,10 +217,20 @@ Turbo zenflate compress costs 1.6-3.4ms per strategy — negligible next to filt
 ## Pending Encoder Optimizations
 
 ### Transparent pixel zeroing
-Implemented in `compress_filtered()`. For RGBA8 (bpp=4), zeroes RGB channels of
+Implemented in `compress_filtered()`. For 8-bit RGBA rows only, zeroes RGB channels of
 fully-transparent pixels (`alpha == 0 → [0,0,0,0]`) before filtering/compression.
 Quick `has_any_transparent_pixel()` scan avoids copying when no transparent pixels exist.
-Creates runs of identical bytes that compress significantly better. No quality impact.
+Creates runs of identical bytes that compress significantly better. No visible-pixel
+impact, but the RGB bytes under `alpha == 0` are NOT preserved even in lossless mode
+(documented on `encode_rgba8` and in the README; no `exact`-style opt-out exists yet).
+
+Eligibility is keyed on `RowFormat { bpp, rgba8 }` (built via `RowFormat::from_png(
+color_type, bit_depth)` / `::truecolor8(bpp)` / `::INDEXED`), NOT on `bpp == 4` —
+GA16 is also 4 bytes/pixel and was corrupted by the old gate (see Known Issues).
+Paths that skip it: effort 0 (stored blocks) and the zencodec `push_rows` effort-1
+pre-filtered streaming path (`codec.rs` `PreFilteredState`), which store rows as
+supplied — so buffered vs streaming encodes of the same RGBA8 input can differ in
+the hidden RGB under `alpha == 0`.
 
 ### Auto-indexed encoding
 `encode_auto()` and `encode_apng_auto()` quantize via any `Quantizer` backend and check a
@@ -289,4 +299,15 @@ strategies, zenquant perceptual quantization. Optimizations worth adopting from 
 
 ## Known Issues
 
-None currently.
+- **Fixed 2026-08-27 — GA16 corrupted by RGBA8 transparent zeroing.** The
+  `compress_filtered` zeroing gate was `bpp == 4`, which 16-bit gray+alpha also
+  satisfies; a GA16 pixel `[G_hi, G_lo, A_hi, A_lo]` with alpha low byte 0 had
+  `G_hi, G_lo, A_hi` wiped (gray 0x1234 / alpha 0xFF00 → gray 0 / alpha 0x0000).
+  Unreachable from the public API (no GA16 encode entry; `optimize_16bit` never
+  emits GA16) but live at `write_truecolor_png(4, 16)`. Now keyed on `RowFormat`;
+  regression tests `truecolor_png_ga16_alpha_low_byte_zero_roundtrips_byte_exact`
+  and `..._rgba16_...` in `src/encoder/mod.rs`. If a GA16 encode entry point or
+  `GrayAlpha16` encode descriptor is ever added, those tests are the gate.
+- **Open (design, not a defect):** buffered RGBA8 encodes zero RGB under
+  `alpha == 0`; the `push_rows` effort-1 streaming path does not. Both decode to
+  the same visible image. Resolving it either way needs the `exact` knob decision.

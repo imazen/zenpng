@@ -6,6 +6,22 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- **16-bit gray+alpha rows were corrupted by the RGBA8 transparent-pixel
+  zeroing.** `compress_filtered` keyed the "zero RGB under `alpha == 0`"
+  optimization on `bpp == 4`, which 16-bit gray+alpha also satisfies
+  (2 channels × 2 bytes). A GA16 pixel `[G_hi, G_lo, A_hi, A_lo]` was read
+  as `[R, G, B, A]`, so every pixel whose alpha *low* byte was 0 (alpha
+  0x0100, 0x8000, 0xFF00, …) had its gray and alpha high byte wiped —
+  e.g. gray 0x1234 / alpha 0xFF00 decoded as gray 0 / alpha 0x0000, an
+  opaque pixel turned fully transparent black. Not reachable from the
+  public API today (no GA16 encode entry point and the 16-bit downcast never
+  emits GA16), but live at `write_truecolor_png(color_type = 4, bit_depth =
+  16)`. The zeroing is now keyed on an explicit `RowFormat { bpp, rgba8 }`
+  derived from the IHDR color type + bit depth, so only 8-bit RGBA rows are
+  eligible. Regression tests round-trip GA16 and RGBA16 byte-exact at
+  efforts 1/7/13 (mutation-verified: restoring the `bpp == 4` gate fails
+  the GA16 test).
+
 - **APNG decode buffers were panic-on-OOM** (issue #13, residual after
   f979f72 moved the still-image paths to `alloc_util`): the composited canvas
   (`vec![0u8; canvas_bytes]`), the per-frame pixel buffers in
