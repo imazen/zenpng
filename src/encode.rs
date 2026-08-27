@@ -374,6 +374,20 @@ pub fn encode_rgb8(
 }
 
 /// Encode RGBA8 pixels to PNG.
+///
+/// # Bytes under fully-transparent alpha are not preserved
+///
+/// Whenever the rows are written as 8-bit RGBA at any effort above 0, the
+/// R, G, B bytes of every pixel with `alpha == 0` are zeroed before
+/// filtering (the same optimization libwebp applies unless `exact` is
+/// set). The visible image is unchanged and every pixel that can be seen
+/// round-trips byte-exact, but a decoder returns `[0, 0, 0, 0]` for those
+/// pixels rather than the RGB you supplied. This is what makes transparent
+/// regions compress well; there is currently no option to keep the hidden
+/// RGB. `Compression::None` (effort 0) and the effort-1 row-streaming path
+/// (`push_rows` on the zencodec encoder) store the rows as supplied. No
+/// other layout is touched — 16-bit RGBA, gray+alpha at either depth,
+/// RGB, gray, and indexed output all round-trip byte-exact.
 pub fn encode_rgba8(
     img: ImgRef<Rgba<u8>>,
     metadata: Option<&Metadata>,

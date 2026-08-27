@@ -102,6 +102,15 @@ fully opaque, RGB→Grayscale when R==G==B, 16-bit→8-bit when samples fit, and
 truecolor→indexed when ≤256 unique colors. All lossless. (To force byte-for-byte
 RGBA8 output, set the downcast policy off via `EncodeConfig` — see its rustdoc.)
 
+One deliberate exception: when rows are written as 8-bit RGBA at any effort
+above 0, the RGB bytes of fully-transparent pixels (`alpha == 0`) are zeroed
+before filtering, so a decoder returns `[0, 0, 0, 0]` for them. Nothing visible
+changes and transparent regions compress far better, but the RGB you supplied
+under `alpha == 0` is not kept (libwebp does the same unless `exact` is set).
+`Compression::None` and the effort-1 `push_rows` streaming path store the rows
+as supplied; 16-bit RGBA, gray+alpha, RGB, gray, and indexed output are never
+touched.
+
 ## Compression presets
 
 Presets are placed at Pareto-optimal points on the effort curve, approximately

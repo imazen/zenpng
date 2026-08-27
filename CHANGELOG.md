@@ -200,6 +200,11 @@ All notable changes to zenpng are documented here.
   `fuzz/Cargo.lock`.
 
 ### Changed
+- **Documented that RGB under `alpha == 0` is zeroed for 8-bit RGBA output**
+  even in lossless mode (README quick start, `encode_rgba8` rustdoc,
+  `PngEncoderConfig::with_lossless`). Behaviour is unchanged; it was
+  previously stated only in the APNG section. Effort 0 and the `push_rows`
+  effort-1 streaming path store rows as supplied; no other layout is touched.
 - **Encode memory pre-flight now gates on the calibrated peak estimate
   (db6c5b7a).** With `ResourceLimits::max_memory_bytes` set, encode admission
   compares the budget against `heuristics::estimate_encode(..)`'s

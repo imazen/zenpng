@@ -486,6 +486,10 @@ impl zencodec::encode::EncoderConfig for PngEncoderConfig {
         self.quality
     }
 
+    /// Lossless is PNG's native mode and the default. One caveat applies
+    /// even here: for 8-bit RGBA output at effort > 0, the RGB bytes under
+    /// `alpha == 0` are zeroed for compression (visible pixels are exact;
+    /// see [`encode_rgba8`](crate::encode_rgba8) for details).
     fn with_lossless(mut self, lossless: bool) -> Self {
         self.lossless = lossless;
         self
