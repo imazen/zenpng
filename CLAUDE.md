@@ -105,6 +105,20 @@ cargo test -- simd             # SIMD tests only
 
 Each filter has `for_each_token_permutation` tests that verify byte-exact match against scalar reference at all dispatch tiers.
 
+**32-bit (`usize` = u32) coverage.** CI runs `cross test --target
+i686-unknown-linux-gnu` and `cargo test --lib --target wasm32-wasip1`. Locally,
+i686 *test* builds need a 32-bit C toolchain for the `libdeflater` dev-dep
+(`cargo clippy --target i686-unknown-linux-gnu --lib` still typechecks the
+library); the runnable 32-bit proxy is wasm32:
+`CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --dir ." cargo test --lib --target wasm32-wasip1`.
+Size math derived from an IHDR must be checked and bounded by
+`alloc_util::alloc_len` / `stream_capacity` (`isize::MAX`, the `Vec` ceiling):
+a gray8 row at the PNG max width is exactly `isize::MAX` bytes on 32-bit, so
+`stride * 2` wrapped there (2026-08-27, `huge-ihdr-gray8-2147483647sq.png`).
+Gate width-specific expectations with `#[cfg(target_pointer_width = ...)]`
+test pairs, not a runtime `cfg!()` branch — an out-of-range `usize` literal in
+the dead branch is still a compile error.
+
 ## Decode Checksum Options
 
 Checksums are **skipped by default** for maximum decode speed.
