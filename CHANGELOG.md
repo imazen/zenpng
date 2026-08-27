@@ -6,6 +6,17 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- **`fuzz_decode_strict` harness reached the allocator with exabyte requests**
+  (issue #19, farm signature `68f9a17dcbfa8396`): the target started from
+  `PngDecodeConfig::strict()`, which has no `max_pixels` / `max_memory_bytes`,
+  so a 2^31-1 × 2^31-1 IHDR requested ~4.6 EB and ASan aborted with
+  `allocation-size-too-big` before the decoder's fallible `try_reserve` could
+  return `Err`. The harness now starts from `default()` (120 MP / 4 GiB) with
+  both checksums enabled. Added `tests/fuzz_regression.rs` (the
+  `cargo test --test fuzz_regression` gate `fuzz.yml` already invoked but which
+  did not exist) plus a synthesized huge-IHDR seed under `fuzz/regression/`;
+  the original repro is only in R2 / the WSL mirror and was not reproduced
+  locally. `strict()` itself is unchanged and still documents "no limits".
 - **Out-of-range palette indices were silently corrupted instead of rejected**
   (issue #20, 2026-08-26 ultracode sweep, adversarially verified):
   `write_indexed_png` validated palette size and buffer length but never that
