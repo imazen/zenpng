@@ -21,8 +21,7 @@ pub(crate) fn unfilter_up(row: &mut [u8], prev: &[u8]) {
     // Unfiltering is exact integer arithmetic so the paths are identical by
     // construction — verified 0 mismatching bytes across all filters, bpp and
     // widths (1920/641/17/5/1).
-    #[cfg(target_arch = "aarch64")]
-    {
+    if cfg!(target_arch = "aarch64") {
         use archmage::SimdToken;
         return unfilter_up_impl_scalar(
             ScalarToken::summon().expect("scalar token is infallible"),
@@ -30,7 +29,7 @@ pub(crate) fn unfilter_up(row: &mut [u8], prev: &[u8]) {
             prev,
         );
     }
-        incant!(unfilter_up_impl(row, prev), [v3, v1, neon, wasm128, scalar])
+    incant!(unfilter_up_impl(row, prev), [v3, v1, neon, wasm128, scalar])
 }
 
 #[cfg(target_arch = "x86_64")]

@@ -17,8 +17,9 @@ pub(crate) fn unfilter_paeth(row: &mut [u8], prev: &[u8], bpp: usize) {
     // Unfiltering is exact integer arithmetic so the paths are identical by
     // construction — verified 0 mismatching bytes across all filters, bpp and
     // widths (1920/641/17/5/1).
-    #[cfg(target_arch = "aarch64")]
-    return unfilter_paeth_scalar_any(row, prev, bpp);
+    if cfg!(target_arch = "aarch64") {
+        return unfilter_paeth_scalar_any(row, prev, bpp);
+    }
     match bpp {
         3 => incant!(
             unfilter_paeth_bpp3_impl(row, prev),

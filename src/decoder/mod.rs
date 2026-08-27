@@ -1138,7 +1138,9 @@ mod tests {
             (png::ColorType::GrayscaleAlpha, _) => {
                 // GA8 → RGBA8 (matches our decoder behavior)
                 let rgba: Vec<Rgba<u8>> = raw_pixels
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|ga| Rgba {
                         r: ga[0],
                         g: ga[0],
@@ -1207,7 +1209,9 @@ mod tests {
 
     fn be_to_native_16_ref(bytes: &[u8]) -> Vec<u16> {
         bytes
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u16::from_be_bytes([c[0], c[1]]))
             .collect()
     }

@@ -70,7 +70,9 @@ fn load_rgb8(path: &str) -> (Vec<u8>, usize, usize) {
     let rgb = match info.color_type {
         png::ColorType::Rgb => buf,
         png::ColorType::Rgba => buf
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect(),
         png::ColorType::Grayscale => buf.iter().flat_map(|&v| [v, v, v]).collect(),
@@ -127,7 +129,9 @@ fn main() {
         let encoded = match (depth, alpha.as_str()) {
             (16, "rgba") => {
                 let px: Vec<Rgba<u16>> = rgb
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                     .map(|p| {
                         let w16 = |v: u8| ((v as u16) << 8) | v as u16;
                         Rgba {
@@ -148,7 +152,9 @@ fn main() {
             }
             (16, _) => {
                 let px: Vec<Rgb<u16>> = rgb
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                     .map(|p| {
                         let w16 = |v: u8| ((v as u16) << 8) | v as u16;
                         Rgb {
@@ -168,7 +174,9 @@ fn main() {
             }
             (_, "rgba") => {
                 let px: Vec<Rgba<u8>> = rgb
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                     .map(|p| Rgba {
                         r: p[0],
                         g: p[1],
@@ -186,7 +194,9 @@ fn main() {
             }
             _ => {
                 let px: Vec<Rgb<u8>> = rgb
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                     .map(|p| Rgb {
                         r: p[0],
                         g: p[1],

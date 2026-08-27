@@ -414,7 +414,11 @@ fn zero_transparent_rgb_region(canvas: &mut [u8], canvas_w: usize, region: &Delt
     for dy in 0..rh {
         let y = ry + dy;
         let row_start = (y * canvas_w + rx) * 4;
-        for px in canvas[row_start..row_start + rw * 4].chunks_exact_mut(4) {
+        for px in canvas[row_start..row_start + rw * 4]
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+        {
             if px[3] == 0 {
                 px[0] = 0;
                 px[1] = 0;
@@ -1009,7 +1013,7 @@ impl SeqCounter {
 /// When true, we can encode as RGB (color_type=2, bpp=3) for 25% raw savings.
 fn all_frames_opaque(frames: &[ApngFrameInput<'_>], expected_len: usize) -> bool {
     for frame in frames {
-        for chunk in frame.pixels[..expected_len].chunks_exact(4) {
+        for chunk in frame.pixels[..expected_len].as_chunks::<4>().0.iter() {
             if chunk[3] != 255 {
                 return false;
             }
@@ -1325,6 +1329,13 @@ pub(crate) fn encode_apng_indexed_from_indices(
 ) -> crate::error::Result<Vec<u8>> {
     let num_frames = frames.len() as u32;
     let n_colors = palette_rgba.len();
+
+    // Every frame's indices must reference existing palette entries — the
+    // packer would otherwise silently remap or emit spec-invalid values
+    // (sweep issue #20; see validate_palette_indices).
+    for indices in frame_indices {
+        super::validate_palette_indices(indices, n_colors)?;
+    }
 
     // Build separate RGB and alpha palette arrays
     let mut palette_rgb = Vec::with_capacity(n_colors * 3);
@@ -1670,13 +1681,13 @@ mod tests {
 
         // Frame 0: all red
         let mut f0 = vec![0u8; npx * 4];
-        for px in f0.chunks_exact_mut(4) {
+        for px in f0.as_chunks_mut::<4>().0.iter_mut() {
             px.copy_from_slice(&[255, 0, 0, 255]);
         }
 
         // Frame 1: all green
         let mut f1 = vec![0u8; npx * 4];
-        for px in f1.chunks_exact_mut(4) {
+        for px in f1.as_chunks_mut::<4>().0.iter_mut() {
             px.copy_from_slice(&[0, 255, 0, 255]);
         }
 
@@ -1937,13 +1948,13 @@ mod tests {
 
         // Frame 0: all red
         let mut f0 = vec![0u8; npx * 4];
-        for px in f0.chunks_exact_mut(4) {
+        for px in f0.as_chunks_mut::<4>().0.iter_mut() {
             px.copy_from_slice(&[255, 0, 0, 255]);
         }
 
         // Frame 1: all blue
         let mut f1 = vec![0u8; npx * 4];
-        for px in f1.chunks_exact_mut(4) {
+        for px in f1.as_chunks_mut::<4>().0.iter_mut() {
             px.copy_from_slice(&[0, 0, 255, 255]);
         }
 
@@ -2020,7 +2031,7 @@ mod tests {
 
         // Frame 2: everything opaque
         let mut f2 = f0.clone();
-        for px in f2.chunks_exact_mut(4) {
+        for px in f2.as_chunks_mut::<4>().0.iter_mut() {
             px[3] = 255;
         }
 
@@ -2093,7 +2104,7 @@ mod tests {
         // Blue background
         let make_frame = |sprite_x: usize, sprite_y: usize| -> Vec<u8> {
             let mut buf = vec![0u8; npx * 4];
-            for px in buf.chunks_exact_mut(4) {
+            for px in buf.as_chunks_mut::<4>().0.iter_mut() {
                 px.copy_from_slice(&[0, 0, 200, 255]); // blue bg
             }
             // 4×4 red sprite
@@ -2172,19 +2183,19 @@ mod tests {
 
         // Frame 0: semi-transparent red
         let mut f0 = vec![0u8; npx * 4];
-        for px in f0.chunks_exact_mut(4) {
+        for px in f0.as_chunks_mut::<4>().0.iter_mut() {
             px.copy_from_slice(&[255, 0, 0, 128]);
         }
 
         // Frame 1: semi-transparent green (different everywhere)
         let mut f1 = vec![0u8; npx * 4];
-        for px in f1.chunks_exact_mut(4) {
+        for px in f1.as_chunks_mut::<4>().0.iter_mut() {
             px.copy_from_slice(&[0, 255, 0, 200]);
         }
 
         // Frame 2: mix of semi-transparent values
         let mut f2 = vec![0u8; npx * 4];
-        for (i, px) in f2.chunks_exact_mut(4).enumerate() {
+        for (i, px) in f2.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let alpha = (50 + (i * 3) % 200) as u8;
             px.copy_from_slice(&[128, 128, 0, alpha]);
         }
@@ -2253,19 +2264,19 @@ mod tests {
 
         // Frame 0: all red, fully opaque
         let mut f0 = vec![0u8; npx * 4];
-        for px in f0.chunks_exact_mut(4) {
+        for px in f0.as_chunks_mut::<4>().0.iter_mut() {
             px.copy_from_slice(&[255, 0, 0, 255]);
         }
 
         // Frame 1: all blue, fully opaque
         let mut f1 = vec![0u8; npx * 4];
-        for px in f1.chunks_exact_mut(4) {
+        for px in f1.as_chunks_mut::<4>().0.iter_mut() {
             px.copy_from_slice(&[0, 0, 255, 255]);
         }
 
         // Frame 2: mixed colors with some black, fully opaque
         let mut f2 = vec![0u8; npx * 4];
-        for (i, px) in f2.chunks_exact_mut(4).enumerate() {
+        for (i, px) in f2.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let r = ((i * 7) % 256) as u8;
             let g = ((i * 13) % 256) as u8;
             let b = ((i * 31) % 256) as u8;
@@ -2342,13 +2353,13 @@ mod tests {
 
         // Frame 0: opaque red
         let mut f0 = vec![0u8; npx * 4];
-        for px in f0.chunks_exact_mut(4) {
+        for px in f0.as_chunks_mut::<4>().0.iter_mut() {
             px.copy_from_slice(&[255, 0, 0, 255]);
         }
 
         // Frame 1: semi-transparent green
         let mut f1 = vec![0u8; npx * 4];
-        for px in f1.chunks_exact_mut(4) {
+        for px in f1.as_chunks_mut::<4>().0.iter_mut() {
             px.copy_from_slice(&[0, 255, 0, 128]); // alpha=128
         }
 

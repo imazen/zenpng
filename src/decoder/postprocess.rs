@@ -16,7 +16,9 @@ use zenpixels::{GrayAlpha16, Pixel, PixelBuffer};
 /// Falls back to per-element construction only if alignment prevents zero-copy.
 pub(crate) fn bytes_to_rgba16_vec(bytes: &[u8]) -> Vec<Rgba<u16>> {
     bytes
-        .chunks_exact(8)
+        .as_chunks::<8>()
+        .0
+        .iter()
         .map(|c| Rgba {
             r: u16::from_ne_bytes([c[0], c[1]]),
             g: u16::from_ne_bytes([c[2], c[3]]),
@@ -191,7 +193,7 @@ pub(crate) fn post_process_row(
                         0
                     };
                     // Gray16 + tRNS → GrayAlpha16 (4 bytes per pixel, native endian)
-                    for chunk in raw.chunks_exact(2) {
+                    for chunk in raw.as_chunks::<2>().0.iter() {
                         let val = u16::from_be_bytes([chunk[0], chunk[1]]);
                         let alpha: u16 = if val == trns_val { 0 } else { 65535 };
                         out.extend_from_slice(&val.to_ne_bytes());
@@ -199,7 +201,7 @@ pub(crate) fn post_process_row(
                     }
                 } else {
                     // Gray16 → native endian
-                    for chunk in raw.chunks_exact(2) {
+                    for chunk in raw.as_chunks::<2>().0.iter() {
                         let val = u16::from_be_bytes([chunk[0], chunk[1]]);
                         out.extend_from_slice(&val.to_ne_bytes());
                     }
@@ -237,7 +239,7 @@ pub(crate) fn post_process_row(
                         (0, 0, 0)
                     };
                     // RGB16 + tRNS → RGBA16 native endian
-                    for chunk in raw.chunks_exact(6) {
+                    for chunk in raw.as_chunks::<6>().0.iter() {
                         let r = u16::from_be_bytes([chunk[0], chunk[1]]);
                         let g = u16::from_be_bytes([chunk[2], chunk[3]]);
                         let b = u16::from_be_bytes([chunk[4], chunk[5]]);
@@ -253,7 +255,7 @@ pub(crate) fn post_process_row(
                     }
                 } else {
                     // RGB16 → native endian
-                    for chunk in raw.chunks_exact(2) {
+                    for chunk in raw.as_chunks::<2>().0.iter() {
                         let val = u16::from_be_bytes([chunk[0], chunk[1]]);
                         out.extend_from_slice(&val.to_ne_bytes());
                     }
@@ -271,7 +273,7 @@ pub(crate) fn post_process_row(
                         (0, 0, 0)
                     };
                     // RGB8 + tRNS → RGBA8
-                    for chunk in raw.chunks_exact(3).take(width) {
+                    for chunk in raw.as_chunks::<3>().0.iter().take(width) {
                         let alpha = if chunk[0] == tr && chunk[1] == tg && chunk[2] == tb {
                             0u8
                         } else {
@@ -318,7 +320,7 @@ pub(crate) fn post_process_row(
             // GrayAlpha
             if ihdr.bit_depth == 16 {
                 // GrayAlpha16 → native endian
-                for chunk in raw.chunks_exact(4) {
+                for chunk in raw.as_chunks::<4>().0.iter() {
                     let v = u16::from_be_bytes([chunk[0], chunk[1]]);
                     let a = u16::from_be_bytes([chunk[2], chunk[3]]);
                     out.extend_from_slice(&v.to_ne_bytes());
@@ -326,7 +328,7 @@ pub(crate) fn post_process_row(
                 }
             } else {
                 // GrayAlpha8 → RGBA8 (matches decode.rs:182-192 behavior)
-                for chunk in raw.chunks_exact(2).take(width) {
+                for chunk in raw.as_chunks::<2>().0.iter().take(width) {
                     let g = chunk[0];
                     let a = chunk[1];
                     out.extend_from_slice(&[g, g, g, a]);
@@ -337,7 +339,7 @@ pub(crate) fn post_process_row(
             // RGBA
             if ihdr.bit_depth == 16 {
                 // RGBA16 → native endian
-                for chunk in raw.chunks_exact(2) {
+                for chunk in raw.as_chunks::<2>().0.iter() {
                     let val = u16::from_be_bytes([chunk[0], chunk[1]]);
                     out.extend_from_slice(&val.to_ne_bytes());
                 }
@@ -475,7 +477,9 @@ pub(crate) fn build_pixel_data(
         // Grayscale
         (0, 16, false) => {
             let gray = try_cast_vec_or(pixels, |b| {
-                b.chunks_exact(2)
+                b.as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|c| Gray(u16::from_ne_bytes([c[0], c[1]])))
                     .collect()
             });
@@ -501,7 +505,9 @@ pub(crate) fn build_pixel_data(
         // RGB
         (2, 16, false) => {
             let rgb = try_cast_vec_or(pixels, |b| {
-                b.chunks_exact(6)
+                b.as_chunks::<6>()
+                    .0
+                    .iter()
                     .map(|c| Rgb {
                         r: u16::from_ne_bytes([c[0], c[1]]),
                         g: u16::from_ne_bytes([c[2], c[3]]),

@@ -1813,7 +1813,7 @@ fn run_phase4_normal(
 /// Quick scan to avoid copying the entire image when there are no transparent
 /// pixels (common for photos). Checks every 4th byte starting at offset 3.
 fn has_any_transparent_pixel(data: &[u8]) -> bool {
-    data.chunks_exact(4).any(|px| px[3] == 0)
+    data.as_chunks::<4>().0.iter().any(|px| px[3] == 0)
 }
 
 /// Copy pixel data, zeroing RGB channels of fully-transparent pixels.
@@ -1823,7 +1823,7 @@ fn has_any_transparent_pixel(data: &[u8]) -> bool {
 /// and DEFLATE compress much better than random RGB + zero alpha.
 fn zero_transparent_rgba8(data: &[u8]) -> Vec<u8> {
     let mut buf = data.to_vec();
-    for px in buf.chunks_exact_mut(4) {
+    for px in buf.as_chunks_mut::<4>().0.iter_mut() {
         if px[3] == 0 {
             px[0] = 0;
             px[1] = 0;

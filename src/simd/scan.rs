@@ -598,19 +598,28 @@ mod tests {
     use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
     fn scalar_is_opaque(rgba: &[u8]) -> bool {
-        rgba.chunks_exact(4).all(|p| p[3] == 255)
+        rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255)
     }
     fn scalar_is_grayscale_rgba8(rgba: &[u8]) -> bool {
-        rgba.chunks_exact(4).all(|p| p[0] == p[1] && p[1] == p[2])
+        rgba.as_chunks::<4>()
+            .0
+            .iter()
+            .all(|p| p[0] == p[1] && p[1] == p[2])
     }
     fn scalar_alpha_binary(rgba: &[u8]) -> bool {
-        rgba.chunks_exact(4).all(|p| p[3] == 0 || p[3] == 255)
+        rgba.as_chunks::<4>()
+            .0
+            .iter()
+            .all(|p| p[3] == 0 || p[3] == 255)
     }
     fn scalar_is_grayscale_rgb8(rgb: &[u8]) -> bool {
-        rgb.chunks_exact(3).all(|p| p[0] == p[1] && p[1] == p[2])
+        rgb.as_chunks::<3>()
+            .0
+            .iter()
+            .all(|p| p[0] == p[1] && p[1] == p[2])
     }
     fn scalar_bit_replication(be: &[u8]) -> bool {
-        be.chunks_exact(2).all(|p| p[0] == p[1])
+        be.as_chunks::<2>().0.iter().all(|p| p[0] == p[1])
     }
 
     // ── Tiny inline synthetics — explicit true/false fixtures per
@@ -925,7 +934,7 @@ mod tests {
         let mut o = req.check_opaque;
         let mut g = req.check_grayscale;
         let mut b = req.check_binary_alpha;
-        for chunk in rgba.chunks_exact(4) {
+        for chunk in rgba.as_chunks::<4>().0.iter() {
             if o && chunk[3] != 255 {
                 o = false;
             }

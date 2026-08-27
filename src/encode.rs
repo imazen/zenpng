@@ -875,7 +875,7 @@ fn native_to_be_16(native: &[u8]) -> Vec<u8> {
         return native.to_vec();
     }
     let mut out = native.to_vec();
-    for chunk in out.chunks_exact_mut(2) {
+    for chunk in out.as_chunks_mut::<2>().0.iter_mut() {
         chunk.swap(0, 1);
     }
     out

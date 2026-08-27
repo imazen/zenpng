@@ -355,12 +355,17 @@ pub(crate) fn can_reduce_16_to_8_replicated(be_bytes: &[u8]) -> bool {
 /// callers whose pipeline treats u16 channels as `u8 << 8` and expects this
 /// behavior. Off by default in [`crate::encode::DowncastFlags`].
 pub(crate) fn can_reduce_16_to_8_low_zero(be_bytes: &[u8]) -> bool {
-    be_bytes.chunks_exact(2).all(|pair| pair[1] == 0)
+    be_bytes.as_chunks::<2>().0.iter().all(|pair| pair[1] == 0)
 }
 
 /// Reduce 16-bit big-endian pixel data to 8-bit by taking the high byte.
 pub(crate) fn reduce_16_to_8(be_bytes: &[u8]) -> Vec<u8> {
-    be_bytes.chunks_exact(2).map(|pair| pair[0]).collect()
+    be_bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| pair[0])
+        .collect()
 }
 
 /// Convert RGBA8 pixel data to RGB8 by stripping the alpha channel.

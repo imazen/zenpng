@@ -81,6 +81,7 @@ pub(crate) fn write_indexed_png(
             "index buffer too small for dimensions".to_string(),
         )));
     }
+    validate_palette_indices(&indices[..w * h], n_colors)?;
 
     let bit_depth = select_bit_depth(n_colors);
     let packed_rows = pack_all_rows(indices, w, h, bit_depth);
@@ -457,6 +458,25 @@ pub(crate) fn packed_row_bytes(width: usize, bit_depth: u8) -> usize {
     }
 }
 
+/// Every emitted index must reference an existing palette entry. The packer
+/// below masks sub-byte indices to the bit depth and emits 8-bit indices
+/// verbatim, so an out-of-range index would otherwise be SILENTLY remapped
+/// onto an arbitrary palette color (sub-byte) or produce a spec-invalid PNG
+/// whose IDAT references entries beyond PLTE (8-bit) — decoder-dependent
+/// garbage returned as success (sweep issue #20; the zenjpeg #196
+/// missing-table-entry mechanism).
+pub(crate) fn validate_palette_indices(
+    indices: &[u8],
+    n_colors: usize,
+) -> crate::error::Result<()> {
+    if let Some(&bad) = indices.iter().find(|&&i| usize::from(i) >= n_colors) {
+        return Err(at!(PngError::InvalidBuffer(alloc::format!(
+            "palette index {bad} out of range for {n_colors}-entry palette"
+        ))));
+    }
+    Ok(())
+}
+
 pub(crate) fn pack_all_rows(indices: &[u8], width: usize, height: usize, bit_depth: u8) -> Vec<u8> {
     if bit_depth == 8 {
         return indices[..width * height].to_vec();
@@ -473,6 +493,9 @@ pub(crate) fn pack_all_rows(indices: &[u8], width: usize, height: usize, bit_dep
         for (x, &idx) in src_row.iter().enumerate() {
             let byte_pos = x / ppb;
             let bit_offset = (ppb - 1 - x % ppb) * bit_depth as usize;
+            // Callers validate range (validate_palette_indices / gray value
+            // contracts); the mask must never actually truncate.
+            debug_assert!(idx <= mask, "index {idx} exceeds bit depth {bit_depth}");
             dst_row[byte_pos] |= (idx & mask) << bit_offset;
         }
     }
@@ -498,6 +521,59 @@ mod tests {
             remaining_ns: None,
             max_threads: 0,
         }
+    }
+
+    // ── palette index validation (sweep issue #20) ──────────────────
+
+    /// Out-of-range palette indices were previously silently masked onto
+    /// arbitrary palette colors (sub-byte depths) or emitted verbatim past
+    /// PLTE (8-bit) — decoder-dependent garbage returned as success.
+    #[test]
+    fn out_of_range_palette_indices_are_rejected() {
+        let meta = PngWriteMetadata::from_metadata(None);
+        // 3-color palette -> bit depth 2. Index 5 would silently become
+        // color 1 pre-fix.
+        let palette = [0u8, 0, 0, 255, 255, 255, 128, 0, 0];
+        let indices = [0u8, 1, 2, 5];
+        let err = write_indexed_png(&indices, 2, 2, &palette, None, &meta, 1, default_opts());
+        let msg = format!("{}", err.expect_err("index 5 must be rejected"));
+        assert!(msg.contains("out of range"), "got: {msg}");
+
+        // 8-bit depth path: 300-entry-referencing index emitted verbatim
+        // pre-fix (spec-invalid IDAT past PLTE).
+        let palette: Vec<u8> = (0..=255u16).flat_map(|i| [i as u8; 3]).collect();
+        let mut indices = vec![7u8; 4];
+        indices[3] = 255; // valid for 256 colors
+        assert!(
+            write_indexed_png(
+                &indices,
+                2,
+                2,
+                &palette[..17 * 3],
+                None,
+                &meta,
+                1,
+                default_opts()
+            )
+            .is_err(),
+            "index 255 with a 17-entry palette must be rejected"
+        );
+
+        // Valid indices still encode and roundtrip.
+        let ok = write_indexed_png(
+            &[0u8, 1, 2, 1],
+            2,
+            2,
+            &palette[..3 * 3],
+            None,
+            &meta,
+            1,
+            default_opts(),
+        )
+        .expect("in-range indices must encode");
+        let decoded =
+            crate::decode(&ok, &crate::PngDecodeConfig::none(), &Unstoppable).expect("must decode");
+        assert_eq!((decoded.info.width, decoded.info.height), (2, 2));
     }
 
     // ── select_bit_depth ────────────────────────────────────────────

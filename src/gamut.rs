@@ -129,7 +129,7 @@ pub(crate) fn try_downcast_rgb8_to_srgb(rgb: &[u8], src: SourceGamut) -> Option<
     let m = src.matrix_to_srgb();
 
     // Pass 1: bounds check with early-exit.
-    for px in rgb.chunks_exact(3) {
+    for px in rgb.as_chunks::<3>().0.iter() {
         let lin = [
             srgb_to_linear(px[0] as f32 / 255.0),
             srgb_to_linear(px[1] as f32 / 255.0),
@@ -146,7 +146,7 @@ pub(crate) fn try_downcast_rgb8_to_srgb(rgb: &[u8], src: SourceGamut) -> Option<
 
     // Pass 2: commit the transform.
     let mut out_buf = Vec::with_capacity(rgb.len());
-    for px in rgb.chunks_exact(3) {
+    for px in rgb.as_chunks::<3>().0.iter() {
         let lin = [
             srgb_to_linear(px[0] as f32 / 255.0),
             srgb_to_linear(px[1] as f32 / 255.0),
@@ -165,7 +165,7 @@ pub(crate) fn try_downcast_rgb8_to_srgb(rgb: &[u8], src: SourceGamut) -> Option<
 pub(crate) fn try_downcast_rgba8_to_srgb(rgba: &[u8], src: SourceGamut) -> Option<Vec<u8>> {
     let m = src.matrix_to_srgb();
 
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0.iter() {
         let lin = [
             srgb_to_linear(px[0] as f32 / 255.0),
             srgb_to_linear(px[1] as f32 / 255.0),
@@ -181,7 +181,7 @@ pub(crate) fn try_downcast_rgba8_to_srgb(rgba: &[u8], src: SourceGamut) -> Optio
     }
 
     let mut out_buf = Vec::with_capacity(rgba.len());
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0.iter() {
         let lin = [
             srgb_to_linear(px[0] as f32 / 255.0),
             srgb_to_linear(px[1] as f32 / 255.0),

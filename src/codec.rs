@@ -1016,7 +1016,9 @@ impl PngEncoder {
             PixelFormat::Bgra8 => {
                 let raw = contiguous_bytes(&pixels);
                 let rgba: Vec<u8> = raw
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .flat_map(|c| [c[2], c[1], c[0], c[3]])
                     .collect();
                 self.do_encode(&rgba, w, h, crate::encode::ColorType::Rgba)
@@ -1025,7 +1027,9 @@ impl PngEncoder {
                 // Padding byte 3 is undefined — strip to RGB.
                 let raw = contiguous_bytes(&pixels);
                 let rgb: Vec<u8> = raw
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .flat_map(|c| [c[0], c[1], c[2]])
                     .collect();
                 self.do_encode(&rgb, w, h, crate::encode::ColorType::Rgb)
@@ -1034,7 +1038,9 @@ impl PngEncoder {
                 // BGRA layout with padding byte 3 — strip to RGB via swap.
                 let raw = contiguous_bytes(&pixels);
                 let rgb: Vec<u8> = raw
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .flat_map(|c| [c[2], c[1], c[0]])
                     .collect();
                 self.do_encode(&rgb, w, h, crate::encode::ColorType::Rgb)
@@ -1174,7 +1180,7 @@ impl PngEncoder {
                             linear_to_srgb_u8_rgba_slice(floats, &mut state.pixel_data[start..]);
                         }
                         PixelFormat::Bgra8 => {
-                            for c in src.chunks_exact(4) {
+                            for c in src.as_chunks::<4>().0 {
                                 state
                                     .pixel_data
                                     .extend_from_slice(&[c[2], c[1], c[0], c[3]]);
@@ -1182,13 +1188,13 @@ impl PngEncoder {
                         }
                         PixelFormat::Rgbx8 => {
                             let row_pixels = self.canvas_width as usize;
-                            for c in src.chunks_exact(4).take(row_pixels) {
+                            for c in src.as_chunks::<4>().0.iter().take(row_pixels) {
                                 state.pixel_data.extend_from_slice(&[c[0], c[1], c[2]]);
                             }
                         }
                         PixelFormat::Bgrx8 => {
                             let row_pixels = self.canvas_width as usize;
-                            for c in src.chunks_exact(4).take(row_pixels) {
+                            for c in src.as_chunks::<4>().0.iter().take(row_pixels) {
                                 state.pixel_data.extend_from_slice(&[c[2], c[1], c[0]]);
                             }
                         }
@@ -1240,7 +1246,7 @@ impl PngEncoder {
                             state.push_converted_row();
                         }
                         PixelFormat::Bgra8 => {
-                            for (i, c) in src.chunks_exact(4).enumerate() {
+                            for (i, c) in src.as_chunks::<4>().0.iter().enumerate() {
                                 state.convert_buf[i * 4] = c[2];
                                 state.convert_buf[i * 4 + 1] = c[1];
                                 state.convert_buf[i * 4 + 2] = c[0];
@@ -1250,7 +1256,8 @@ impl PngEncoder {
                         }
                         PixelFormat::Rgbx8 => {
                             let row_pixels = self.canvas_width as usize;
-                            for (i, c) in src.chunks_exact(4).enumerate().take(row_pixels) {
+                            for (i, c) in src.as_chunks::<4>().0.iter().enumerate().take(row_pixels)
+                            {
                                 state.convert_buf[i * 3] = c[0];
                                 state.convert_buf[i * 3 + 1] = c[1];
                                 state.convert_buf[i * 3 + 2] = c[2];
@@ -1259,7 +1266,8 @@ impl PngEncoder {
                         }
                         PixelFormat::Bgrx8 => {
                             let row_pixels = self.canvas_width as usize;
-                            for (i, c) in src.chunks_exact(4).enumerate().take(row_pixels) {
+                            for (i, c) in src.as_chunks::<4>().0.iter().enumerate().take(row_pixels)
+                            {
                                 state.convert_buf[i * 3] = c[2];
                                 state.convert_buf[i * 3 + 1] = c[1];
                                 state.convert_buf[i * 3 + 2] = c[0];
@@ -1311,7 +1319,7 @@ impl PngEncoder {
                             state.push_converted_row();
                         }
                         PixelFormat::Bgra8 => {
-                            for (i, c) in src.chunks_exact(4).enumerate() {
+                            for (i, c) in src.as_chunks::<4>().0.iter().enumerate() {
                                 state.convert_buf[i * 4] = c[2];
                                 state.convert_buf[i * 4 + 1] = c[1];
                                 state.convert_buf[i * 4 + 2] = c[0];
@@ -1321,7 +1329,8 @@ impl PngEncoder {
                         }
                         PixelFormat::Rgbx8 => {
                             let row_pixels = self.canvas_width as usize;
-                            for (i, c) in src.chunks_exact(4).enumerate().take(row_pixels) {
+                            for (i, c) in src.as_chunks::<4>().0.iter().enumerate().take(row_pixels)
+                            {
                                 state.convert_buf[i * 3] = c[0];
                                 state.convert_buf[i * 3 + 1] = c[1];
                                 state.convert_buf[i * 3 + 2] = c[2];
@@ -1330,7 +1339,8 @@ impl PngEncoder {
                         }
                         PixelFormat::Bgrx8 => {
                             let row_pixels = self.canvas_width as usize;
-                            for (i, c) in src.chunks_exact(4).enumerate().take(row_pixels) {
+                            for (i, c) in src.as_chunks::<4>().0.iter().enumerate().take(row_pixels)
+                            {
                                 state.convert_buf[i * 3] = c[2];
                                 state.convert_buf[i * 3 + 1] = c[1];
                                 state.convert_buf[i * 3 + 2] = c[0];
@@ -1490,14 +1500,18 @@ impl PngAnimationFrameEncoder {
             (zenpixels::ChannelType::U8, zenpixels::ChannelLayout::Bgra) => {
                 let src = contiguous_bytes(pixels);
                 Ok(src
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .flat_map(|c| [c[2], c[1], c[0], c[3]])
                     .collect())
             }
             (zenpixels::ChannelType::U8, zenpixels::ChannelLayout::Rgb) => {
                 let src = contiguous_bytes(pixels);
                 Ok(src
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                     .flat_map(|c| [c[0], c[1], c[2], 255])
                     .collect())
             }
@@ -3460,7 +3474,7 @@ fn native_to_be_16(native: &[u8]) -> Vec<u8> {
         return native.to_vec();
     }
     let mut out = native.to_vec();
-    for chunk in out.chunks_exact_mut(2) {
+    for chunk in out.as_chunks_mut::<2>().0.iter_mut() {
         chunk.swap(0, 1);
     }
     out
@@ -6774,10 +6788,14 @@ mod tests {
             input_bytes < cap,
             "input buffer must fit the cap (the old check admitted this size)"
         );
-        let est = crate::heuristics::estimate_encode(w, h, 3, crate::Compression::default().effort())
-            .unwrap()
-            .peak_memory_bytes;
-        assert!(est > cap, "calibrated peak must exceed the cap for this test");
+        let est =
+            crate::heuristics::estimate_encode(w, h, 3, crate::Compression::default().effort())
+                .unwrap()
+                .peak_memory_bytes;
+        assert!(
+            est > cap,
+            "calibrated peak must exceed the cap for this test"
+        );
 
         let limits = ResourceLimits::none().with_max_memory(cap);
         let encoder = PngEncoderConfig::new()
@@ -6809,11 +6827,18 @@ mod tests {
         use zencodec::encode::Encoder as _;
         let (w, h) = (512usize, 512usize);
         let cap: u64 = 64 * 1024 * 1024;
-        let est =
-            crate::heuristics::estimate_encode(w as u32, h as u32, 3, crate::Compression::default().effort())
-                .unwrap()
-                .peak_memory_bytes;
-        assert!(est <= cap, "modeled peak {est} must fit the moderate cap {cap}");
+        let est = crate::heuristics::estimate_encode(
+            w as u32,
+            h as u32,
+            3,
+            crate::Compression::default().effort(),
+        )
+        .unwrap()
+        .peak_memory_bytes;
+        assert!(
+            est <= cap,
+            "modeled peak {est} must fit the moderate cap {cap}"
+        );
 
         let limits = ResourceLimits::none().with_max_memory(cap);
         let pixels: Vec<Rgb<u8>> = (0..w * h)

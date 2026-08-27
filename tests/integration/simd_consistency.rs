@@ -55,6 +55,17 @@ fn png_encode_all_tiers_match() {
                 encoded.len(),
             );
         } else {
+            // Byte-identity across tiers passes even when every tier is
+            // corrupt — the reference bytes must also DECODE and roundtrip
+            // (the zenjpeg locked-values lesson: hash locks without a decode
+            // blessed undecodable streams for months).
+            let decoded = zenpng::decode(&encoded, &zenpng::PngDecodeConfig::none(), &Unstoppable)
+                .expect("tier-parity reference bytes must decode");
+            assert_eq!(
+                (decoded.info.width, decoded.info.height),
+                (img.width() as u32, img.height() as u32),
+                "decoded dimensions"
+            );
             reference_hash = Some(h);
         }
     });

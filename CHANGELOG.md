@@ -4,6 +4,24 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Out-of-range palette indices were silently corrupted instead of rejected**
+  (issue #20, 2026-08-26 ultracode sweep, adversarially verified):
+  `write_indexed_png` validated palette size and buffer length but never that
+  each index references an existing entry. Sub-byte depths masked bad indices
+  onto arbitrary palette colors (`idx & mask`); depth 8 emitted them verbatim,
+  producing a spec-invalid PNG whose IDAT references entries beyond PLTE —
+  decoder-dependent garbage returned as success. Reachable through the public
+  `Quantizer` trait. Both the still and APNG indexed paths now validate every
+  index up front (`validate_palette_indices`), and `pack_all_rows` debug-asserts
+  the mask never truncates. Regression-tested at depths 2 and 8.
+- The SIMD tier-parity test now decodes its reference bytes (byte-identity
+  across tiers passes even when every tier is corrupt).
+- Cleared the new clippy `-D warnings` wall across all targets
+  (`chunks_exact` → `as_chunks`, cfg-return unreachable patterns), verified on
+  aarch64 and x86_64 (lib).
+
 ### QUEUED BREAKING CHANGES
 <!-- Breaking changes that will ship together in the next release. Do NOT
      ship these piecemeal — batch them. -->

@@ -722,7 +722,7 @@ fn promote_to_rgba(pixels: &PixelBuffer, is_16bit: bool) -> Vec<u8> {
         // 8-bit sources upscaled to 16-bit
         let rgba8 = promote_to_rgba(pixels, false);
         let mut out = Vec::with_capacity(rgba8.len() * 2);
-        for chunk in rgba8.chunks_exact(4) {
+        for chunk in rgba8.as_chunks::<4>().0.iter() {
             for &b in chunk {
                 let v16 = b as u16 * 257;
                 out.extend_from_slice(&v16.to_ne_bytes());
@@ -866,7 +866,12 @@ fn composite_frame(
 /// Simplified APNG spec formula: out = fg + bg * (255 - fg_a) / 255
 #[allow(clippy::manual_checked_ops)]
 fn blend_over_row_8(dst: &mut [u8], src: &[u8]) {
-    for (dst_px, src_px) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+    for (dst_px, src_px) in dst
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(src.as_chunks::<4>().0.iter())
+    {
         let fg_a = src_px[3] as u32;
         if fg_a == 255 {
             dst_px.copy_from_slice(src_px);
@@ -898,7 +903,12 @@ fn blend_over_row_8(dst: &mut [u8], src: &[u8]) {
 /// Per-pixel alpha composite for RGBA16 (native endian).
 #[allow(clippy::manual_checked_ops)]
 fn blend_over_row_16(dst: &mut [u8], src: &[u8]) {
-    for (dst_px, src_px) in dst.chunks_exact_mut(8).zip(src.chunks_exact(8)) {
+    for (dst_px, src_px) in dst
+        .as_chunks_mut::<8>()
+        .0
+        .iter_mut()
+        .zip(src.as_chunks::<8>().0.iter())
+    {
         let fg_a = u16::from_ne_bytes([src_px[6], src_px[7]]) as u64;
         if fg_a == 65535 {
             dst_px.copy_from_slice(src_px);
@@ -1326,7 +1336,7 @@ mod tests {
                 (png::ColorType::Rgba, png::BitDepth::Eight) => buf,
                 (png::ColorType::Rgb, png::BitDepth::Eight) => {
                     let mut rgba = Vec::with_capacity(buf.len() / 3 * 4);
-                    for chunk in buf.chunks_exact(3) {
+                    for chunk in buf.as_chunks::<3>().0.iter() {
                         rgba.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
                     }
                     rgba
@@ -1334,7 +1344,7 @@ mod tests {
                 (png::ColorType::Rgba, png::BitDepth::Sixteen) => {
                     // Downscale 16-bit to 8-bit
                     let mut rgba = Vec::with_capacity(buf.len() / 2);
-                    for chunk in buf.chunks_exact(2) {
+                    for chunk in buf.as_chunks::<2>().0.iter() {
                         rgba.push(chunk[0]); // high byte
                     }
                     rgba

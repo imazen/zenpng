@@ -143,7 +143,9 @@ fn main() {
             // Synthesize a high-entropy alpha (= green channel) so the alpha
             // path isn't trivially all-opaque (which the encoder downcasts away).
             let px: Vec<Rgba<u8>> = data
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|p| Rgba {
                     r: p[0],
                     g: p[1],
@@ -167,7 +169,9 @@ fn main() {
             // back to 8-bit, defeating the 16-bit stratum — disable it so the
             // probe actually exercises the 16-bit working set.
             let px: Vec<Rgb<u16>> = data
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|p| {
                     let w16 = |v: u8| ((v as u16) << 8) | v as u16;
                     Rgb {
@@ -190,7 +194,9 @@ fn main() {
         }
         "rgba16" => {
             let px: Vec<Rgba<u16>> = data
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|p| {
                     let w16 = |v: u8| ((v as u16) << 8) | v as u16;
                     Rgba {
@@ -214,7 +220,9 @@ fn main() {
         }
         _ => {
             let px: Vec<Rgb<u8>> = data
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|p| Rgb {
                     r: p[0],
                     g: p[1],
