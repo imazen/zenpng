@@ -356,7 +356,9 @@ impl<'a> RowDecoder<'a> {
         if ihdr_chunk.chunk_type != *b"IHDR" {
             return Err(at!(PngError::Decode("first chunk is not IHDR".into())));
         }
-        let ihdr = Ihdr::parse(ihdr_chunk.data)?;
+        // Platform row-size check deferred until after `config.validate` below,
+        // so an over-cap image reports `LimitExceeded` on every pointer width.
+        let ihdr = Ihdr::parse_fields(ihdr_chunk.data)?;
 
         // Collect pre-IDAT ancillary chunks
         let mut ancillary = PngAncillary::default();
@@ -390,6 +392,7 @@ impl<'a> RowDecoder<'a> {
         // Apply limits
         let output_bpp = output_bytes_per_pixel(&ihdr, &ancillary) as u32;
         config.validate(ihdr.width, ihdr.height, output_bpp)?;
+        ihdr.check_row_fits_platform()?;
 
         let stride = ihdr.stride()?;
         let raw_row_bytes = ihdr.raw_row_bytes()?;

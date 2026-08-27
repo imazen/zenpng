@@ -76,7 +76,9 @@ pub(crate) fn decode_interlaced(
     if ihdr_chunk.chunk_type != *b"IHDR" {
         return Err(at!(PngError::Decode("first chunk is not IHDR".into())));
     }
-    let ihdr = Ihdr::parse(ihdr_chunk.data)?;
+    // Platform row-size check deferred until after `config.validate` below,
+    // so an over-cap image reports `LimitExceeded` on every pointer width.
+    let ihdr = Ihdr::parse_fields(ihdr_chunk.data)?;
 
     // Collect pre-IDAT metadata
     let mut ancillary = PngAncillary::default();
@@ -106,19 +108,26 @@ pub(crate) fn decode_interlaced(
 
     let out_bpp = (fmt.channels * fmt.bytes_per_channel) as u32;
     config.validate(ihdr.width, ihdr.height, out_bpp)?;
+    ihdr.check_row_fits_platform()?;
 
     let bpp = ihdr.filter_bpp();
     let width = ihdr.width;
     let height = ihdr.height;
 
     // Allocate final output image. Sized from the (untrusted) IHDR
-    // dimensions → default fallible.
-    let out_row_bytes = width as usize * fmt.channels * fmt.bytes_per_channel;
-    let final_total = out_row_bytes.checked_mul(height as usize).ok_or_else(|| {
+    // dimensions → default fallible. The output row can be far wider than the
+    // raw row (1-bit indexed → RGBA8 is 32×), so it gets its own checked math.
+    let too_large = || {
         at!(PngError::OutOfMemory(
             "image too large for this platform".into()
         ))
-    })?;
+    };
+    let out_row_bytes = (width as usize)
+        .checked_mul(fmt.channels * fmt.bytes_per_channel)
+        .ok_or_else(too_large)?;
+    let final_total = out_row_bytes
+        .checked_mul(height as usize)
+        .ok_or_else(too_large)?;
     let mut final_pixels = crate::alloc_util::alloc_zeroed(config.alloc_pref, true, final_total)?;
 
     // Create IDAT source and decompressor.

@@ -99,7 +99,13 @@ impl<'a> ApngDecoder<'a> {
             return Err(at!(PngError::Decode("first chunk is not IHDR".into())));
         }
         let ihdr_length = u32::from_be_bytes(data[8..12].try_into().unwrap()) as usize;
-        let ihdr = Ihdr::parse(&data[ihdr_data_start..ihdr_data_start + ihdr_length])?;
+        let ihdr = Ihdr::parse_fields(&data[ihdr_data_start..ihdr_data_start + ihdr_length])?;
+        // Caller limits first (so an over-cap canvas is `LimitExceeded` on every
+        // pointer width), then the platform row-size bound. The canvas is always
+        // RGBA8 / RGBA16, whatever the IHDR color type.
+        let canvas_bpp: u32 = if ihdr.bit_depth == 16 { 8 } else { 4 };
+        config.validate(ihdr.width, ihdr.height, canvas_bpp)?;
+        ihdr.check_row_fits_platform()?;
 
         // Scan pre-IDAT chunks: collect ancillary, find acTL, look for fcTL before IDAT
         let mut ancillary = PngAncillary::default();
@@ -281,16 +287,18 @@ impl<'a> ApngDecoder<'a> {
         let w = fctl.width as usize;
         let h = fctl.height as usize;
         let pixel_bytes = fmt.channels * fmt.bytes_per_channel;
-        let out_row_bytes = w * pixel_bytes;
 
         // Frame buffer is sized from the (untrusted) fcTL → default fallible;
         // the two one-row scratches are bounded by the row width → default
-        // infallible. See `crate::alloc_util`.
-        let out_total = out_row_bytes.checked_mul(h).ok_or_else(|| {
+        // infallible. See `crate::alloc_util`. The output row can be far wider
+        // than the raw row (1-bit indexed → RGBA8 is 32×): checked on 32-bit.
+        let too_large = || {
             at!(PngError::OutOfMemory(
                 "APNG frame too large for this platform".into()
             ))
-        })?;
+        };
+        let out_row_bytes = w.checked_mul(pixel_bytes).ok_or_else(too_large)?;
+        let out_total = out_row_bytes.checked_mul(h).ok_or_else(too_large)?;
         let mut all_pixels =
             crate::alloc_util::vec_with_capacity(self.config.alloc_pref, true, out_total)?;
         let mut prev_row =
@@ -411,15 +419,16 @@ impl<'a> ApngDecoder<'a> {
         let w = fctl.width as usize;
         let h = fctl.height as usize;
         let pixel_bytes = fmt.channels * fmt.bytes_per_channel;
-        let out_row_bytes = w * pixel_bytes;
 
         // Same allocation policy as `decode_idat_frame`: fallible frame buffer,
-        // infallible one-row scratch.
-        let out_total = out_row_bytes.checked_mul(h).ok_or_else(|| {
+        // infallible one-row scratch, checked output-row math.
+        let too_large = || {
             at!(PngError::OutOfMemory(
                 "APNG frame too large for this platform".into()
             ))
-        })?;
+        };
+        let out_row_bytes = w.checked_mul(pixel_bytes).ok_or_else(too_large)?;
+        let out_total = out_row_bytes.checked_mul(h).ok_or_else(too_large)?;
         let mut all_pixels =
             crate::alloc_util::vec_with_capacity(self.config.alloc_pref, true, out_total)?;
         let mut prev_row =

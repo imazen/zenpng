@@ -22,6 +22,25 @@ All notable changes to zenpng are documented here.
   test now passes on every pointer width with the same `OutOfMemory`
   expectation.
 
+- **Configured limits are checked before the platform row-size bound.**
+  `Ihdr::parse` rejected a row wider than the address space (RGBA8 at width
+  2^31 − 1 is 2^33 bytes) before the decoder ever consulted `max_pixels` /
+  `max_memory_bytes`, so on 32-bit an over-cap image surfaced as
+  `OutOfMemory("row size overflow")` where 64-bit reported `LimitExceeded`.
+  Decoders now parse with `Ihdr::parse_fields`, run `PngDecodeConfig::validate`,
+  then `Ihdr::check_row_fits_platform`, giving `LimitExceeded` on every width
+  (`apng_huge_canvas_is_rejected_by_default_limits` on i686). `ApngDecoder::new`
+  now performs that limit check itself, which also covers the zencodec
+  animation-frame decoder — it passed the caps into its config but nothing
+  enforced them. The output-row byte count (`width × output bpp`, up to 32× the
+  raw row for 1-bit indexed → RGBA8) is now checked on all four decode paths
+  instead of relying on the raw-row check.
+
+- **CI: wasm32 job installs wasmtime via `taiki-e/install-action`.** The
+  `wasmtime.dev/install.sh` script resolves "latest" through the GitHub API;
+  when that is rate-limited on a shared runner it tries to fetch version `{`
+  and installs nothing, so the tests never executed (run 33103871877).
+
 - **16-bit gray+alpha rows were corrupted by the RGBA8 transparent-pixel
   zeroing.** `compress_filtered` keyed the "zero RGB under `alpha == 0`"
   optimization on `bpp == 4`, which 16-bit gray+alpha also satisfies

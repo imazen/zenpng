@@ -21,9 +21,10 @@ fn seed(name: &str) -> Vec<u8> {
 /// `n > isize::MAX` panicked with "capacity overflow" (and a merely-too-large
 /// size aborted on OOM); the fallible path must surface `OutOfMemory` instead.
 ///
-/// On 32-bit targets the row-size check in `Ihdr::parse` rejects the image
-/// earlier with the same `OutOfMemory` variant, so the assertion holds there
-/// too (but does not exercise the canvas site).
+/// On 32-bit targets the platform row-size check (an RGBA8 row at this width
+/// is 2^33 bytes) rejects the image with the same `OutOfMemory` variant before
+/// the canvas is sized, so the assertion holds there too (but does not
+/// exercise the canvas site).
 #[test]
 fn apng_canvas_allocation_failure_is_an_error_not_an_abort() {
     let data = seed("huge-ihdr-rgba8-apng-2147483647sq.png");
@@ -39,6 +40,11 @@ fn apng_canvas_allocation_failure_is_an_error_not_an_abort() {
 
 /// With the default caps the same file is rejected at the pixel limit before
 /// any allocation is attempted.
+///
+/// This must hold on every pointer width: the caller's limits are checked
+/// before the platform row-size bound, so 32-bit reports `LimitExceeded`
+/// here too rather than `OutOfMemory("row size overflow")` (which is what
+/// i686 produced when `Ihdr::parse` applied the platform check first).
 #[test]
 fn apng_huge_canvas_is_rejected_by_default_limits() {
     let data = seed("huge-ihdr-rgba8-apng-2147483647sq.png");

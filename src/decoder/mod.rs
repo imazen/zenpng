@@ -347,13 +347,17 @@ pub(crate) fn decode_png(
     let alloc_pref = limits.alloc_pref;
     let fmt = OutputFormat::from_ihdr(&ihdr, reader.ancillary())?;
     let pixel_bytes = fmt.channels * fmt.bytes_per_channel;
-    let out_row_bytes = w * pixel_bytes;
-
-    let out_total = out_row_bytes.checked_mul(h).ok_or_else(|| {
+    // The output row can be far wider than the raw row (1-bit indexed → RGBA8
+    // is 32×), so it gets its own checked math rather than riding on the
+    // IHDR row-size check.
+    let too_large = || {
         at!(PngError::OutOfMemory(
             "image too large for this platform".into()
         ))
-    })?;
+    };
+    let out_row_bytes = w.checked_mul(pixel_bytes).ok_or_else(too_large)?;
+
+    let out_total = out_row_bytes.checked_mul(h).ok_or_else(too_large)?;
     // Full-image accumulator sized from the (untrusted) IHDR → default
     // fallible; the single raw-row copy is bounded by the row width → default
     // infallible.

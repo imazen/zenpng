@@ -20,7 +20,26 @@ pub(crate) struct Ihdr {
 
 impl Ihdr {
     /// Parse IHDR from chunk data (must be exactly 13 bytes).
+    ///
+    /// Full validation: the spec checks of [`parse_fields`](Self::parse_fields)
+    /// plus [`check_row_fits_platform`](Self::check_row_fits_platform).
     pub fn parse(data: &[u8]) -> crate::error::Result<Self> {
+        let ihdr = Self::parse_fields(data)?;
+        ihdr.check_row_fits_platform()?;
+        Ok(ihdr)
+    }
+
+    /// Parse and validate an IHDR *without* the platform row-size check.
+    ///
+    /// Decoders use this so the caller's configured limits
+    /// (`PngDecodeConfig::validate`) are consulted before the platform bound:
+    /// an image over the pixel cap must report `LimitExceeded` on every
+    /// pointer width, not `OutOfMemory` on 32-bit merely because its row is
+    /// wider than the address space. Callers MUST follow up with
+    /// [`check_row_fits_platform`](Self::check_row_fits_platform) (or the
+    /// checked [`raw_row_bytes`](Self::raw_row_bytes) / [`stride`](Self::stride),
+    /// which enforce the same bound) before sizing any buffer.
+    pub(crate) fn parse_fields(data: &[u8]) -> crate::error::Result<Self> {
         if data.len() != 13 {
             return Err(at!(PngError::Decode(alloc::format!(
                 "IHDR chunk is {} bytes, expected 13",
@@ -75,13 +94,12 @@ impl Ihdr {
             color_type,
             interlace,
         };
-        ihdr.validate()?;
+        ihdr.validate_format()?;
         Ok(ihdr)
     }
 
-    /// Validate color_type / bit_depth combination per PNG spec,
-    /// and ensure row byte computation won't overflow `usize`.
-    fn validate(&self) -> crate::error::Result<()> {
+    /// Validate the color_type / bit_depth combination per the PNG spec.
+    fn validate_format(&self) -> crate::error::Result<()> {
         let valid = match self.color_type {
             0 => matches!(self.bit_depth, 1 | 2 | 4 | 8 | 16), // Grayscale
             2 => matches!(self.bit_depth, 8 | 16),             // RGB
@@ -97,7 +115,16 @@ impl Ihdr {
                 self.bit_depth
             ))));
         }
+        Ok(())
+    }
 
+    /// Ensure one raw row of this image fits a single allocation on this
+    /// target (`usize`, and no larger than `isize::MAX`).
+    ///
+    /// Part of [`parse`](Self::parse); decoders that used
+    /// [`parse_fields`](Self::parse_fields) call it after the configured
+    /// limits have been checked.
+    pub(crate) fn check_row_fits_platform(&self) -> crate::error::Result<()> {
         // Verify that bits_per_row = width * channels * bit_depth fits in a
         // single allocation (`usize`, and no larger than `isize::MAX`) without
         // overflow. Compute in u64 to avoid overflow during the check.
