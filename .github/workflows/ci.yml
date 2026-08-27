@@ -77,10 +77,11 @@ jobs:
         with:
           key: wasm32
 
-      - name: Install wasmtime
-        run: |
-          curl https://wasmtime.dev/install.sh -sSf | bash
-          echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
+      # Pinned-manifest install: the wasmtime.dev/install.sh script resolves
+      # "latest" through the GitHub API and, when that is rate-limited on a
+      # shared runner, tries to download version "{" and installs nothing
+      # (run 33103871877). install-action carries its own manifest.
+      - uses: taiki-e/install-action@wasmtime
 
       - name: Test (default features, WASM SIMD128)
         env:
