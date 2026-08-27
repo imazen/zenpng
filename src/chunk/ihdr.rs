@@ -23,7 +23,11 @@ impl Ihdr {
     ///
     /// Full validation: the spec checks of [`parse_fields`](Self::parse_fields)
     /// plus [`check_row_fits_platform`](Self::check_row_fits_platform).
-    pub fn parse(data: &[u8]) -> crate::error::Result<Self> {
+    /// Production paths call the two halves separately (with the caller's
+    /// `PngDecodeConfig::validate` in between), so this combined form is
+    /// test-only.
+    #[cfg(test)]
+    pub(crate) fn parse(data: &[u8]) -> crate::error::Result<Self> {
         let ihdr = Self::parse_fields(data)?;
         ihdr.check_row_fits_platform()?;
         Ok(ihdr)

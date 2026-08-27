@@ -32,9 +32,11 @@ All notable changes to zenpng are documented here.
   (`apng_huge_canvas_is_rejected_by_default_limits` on i686). `ApngDecoder::new`
   now performs that limit check itself, which also covers the zencodec
   animation-frame decoder — it passed the caps into its config but nothing
-  enforced them. The output-row byte count (`width × output bpp`, up to 32× the
-  raw row for 1-bit indexed → RGBA8) is now checked on all four decode paths
-  instead of relying on the raw-row check.
+  enforced them. `probe` no longer applies the platform row bound either (it
+  reads metadata only, and `decode_apng` probes before decoding), so a valid
+  header probes on every pointer width. The output-row byte count (`width ×
+  output bpp`, up to 32× the raw row for 1-bit indexed → RGBA8) is now
+  checked on all four decode paths instead of relying on the raw-row check.
 
 - **CI: wasm32 job installs wasmtime via `taiki-e/install-action`.** The
   `wasmtime.dev/install.sh` script resolves "latest" through the GitHub API;

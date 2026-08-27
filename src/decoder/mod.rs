@@ -151,7 +151,11 @@ pub(crate) fn probe_png(data: &[u8]) -> crate::error::Result<PngInfo> {
     if ihdr_chunk.chunk_type != *b"IHDR" {
         return Err(at!(PngError::Decode("first chunk is not IHDR".into())));
     }
-    let ihdr = Ihdr::parse(ihdr_chunk.data)?;
+    // Probing reads metadata only and never sizes a row buffer, so it does
+    // not apply the platform row-size bound: a valid header must probe on
+    // every pointer width, and `decode_apng` (which probes first) must reach
+    // the decoder's limit check rather than fail here with `OutOfMemory`.
+    let ihdr = Ihdr::parse_fields(ihdr_chunk.data)?;
 
     let mut ancillary = PngAncillary::default();
     let mut idat_bytes: u64 = 0;
