@@ -1,6 +1,7 @@
 //! APNG frame-by-frame decoding and compositing.
 
 use alloc::borrow::Cow;
+#[cfg(test)]
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -281,9 +282,20 @@ impl<'a> ApngDecoder<'a> {
         let pixel_bytes = fmt.channels * fmt.bytes_per_channel;
         let out_row_bytes = w * pixel_bytes;
 
-        let mut all_pixels = Vec::with_capacity(out_row_bytes * h);
-        let mut prev_row = vec![0u8; raw_row_bytes];
-        let mut current_row = vec![0u8; raw_row_bytes];
+        // Frame buffer is sized from the (untrusted) fcTL → default fallible;
+        // the two one-row scratches are bounded by the row width → default
+        // infallible. See `crate::alloc_util`.
+        let out_total = out_row_bytes.checked_mul(h).ok_or_else(|| {
+            at!(PngError::OutOfMemory(
+                "APNG frame too large for this platform".into()
+            ))
+        })?;
+        let mut all_pixels =
+            crate::alloc_util::vec_with_capacity(self.config.alloc_pref, true, out_total)?;
+        let mut prev_row =
+            crate::alloc_util::alloc_zeroed(self.config.alloc_pref, false, raw_row_bytes)?;
+        let mut current_row =
+            crate::alloc_util::alloc_zeroed(self.config.alloc_pref, false, raw_row_bytes)?;
         let mut row_buf = Vec::new();
 
         for _y in 0..h {
@@ -399,9 +411,19 @@ impl<'a> ApngDecoder<'a> {
         let pixel_bytes = fmt.channels * fmt.bytes_per_channel;
         let out_row_bytes = w * pixel_bytes;
 
-        let mut all_pixels = Vec::with_capacity(out_row_bytes * h);
-        let mut prev_row = vec![0u8; raw_row_bytes];
-        let mut current_row = vec![0u8; raw_row_bytes];
+        // Same allocation policy as `decode_idat_frame`: fallible frame buffer,
+        // infallible one-row scratch.
+        let out_total = out_row_bytes.checked_mul(h).ok_or_else(|| {
+            at!(PngError::OutOfMemory(
+                "APNG frame too large for this platform".into()
+            ))
+        })?;
+        let mut all_pixels =
+            crate::alloc_util::vec_with_capacity(self.config.alloc_pref, true, out_total)?;
+        let mut prev_row =
+            crate::alloc_util::alloc_zeroed(self.config.alloc_pref, false, raw_row_bytes)?;
+        let mut current_row =
+            crate::alloc_util::alloc_zeroed(self.config.alloc_pref, false, raw_row_bytes)?;
         let mut row_buf = Vec::new();
 
         for _y in 0..h {
@@ -496,8 +518,10 @@ pub(crate) fn decode_apng_composed(
     let num_frames = decoder.num_frames;
     let num_plays = decoder.num_plays;
 
-    // Canvas starts as transparent black
-    let mut canvas = vec![0u8; canvas_bytes];
+    // Canvas starts as transparent black. Sized from the (untrusted) IHDR →
+    // default fallible, so an allocation failure within the configured caps is
+    // an `Err(OutOfMemory)` for this decode, not a process abort (issue #13).
+    let mut canvas = crate::alloc_util::alloc_zeroed(config.alloc_pref, true, canvas_bytes)?;
     let mut frames = Vec::with_capacity((num_frames as usize).min(65536));
 
     // For RestorePrevious: saved frame region (not full canvas)
@@ -522,7 +546,13 @@ pub(crate) fn decode_apng_composed(
 
         // If this frame's dispose_op is RestorePrevious, save only the frame region
         if frame.fctl.dispose_op == 2 {
-            saved_region = Some(save_region(&frame.fctl, &canvas, canvas_w, is_16bit));
+            saved_region = Some(save_region(
+                &frame.fctl,
+                &canvas,
+                canvas_w,
+                is_16bit,
+                config.alloc_pref,
+            )?);
         }
 
         // Promote subframe pixels to RGBA and composite onto canvas
@@ -596,7 +626,17 @@ struct SavedRegion {
 }
 
 /// Save only the frame region from the canvas.
-fn save_region(fctl: &FrameControl, canvas: &[u8], canvas_w: usize, is_16bit: bool) -> SavedRegion {
+///
+/// The region can be as large as the whole canvas (a full-canvas frame with
+/// `dispose_op = RestorePrevious`), so it follows the canvas allocation policy
+/// (default fallible).
+fn save_region(
+    fctl: &FrameControl,
+    canvas: &[u8],
+    canvas_w: usize,
+    is_16bit: bool,
+    alloc_pref: zencodec::AllocPreference,
+) -> crate::error::Result<SavedRegion> {
     let bpp = if is_16bit { 8 } else { 4 };
     let x = fctl.x_offset as usize;
     let y = fctl.y_offset as usize;
@@ -605,12 +645,19 @@ fn save_region(fctl: &FrameControl, canvas: &[u8], canvas_w: usize, is_16bit: bo
     let row_stride = canvas_w * bpp;
     let region_row_bytes = w * bpp;
 
-    let mut data = Vec::with_capacity(region_row_bytes * h);
+    // The region lies inside the already-allocated canvas, so this cannot
+    // overflow; keep the checked form so the invariant is explicit.
+    let region_total = region_row_bytes.checked_mul(h).ok_or_else(|| {
+        at!(PngError::OutOfMemory(
+            "APNG saved region too large for this platform".into()
+        ))
+    })?;
+    let mut data = crate::alloc_util::vec_with_capacity(alloc_pref, true, region_total)?;
     for row in y..y + h {
         let start = row * row_stride + x * bpp;
         data.extend_from_slice(&canvas[start..start + region_row_bytes]);
     }
-    SavedRegion { data, x, y, w, h }
+    Ok(SavedRegion { data, x, y, w, h })
 }
 
 /// Apply dispose_op to the canvas based on the previous frame's fctl.

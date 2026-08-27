@@ -6,6 +6,19 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- **APNG decode buffers were panic-on-OOM** (issue #13, residual after
+  f979f72 moved the still-image paths to `alloc_util`): the composited canvas
+  (`vec![0u8; canvas_bytes]`), the per-frame pixel buffers in
+  `decode_idat_frame` / `decode_fdat_frame`, and the `RestorePrevious` saved
+  region still used infallible `vec!` / `Vec::with_capacity`, so an
+  allocation the configured caps allowed but the machine could not satisfy
+  aborted the whole process. All four sites now go through
+  `alloc_util` (default fallible for the untrusted-sized buffers, infallible
+  for the one-row scratch, honoring `AllocPreference` overrides) and return
+  `PngError::OutOfMemory`; the frame-size products are `checked_mul`
+  instead of bare `*`. Regression-tested with a 2^31-1 square RGBA8 APNG
+  under `PngDecodeConfig::none()` (mutation-verified: the old canvas site
+  panics with `capacity overflow`).
 - **`fuzz_decode_strict` harness reached the allocator with exabyte requests**
   (issue #19, farm signature `68f9a17dcbfa8396`): the target started from
   `PngDecodeConfig::strict()`, which has no `max_pixels` / `max_memory_bytes`,

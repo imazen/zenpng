@@ -22,3 +22,6 @@ mod cicp_chunk_emit;
 
 #[path = "integration/truncation_series.rs"]
 mod truncation_series;
+
+#[path = "integration/apng_alloc.rs"]
+mod apng_alloc;
