@@ -75,8 +75,16 @@ fn strict_harness_config_rejects_huge_ihdr_at_the_limit() {
 }
 
 /// Documents *why* the harness must not start from `strict()`: with no caps,
-/// the same seed is only stopped by the allocator (or usize overflow on
-/// 32-bit) — a graceful `OutOfMemory` here, an ASan abort under the fuzzer.
+/// nothing short of the allocation machinery stops the same seed — a
+/// graceful `OutOfMemory` here, an ASan abort under the fuzzer.
+///
+/// The expectation is the same on every pointer width, for different reasons:
+/// on 64-bit the row buffers (2 GiB each) and the 4 GiB inflate buffer are
+/// allocated and the ~4.6 EB full-image `try_reserve` fails; on 32-bit the
+/// gray8 row (`2^31 - 1` bytes) is `isize::MAX` exactly, so the checked
+/// two-row inflate capacity (`2^32`) is rejected before any allocation is
+/// attempted. Either way it must be `OutOfMemory`, never a panic (this seed
+/// previously tripped `attempt to multiply with overflow` on i686).
 #[test]
 fn unbounded_strict_config_reaches_the_allocator_for_huge_ihdr() {
     let seed = regression_dir().join("huge-ihdr-gray8-2147483647sq.png");

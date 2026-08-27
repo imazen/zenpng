@@ -6,6 +6,22 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- **32-bit decode panicked on a max-width IHDR instead of returning
+  `OutOfMemory`.** The streaming inflate buffer was sized `stride * 2` in
+  `usize`; for gray8 at width 2^31 − 1 the stride is 2^31, so the doubling
+  overflowed on i686/wasm32 (`attempt to multiply with overflow` in debug, a
+  wrapped capacity in release). All four sites (`RowDecoder::new`, Adam7,
+  APNG IDAT/fdAT frames) now size the buffer through
+  `alloc_util::stream_capacity`, which computes in `u64` and rejects anything
+  that — together with zenflate's own 32 KiB lookback — cannot be one Rust
+  allocation. The IHDR row-size check now bounds rows at `isize::MAX` (the
+  ceiling every `Vec` enforces) rather than `usize::MAX`, the stored-block
+  fast path uses checked `stride * height` / `raw_row_bytes * height`, and the
+  two row scratches in `RowDecoder` honor an explicit `AllocPreference`. The
+  `unbounded_strict_config_reaches_the_allocator_for_huge_ihdr` regression
+  test now passes on every pointer width with the same `OutOfMemory`
+  expectation.
+
 - **16-bit gray+alpha rows were corrupted by the RGBA8 transparent-pixel
   zeroing.** `compress_filtered` keyed the "zero RGB under `alpha == 0`"
   optimization on `bpp == 4`, which 16-bit gray+alpha also satisfies

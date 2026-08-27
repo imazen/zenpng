@@ -98,8 +98,9 @@ impl Ihdr {
             ))));
         }
 
-        // Verify that bits_per_row = width * channels * bit_depth fits in usize
-        // without overflow. Compute in u64 to avoid overflow during the check.
+        // Verify that bits_per_row = width * channels * bit_depth fits in a
+        // single allocation (`usize`, and no larger than `isize::MAX`) without
+        // overflow. Compute in u64 to avoid overflow during the check.
         let bits_per_row = (self.width as u64)
             .checked_mul(self.channels() as u64)
             .and_then(|v| v.checked_mul(self.bit_depth as u64));
@@ -108,7 +109,7 @@ impl Ihdr {
             b.checked_add(7).map(|v| v / 8)
         });
         match row_bytes {
-            Some(bytes) if usize::try_from(bytes).is_ok() => {}
+            Some(bytes) if crate::alloc_util::alloc_len(bytes).is_some() => {}
             _ => {
                 return Err(at!(PngError::OutOfMemory(alloc::format!(
                     "IHDR: row size overflow for {}x{} color_type={} bit_depth={} \
@@ -146,9 +147,10 @@ impl Ihdr {
     /// Raw row bytes (unfiltered row data, not including filter byte).
     /// For sub-8-bit depths, accounts for bit packing.
     ///
-    /// Returns an error if the computation overflows `usize`. This cannot
-    /// happen for IHDR values that passed through [`Ihdr::parse`], which
-    /// validates that row bytes fit in `usize`.
+    /// Returns an error if the row cannot be held by a single allocation on
+    /// this target (overflows `usize`, or exceeds `isize::MAX` — the ceiling
+    /// every `Vec` enforces). This cannot happen for IHDR values that passed
+    /// through [`Ihdr::parse`], which validates the same bound.
     pub fn raw_row_bytes(&self) -> crate::error::Result<usize> {
         let bits_per_row = (self.width as u64)
             .checked_mul(self.channels() as u64)
@@ -166,7 +168,7 @@ impl Ihdr {
                 "row_bytes overflow during rounding".into()
             ))
         })?;
-        usize::try_from(row_bytes).map_err(|_| {
+        crate::alloc_util::alloc_len(row_bytes).ok_or_else(|| {
             at!(PngError::OutOfMemory(alloc::format!(
                 "row_bytes {} exceeds platform address space",
                 row_bytes

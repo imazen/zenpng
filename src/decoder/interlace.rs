@@ -126,7 +126,7 @@ pub(crate) fn decode_interlaced(
     // otherwise the fill loop cannot accumulate a full row and spins forever.
     // Pass 7 (x_step=1) gives the widest rows: full image width.
     let max_pass_stride = ihdr.stride()?; // 1 + raw_row_bytes for full width
-    let capacity = max_pass_stride * 2;
+    let capacity = crate::alloc_util::stream_capacity(max_pass_stride)?;
     let source = IdatSource::new(
         Cow::Borrowed(data),
         first_idat_pos,

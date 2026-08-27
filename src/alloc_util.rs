@@ -24,6 +24,57 @@ use whereat::{At, at};
 
 use crate::error::PngError;
 
+/// Largest byte count a single Rust allocation can hold: `isize::MAX`.
+///
+/// `Vec` panics with "capacity overflow" (even on the `try_reserve` path it
+/// returns `CapacityOverflow`, but `vec![0; n]` panics) for anything larger, so
+/// a size that fits `usize` but not `isize` must be rejected *before* it reaches
+/// an allocator. On 64-bit this is unreachable for PNG geometry; on 32-bit
+/// targets a single row can exceed it (gray8 at the PNG max width is exactly
+/// `isize::MAX` bytes, and any wider pixel format overshoots).
+pub(crate) const MAX_ALLOC_BYTES: u64 = isize::MAX as u64;
+
+/// Narrow a `u64` byte count to `usize` if a single allocation of that many
+/// bytes is representable on this target (`<= isize::MAX`), else `None`.
+#[inline]
+#[must_use]
+pub(crate) fn alloc_len(bytes: u64) -> Option<usize> {
+    if bytes > MAX_ALLOC_BYTES {
+        return None;
+    }
+    usize::try_from(bytes).ok()
+}
+
+/// Headroom reserved for the fixed-size buffers zenflate's streaming
+/// decompressor allocates alongside the caller's capacity (a 32 KiB lookback
+/// window plus a small input buffer, allocated as one `vec![0u8; lookback +
+/// capacity]`). Kept generously above the real figure so a zenflate bump cannot
+/// silently turn a capacity we accepted into a "capacity overflow" panic.
+const STREAM_DECOMPRESSOR_OVERHEAD: u64 = 64 * 1024;
+
+/// Capacity for a [`zenflate::StreamDecompressor`] that must buffer two rows of
+/// `stride` bytes, computed with checked arithmetic and bounded by what the
+/// allocator can represent.
+///
+/// The previous `stride * 2` wrapped on 32-bit targets for a gray8 IHDR at the
+/// PNG maximum width (`stride == 2^31`): a debug-build panic, a wrapped `0`
+/// capacity in release. Returns [`PngError::OutOfMemory`] when two rows plus
+/// zenflate's own overhead cannot fit in one allocation on this target.
+pub(crate) fn stream_capacity(stride: usize) -> Result<usize, At<PngError>> {
+    let too_large = || {
+        at!(PngError::OutOfMemory(alloc::format!(
+            "row stride {stride} too large: two rows exceed the platform address space"
+        )))
+    };
+    let capacity = (stride as u64).checked_mul(2).ok_or_else(too_large)?;
+    // Two rows plus zenflate's fixed buffers must be one representable allocation.
+    capacity
+        .checked_add(STREAM_DECOMPRESSOR_OVERHEAD)
+        .and_then(alloc_len)
+        .ok_or_else(too_large)?;
+    alloc_len(capacity).ok_or_else(too_large)
+}
+
 /// Resolve the 3-mode [`AllocPreference`](zencodec::AllocPreference) against
 /// THIS site's default fallibility.
 ///
@@ -165,6 +216,61 @@ mod tests {
     fn vec_with_capacity_fallible_oom_returns_err() {
         let r = vec_with_capacity(AllocPreference::Fallible, true, usize::MAX);
         assert!(r.is_err());
+        assert!(matches!(r.unwrap_err().error(), PngError::OutOfMemory(_)));
+    }
+
+    #[test]
+    fn alloc_len_bounds_at_isize_max_on_every_width() {
+        assert_eq!(alloc_len(0), Some(0));
+        assert_eq!(alloc_len(MAX_ALLOC_BYTES), Some(isize::MAX as usize));
+        assert_eq!(alloc_len(MAX_ALLOC_BYTES + 1), None);
+        assert_eq!(alloc_len(u64::MAX), None);
+    }
+
+    #[test]
+    fn stream_capacity_small_stride_is_two_rows() {
+        assert_eq!(stream_capacity(1).unwrap(), 2);
+        assert_eq!(stream_capacity(4097).unwrap(), 8194);
+    }
+
+    /// Gray8 at the PNG maximum width (2^31 - 1): stride is 2^31. Two rows
+    /// plus overhead fit a 64-bit allocation.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn stream_capacity_gray8_max_width_64bit() {
+        let stride = 0x7FFF_FFFFusize + 1;
+        assert_eq!(stream_capacity(stride).unwrap(), 0x1_0000_0000usize);
+    }
+
+    /// Same stride on 32-bit: `2 * stride` is not even representable in
+    /// `usize`. This is the `huge-ihdr-gray8-2147483647sq.png` seed that
+    /// panicked with `attempt to multiply with overflow` on i686.
+    #[test]
+    #[cfg(target_pointer_width = "32")]
+    fn stream_capacity_gray8_max_width_32bit() {
+        let stride = 0x7FFF_FFFFusize + 1;
+        let r = stream_capacity(stride);
+        assert!(matches!(r.unwrap_err().error(), PngError::OutOfMemory(_)));
+    }
+
+    /// A stride whose doubling fits `usize` but not `isize::MAX` on 32-bit:
+    /// this is what previously reached zenflate's `vec![0u8; lookback +
+    /// capacity]` and panicked with "capacity overflow".
+    #[test]
+    #[cfg(target_pointer_width = "32")]
+    fn stream_capacity_rejects_two_rows_beyond_isize_max_32bit() {
+        // 2 * 0x4000_0001 = 0x8000_0002 > isize::MAX (0x7FFF_FFFF).
+        let r = stream_capacity(0x4000_0001);
+        assert!(matches!(r.unwrap_err().error(), PngError::OutOfMemory(_)));
+        // Exactly at the edge: 2 * stride + overhead must still fit.
+        let edge = (isize::MAX as usize - 64 * 1024) / 2;
+        assert_eq!(stream_capacity(edge).unwrap(), edge * 2);
+        assert!(stream_capacity(edge + 1).is_err());
+    }
+
+    #[test]
+    fn stream_capacity_rejects_usize_max() {
+        let r = stream_capacity(usize::MAX);
         assert!(matches!(r.unwrap_err().error(), PngError::OutOfMemory(_)));
     }
 }

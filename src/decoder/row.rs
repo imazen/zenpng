@@ -1,7 +1,6 @@
 //! Streaming row decoder: IDAT source and row-by-row decompression + unfilter.
 
 use alloc::borrow::Cow;
-use alloc::vec;
 use alloc::vec::Vec;
 
 use zenflate::crc32;
@@ -395,10 +394,19 @@ impl<'a> RowDecoder<'a> {
         let stride = ihdr.stride()?;
         let raw_row_bytes = ihdr.raw_row_bytes()?;
         let bpp = ihdr.filter_bpp();
+        // Two rows of inflate buffer, checked: `stride * 2` wrapped on 32-bit
+        // for a max-width gray8 IHDR (stride == 2^31).
+        let capacity = crate::alloc_util::stream_capacity(stride)?;
+
+        // The two one-row scratches are bounded by the row width → default
+        // infallible, but honor an explicit `AllocPreference`. See
+        // `crate::alloc_util`.
+        let prev_row = crate::alloc_util::alloc_zeroed(config.alloc_pref, false, raw_row_bytes)?;
+        let current_row = crate::alloc_util::alloc_zeroed(config.alloc_pref, false, raw_row_bytes)?;
 
         // Create IDAT source and decompressor — data is moved into IdatSource
         let source = IdatSource::new(data, first_idat_pos, config.skip_critical_chunk_crc)?;
-        let decompressor = zenflate::StreamDecompressor::zlib(source, stride * 2)
+        let decompressor = zenflate::StreamDecompressor::zlib(source, capacity)
             .with_skip_checksum(config.skip_decompression_checksum);
 
         Ok(Self {
@@ -406,8 +414,8 @@ impl<'a> RowDecoder<'a> {
             ihdr,
             ancillary,
             first_idat_pos,
-            prev_row: vec![0u8; raw_row_bytes],
-            current_row: vec![0u8; raw_row_bytes],
+            prev_row,
+            current_row,
             rows_yielded: 0,
             stride,
             bpp,

@@ -565,7 +565,14 @@ fn try_decode_stored(
     // Walk spans linearly with a cursor, copying row data into the output buffer.
 
     let total_payload: usize = spans.iter().map(|&(_, l)| l).sum();
-    let expected = stride * height;
+    // `raw_row_bytes * height` was already range-checked by the caller, but
+    // `stride * height` adds one byte per row and can wrap where that did not
+    // (narrow on 64-bit, real on 32-bit) — keep both products checked.
+    let Some(expected) = stride.checked_mul(height) else {
+        return Some(Err(at!(PngError::OutOfMemory(
+            "image too large for this platform".into()
+        ))));
+    };
     if total_payload < expected {
         return Some(Err(at!(PngError::Decode(alloc::format!(
             "stored data too short: {total_payload} < {expected}"
@@ -575,7 +582,11 @@ fn try_decode_stored(
     // Full-image buffer sized from (untrusted) IHDR dimensions → default
     // fallible; the one-row `zeros` scratch is bounded by the row width →
     // default infallible.
-    let total_pixels = raw_row_bytes * height;
+    let Some(total_pixels) = raw_row_bytes.checked_mul(height) else {
+        return Some(Err(at!(PngError::OutOfMemory(
+            "image too large for this platform".into()
+        ))));
+    };
     let mut all_pixels = match crate::alloc_util::alloc_zeroed(alloc_pref, true, total_pixels) {
         Ok(v) => v,
         Err(e) => return Some(Err(e)),

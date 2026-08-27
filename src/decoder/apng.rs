@@ -268,12 +268,13 @@ impl<'a> ApngDecoder<'a> {
         let raw_row_bytes = frame_ihdr.raw_row_bytes()?;
         let bpp = frame_ihdr.filter_bpp();
 
+        let capacity = crate::alloc_util::stream_capacity(stride)?;
         let source = IdatSource::new(
             Cow::Borrowed(self.file_data),
             self.first_idat_pos,
             self.config.skip_critical_chunk_crc,
         )?;
-        let mut decompressor = zenflate::StreamDecompressor::zlib(source, stride * 2)
+        let mut decompressor = zenflate::StreamDecompressor::zlib(source, capacity)
             .with_skip_checksum(self.config.skip_decompression_checksum);
 
         let fmt = OutputFormat::from_ihdr(&frame_ihdr, &self.ancillary)?;
@@ -402,7 +403,8 @@ impl<'a> ApngDecoder<'a> {
             self.config.skip_critical_chunk_crc,
         )
         .map_err(|e| at!(e))?;
-        let mut decompressor = zenflate::StreamDecompressor::zlib(source, stride * 2)
+        let capacity = crate::alloc_util::stream_capacity(stride)?;
+        let mut decompressor = zenflate::StreamDecompressor::zlib(source, capacity)
             .with_skip_checksum(self.config.skip_decompression_checksum);
 
         let fmt = OutputFormat::from_ihdr(&frame_ihdr, &self.ancillary)?;
