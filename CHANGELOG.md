@@ -6,6 +6,18 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- **The `Fuzz regression` CI job could not fail.** It ran
+  `cargo test --test fuzz_regression 2>/dev/null || echo "No regression test
+  found…"` inside an `if [ -d fuzz/regression ]` guard, so a genuinely failing
+  suite, a missing corpus, and a missing harness all reported green.
+  `tests/fuzz_regression.rs` has existed the whole time, so the fallback was
+  masking real failures rather than covering a missing target. The step is now
+  a bare `cargo test --test fuzz_regression`. The harness's `!seeds.is_empty()`
+  check is now a pinned `>= MIN_SEEDS` (3) that also skips `README`/dotfiles, so
+  a gutted or documentation-only corpus fails instead of replaying whatever
+  survived. Mutation-verified: cutting the corpus to one seed plus a README, and
+  a panic injected into the replay path, each exit 101.
+
 - **32-bit decode panicked on a max-width IHDR instead of returning
   `OutOfMemory`.** The streaming inflate buffer was sized `stride * 2` in
   `usize`; for gray8 at width 2^31 − 1 the stride is 2^31, so the doubling

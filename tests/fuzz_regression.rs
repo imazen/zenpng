@@ -19,13 +19,33 @@ fn regression_seeds() -> Vec<(String, Vec<u8>)> {
         .expect("fuzz/regression/ must exist")
         .map(|e| e.expect("readable dir entry").path())
         .filter(|p| p.is_file())
+        // Documentation is not a seed: without this, a corpus emptied down to a
+        // README.md would satisfy the count below and replay nothing.
+        .filter(|p| {
+            let name = p
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let lower = name.to_ascii_lowercase();
+            !name.starts_with('.') && !lower.ends_with(".md") && !lower.ends_with(".txt")
+        })
         .map(|p| {
             let bytes = std::fs::read(&p).expect("readable seed");
             (p.file_name().unwrap().to_string_lossy().into_owned(), bytes)
         })
         .collect();
     seeds.sort_by(|a, b| a.0.cmp(&b.0));
-    assert!(!seeds.is_empty(), "fuzz/regression/ has no seeds");
+    // A count, not just non-empty: a partial checkout or a bulk delete that left
+    // one seed behind would otherwise still report a pass over a gutted corpus.
+    // Raise MIN_SEEDS when seeds are added; only lower it when deleting on purpose.
+    const MIN_SEEDS: usize = 3;
+    assert!(
+        seeds.len() >= MIN_SEEDS,
+        "fuzz/regression/ holds {} replayable seeds, expected at least {MIN_SEEDS} — \
+         the committed regression corpus is missing or was renamed",
+        seeds.len()
+    );
     seeds
 }
 
