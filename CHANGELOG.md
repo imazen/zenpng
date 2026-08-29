@@ -4,6 +4,30 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **`zencodec` / `zenpixels` / `zenpixels-convert` requirements now span the
+  published minor and the next one**: `zencodec` `"0.1.26"` → `">=0.1.26,
+  <0.3.0"`, `zenpixels` `">=0.2.11, <0.3"` → `">=0.2.11, <0.4.0"`,
+  `zenpixels-convert` `">=0.2.16, <0.3"` → `">=0.2.16, <0.4.0"`, and `squintly`'s
+  `zenpixels` `"0.2.11"` → `">=0.2.11, <0.4.0"`. For a `0.x` crate Cargo treats
+  the minor as the major, so both the bare `"0.1.26"` and the `<0.3` ceiling stop
+  at the next minor, and a `zencodec 0.2.0` / `zenpixels 0.3.0` release would
+  have been invisible until this manifest was hand-edited. Floors are unchanged
+  and nothing newer is published, so resolution is identical (`cargo metadata
+  --all-features`: one copy of each). **This repo already documents why the range
+  has to be uniform:** the `[patch.crates-io] zencodec` comment below describes
+  exactly the two-copies failure — two instances of the same `0.x` crate make
+  `DecoderConfig` a *different type* on each side and the trait bound fails to
+  typecheck (E0277). A consumer left un-widened while its siblings move is how
+  that second copy gets into the graph. The standing current-plus-next rule is
+  documented in the zencodec repo's `CLAUDE.md`. The two `imazen/zencodec` git
+  entries (the patch pin and the `zencodec-testkit` dev-dep) are untouched — a
+  patch replaces the source regardless of the requirement, and a git dep has no
+  registry requirement to widen. Note for whoever retires them: both comments
+  say testkit is not yet published, but `zencodec-testkit 0.1.0` is on crates.io,
+  so both can become plain registry deps whenever someone verifies the swap.
+
 ### Fixed
 
 - **Pushes to `main` now cancel their superseded CI runs.** `ci.yml` keyed its
