@@ -42,18 +42,28 @@ All notable changes to zenpng are documented here.
   (`truecolor_png_ga16_alpha_low_byte_zero_roundtrips_byte_exact`, `…_rgba16_…`)
   are unchanged.
 
-  **Held back deliberately: `quantette` stays at `"0.5"` (0.6.0 is published).**
-  It is a palette quantizer — its entire job is choosing output colors — and
-  0.6.0 is a leading-digit bump, which for a `0.x` crate is the author signalling
-  a break. zenpng's quantette coverage is *structural*, not byte-golden (the
-  tests assert only that the palette is non-empty, `len() <= 256`, and that the
-  index count matches), so the suite cannot prove the palette bytes are stable
-  across the bump. Upgrading needs a palette-diff measurement against 0.5.1 and
-  an owner decision, not a routine dep bump. The API zenpng uses (`ImageBuf`,
-  `Pipeline`, `QuantizeMethod`, `kmeans::KmeansOptions`, `dither::FloydSteinberg`,
-  `deps::palette::Srgb`) does still exist in 0.6.0, and 0.6.0's `rust-version`
-  is 1.90, so the port itself looks small — it is the output-stability question
-  that is open.
+- **`quantette` `"0.5"` → `"0.6.0"`, after measuring that it changes no pixels.**
+  `quantette` is a palette quantizer — choosing output colors is its entire job —
+  and 0.6.0 is a leading-digit bump, which for a `0.x` crate is the author
+  signalling a break, so this could not be taken on faith. zenpng's quantette
+  coverage is *structural*, not byte-golden (the tests assert only that the
+  palette is non-empty, `len() <= 256`, and that the index count matches), so the
+  suite cannot prove palette stability on its own.
+
+  It was therefore measured directly: a harness depending on `quantette =0.5.1`
+  and `=0.6.0` *simultaneously* (they are semver-incompatible, so Cargo will
+  link both) replayed `QuantetteQuantizer::quantize_rgba`'s exact call sequence
+  — `ImageBuf::new` → `Pipeline::palette_size().quantize_method()` →
+  `output_srgb8_indexed_image()` → `palette()` / `indices()` — against both, and
+  compared the emitted palette and index buffers byte for byte. **576
+  configurations** (4 content classes: photo / screenshot / line-art / uniform
+  noise × 3 sizes: 16², 64², 256² × Wu and k-means × palette sizes 2/16/64/256 ×
+  dithering off and on × `sampling_factor` 1.0 — zenpng's default — 0.5 and
+  0.25) produced **zero** differences: every palette and every index buffer was
+  byte-identical. The comparison also spans a SIMD and RNG backend change
+  (0.5.1 resolves `wide 0.8.3` + `rand 0.9`, 0.6.0 resolves `wide 1.7.0` +
+  `rand 0.10`) and is still bit-exact. The API zenpng uses compiles unchanged,
+  and 0.6.0's `rust-version` is 1.90, below the declared MSRV.
 
   No `Cargo.lock` change is committed because zenpng gitignores its lockfile
   (`.gitignore:1`); a fresh resolve already picks the newest compatible
