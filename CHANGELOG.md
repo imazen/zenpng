@@ -30,6 +30,14 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- **Clippy on stable 1.98 failed the lib.** `chunks_exact_to_as_chunks` is new in
+  Rust 1.98, and `scalar_bit_replication_lossless_be16` (`src/lib.rs`) used
+  `be.chunks_exact(2)` with a constant chunk size — now `be.as_chunks::<2>().0`.
+  The Clippy CI job pins `dtolnay/rust-toolchain@stable`, so this was going to
+  turn the job red on its own the moment the runners picked up 1.98; it is not
+  caused by any dependency change. `as_chunks` predates the declared MSRV, and
+  `cargo hack check --rust-version` (1.93) still passes.
+
 - **Pushes to `main` now cancel their superseded CI runs.** `ci.yml` keyed its
   concurrency group on `${{ github.head_ref || github.run_id }}`.
   `github.head_ref` is populated only for `pull_request` events, so on a push it

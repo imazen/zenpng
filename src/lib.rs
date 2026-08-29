@@ -181,7 +181,7 @@ pub mod __bench_scan {
     }
 
     pub fn scalar_bit_replication_lossless_be16(be: &[u8]) -> bool {
-        be.chunks_exact(2).all(|p| p[0] == p[1])
+        be.as_chunks::<2>().0.iter().all(|p| p[0] == p[1])
     }
 
     pub fn scalar_fused_predicates_rgba8(rgba: &[u8], req: FusedRequest) -> FusedResult {
