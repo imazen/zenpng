@@ -43,7 +43,7 @@ almost-enough = { version = "0.4.2", features = ["std"] }
 [dev-dependencies]
 png = "0.18"
 flate2 = "1"
-miniz_oxide = "0.8"
+miniz_oxide = "0.9.1"
 zopfli = "0.8"
 lodepng = "3.12.2"
 # zencodec conformance harness (unpublished companion crate). Git-pinned to the

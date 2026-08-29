@@ -28,6 +28,43 @@ All notable changes to zenpng are documented here.
   say testkit is not yet published, but `zencodec-testkit 0.1.0` is on crates.io,
   so both can become plain registry deps whenever someone verifies the swap.
 
+- **`miniz_oxide` dev-dependency `"0.8"` → `"0.9.1"`.** Third-party-only update.
+  `miniz_oxide` is a dev-dep used two ways, neither of which reaches shipped
+  output: as a *reference inflater* in the encoder unit tests
+  (`decompress_to_vec_zlib`, ~12 call sites in `src/encoder/compress.rs`, which
+  assert zenpng's IDAT round-trips through an independent decoder), and as a
+  comparison compressor in `examples/corpus_bench.rs` / `examples/deflate_compare.rs`
+  (benchmark numbers only). Both signatures are unchanged in 0.9
+  (`decompress_to_vec_zlib(&[u8]) -> Result<Vec<u8>, DecompressError>`,
+  `compress_to_vec_zlib(&[u8], u8) -> Vec<u8>`), and inflate output is
+  spec-determined, so no test expectation moves. All 736 tests pass and the two
+  byte-exact 16-bit regression tests
+  (`truecolor_png_ga16_alpha_low_byte_zero_roundtrips_byte_exact`, `…_rgba16_…`)
+  are unchanged.
+
+  **Held back deliberately: `quantette` stays at `"0.5"` (0.6.0 is published).**
+  It is a palette quantizer — its entire job is choosing output colors — and
+  0.6.0 is a leading-digit bump, which for a `0.x` crate is the author signalling
+  a break. zenpng's quantette coverage is *structural*, not byte-golden (the
+  tests assert only that the palette is non-empty, `len() <= 256`, and that the
+  index count matches), so the suite cannot prove the palette bytes are stable
+  across the bump. Upgrading needs a palette-diff measurement against 0.5.1 and
+  an owner decision, not a routine dep bump. The API zenpng uses (`ImageBuf`,
+  `Pipeline`, `QuantizeMethod`, `kmeans::KmeansOptions`, `dither::FloydSteinberg`,
+  `deps::palette::Srgb`) does still exist in 0.6.0, and 0.6.0's `rust-version`
+  is 1.90, so the port itself looks small — it is the output-stability question
+  that is open.
+
+  No `Cargo.lock` change is committed because zenpng gitignores its lockfile
+  (`.gitignore:1`); a fresh resolve already picks the newest compatible
+  third-party versions, which is what CI builds. For the record, a constrained
+  refresh (`cargo update -p …` over all 129 third-party packages, every
+  zen-family crate excluded) moves 24 packages, including `thiserror` 2.0.19 →
+  2.0.20, `imgref` 1.12.2 → 1.12.3, `flate2` 1.1.9 → 1.1.10, `libdeflater`
+  1.25.2 → 1.26.0, `crc32fast` 1.5.0 → 1.5.1, and `palette` 0.7.6 → 0.7.7
+  (which swaps `fast-srgb8` for `palette_math`). `zenflate 0.3.6 → 0.4.0` was
+  **not** taken — zen-family deps are out of scope for this pass.
+
 ### Fixed
 
 - **Clippy on stable 1.98 failed the lib.** `chunks_exact_to_as_chunks` is new in
