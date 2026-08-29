@@ -65,9 +65,15 @@ All notable changes to zenpng are documented here.
   `rand 0.10`) and is still bit-exact. The API zenpng uses compiles unchanged,
   and 0.6.0's `rust-version` is 1.90, below the declared MSRV.
 
-  No `Cargo.lock` change is committed because zenpng gitignores its lockfile
+  The **root** `Cargo.lock` is not committed because zenpng gitignores it
   (`.gitignore:1`); a fresh resolve already picks the newest compatible
-  third-party versions, which is what CI builds. For the record, a constrained
+  third-party versions, which is what CI builds. The two **nested** lockfiles
+  *are* tracked and were refreshed under the same third-party-only constraint:
+  `fuzz/Cargo.lock` (21 packages — `getrandom` 0.3.4 → 0.4.3, which drops the
+  `wasip2` / `wit-bindgen` subtree, plus `bytemuck` 1.25.2, `libc` 0.2.189,
+  `cc` 1.4.4, `thiserror` 2.0.20) and `apidoc/Cargo.lock` (14 packages —
+  `rustdoc-types` 0.57.4, `serde` 1.0.229, `syn` 3.0.4, `thiserror` 2.0.20).
+  Both still `cargo check --all-targets` clean. For the record, a constrained
   refresh (`cargo update -p …` over all 129 third-party packages, every
   zen-family crate excluded) moves 24 packages, including `thiserror` 2.0.19 →
   2.0.20, `imgref` 1.12.2 → 1.12.3, `flate2` 1.1.9 → 1.1.10, `libdeflater`
