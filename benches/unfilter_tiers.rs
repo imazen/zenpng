@@ -85,50 +85,51 @@ fn bench_filters(suite: &mut Suite) {
 
     // 1920-px rows at 3 and 4 bytes/px — the shapes a real decode unfilters.
     for &(bpp, label) in &[(3usize, "rgb8"), (4usize, "rgba8")] {
-        let width = 1920usize;
-        let len = width * bpp;
-        let prev: &'static [u8] = Box::leak(noise(len, 0x1234).into_boxed_slice());
-        let base: &'static [u8] = Box::leak(noise(len, 0x9876).into_boxed_slice());
+        for width in [1usize, 17, 64, 256, 1024, 1920, 4096] {
+            let len = width * bpp;
+            let prev: &'static [u8] = Box::leak(noise(len, 0x1234).into_boxed_slice());
+            let base: &'static [u8] = Box::leak(noise(len, 0x9876).into_boxed_slice());
 
-        for &(ft, fname) in &[(1u8, "sub"), (2, "up"), (3, "avg"), (4, "paeth")] {
-            #[cfg(target_arch = "aarch64")]
-            if !(ft == 3 && bpp == 3) {
-                set_simd(false);
-                let mut expected = base.to_vec();
-                zenpng::__bench_unfilter_row(ft, &mut expected, prev, bpp);
-                set_simd(true);
-                let mut actual = base.to_vec();
-                direct_neon(ft, &mut actual, prev, bpp);
-                assert_eq!(actual, expected, "direct NEON {fname}/{label}");
-            }
-            suite.compare(format!("unfilter_{fname}/{label}"), |g| {
-                g.throughput(Throughput::Bytes(len as u64));
+            for &(ft, fname) in &[(1u8, "sub"), (2, "up"), (3, "avg"), (4, "paeth")] {
                 #[cfg(target_arch = "aarch64")]
                 if !(ft == 3 && bpp == 3) {
-                    g.bench("direct_neon", move |b| {
-                        b.with_input(move || {
-                            set_simd(true);
-                            base.to_vec()
-                        })
-                        .run(move |mut row| {
-                            direct_neon(ft, &mut row, prev, bpp);
-                            row
-                        })
-                    });
+                    set_simd(false);
+                    let mut expected = base.to_vec();
+                    zenpng::__bench_unfilter_row(ft, &mut expected, prev, bpp);
+                    set_simd(true);
+                    let mut actual = base.to_vec();
+                    direct_neon(ft, &mut actual, prev, bpp);
+                    assert_eq!(actual, expected, "direct NEON {fname}/{label}");
                 }
-                for (arm, simd) in [("production", true), ("forced_scalar", false)] {
-                    g.bench(arm, move |b| {
-                        b.with_input(move || {
-                            set_simd(simd);
-                            base.to_vec()
-                        })
-                        .run(move |mut row| {
-                            zenpng::__bench_unfilter_row(ft, &mut row, prev, bpp);
-                            row
-                        })
-                    });
-                }
-            });
+                suite.compare(format!("unfilter_{fname}/{label}/{width}"), |g| {
+                    g.throughput(Throughput::Bytes(len as u64));
+                    #[cfg(target_arch = "aarch64")]
+                    if !(ft == 3 && bpp == 3) {
+                        g.bench("direct_neon", move |b| {
+                            b.with_input(move || {
+                                set_simd(true);
+                                base.to_vec()
+                            })
+                            .run(move |mut row| {
+                                direct_neon(ft, &mut row, prev, bpp);
+                                row
+                            })
+                        });
+                    }
+                    for (arm, simd) in [("production", true), ("forced_scalar", false)] {
+                        g.bench(arm, move |b| {
+                            b.with_input(move || {
+                                set_simd(simd);
+                                base.to_vec()
+                            })
+                            .run(move |mut row| {
+                                zenpng::__bench_unfilter_row(ft, &mut row, prev, bpp);
+                                row
+                            })
+                        });
+                    }
+                });
+            }
         }
     }
     set_simd(true);

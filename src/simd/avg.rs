@@ -99,41 +99,24 @@ fn unfilter_avg_bpp4_impl_v1(_token: X64V1Token, row: &mut [u8], prev: &[u8]) {
 #[cfg(target_arch = "aarch64")]
 #[arcane]
 pub(crate) fn unfilter_avg_bpp4_impl_neon(_token: NeonToken, row: &mut [u8], prev: &[u8]) {
-    let len = row.len();
-    if len < 4 {
+    if row.len() < 4 {
         return;
     }
-
-    // a_wide = left pixel widened to u16 (starts as zero)
-    let mut a_wide = vdup_n_u16(0);
-
-    let mut i = 0;
-    while i + 4 <= len {
-        // b = above pixel, widened to u16
-        let b_bytes = u32::from_le_bytes(<[u8; 4]>::try_from(&prev[i..i + 4]).unwrap());
-        let b_raw = vcreate_u8(b_bytes as u64);
-        let b_wide = vget_low_u16(vmovl_u8(b_raw));
-
-        // avg = (a + b) >> 1  (u16 arithmetic, no overflow: max 255+255=510)
-        let sum = vadd_u16(a_wide, b_wide);
-        let avg_wide = vshr_n_u16::<1>(sum);
-
-        // Narrow avg to u8 (values 0-254, vmovn won't saturate)
-        let avg_narrow = vmovn_u16(vcombine_u16(avg_wide, vdup_n_u16(0)));
-
-        // Load filtered bytes and add average (wrapping u8 add)
-        let filt_bytes = u32::from_le_bytes(<[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
-        let filt = vcreate_u8(filt_bytes as u64);
-        let result = vadd_u8(filt, avg_narrow);
-
-        // Store 4-byte result
-        let result_u32 = vget_lane_u32::<0>(vreinterpret_u32_u8(result));
-        row[i..i + 4].copy_from_slice(&result_u32.to_le_bytes());
-
-        // Feedback: a = result widened
-        a_wide = vget_low_u16(vmovl_u8(result));
-
-        i += 4;
+    let prev = &prev[..row.len() / 4 * 4];
+    let mut left = vdup_n_u8(0);
+    for (pixel, above) in row
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(prev.as_chunks::<4>().0)
+    {
+        let b = vcreate_u8(u32::from_le_bytes(*above) as u64);
+        // Unsigned halving add computes floor((left + above) / 2)
+        // without widening, including sums greater than 255.
+        let predictor = vhadd_u8(left, b);
+        let filtered = vcreate_u8(u32::from_le_bytes(*pixel) as u64);
+        left = vadd_u8(filtered, predictor);
+        *pixel = vget_lane_u32::<0>(vreinterpret_u32_u8(left)).to_le_bytes();
     }
 }
 
@@ -186,6 +169,36 @@ pub(crate) fn unfilter_avg_bpp4_impl_scalar(_token: ScalarToken, row: &mut [u8],
 #[cfg(test)]
 mod tests {
     use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn neon_halving_add_matches_all_byte_pairs() {
+        use super::unfilter_avg_bpp4_impl_neon;
+        use archmage::{NeonToken, SimdToken};
+        let token = NeonToken::summon().expect("aarch64 NEON");
+        for left in 0..=255u8 {
+            for above in 0..=255u8 {
+                let mut row = [left, left, left, left, 0, 1, 127, 255];
+                let prev = [0, 0, 0, 0, above, above, above, above];
+                let mut expected = row;
+                scalar_avg(&mut expected, &prev, 4);
+                unfilter_avg_bpp4_impl_neon(token, &mut row, &prev);
+                assert_eq!(row, expected, "left={left} above={above}");
+            }
+        }
+        for width in [1, 2, 3, 5, 17, 64, 641, 1920] {
+            for offset in 0..16 {
+                let mut row: Vec<u8> = (0..offset + width * 4 + 19)
+                    .map(|i| (i as u8).wrapping_mul(73))
+                    .collect();
+                let prev: Vec<u8> = (0..width * 4).map(|i| (i as u8).wrapping_mul(31)).collect();
+                let mut expected = row.clone();
+                scalar_avg(&mut expected[offset..offset + width * 4], &prev, 4);
+                unfilter_avg_bpp4_impl_neon(token, &mut row[offset..offset + width * 4], &prev);
+                assert_eq!(row, expected, "width={width} offset={offset}");
+            }
+        }
+    }
 
     fn scalar_avg(row: &mut [u8], prev: &[u8], bpp: usize) {
         let len = row.len();
