@@ -70,3 +70,12 @@ All logs retain process resource counters. Neither WASM timing nor an
 end-to-end corpus speedup is claimed. The other explicit NEON filter losses
 are confirmed by the baseline; production continues to select their faster
 scalar paths. Sub RGB8 continues to benefit from its existing NEON kernel.
+
+
+## Encoder predicate scans
+
+The predicate benchmark now supplies an actually opaque buffer to the opacity check (the previous first pixel had alpha zero), checks exact results before timing, and gives each operation/size its own paired scalar baseline. Labels now say runtime SIMD instead of implying 512-bit vectors on ARM.
+
+All 28 SIMD/scalar comparisons across 24 groups favored the existing runtime path: five individual predicates plus two fused variants at 64², 256², 1024², and 4096². Paired runtime reductions span 71.53–87.69% for these full-scan fixtures. Several individual-predicate cells have high CV; the retained paired intervals remain below zero. The constant-generic fused implementation was compared against scalar, not statistically against the runtime fused implementation.
+
+All untimed exact-result checks passed, and `cargo clippy --locked -p zenpng --bench scalar_vs_simd --features _dev -- -D warnings` passed. No production predicate change was needed. These are deliberately full-scan synthetic fixtures, not end-to-end encode timings or quality calibration. Run `just arm-scan-tiers-macos`; results and the full-log pointer are adjacent to this report.

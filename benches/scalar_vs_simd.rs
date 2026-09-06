@@ -1,23 +1,6 @@
-//! Scalar-vs-SIMD comparison bench.
-//!
-//! Decides whether the magetypes 512-bit SIMD predicates are pulling
-//! their weight vs the plain scalar reference, per CLAUDE.md's "manual
-//! intrinsics only when they save 10%+" guidance.
-//!
-//! For each predicate we run the same workload through:
-//!   * `scalar_*`      — hand-written scalar reference
-//!   * `simd_*`        — magetypes-generated, runtime-dispatched
-//!   * (fused only) `simd_fused` and `simd_fused_cg`
-//!
-//! If a SIMD path doesn't beat scalar by 10%+ on the success path, the
-//! magetypes V4x specialization isn't worth keeping. If a SIMD path
-//! does beat scalar by ≥10%, it's pulling its weight; if it beats
-//! scalar by <10% even at the largest size, the magetypes generic
-//! polyfill is leaving performance on the table and a hand-written
-//! AVX-512 specialization could be considered.
-//!
-//! Run:
-//!   cargo bench --bench scalar_vs_simd --features _dev
+//! Runtime-dispatched PNG scan predicates versus their scalar references.
+//! Four sizes exercise full scans; scalar loops may auto-vectorize on ARM.
+//! Run: cargo bench --bench scalar_vs_simd --features _dev
 
 use zenbench::prelude::*;
 
@@ -59,70 +42,103 @@ fn be16_all_replicated(w: usize, h: usize) -> Vec<u8> {
 fn build_size_group(suite: &mut Suite, w: usize, h: usize, label: &'static str) {
     let pixels = (w * h) as u64;
     let rgba_input = rgba8_all_pass(w, h);
+    let mut opaque_input = rgba_input.clone();
+    for pixel in opaque_input.as_chunks_mut::<4>().0 {
+        pixel[3] = 255;
+    }
+    assert!(scan::scalar_is_opaque_rgba8(&opaque_input));
+    assert!(scan::is_opaque_rgba8(&opaque_input));
+    assert_eq!(
+        scan::scalar_is_grayscale_rgba8(&rgba_input),
+        scan::is_grayscale_rgba8(&rgba_input)
+    );
+    assert_eq!(
+        scan::scalar_alpha_is_binary_rgba8(&rgba_input),
+        scan::alpha_is_binary_rgba8(&rgba_input)
+    );
     let rgb_input = rgb8_all_gray(w, h);
     let be16_input = be16_all_replicated(w, h);
+    assert_eq!(
+        scan::scalar_is_grayscale_rgb8(&rgb_input),
+        scan::is_grayscale_rgb8(&rgb_input)
+    );
+    assert_eq!(
+        scan::scalar_bit_replication_lossless_be16(&be16_input),
+        scan::bit_replication_lossless_be16(&be16_input)
+    );
+    let req = scan::FusedRequest::all();
+    let expected = scan::scalar_fused_predicates_rgba8(&rgba_input, req);
+    assert_eq!(expected, scan::fused_predicates_rgba8(&rgba_input, req));
+    assert_eq!(expected, scan::fused_predicates_rgba8_cg(&rgba_input, req));
 
-    suite.group(label, move |g| {
+    suite.compare(format!("{label}/is_opaque_rgba8"), |g| {
         g.throughput(Throughput::Elements(pixels));
         g.throughput_unit("px");
-
-        // ── is_opaque_rgba8 ─────────────────────────────────────────
-        g.subgroup("is_opaque_rgba8");
-        let s = rgba_input.clone();
+        let s = opaque_input.clone();
         g.bench("scalar", move |b| {
             b.iter(|| zenbench::black_box(scan::scalar_is_opaque_rgba8(&s)))
         });
-        let v = rgba_input.clone();
-        g.bench("simd_512", move |b| {
+        let v = opaque_input;
+        g.bench("runtime_simd", move |b| {
             b.iter(|| zenbench::black_box(scan::is_opaque_rgba8(&v)))
         });
+    });
 
-        // ── is_grayscale_rgba8 ─────────────────────────────────────
-        g.subgroup("is_grayscale_rgba8");
+    suite.compare(format!("{label}/is_grayscale_rgba8"), |g| {
+        g.throughput(Throughput::Elements(pixels));
+        g.throughput_unit("px");
         let s = rgba_input.clone();
         g.bench("scalar", move |b| {
             b.iter(|| zenbench::black_box(scan::scalar_is_grayscale_rgba8(&s)))
         });
         let v = rgba_input.clone();
-        g.bench("simd_512", move |b| {
+        g.bench("runtime_simd", move |b| {
             b.iter(|| zenbench::black_box(scan::is_grayscale_rgba8(&v)))
         });
+    });
 
-        // ── alpha_is_binary_rgba8 ──────────────────────────────────
-        g.subgroup("alpha_is_binary_rgba8");
+    suite.compare(format!("{label}/alpha_is_binary_rgba8"), |g| {
+        g.throughput(Throughput::Elements(pixels));
+        g.throughput_unit("px");
         let s = rgba_input.clone();
         g.bench("scalar", move |b| {
             b.iter(|| zenbench::black_box(scan::scalar_alpha_is_binary_rgba8(&s)))
         });
         let v = rgba_input.clone();
-        g.bench("simd_512", move |b| {
+        g.bench("runtime_simd", move |b| {
             b.iter(|| zenbench::black_box(scan::alpha_is_binary_rgba8(&v)))
         });
+    });
 
-        // ── is_grayscale_rgb8 ──────────────────────────────────────
-        g.subgroup("is_grayscale_rgb8");
+    suite.compare(format!("{label}/is_grayscale_rgb8"), |g| {
+        g.throughput(Throughput::Elements(pixels));
+        g.throughput_unit("px");
         let s = rgb_input.clone();
         g.bench("scalar", move |b| {
             b.iter(|| zenbench::black_box(scan::scalar_is_grayscale_rgb8(&s)))
         });
         let v = rgb_input;
-        g.bench("simd_512", move |b| {
+        g.bench("runtime_simd", move |b| {
             b.iter(|| zenbench::black_box(scan::is_grayscale_rgb8(&v)))
         });
+    });
 
-        // ── bit_replication_lossless_be16 ──────────────────────────
-        g.subgroup("bit_replication_be16");
+    suite.compare(format!("{label}/bit_replication_be16"), |g| {
+        g.throughput(Throughput::Elements(pixels));
+        g.throughput_unit("px");
         let s = be16_input.clone();
         g.bench("scalar", move |b| {
             b.iter(|| zenbench::black_box(scan::scalar_bit_replication_lossless_be16(&s)))
         });
         let v = be16_input;
-        g.bench("simd_512", move |b| {
+        g.bench("runtime_simd", move |b| {
             b.iter(|| zenbench::black_box(scan::bit_replication_lossless_be16(&v)))
         });
+    });
 
-        // ── fused (3-in-1) ─────────────────────────────────────────
-        g.subgroup("fused_three_checks");
+    suite.compare(format!("{label}/fused_three_checks"), |g| {
+        g.throughput(Throughput::Elements(pixels));
+        g.throughput_unit("px");
         let req = scan::FusedRequest {
             check_opaque: true,
             check_grayscale: true,

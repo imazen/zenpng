@@ -65,3 +65,8 @@ arm-unfilters-macos group="":
     set -euo pipefail
     mkdir -p "$HOME/tmp"
     CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 /usr/bin/time -l cargo bench --locked --features _dev --bench unfilter_tiers -- --group="{{group}}" --format=llm 2>&1 | tee "$HOME/tmp/zenpng-unfilters-$(date -u +%Y%m%dT%H%M%SZ).log"
+
+# Native ARM predicate scan comparisons, with complete output retained.
+arm-scan-tiers-macos:
+    mkdir -p "$HOME/tmp"
+    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 /usr/bin/time -l cargo bench --locked -p zenpng --bench scalar_vs_simd --features _dev -- --format=llm > "$HOME/tmp/png-arm-scan-tiers.log" 2>&1
