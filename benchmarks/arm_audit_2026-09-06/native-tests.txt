@@ -1,0 +1,5 @@
+Command: cargo test --locked --release --lib --features _dev
+Full log: /Users/lilith/tmp/arm-all-2026-09-06/png-final-tests.log
+SHA256: a7726f5c7ebba8c9519f86de82aa20a0b1685ef98cd749f31ea9f625fbb505dc
+test simd::avg::tests::neon_halving_add_matches_all_byte_pairs ... ok
+test result: ok. 703 passed; 0 failed; 14 ignored; 0 measured; 0 filtered out; finished in 1.19s

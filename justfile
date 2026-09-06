@@ -60,8 +60,8 @@ feature-check:
     cargo test --all-features
 
 # Native ARM unfilter audit; retain complete output for comparison.
-arm-unfilters-macos:
+arm-unfilters-macos group="":
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p "$HOME/tmp"
-    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 /usr/bin/time -l cargo bench --locked --features _dev --bench unfilter_tiers -- --format=llm 2>&1 | tee "$HOME/tmp/zenpng-unfilters-$(date -u +%Y%m%dT%H%M%SZ).log"
+    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 /usr/bin/time -l cargo bench --locked --features _dev --bench unfilter_tiers -- --group="{{group}}" --format=llm 2>&1 | tee "$HOME/tmp/zenpng-unfilters-$(date -u +%Y%m%dT%H%M%SZ).log"

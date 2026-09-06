@@ -1,0 +1,47 @@
+   Compiling zenpng v0.2.0 (/Users/lilith/work/zen/zenpng)
+    Finished `bench` profile [optimized] target(s) in 2.64s
+     Running benches/unfilter_tiers.rs (target/release/deps/unfilter_tiers-4c154db44fe14d6d)
+[unfilter_tiers] comparing neon vs forced scalar
+[zenbench] calibration: int=0.40ns/iter mem_bw=86.2GiB/s mem_lat=7.9ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.42ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /Users/lilith/tmp/zenbench/zenbench-1788672432-f9ed.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1788672432-f9ed
+  git: c9e9a3708456ce4ea7c84824224da02ae63daec8
+═══════════════════════════════════════════════════════════════
+
+  unfilter_avg/rgba8  40 rounds × 389 calls
+                    mean ±mad µs  95% CI vs base      iB/s
+  ├─ direct_neon     4.3 ±1.2µs  [4.1–4.5]µs        1.66G
+  ├─ production      6.5 ±1.3µs  [+45.8%–+54.3%]    1.11G
+  ╰─ forced_scalar   6.4 ±1.6µs  [+43.8%–+51.1%]    1.11G
+
+  direct_neon    ████████████████████████████████████████████████████ 1.66 GiB/s
+  forced_scalar  ███████████████████████████████████ 1.11 GiB/s
+  production     ███████████████████████████████████ 1.11 GiB/s
+
+  total: 5.9s
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+group=unfilter_avg/rgba8 benchmark=direct_neon  |  vs_base=baseline  |  min=2.23µs mean=4.30µs median=4.33µs mad=1.15µs  |  throughput=1.66 GiB/s  |  n=40 cv=18.7% rounds=40 calls=389 mean_ci=[4.05µs 4.55µs] cold=1.79µs
+group=unfilter_avg/rgba8 benchmark=production  |  vs_base_pct=+50.06 ci=[+45.82% +54.33%] significant=true effect=2.16 p=0.0000  |  min=3.35µs mean=6.46µs median=6.46µs mad=1.32µs  |  throughput=1.11 GiB/s  |  n=40 cv=18.0% rounds=40 calls=389 mean_ci=[6.09µs 6.80µs] cold=2.71µs
+group=unfilter_avg/rgba8 benchmark=forced_scalar  |  vs_base_pct=+47.47 ci=[+43.81% +51.12%] significant=true effect=2.01 p=0.0000  |  min=3.37µs mean=6.43µs median=6.45µs mad=1.57µs  |  throughput=1.11 GiB/s  |  n=40 cv=19.1% rounds=40 calls=389 mean_ci=[6.04µs 6.79µs] cold=2.58µs
+        8.98 real         2.71 user         0.80 sys
+           151060480  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               59585  page reclaims
+                 206  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   7  messages sent
+                   6  messages received
+                  10  signals received
+                  72  voluntary context switches
+                7680  involuntary context switches
+           745518537  instructions retired
+           241258841  cycles elapsed
+            35865176  peak memory footprint

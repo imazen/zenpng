@@ -19,3 +19,54 @@ Private kernels become crate-visible only; no public API is added.
 Reproduction: `just arm-unfilters-macos`. All heavy work is serialized,
 niced, and capped to four build/Rayon/OpenMP threads. macOS `/usr/bin/time -l`
 resource counters are retained in the log; no Linux cgroup cap is available.
+
+## Verified Average improvement
+
+`dfdea008` replaces widen/add/shift/narrow with exact unsigned NEON halving
+add (`vhadd_u8`). Fixed four-byte row chunks eliminate the repeated indexed
+slice checks. `4d6db0bd` enables that kernel in production for ARM RGBA rows
+with a left-neighbor recurrence; zero/one-pixel rows use the scalar formula.
+Other architectures and filter dispatch choices are unchanged.
+
+The [direct-kernel baseline](png-direct.log) measured Average RGBA at
+12.42 us against 5.95 us scalar for 1920 pixels. After the change the
+[same comparison](png-avg-halving.log) is 4.30 us against 6.43 us scalar.
+These are separate interleaved runs; exact before/after percentages are
+subject to shared-host variance. The [width sweep](png-avg-widths.log)
+identified one-pixel dispatch overhead, handled by the recurrence-free path.
+
+Final [production-dispatch measurements](png-avg-production.log):
+
+| Row pixels | Production | Forced scalar |
+|---:|---:|---:|
+| 1 | 16.3ns | 16.3ns |
+| 17 | 51.7ns | 68.9ns |
+| 64 | 156.1ns | 225.6ns |
+| 256 | 599.5ns | 888.5ns |
+| 1024 | 2.35µs | 3.54µs |
+| 1920 | 4.31µs | 6.45µs |
+| 4096 | 9.09µs | 13.71µs |
+
+The production path wins on measured rows of 17 through 4096 pixels;
+one-pixel production and scalar timings are equivalent. This is an unfilter
+kernel result, not a whole PNG decode speedup. Palette scans, deflate, and
+other filtering costs are outside this comparison. No quality parameters or
+source-calibration tables are derived from the experiment.
+
+[Assembly excerpt](average-halving.asm) contains `uhadd.8b` and `add.8b`,
+with no widening/narrowing, no helper calls, and no bounds checks in the loop.
+Generated using `otool -tvV target/release/deps/unfilter_tiers-4c154db44fe14d6d`
+on the benchmark at `dfdea008`. archmage/magetypes are locked at 0.9.28.
+
+[Native test summary](native-tests.txt): 703 pass, zero failures, 14 existing
+ignored tests unchanged. The new direct-NEON oracle covers all 65536
+left/above byte pairs (including wrapping addition), row widths 1 through
+1920, offsets 0 through 15, and untouched buffer guards. Existing dispatch
+permutation tests also pass after enabling the kernel. Scoped formatting and
+[final clippy](png-final-clippy.log) pass with warnings denied. Full test log
+is retained outside git because it exceeds 30 KB; its SHA256 is recorded.
+
+All logs retain process resource counters. Neither WASM timing nor an
+end-to-end corpus speedup is claimed. The other explicit NEON filter losses
+are confirmed by the baseline; production continues to select their faster
+scalar paths. Sub RGB8 continues to benefit from its existing NEON kernel.

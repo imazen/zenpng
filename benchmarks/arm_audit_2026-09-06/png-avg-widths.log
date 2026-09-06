@@ -1,0 +1,129 @@
+   Compiling zenpng v0.2.0 (/Users/lilith/work/zen/zenpng)
+    Finished `bench` profile [optimized] target(s) in 2.69s
+     Running benches/unfilter_tiers.rs (target/release/deps/unfilter_tiers-4c154db44fe14d6d)
+[unfilter_tiers] comparing neon vs forced scalar
+[zenbench] calibration: int=0.40ns/iter mem_bw=81.1GiB/s mem_lat=7.9ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.47ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /Users/lilith/tmp/zenbench/zenbench-1788672525-fabb.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1788672525-fabb
+  git: dfdea0085e003288e5edaeac3c17d6c308037855
+═══════════════════════════════════════════════════════════════
+
+  unfilter_avg/rgba8/1  200 rounds × 71K calls
+                    mean ±mad ns  95% CI vs base    iB/s
+  ├─ direct_neon     17.9 ±1.9ns  [17.6–18.2]ns     213M
+  ├─ production      15.8 ±1.9ns  [-12.8%–-9.5%]    241M
+  ╰─ forced_scalar   15.9 ±1.7ns  [-12.3%–-9.3%]    240M
+
+  production     █████████████████████████████████████████████████████ 241 MiB/s
+  forced_scalar  █████████████████████████████████████████████████████ 240 MiB/s
+  direct_neon    ███████████████████████████████████████████████ 213 MiB/s
+
+  unfilter_avg/rgba8/17  90 rounds × 40K calls
+                    mean ±mad ns  95% CI vs base      iB/s
+  ├─ direct_neon     45.6 ±6.0ns  [44.1–46.9]ns      1.39G
+  ├─ production      64.4 ±8.5ns  [+36.9%–+43.4%]    1008M
+  ╰─ forced_scalar   64.3 ±6.8ns  [+37.5%–+44.5%]    1009M
+
+  direct_neon    ████████████████████████████████████████████████████ 1.39 GiB/s
+  forced_scalar  █████████████████████████████████████ 1009 MiB/s
+  production     █████████████████████████████████████ 1008 MiB/s
+
+  unfilter_avg/rgba8/64  30 rounds × 11K calls
+                    mean ±mad ns  95% CI vs base      iB/s
+  ├─ direct_neon     154 ±32ns  [145–163]ns        1.55G
+  ├─ production      221 ±24ns  [+39.4%–+47.6%]    1.08G
+  ╰─ forced_scalar   221 ±23ns  [+39.6%–+47.5%]    1.08G
+
+  direct_neon    ████████████████████████████████████████████████████ 1.55 GiB/s
+  production     ████████████████████████████████████ 1.08 GiB/s
+  forced_scalar  ████████████████████████████████████ 1.08 GiB/s
+
+  unfilter_avg/rgba8/256  30 rounds × 2K calls
+                    mean ±mad ns  95% CI vs base      iB/s
+  ├─ direct_neon     575 ±153ns  [535–614]ns        1.66G
+  ├─ production      858 ±193ns  [+44.4%–+53.9%]    1.11G
+  ╰─ forced_scalar   849 ±215ns  [+41.6%–+49.1%]    1.12G
+
+  direct_neon    ████████████████████████████████████████████████████ 1.66 GiB/s
+  forced_scalar  ███████████████████████████████████ 1.12 GiB/s
+  production     ███████████████████████████████████ 1.11 GiB/s
+
+  unfilter_avg/rgba8/1024  50 rounds × 700 calls
+                    mean ±mad µs  95% CI vs base      iB/s
+  ├─ direct_neon     2.3 ±0.3µs  [2.2–2.4]µs        1.67G
+  ├─ production      3.4 ±0.1µs  [+45.3%–+50.3%]    1.13G
+  ╰─ forced_scalar   3.4 ±0.1µs  [+43.4%–+49.9%]    1.12G
+
+  direct_neon    ████████████████████████████████████████████████████ 1.67 GiB/s
+  production     ███████████████████████████████████ 1.13 GiB/s
+  forced_scalar  ███████████████████████████████████ 1.12 GiB/s
+
+  unfilter_avg/rgba8/1920  40 rounds × 373 calls
+                    mean ±mad µs  95% CI vs base      iB/s
+  ├─ direct_neon     4.4 ±0.5µs  [4.1–4.7]µs        1.63G [1]
+  ├─ production      6.3 ±1.8µs  [+41.6%–+49.4%]    1.13G [2]
+  ╰─ forced_scalar   6.4 ±1.1µs  [+43.2%–+50.3%]    1.11G [3]
+
+  direct_neon    ████████████████████████████████████████████████████ 1.63 GiB/s
+  production     ████████████████████████████████████ 1.13 GiB/s
+  forced_scalar  ███████████████████████████████████ 1.11 GiB/s
+  [1] CV=22%
+  [2] CV=22%
+  [3] CV=21%
+
+  unfilter_avg/rgba8/4096  40 rounds × 176 calls
+                     mean ±mad µs  95% CI vs base      iB/s
+  ├─ direct_neon      9.1 ±2.6µs  [8.5–9.6]µs        1.68G
+  ├─ production      13.5 ±2.4µs  [+44.4%–+54.0%]    1.13G
+  ╰─ forced_scalar   13.4 ±3.9µs  [+43.7%–+52.7%]    1.14G [1]
+
+  direct_neon    ████████████████████████████████████████████████████ 1.68 GiB/s
+  forced_scalar  ███████████████████████████████████ 1.14 GiB/s
+  production     ███████████████████████████████████ 1.13 GiB/s
+  [1] CV=21%
+
+  total: 64.1s  (7 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+group=unfilter_avg/rgba8/1 benchmark=direct_neon  |  vs_base=baseline  |  min=9.3ns mean=17.9ns median=17.9ns mad=1.9ns  |  throughput=213.44 MiB/s  |  n=200 cv=11.6% rounds=200 calls=71428 mean_ci=[17.6ns 18.2ns] cold=84.0ns
+group=unfilter_avg/rgba8/1 benchmark=production  |  vs_base_pct=-11.11 ci=[-12.80% -9.45%] significant=true effect=-1.07 p=0.0000  |  min=8.7ns mean=15.8ns median=16.1ns mad=1.9ns  |  throughput=240.73 MiB/s  |  n=200 cv=11.0% rounds=200 calls=71428 mean_ci=[15.6ns 16.1ns] cold=41.0ns
+group=unfilter_avg/rgba8/1 benchmark=forced_scalar  |  vs_base_pct=-10.78 ci=[-12.33% -9.26%] significant=true effect=-1.03 p=0.0000  |  min=8.4ns mean=15.9ns median=16.1ns mad=1.7ns  |  throughput=239.95 MiB/s  |  n=200 cv=11.0% rounds=200 calls=71428 mean_ci=[15.7ns 16.1ns]
+group=unfilter_avg/rgba8/17 benchmark=direct_neon  |  vs_base=baseline  |  min=24.1ns mean=45.6ns median=46.0ns mad=6.0ns  |  throughput=1.39 GiB/s  |  n=90 cv=15.0% rounds=90 calls=40000 mean_ci=[44.1ns 46.9ns] cold=41.0ns
+group=unfilter_avg/rgba8/17 benchmark=production  |  vs_base_pct=+40.19 ci=[+36.92% +43.42%] significant=true effect=2.25 p=0.0000  |  min=35.0ns mean=64.4ns median=64.7ns mad=8.5ns  |  throughput=1007.66 MiB/s  |  n=90 cv=14.9% rounds=90 calls=40000 mean_ci=[62.3ns 66.3ns] cold=42.0ns
+group=unfilter_avg/rgba8/17 benchmark=forced_scalar  |  vs_base_pct=+41.00 ci=[+37.55% +44.50%] significant=true effect=2.19 p=0.0000  |  min=34.8ns mean=64.3ns median=64.3ns mad=6.8ns  |  throughput=1008.63 MiB/s  |  n=90 cv=17.1% rounds=90 calls=40000 mean_ci=[62.1ns 66.5ns] cold=41.0ns
+group=unfilter_avg/rgba8/64 benchmark=direct_neon  |  vs_base=baseline  |  min=86.4ns mean=154.3ns median=163.6ns mad=32.5ns  |  throughput=1.55 GiB/s  |  n=30 cv=17.5% rounds=30 calls=11235 mean_ci=[144.7ns 163.4ns] cold=84.0ns
+group=unfilter_avg/rgba8/64 benchmark=production  |  vs_base_pct=+43.49 ci=[+39.43% +47.62%] significant=true effect=2.12 p=0.0000  |  min=131.1ns mean=221.4ns median=236.2ns mad=24.3ns  |  throughput=1.08 GiB/s  |  n=30 cv=16.1% rounds=30 calls=11235 mean_ci=[208.5ns 233.5ns] cold=83.0ns
+group=unfilter_avg/rgba8/64 benchmark=forced_scalar  |  vs_base_pct=+43.50 ci=[+39.59% +47.52%] significant=true effect=2.15 p=0.0000  |  min=125.7ns mean=221.4ns median=239.4ns mad=23.4ns  |  throughput=1.08 GiB/s  |  n=30 cv=15.8% rounds=30 calls=11235 mean_ci=[208.9ns 233.4ns] cold=125.0ns
+group=unfilter_avg/rgba8/256 benchmark=direct_neon  |  vs_base=baseline  |  min=322.7ns mean=575.4ns median=592.9ns mad=153.1ns  |  throughput=1.66 GiB/s  |  n=30 cv=19.4% rounds=30 calls=2747 mean_ci=[534.8ns 614.2ns] cold=250.0ns
+group=unfilter_avg/rgba8/256 benchmark=production  |  vs_base_pct=+49.14 ci=[+44.37% +53.94%] significant=true effect=2.02 p=0.0000  |  min=519.2ns mean=858.2ns median=890.6ns mad=193.0ns  |  throughput=1.11 GiB/s  |  n=30 cv=19.0% rounds=30 calls=2747 mean_ci=[798.0ns 913.7ns] cold=334.0ns
+group=unfilter_avg/rgba8/256 benchmark=forced_scalar  |  vs_base_pct=+45.33 ci=[+41.64% +49.07%] significant=true effect=1.89 p=0.0000  |  min=484.2ns mean=849.4ns median=885.2ns mad=215.3ns  |  throughput=1.12 GiB/s  |  n=30 cv=19.1% rounds=30 calls=2747 mean_ci=[791.8ns 905.7ns] cold=333.0ns
+group=unfilter_avg/rgba8/1024 benchmark=direct_neon  |  vs_base=baseline  |  min=1.26µs mean=2.29µs median=2.32µs mad=304.5ns  |  throughput=1.67 GiB/s  |  n=50 cv=16.4% rounds=50 calls=700 mean_ci=[2.18µs 2.39µs] cold=1.29µs
+group=unfilter_avg/rgba8/1024 benchmark=production  |  vs_base_pct=+47.83 ci=[+45.31% +50.27%] significant=true effect=2.43 p=0.0000  |  min=1.89µs mean=3.36µs median=3.45µs mad=121.4ns  |  throughput=1.13 GiB/s  |  n=50 cv=15.4% rounds=50 calls=700 mean_ci=[3.22µs 3.50µs] cold=1.38µs
+group=unfilter_avg/rgba8/1024 benchmark=forced_scalar  |  vs_base_pct=+46.66 ci=[+43.42% +49.89%] significant=true effect=2.37 p=0.0000  |  min=1.90µs mean=3.39µs median=3.46µs mad=134.9ns  |  throughput=1.12 GiB/s  |  n=50 cv=15.9% rounds=50 calls=700 mean_ci=[3.24µs 3.54µs] cold=1.42µs
+group=unfilter_avg/rgba8/1920 benchmark=direct_neon  |  vs_base=baseline  |  min=2.13µs mean=4.38µs median=4.79µs mad=548.5ns  |  throughput=1.63 GiB/s  |  n=40 cv=21.9% rounds=40 calls=373 mean_ci=[4.07µs 4.66µs] cold=1.83µs
+group=unfilter_avg/rgba8/1920 benchmark=production  |  vs_base_pct=+45.58 ci=[+41.62% +49.36%] significant=true effect=1.66 p=0.0000  |  min=3.16µs mean=6.32µs median=6.46µs mad=1.81µs  |  throughput=1.13 GiB/s  |  n=40 cv=22.2% rounds=40 calls=373 mean_ci=[5.87µs 6.73µs] cold=2.54µs
+group=unfilter_avg/rgba8/1920 benchmark=forced_scalar  |  vs_base_pct=+46.82 ci=[+43.21% +50.32%] significant=true effect=1.78 p=0.0000  |  min=3.21µs mean=6.44µs median=6.94µs mad=1.09µs  |  throughput=1.11 GiB/s  |  n=40 cv=20.5% rounds=40 calls=373 mean_ci=[6.01µs 6.82µs] cold=2.62µs
+group=unfilter_avg/rgba8/4096 benchmark=direct_neon  |  vs_base=baseline  |  min=5.01µs mean=9.06µs median=9.21µs mad=2.58µs  |  throughput=1.68 GiB/s  |  n=40 cv=20.0% rounds=40 calls=176 mean_ci=[8.49µs 9.61µs] cold=3.88µs
+group=unfilter_avg/rgba8/4096 benchmark=production  |  vs_base_pct=+49.18 ci=[+44.41% +53.96%] significant=true effect=2.07 p=0.0000  |  min=7.49µs mean=13.51µs median=13.79µs mad=2.43µs  |  throughput=1.13 GiB/s  |  n=40 cv=18.1% rounds=40 calls=176 mean_ci=[12.74µs 14.26µs] cold=7.83µs
+group=unfilter_avg/rgba8/4096 benchmark=forced_scalar  |  vs_base_pct=+48.26 ci=[+43.67% +52.68%] significant=true effect=1.86 p=0.0000  |  min=7.20µs mean=13.43µs median=13.74µs mad=3.86µs  |  throughput=1.14 GiB/s  |  n=40 cv=20.7% rounds=40 calls=176 mean_ci=[12.55µs 14.28µs] cold=7.83µs
+       67.41 real        19.11 user         6.44 sys
+           152043520  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              124476  page reclaims
+                 643  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   7  messages sent
+                   6  messages received
+                  10  signals received
+                 103  voluntary context switches
+               75259  involuntary context switches
+           744508038  instructions retired
+           245511996  cycles elapsed
+            35848792  peak memory footprint
