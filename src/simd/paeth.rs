@@ -181,7 +181,7 @@ fn unfilter_paeth_bpp3_impl_v2(token: X64V2Token, row: &mut [u8], prev: &[u8]) {
 
 #[cfg(target_arch = "aarch64")]
 #[arcane]
-fn unfilter_paeth_bpp4_impl_neon(token: NeonToken, row: &mut [u8], prev: &[u8]) {
+pub(crate) fn unfilter_paeth_bpp4_impl_neon(token: NeonToken, row: &mut [u8], prev: &[u8]) {
     let len = row.len();
     if len < 4 {
         return;
@@ -258,7 +258,7 @@ fn paeth_simd_neon(_token: NeonToken, a: int16x4_t, b: int16x4_t, c: int16x4_t) 
 
 #[cfg(target_arch = "aarch64")]
 #[arcane]
-fn unfilter_paeth_bpp3_impl_neon(token: NeonToken, row: &mut [u8], prev: &[u8]) {
+pub(crate) fn unfilter_paeth_bpp3_impl_neon(token: NeonToken, row: &mut [u8], prev: &[u8]) {
     let len = row.len();
     if len < 3 {
         return;
@@ -419,12 +419,12 @@ fn unfilter_paeth_bpp3_impl_wasm128(token: Wasm128Token, row: &mut [u8], prev: &
     }
 }
 
-fn unfilter_paeth_bpp3_impl_scalar(_token: ScalarToken, row: &mut [u8], prev: &[u8]) {
+pub(crate) fn unfilter_paeth_bpp3_impl_scalar(_token: ScalarToken, row: &mut [u8], prev: &[u8]) {
     unfilter_paeth_scalar_any(row, prev, 3);
 }
 
 // Scalar fallback for incant! dispatch
-fn unfilter_paeth_bpp4_impl_scalar(_token: ScalarToken, row: &mut [u8], prev: &[u8]) {
+pub(crate) fn unfilter_paeth_bpp4_impl_scalar(_token: ScalarToken, row: &mut [u8], prev: &[u8]) {
     unfilter_paeth_scalar_any(row, prev, 4);
 }
 

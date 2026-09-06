@@ -104,7 +104,7 @@ fn unfilter_sub_bpp3_impl_v1(_token: X64V1Token, row: &mut [u8]) {
 
 #[cfg(target_arch = "aarch64")]
 #[arcane]
-fn unfilter_sub_bpp4_impl_neon(_token: NeonToken, row: &mut [u8]) {
+pub(crate) fn unfilter_sub_bpp4_impl_neon(_token: NeonToken, row: &mut [u8]) {
     let len = row.len();
     if len < 8 {
         unfilter_sub_scalar_any(row, 4);
@@ -168,7 +168,7 @@ fn unfilter_sub_bpp4_impl_neon(_token: NeonToken, row: &mut [u8]) {
 
 #[cfg(target_arch = "aarch64")]
 #[arcane]
-fn unfilter_sub_bpp3_impl_neon(_token: NeonToken, row: &mut [u8]) {
+pub(crate) fn unfilter_sub_bpp3_impl_neon(_token: NeonToken, row: &mut [u8]) {
     let len = row.len();
     if len < 6 {
         unfilter_sub_scalar_any(row, 3);
@@ -263,12 +263,12 @@ fn unfilter_sub_bpp3_impl_wasm128(_token: Wasm128Token, row: &mut [u8]) {
     }
 }
 
-fn unfilter_sub_bpp3_impl_scalar(_token: ScalarToken, row: &mut [u8]) {
+pub(crate) fn unfilter_sub_bpp3_impl_scalar(_token: ScalarToken, row: &mut [u8]) {
     unfilter_sub_scalar_any(row, 3);
 }
 
 // Scalar fallback for incant! dispatch
-fn unfilter_sub_bpp4_impl_scalar(_token: ScalarToken, row: &mut [u8]) {
+pub(crate) fn unfilter_sub_bpp4_impl_scalar(_token: ScalarToken, row: &mut [u8]) {
     unfilter_sub_scalar_any(row, 4);
 }
 

@@ -85,7 +85,7 @@ fn unfilter_up_impl_v1(_token: X64V1Token, row: &mut [u8], prev: &[u8]) {
 
 #[cfg(target_arch = "aarch64")]
 #[arcane]
-fn unfilter_up_impl_neon(_token: NeonToken, row: &mut [u8], prev: &[u8]) {
+pub(crate) fn unfilter_up_impl_neon(_token: NeonToken, row: &mut [u8], prev: &[u8]) {
     let len = row.len().min(prev.len());
     let mut i = 0;
 
@@ -125,7 +125,7 @@ fn unfilter_up_impl_wasm128(_token: Wasm128Token, row: &mut [u8], prev: &[u8]) {
     }
 }
 
-fn unfilter_up_impl_scalar(_token: ScalarToken, row: &mut [u8], prev: &[u8]) {
+pub(crate) fn unfilter_up_impl_scalar(_token: ScalarToken, row: &mut [u8], prev: &[u8]) {
     let len = row.len().min(prev.len());
     for i in 0..len {
         row[i] = row[i].wrapping_add(prev[i]);

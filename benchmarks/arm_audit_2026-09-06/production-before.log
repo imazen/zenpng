@@ -1,0 +1,218 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling libc v0.2.189
+   Compiling bitflags v2.13.1
+   Compiling libm v0.2.16
+   Compiling safe_unaligned_simd v0.2.5
+   Compiling rustversion v1.0.23
+   Compiling autocfg v1.5.1
+   Compiling num-traits v0.2.19
+   Compiling syn v3.0.4
+   Compiling syn v2.0.119
+   Compiling bytemuck_derive v1.12.0
+   Compiling archmage-macros v0.9.28
+   Compiling rustix v1.1.4
+   Compiling cfg-if v1.0.4
+   Compiling simd-adler32 v0.3.10
+   Compiling imgref v1.12.3
+   Compiling bytemuck v1.25.2
+   Compiling errno v0.3.14
+   Compiling archmage v0.9.28
+   Compiling whereat v0.1.5
+   Compiling crc32fast v1.5.1
+   Compiling memchr v2.8.3
+   Compiling rgb v0.8.53
+   Compiling paste v1.0.15
+   Compiling serde_core v1.0.229
+   Compiling enough v0.4.4
+   Compiling zenpixels v0.2.16
+   Compiling magetypes v0.9.28
+   Compiling adler2 v2.0.1
+   Compiling thiserror v2.0.20
+   Compiling utf8parse v0.2.2
+   Compiling zmij v1.0.23
+   Compiling shlex v2.0.1
+   Compiling find-msvc-tools v0.1.11
+   Compiling cc v1.4.4
+   Compiling anstyle-parse v1.0.0
+   Compiling almost-enough v0.4.4
+   Compiling thiserror-impl v2.0.20
+   Compiling colorchoice v1.0.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling serde v1.0.229
+   Compiling anstyle-query v1.1.5
+   Compiling serde_json v1.0.151
+   Compiling anstyle v1.0.14
+   Compiling anstream v1.0.0
+   Compiling garb v0.2.8
+   Compiling zencodec v0.1.26 (https://github.com/imazen/zencodec?tag=v0.1.26#998edf5f)
+   Compiling libdeflate-sys v1.26.0
+   Compiling linear-srgb v0.6.12
+   Compiling miniz_oxide v0.9.1
+   Compiling serde_derive v1.0.229
+   Compiling objc2-core-foundation v0.3.2
+   Compiling lz4_flex v0.13.1
+   Compiling option-ext v0.2.0
+   Compiling clap_lex v1.1.0
+   Compiling strsim v0.11.1
+   Compiling itoa v1.0.18
+   Compiling once_cell v1.21.4
+   Compiling zlib-rs v0.6.7
+   Compiling heck v0.5.0
+   Compiling clap_derive v4.6.4
+   Compiling zenquant v0.1.3
+   Compiling zenpixels-convert v0.2.16
+   Compiling clap_builder v4.6.6
+   Compiling dirs-sys v0.5.0
+   Compiling objc2-io-kit v0.3.2
+   Compiling flate2 v1.1.10
+   Compiling zenflate v0.3.6
+   Compiling sysinfo v0.36.1
+   Compiling dirs v6.0.0
+   Compiling clap v4.6.6
+   Compiling fd-lock v4.0.4
+   Compiling terminal_size v0.4.4
+   Compiling fs4 v1.1.0
+   Compiling miniz_oxide v0.8.9
+   Compiling fdeflate v0.3.7
+   Compiling bumpalo v3.20.3
+   Compiling log v0.4.34
+   Compiling png v0.18.1
+   Compiling zopfli v0.8.3
+   Compiling libdeflater v1.26.0
+   Compiling zenbench v0.1.9
+   Compiling codec-corpus v1.1.0
+   Compiling lodepng v3.12.2
+   Compiling zencodec-testkit v0.1.0 (https://github.com/imazen/zencodec?tag=v0.1.26#998edf5f)
+   Compiling zenpng v0.2.0 (/Users/lilith/work/zen/zenpng)
+warning: unused import: `archmage::SimdToken`
+  --> benches/unfilter_tiers.rs:32:9
+   |
+32 |     use archmage::SimdToken;
+   |         ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `zenpng` (bench "unfilter_tiers") generated 1 warning (run `cargo fix --bench "unfilter_tiers" -p zenpng` to apply 1 suggestion)
+    Finished `bench` profile [optimized] target(s) in 11.12s
+     Running benches/unfilter_tiers.rs (target/release/deps/unfilter_tiers-4c154db44fe14d6d)
+[unfilter_tiers] comparing neon vs forced scalar
+[zenbench] calibration: int=0.38ns/iter mem_bw=86.5GiB/s mem_lat=7.8ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.42ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /Users/lilith/tmp/zenbench/zenbench-1788672071-f22e.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1788672071-f22e
+  git: 31ec83987a5597d80100c2c10b2779690b60851f
+═══════════════════════════════════════════════════════════════
+
+  unfilter_sub/rgb8  30 rounds × 228 calls
+              mean ±mad µs  95% CI vs base        iB/s
+  ├─ neon      2.4 ±0.4µs  [2.2–2.5]µs          2.27G
+  ╰─ scalar   10.9 ±2.0µs  [+335.3%–+383.8%]     506M
+
+  neon    ███████████████████████████████████████████████████████████ 2.27 GiB/s
+  scalar  █████████████ 506 MiB/s
+
+  unfilter_up/rgb8  200 rounds × 13K calls
+             mean ±mad ns  95% CI vs base    iB/s
+  ├─ neon     166 ±11ns  [163–169]ns      32.2G
+  ╰─ scalar    166 ±5ns  [-1.6%–+1.2%]    32.3G [1]
+
+  scalar  ███████████████████████████████████████████████████████████ 32.3 GiB/s
+  neon    ███████████████████████████████████████████████████████████ 32.2 GiB/s
+  [1] CI crosses zero
+
+  unfilter_avg/rgb8  200 rounds × 168 calls
+              mean ±mad µs  95% CI vs base    iB/s
+  ├─ neon     15.7 ±2.6µs  [15.4–16.0]µs     350M
+  ╰─ scalar   15.7 ±2.9µs  [-0.3%–+0.7%]     349M [1]
+
+  neon    ████████████████████████████████████████████████████████████ 350 MiB/s
+  scalar  ████████████████████████████████████████████████████████████ 349 MiB/s
+  [1] CI crosses zero
+
+  unfilter_paeth/rgb8  180 rounds × 137 calls
+              mean ±mad µs  95% CI vs base    iB/s
+  ├─ neon     17.9 ±2.3µs  [17.5–18.2]µs     307M
+  ╰─ scalar   18.0 ±2.2µs  [-0.4%–+0.4%]     306M [1]
+
+  neon    ████████████████████████████████████████████████████████████ 307 MiB/s
+  scalar  ████████████████████████████████████████████████████████████ 306 MiB/s
+  [1] CI crosses zero
+
+  unfilter_sub/rgba8  200 rounds × 1K calls
+             mean ±mad µs  95% CI vs base    iB/s
+  ├─ neon     2.3 ±0.5µs  [2.2–2.4]µs      3.14G [1]
+  ╰─ scalar   2.3 ±0.5µs  [-0.2%–+0.6%]    3.18G [2]
+
+  scalar  ███████████████████████████████████████████████████████████ 3.18 GiB/s
+  neon    ██████████████████████████████████████████████████████████ 3.14 GiB/s
+  [1] CV=23%
+  [2] CI crosses zero
+
+  unfilter_up/rgba8  200 rounds × 10K calls
+             mean ±mad ns  95% CI vs base    iB/s
+  ├─ neon     222 ±9ns  [220–225]ns      32.1G
+  ╰─ scalar   224 ±5ns  [-0.8%–+2.3%]    31.9G [1]
+
+  neon    ███████████████████████████████████████████████████████████ 32.1 GiB/s
+  scalar  ███████████████████████████████████████████████████████████ 31.9 GiB/s
+  [1] CI crosses zero
+
+  unfilter_avg/rgba8  200 rounds × 387 calls
+             mean ±mad µs  95% CI vs base    iB/s
+  ├─ neon     6.5 ±1.4µs  [6.4–6.7]µs      1.10G
+  ╰─ scalar   6.5 ±1.5µs  [-0.0%–+0.6%]    1.10G [1]
+
+  scalar  ███████████████████████████████████████████████████████████ 1.10 GiB/s
+  neon    ███████████████████████████████████████████████████████████ 1.10 GiB/s
+  [1] CI crosses zero
+
+  unfilter_paeth/rgba8  140 rounds × 126 calls
+              mean ±mad µs  95% CI vs base    iB/s
+  ├─ neon     19.6 ±2.1µs  [19.1–20.1]µs     373M
+  ╰─ scalar   19.7 ±1.9µs  [-0.1%–+0.5%]     371M [1]
+
+  neon    ████████████████████████████████████████████████████████████ 373 MiB/s
+  scalar  ████████████████████████████████████████████████████████████ 371 MiB/s
+  [1] CI crosses zero
+
+  total: 157.5s  (30 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+group=unfilter_sub/rgb8 benchmark=neon  |  vs_base=baseline  |  min=1.14µs mean=2.36µs median=2.34µs mad=363.8ns  |  throughput=2.27 GiB/s  |  n=30 cv=20.0% rounds=30 calls=228 mean_ci=[2.20µs 2.53µs] cold=875.0ns
+group=unfilter_sub/rgb8 benchmark=scalar  |  vs_base_pct=+360.02 ci=[+335.35% +383.77%] significant=true effect=5.99 p=0.0000  |  min=5.72µs mean=10.86µs median=10.79µs mad=2.01µs  |  throughput=505.98 MiB/s  |  n=30 cv=18.0% rounds=30 calls=228 mean_ci=[10.15µs 11.52µs] cold=4.83µs
+group=unfilter_up/rgb8 benchmark=neon  |  vs_base=baseline  |  min=78.3ns mean=166.4ns median=169.9ns mad=11.4ns  |  throughput=32.25 GiB/s  |  n=200 cv=12.4% rounds=200 calls=13888 mean_ci=[163.5ns 169.2ns] cold=41.0ns
+group=unfilter_up/rgb8 benchmark=scalar  |  vs_base_pct=-0.18 ci=[-1.62% +1.21%] significant=false effect=-0.01 p=0.8171  |  min=78.2ns mean=166.1ns median=170.4ns mad=5.3ns  |  throughput=32.30 GiB/s  |  n=200 cv=11.9% rounds=200 calls=13888 mean_ci=[163.2ns 168.8ns] cold=83.0ns
+group=unfilter_avg/rgb8 benchmark=neon  |  vs_base=baseline  |  min=8.12µs mean=15.71µs median=15.96µs mad=2.55µs  |  throughput=349.72 MiB/s  |  n=200 cv=13.7% rounds=200 calls=168 mean_ci=[15.41µs 16.00µs] cold=5.92µs
+group=unfilter_avg/rgb8 benchmark=scalar  |  vs_base_pct=+0.23 ci=[-0.26% +0.71%] significant=false effect=0.02 p=0.5319  |  min=8.10µs mean=15.73µs median=15.70µs mad=2.94µs  |  throughput=349.13 MiB/s  |  n=200 cv=13.5% rounds=200 calls=168 mean_ci=[15.44µs 16.02µs] cold=5.96µs
+group=unfilter_paeth/rgb8 benchmark=neon  |  vs_base=baseline  |  min=8.06µs mean=17.88µs median=18.15µs mad=2.31µs  |  throughput=307.30 MiB/s  |  n=180 cv=13.8% rounds=180 calls=137 mean_ci=[17.51µs 18.22µs] cold=6.62µs
+group=unfilter_paeth/rgb8 benchmark=scalar  |  vs_base_pct=-0.03 ci=[-0.41% +0.36%] significant=false effect=-0.00 p=0.8230  |  min=8.16µs mean=17.97µs median=18.47µs mad=2.24µs  |  throughput=305.76 MiB/s  |  n=180 cv=13.6% rounds=180 calls=137 mean_ci=[17.59µs 18.32µs] cold=7.50µs
+group=unfilter_sub/rgba8 benchmark=neon  |  vs_base=baseline  |  min=1.15µs mean=2.28µs median=2.23µs mad=543.2ns  |  throughput=3.14 GiB/s  |  n=200 cv=23.3% rounds=200 calls=1149 mean_ci=[2.21µs 2.36µs] cold=875.0ns
+group=unfilter_sub/rgba8 benchmark=scalar  |  vs_base_pct=+0.21 ci=[-0.22% +0.65%] significant=false effect=0.01 p=0.4274  |  min=1.14µs mean=2.25µs median=2.21µs mad=528.3ns  |  throughput=3.18 GiB/s  |  n=200 cv=17.6% rounds=200 calls=1149 mean_ci=[2.20µs 2.31µs] cold=875.0ns
+group=unfilter_up/rgba8 benchmark=neon  |  vs_base=baseline  |  min=119.3ns mean=222.5ns median=219.4ns mad=9.0ns  |  throughput=32.15 GiB/s  |  n=200 cv=9.6% rounds=200 calls=10638 mean_ci=[219.5ns 225.4ns] cold=83.0ns
+group=unfilter_up/rgba8 benchmark=scalar  |  vs_base_pct=+0.78 ci=[-0.76% +2.30%] significant=false effect=0.08 p=0.5018  |  min=119.9ns mean=224.2ns median=219.1ns mad=5.3ns  |  throughput=31.90 GiB/s  |  n=200 cv=10.3% rounds=200 calls=10638 mean_ci=[221.0ns 227.4ns] cold=125.0ns
+group=unfilter_avg/rgba8 benchmark=neon  |  vs_base=baseline  |  min=2.65µs mean=6.53µs median=6.72µs mad=1.40µs  |  throughput=1.10 GiB/s  |  n=200 cv=18.9% rounds=200 calls=387 mean_ci=[6.35µs 6.69µs] cold=2.54µs
+group=unfilter_avg/rgba8 benchmark=scalar  |  vs_base_pct=+0.32 ci=[-0.00% +0.64%] significant=false effect=0.02 p=0.0652  |  min=2.63µs mean=6.52µs median=6.63µs mad=1.53µs  |  throughput=1.10 GiB/s  |  n=200 cv=18.7% rounds=200 calls=387 mean_ci=[6.35µs 6.69µs] cold=2.58µs
+group=unfilter_paeth/rgba8 benchmark=neon  |  vs_base=baseline  |  min=7.37µs mean=19.62µs median=20.99µs mad=2.06µs  |  throughput=373.36 MiB/s  |  n=140 cv=14.6% rounds=140 calls=126 mean_ci=[19.12µs 20.07µs] cold=8.17µs
+group=unfilter_paeth/rgba8 benchmark=scalar  |  vs_base_pct=+0.22 ci=[-0.09% +0.53%] significant=false effect=0.01 p=0.1248  |  min=7.81µs mean=19.75µs median=21.05µs mad=1.93µs  |  throughput=370.92 MiB/s  |  n=140 cv=14.8% rounds=140 calls=126 mean_ci=[19.25µs 20.21µs] cold=8.12µs
+      168.97 real        30.19 user        23.17 sys
+           283213824  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              863894  page reclaims
+                2689  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                 180  messages sent
+                 262  messages received
+                 195  signals received
+                1018  voluntary context switches
+              231400  involuntary context switches
+          2161484666  instructions retired
+           977611449  cycles elapsed
+            37372504  peak memory footprint

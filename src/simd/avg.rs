@@ -98,7 +98,7 @@ fn unfilter_avg_bpp4_impl_v1(_token: X64V1Token, row: &mut [u8], prev: &[u8]) {
 
 #[cfg(target_arch = "aarch64")]
 #[arcane]
-fn unfilter_avg_bpp4_impl_neon(_token: NeonToken, row: &mut [u8], prev: &[u8]) {
+pub(crate) fn unfilter_avg_bpp4_impl_neon(_token: NeonToken, row: &mut [u8], prev: &[u8]) {
     let len = row.len();
     if len < 4 {
         return;
@@ -179,7 +179,7 @@ fn unfilter_avg_bpp4_impl_wasm128(_token: Wasm128Token, row: &mut [u8], prev: &[
 }
 
 // Scalar fallback for incant! dispatch
-fn unfilter_avg_bpp4_impl_scalar(_token: ScalarToken, row: &mut [u8], prev: &[u8]) {
+pub(crate) fn unfilter_avg_bpp4_impl_scalar(_token: ScalarToken, row: &mut [u8], prev: &[u8]) {
     unfilter_avg_scalar_any(row, prev, 4);
 }
 

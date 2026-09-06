@@ -1,17 +1,45 @@
-//! NEON-vs-scalar for the PNG inverse filters — the decode hot path.
-//!
-//! zenpng's existing benches all cover the scan predicates (is_opaque,
-//! is_grayscale, ...). The inverse filters are where PNG decode time actually
-//! goes, and `bench_unfilter_row` was already exposed under `_dev` for exactly
-//! this purpose — but nothing used it, so the four filter kernels had never
-//! been measured against their own scalar fallback on any architecture.
-//!
-//! Sub and Paeth carry a per-byte serial dependency (each output feeds the
-//! next), so they are the ones most likely to lose to the autovectoriser;
-//! Up and Avg are more parallel. This tells us which.
-//!
-//! Run: `cargo bench --bench unfilter_tiers --features _dev`
-//! Do NOT pass `-C target-cpu=native` (the tier then cannot be disabled).
+//! Compare production dispatch, forced scalar, and explicit NEON unfilters.
+//! Production dispatch deliberately selects scalar for several ARM filters;
+//! those cases must not be labeled as explicit NEON measurements.
+//! Source modules are included to reach crate-private kernels without adding
+//! public benchmark APIs. Input construction and token toggling are untimed.
+//! Run: `cargo bench --bench unfilter_tiers --features _dev`.
+
+#[cfg(target_arch = "aarch64")]
+// Source modules include unit-test imports unused by this harness-free bench.
+#[allow(dead_code, unused_imports)]
+#[path = "../src/simd/avg.rs"]
+mod avg;
+#[cfg(target_arch = "aarch64")]
+// Source modules include unit-test imports unused by this harness-free bench.
+#[allow(dead_code, unused_imports)]
+#[path = "../src/simd/paeth.rs"]
+mod paeth;
+#[cfg(target_arch = "aarch64")]
+// Source modules include unit-test imports unused by this harness-free bench.
+#[allow(dead_code, unused_imports)]
+#[path = "../src/simd/sub.rs"]
+mod sub;
+#[cfg(target_arch = "aarch64")]
+// Source modules include unit-test imports unused by this harness-free bench.
+#[allow(dead_code, unused_imports)]
+#[path = "../src/simd/up.rs"]
+mod up;
+
+#[cfg(target_arch = "aarch64")]
+fn direct_neon(ft: u8, row: &mut [u8], prev: &[u8], bpp: usize) {
+    use archmage::SimdToken;
+    let t = archmage::NeonToken::summon().expect("native NEON enabled");
+    match (ft, bpp) {
+        (1, 3) => sub::unfilter_sub_bpp3_impl_neon(t, row),
+        (1, 4) => sub::unfilter_sub_bpp4_impl_neon(t, row),
+        (2, _) => up::unfilter_up_impl_neon(t, row, prev),
+        (3, 4) => avg::unfilter_avg_bpp4_impl_neon(t, row, prev),
+        (4, 3) => paeth::unfilter_paeth_bpp3_impl_neon(t, row, prev),
+        (4, 4) => paeth::unfilter_paeth_bpp4_impl_neon(t, row, prev),
+        _ => panic!("no explicit NEON kernel for this filter/bpp"),
+    }
+}
 
 use zenbench::prelude::*;
 
@@ -29,7 +57,6 @@ const TIER_NAME: &str = if cfg!(target_arch = "aarch64") {
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 fn set_simd(enabled: bool) -> bool {
-    use archmage::SimdToken;
     TierToken::dangerously_disable_token_process_wide(!enabled).is_ok()
 }
 
@@ -64,9 +91,32 @@ fn bench_filters(suite: &mut Suite) {
         let base: &'static [u8] = Box::leak(noise(len, 0x9876).into_boxed_slice());
 
         for &(ft, fname) in &[(1u8, "sub"), (2, "up"), (3, "avg"), (4, "paeth")] {
+            #[cfg(target_arch = "aarch64")]
+            if !(ft == 3 && bpp == 3) {
+                set_simd(false);
+                let mut expected = base.to_vec();
+                zenpng::__bench_unfilter_row(ft, &mut expected, prev, bpp);
+                set_simd(true);
+                let mut actual = base.to_vec();
+                direct_neon(ft, &mut actual, prev, bpp);
+                assert_eq!(actual, expected, "direct NEON {fname}/{label}");
+            }
             suite.compare(format!("unfilter_{fname}/{label}"), |g| {
                 g.throughput(Throughput::Bytes(len as u64));
-                for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
+                #[cfg(target_arch = "aarch64")]
+                if !(ft == 3 && bpp == 3) {
+                    g.bench("direct_neon", move |b| {
+                        b.with_input(move || {
+                            set_simd(true);
+                            base.to_vec()
+                        })
+                        .run(move |mut row| {
+                            direct_neon(ft, &mut row, prev, bpp);
+                            row
+                        })
+                    });
+                }
+                for (arm, simd) in [("production", true), ("forced_scalar", false)] {
                     g.bench(arm, move |b| {
                         b.with_input(move || {
                             set_simd(simd);
