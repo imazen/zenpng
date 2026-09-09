@@ -13,7 +13,9 @@ use whereat::{At, at};
 use zencodec::decode::{AnimationFrame, DecodeCapabilities, DecodeOutput, OutputInfo};
 use zencodec::encode::{EncodeCapabilities, EncodeOutput};
 use zencodec::{CodecError, ImageFormat, ImageInfo, Metadata, ResourceLimits};
-use zenpixels::{Pixel, PixelDescriptor, PixelSlice, PixelSliceMut};
+use zenpixels::{
+    AlphaMode, ColorPrimaries, Pixel, PixelDescriptor, PixelSlice, PixelSliceMut, TransferFunction,
+};
 
 use crate::decode::PngDecodeConfig;
 use crate::encode::EncodeConfig;
@@ -42,6 +44,50 @@ fn default_deadline() -> impl enough::Stop {
 
 // ── Supported descriptors ────────────────────────────────────────────
 
+// HDR / wide-gamut forms. PNG 3rd ed. signals colour with the `cICP` chunk, so
+// these need no new pixel machinery -- 16-bit RGB samples plus four bytes of
+// code points. Leaving them off the lists did not make them fail cleanly: the
+// encode negotiator (`adapt_for_encode_cow`) is documented as *permissive*, so
+// a PQ buffer whose primaries happened to match an entry was passed through
+// UNCONVERTED and written with no cICP -- PQ pixels in a file that claims sRGB,
+// silently, unless the caller thought to pass `with_cicp` by hand. A buffer
+// whose primaries did *not* match (Display-P3) instead attempted a real gamut
+// conversion and failed for want of a peak luminance. Advertising these makes
+// the match exact in both cases: nothing is converted, nothing is mislabelled.
+
+/// Display-P3 PQ, 16-bit — what Apple and Samsung capture pipelines emit.
+const RGB16_P3_PQ: PixelDescriptor = PixelDescriptor::new_full(
+    zenpixels::ChannelType::U16,
+    zenpixels::ChannelLayout::Rgb,
+    None,
+    TransferFunction::Pq,
+    ColorPrimaries::DisplayP3,
+);
+/// Display-P3 HLG, 16-bit.
+const RGB16_P3_HLG: PixelDescriptor = PixelDescriptor::new_full(
+    zenpixels::ChannelType::U16,
+    zenpixels::ChannelLayout::Rgb,
+    None,
+    TransferFunction::Hlg,
+    ColorPrimaries::DisplayP3,
+);
+/// Display-P3 sRGB-transfer, 8-bit — the macOS/iOS screenshot case `gamut.rs`
+/// already documents.
+const RGB8_P3: PixelDescriptor = PixelDescriptor::new_full(
+    zenpixels::ChannelType::U8,
+    zenpixels::ChannelLayout::Rgb,
+    None,
+    TransferFunction::Srgb,
+    ColorPrimaries::DisplayP3,
+);
+const RGBA8_P3: PixelDescriptor = PixelDescriptor::new_full(
+    zenpixels::ChannelType::U8,
+    zenpixels::ChannelLayout::Rgba,
+    Some(AlphaMode::Straight),
+    TransferFunction::Srgb,
+    ColorPrimaries::DisplayP3,
+);
+
 static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGB8_SRGB,
     PixelDescriptor::RGBA8_SRGB,
@@ -55,6 +101,12 @@ static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGBF32_LINEAR,
     PixelDescriptor::RGBAF32_LINEAR,
     PixelDescriptor::GRAYF32_LINEAR,
+    PixelDescriptor::RGB16_BT2100_PQ,
+    PixelDescriptor::RGB16_BT2100_HLG,
+    RGB16_P3_PQ,
+    RGB16_P3_HLG,
+    RGB8_P3,
+    RGBA8_P3,
 ];
 
 static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
@@ -68,6 +120,12 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGBF32_LINEAR,
     PixelDescriptor::RGBAF32_LINEAR,
     PixelDescriptor::GRAYF32_LINEAR,
+    PixelDescriptor::RGB16_BT2100_PQ,
+    PixelDescriptor::RGB16_BT2100_HLG,
+    RGB16_P3_PQ,
+    RGB16_P3_HLG,
+    RGB8_P3,
+    RGBA8_P3,
 ];
 
 // ── PngEncoderConfig ─────────────────────────────────────────────────
@@ -876,9 +934,44 @@ impl zencodec::encode::Encoder for PngEncoder {
 }
 
 impl PngEncoder {
-    fn encode_inner(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<PngError>> {
+    /// Carry a non-sRGB pixel descriptor into the `cICP` chunk.
+    ///
+    /// A descriptor says what the samples ARE; without a colour chunk the file
+    /// does not, and a PNG with no colour chunk reads back as sRGB by
+    /// convention. So handing this encoder PQ or Display-P3 samples and getting
+    /// a silently sRGB-labelled file was possible whenever the caller did not
+    /// also pass `with_cicp` by hand — the pixels were right and the file lied
+    /// about them. Now the descriptor supplies the code points itself.
+    ///
+    /// An explicit `with_cicp` still wins: the caller may know something the
+    /// descriptor cannot express. sRGB/BT.709 stays untagged, which is the
+    /// conventional and smallest encoding for the overwhelmingly common case.
+    fn cicp_from_descriptor(desc: zenpixels::PixelDescriptor) -> Option<zenpixels::Cicp> {
+        // Only colour that PNG will actually store as-is. The f32 LINEAR
+        // descriptors are an internal working format: this encoder converts
+        // them to sRGB on the way out (`linear_to_srgb_u8_*` below), so a cICP
+        // taken from the input descriptor would describe pixels the file does
+        // not contain — measured, that alone broke three f32 round-trip tests.
+        if desc.channel_type() == zenpixels::ChannelType::F32
+            || desc.transfer == TransferFunction::Linear
+        {
+            return None;
+        }
+        // sRGB/BT.709 stays untagged: conventional, smallest, and what every
+        // reader already assumes for a PNG with no colour chunk.
+        if desc.transfer == TransferFunction::Srgb && desc.primaries == ColorPrimaries::Bt709 {
+            return None;
+        }
+        zenpixels::Cicp::from_descriptor(&desc)
+    }
+
+    fn encode_inner(mut self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<PngError>> {
         use linear_srgb::default::{linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice};
         use zenpixels::PixelFormat;
+
+        if self.config.config.cicp.is_none() {
+            self.config.config.cicp = Self::cicp_from_descriptor(pixels.descriptor());
+        }
 
         let w = pixels.width();
         let h = pixels.rows();
@@ -4189,6 +4282,96 @@ mod tests {
             }
         });
         assert!(report.permutations_run >= 1);
+    }
+
+    /// A PQ / Display-P3 buffer must survive encode unconverted AND come back
+    /// self-describing. Both halves matter: before HDR descriptors were
+    /// advertised, a PQ buffer whose primaries happened to match an sRGB entry
+    /// was passed through by the *permissive* encode negotiator and written
+    /// with no colour chunk at all — pixels intact, file claiming sRGB — while
+    /// a Display-P3 one failed outright trying to gamut-convert without a peak
+    /// luminance.
+    #[test]
+    fn hdr_and_wide_gamut_descriptors_round_trip_with_cicp() {
+        use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        for (desc, name) in [
+            (PixelDescriptor::RGB16_BT2100_PQ, "BT.2100 PQ"),
+            (RGB16_P3_PQ, "Display-P3 PQ"),
+            (RGB8_P3, "Display-P3 sRGB 8-bit"),
+        ] {
+            assert!(
+                ENCODE_DESCRIPTORS.contains(&desc),
+                "{name} must be advertised for encode, or the negotiator will \
+                 convert it or silently mislabel it"
+            );
+
+            let (w, h) = (4u32, 2u32);
+            let bpp = desc.bytes_per_pixel();
+            // A non-flat ramp on purpose: a constant buffer survives a transfer
+            // conversion and would hide the very bug under test.
+            let bytes: Vec<u8> = (0..(w as usize * h as usize * bpp))
+                .map(|i| (i * 7 % 251) as u8)
+                .collect();
+            let src = PixelSlice::new(&bytes, w, h, w as usize * bpp, desc).unwrap();
+
+            let png = PngEncoderConfig::new()
+                .job()
+                .encoder()
+                .unwrap()
+                .encode(src)
+                .unwrap();
+
+            assert!(
+                png.data().windows(4).any(|c| c == b"cICP"),
+                "{name}: no cICP chunk — the file cannot describe its own pixels"
+            );
+
+            let out = PngDecoderConfig::new()
+                .job()
+                .decoder(alloc::borrow::Cow::Borrowed(png.data()), &[])
+                .unwrap()
+                .decode()
+                .unwrap();
+            let got = out.into_buffer();
+            assert_eq!(
+                got.descriptor().transfer(),
+                desc.transfer(),
+                "{name}: transfer changed"
+            );
+            assert_eq!(
+                got.descriptor().primaries,
+                desc.primaries,
+                "{name}: primaries changed"
+            );
+            assert_eq!(
+                got.as_slice().as_strided_bytes(),
+                &bytes[..],
+                "{name}: pixels changed — the encoder converted them"
+            );
+        }
+    }
+
+    /// The converse: plain sRGB must stay untagged. A cICP chunk on every
+    /// ordinary PNG would be a size regression and a behaviour change for
+    /// every existing caller.
+    #[test]
+    fn srgb_stays_untagged() {
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+
+        let bytes = vec![9u8; 4 * 2 * 3];
+        let src = PixelSlice::new(&bytes, 4, 2, 4 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+        let png = PngEncoderConfig::new()
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(src)
+            .unwrap();
+        assert!(
+            !png.data().windows(4).any(|c| c == b"cICP"),
+            "sRGB/BT.709 must not gain a cICP chunk"
+        );
     }
 
     #[test]

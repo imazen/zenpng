@@ -4,6 +4,33 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **HDR and wide-gamut pixels are no longer silently mislabelled or rejected.**
+  `ENCODE_DESCRIPTORS` / `DECODE_DESCRIPTORS` advertised only sRGB and linear
+  forms, and the two failure modes that produced were opposite and both bad. A
+  PQ buffer whose primaries happened to match an advertised entry was passed
+  through by `adapt_for_encode_cow` — documented as the *permissive* negotiator
+  — and written with **no colour chunk at all**: PQ samples in a file that reads
+  back as sRGB, silently, unless the caller thought to pass `with_cicp` by hand.
+  A buffer whose primaries did *not* match (Display-P3) instead attempted a real
+  gamut conversion and failed outright for want of a peak luminance
+  (`HdrSourceRequiresPeak`), so Display-P3 PQ could not be written at all. Both
+  are fixed by advertising the forms PNG can already carry — BT.2100 PQ/HLG,
+  Display-P3 PQ/HLG at 16-bit, Display-P3 sRGB at 8-bit — so negotiation finds
+  an exact match and converts nothing. PNG 3rd ed. signals all of this with
+  `cICP`, so no new pixel machinery was needed.
+- **A non-sRGB descriptor now supplies its own `cICP` chunk.** A descriptor says
+  what the samples are; without a colour chunk the file does not, and a PNG with
+  no colour chunk is sRGB by convention. An explicit `with_cicp` still wins, and
+  sRGB/BT.709 stays untagged (conventional, smallest, and unchanged for every
+  existing caller). f32-linear inputs are excluded because this encoder converts
+  them to sRGB on the way out, so a cICP taken from their descriptor would
+  describe pixels the file does not contain — measured, that alone broke three
+  f32 round-trip tests before the rule was narrowed.
+  Tests: `hdr_and_wide_gamut_descriptors_round_trip_with_cicp` (pixels
+  byte-identical, colour preserved) and `srgb_stays_untagged` (the converse).
+
 ### Changed
 
 - **`zencodec` / `zenpixels` / `zenpixels-convert` requirements now span the
