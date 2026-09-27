@@ -6,7 +6,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use enough::Stop;
-use zenpixels::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer};
+use zenpixels::{ChannelLayout, ChannelType, PixelBuffer};
 
 use crate::chunk::PNG_SIGNATURE;
 use crate::chunk::ancillary::{FrameControl, PngAncillary};
@@ -495,6 +495,90 @@ impl<'a> ApngDecoder<'a> {
 
 // ── Compositing ─────────────────────────────────────────────────────
 
+/// The single compositor used by both whole-animation and incremental decode.
+pub(crate) struct ApngCompositor {
+    canvas: PixelBuffer,
+    saved_region: Option<SavedRegion>,
+    previous: Option<FrameControl>,
+    is_16bit: bool,
+    alloc_pref: zencodec::AllocPreference,
+}
+
+impl ApngCompositor {
+    pub(crate) fn new(ihdr: &Ihdr, config: &PngDecodeConfig) -> crate::error::Result<Self> {
+        let is_16bit = ihdr.bit_depth == 16;
+        config.validate(ihdr.width, ihdr.height, if is_16bit { 8 } else { 4 })?;
+        let descriptor = if is_16bit {
+            zenpixels::PixelDescriptor::RGBA16_SRGB
+        } else {
+            zenpixels::PixelDescriptor::RGBA8_SRGB
+        };
+        let canvas = PixelBuffer::try_new(ihdr.width, ihdr.height, descriptor)
+            .map_err(|e| at!(PngError::OutOfMemory(e.to_string())))?;
+        Ok(Self {
+            canvas,
+            saved_region: None,
+            previous: None,
+            is_16bit,
+            alloc_pref: config.alloc_pref,
+        })
+    }
+
+    pub(crate) fn render(
+        &mut self,
+        frame: &RawFrame,
+        cancel: &dyn Stop,
+    ) -> crate::error::Result<()> {
+        cancel.check().map_err(|e| at!(PngError::from(e)))?;
+        let width = self.canvas.width() as usize;
+        let mut canvas = self.canvas.as_slice_mut();
+        let bytes = canvas.as_strided_bytes_mut();
+        if let Some(previous) = self.previous {
+            apply_dispose_op(&previous, bytes, &self.saved_region, width, self.is_16bit);
+        }
+        self.saved_region = if frame.fctl.dispose_op == 2 {
+            Some(save_region(
+                &frame.fctl,
+                bytes,
+                width,
+                self.is_16bit,
+                self.alloc_pref,
+            )?)
+        } else {
+            None
+        };
+        composite_frame(
+            &frame.fctl,
+            &frame.pixels,
+            bytes,
+            width,
+            self.is_16bit,
+            cancel,
+        )?;
+        self.previous = Some(frame.fctl);
+        cancel.check().map_err(|e| at!(PngError::from(e)))?;
+        Ok(())
+    }
+
+    pub(crate) fn canvas(&self) -> &PixelBuffer {
+        &self.canvas
+    }
+
+    pub(crate) fn copy_canvas(&self) -> crate::error::Result<PixelBuffer> {
+        let mut output = PixelBuffer::try_new(
+            self.canvas.width(),
+            self.canvas.height(),
+            self.canvas.descriptor(),
+        )
+        .map_err(|e| at!(PngError::OutOfMemory(e.to_string())))?;
+        output
+            .as_slice_mut()
+            .as_strided_bytes_mut()
+            .copy_from_slice(self.canvas.as_slice().as_strided_bytes());
+        Ok(output)
+    }
+}
+
 /// Result of composited APNG decoding.
 pub(crate) struct ComposedApng {
     pub frames: Vec<crate::decode::ApngFrame>,
@@ -513,62 +597,22 @@ pub(crate) fn decode_apng_composed(
     cancel: &dyn Stop,
 ) -> crate::error::Result<ComposedApng> {
     let mut decoder = ApngDecoder::new(data, config)?;
-    let canvas_w = decoder.ihdr().width as usize;
-    let canvas_h = decoder.ihdr().height as usize;
-    let is_16bit = decoder.ihdr().bit_depth == 16;
-    let bpp = if is_16bit { 8 } else { 4 }; // RGBA16 vs RGBA8
-
-    // Validate limits before allocating canvas-sized buffers.
-    config.validate(decoder.ihdr().width, decoder.ihdr().height, bpp as u32)?;
-
-    let canvas_bytes = canvas_w
-        .checked_mul(canvas_h)
-        .and_then(|v| v.checked_mul(bpp))
-        .ok_or_else(|| at!(PngError::OutOfMemory("canvas size overflow".into())))?;
-
+    let mut compositor = ApngCompositor::new(decoder.ihdr(), config)?;
     let num_frames = decoder.num_frames;
     let num_plays = decoder.num_plays;
 
-    // Canvas starts as transparent black. Sized from the (untrusted) IHDR →
-    // default fallible, so an allocation failure within the configured caps is
-    // an `Err(OutOfMemory)` for this decode, not a process abort (issue #13).
-    let mut canvas = crate::alloc_util::alloc_zeroed(config.alloc_pref, true, canvas_bytes)?;
     let mut frames = Vec::with_capacity((num_frames as usize).min(65536));
-
-    // For RestorePrevious: saved frame region (not full canvas)
-    let mut saved_region: Option<SavedRegion> = None;
-
-    // Previous frame's fctl (for applying dispose_op after yielding)
-    let mut prev_fctl: Option<FrameControl> = None;
 
     // Track cumulative frame memory. `config.max_memory_bytes` only governs the
     // canvas allocation; without an additional cap, an attacker-crafted APNG
     // with up to 65535 frames at canvas-sized RGBA can request many TiB of
     // heap via `frames.push` (each frame is a full canvas-sized pixel copy).
     // Apply the same `max_memory_bytes` budget to the cumulative `frames` Vec.
-    let per_frame_bytes = canvas_bytes as u64;
+    let per_frame_bytes = compositor.canvas().as_slice().as_strided_bytes().len() as u64;
     let mut total_frame_bytes: u64 = 0;
 
     while let Some(frame) = decoder.next_frame(cancel)? {
-        // Apply dispose_op from the PREVIOUS frame before compositing this one
-        if let Some(pfctl) = prev_fctl {
-            apply_dispose_op(&pfctl, &mut canvas, &saved_region, canvas_w, is_16bit);
-        }
-
-        // If this frame's dispose_op is RestorePrevious, save only the frame region
-        if frame.fctl.dispose_op == 2 {
-            saved_region = Some(save_region(
-                &frame.fctl,
-                &canvas,
-                canvas_w,
-                is_16bit,
-                config.alloc_pref,
-            )?);
-        }
-
-        // Promote subframe pixels to RGBA and composite onto canvas
-        let subframe_rgba = promote_to_rgba(&frame.pixels, is_16bit);
-        composite_frame(&frame.fctl, &subframe_rgba, &mut canvas, canvas_w, is_16bit);
+        compositor.render(&frame, cancel)?;
 
         // Enforce cumulative-frame memory budget BEFORE allocating the next
         // frame's canvas-sized pixel copy.
@@ -585,7 +629,7 @@ pub(crate) fn decode_apng_composed(
         }
 
         // Build PixelBuffer directly from canvas (single copy, no intermediate Vec)
-        let pixels = canvas_to_pixel_data(&canvas, canvas_w, canvas_h, is_16bit);
+        let pixels = compositor.copy_canvas()?;
         frames.push(crate::decode::ApngFrame {
             pixels,
             frame_info: crate::decode::ApngFrameInfo {
@@ -593,8 +637,6 @@ pub(crate) fn decode_apng_composed(
                 delay_den: frame.fctl.delay_den,
             },
         });
-
-        prev_fctl = Some(frame.fctl);
     }
 
     let ihdr = *decoder.ihdr();
@@ -608,23 +650,6 @@ pub(crate) fn decode_apng_composed(
         num_plays,
         warnings,
     })
-}
-
-/// Build PixelBuffer directly from canvas bytes (single allocation).
-fn canvas_to_pixel_data(canvas: &[u8], w: usize, h: usize, is_16bit: bool) -> PixelBuffer {
-    if is_16bit {
-        let rgba: Vec<rgb::Rgba<u16>> = match bytemuck::try_cast_slice(canvas) {
-            Ok(v) => v.to_vec(),
-            Err(bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned) => {
-                super::postprocess::bytes_to_rgba16_vec(canvas)
-            }
-            Err(e) => panic!("unexpected cast error: {e:?}"),
-        };
-        PixelBuffer::from_imgvec(imgref::ImgVec::new(rgba, w, h)).into()
-    } else {
-        let rgba: &[rgb::Rgba<u8>] = bytemuck::cast_slice(canvas);
-        PixelBuffer::from_imgvec(imgref::ImgVec::new(rgba.to_vec(), w, h)).into()
-    }
 }
 
 /// Saved frame region for RestorePrevious (only the affected area, not full canvas).
@@ -715,208 +740,96 @@ fn apply_dispose_op(
     }
 }
 
-/// Promote PixelBuffer to RGBA8 or RGBA16 bytes for canvas compositing.
-fn promote_to_rgba(pixels: &PixelBuffer, is_16bit: bool) -> Vec<u8> {
-    let desc = pixels.descriptor();
-    let layout = desc.layout();
-    let channel_type = desc.channel_type();
-
-    if is_16bit {
-        // Promote to RGBA16 (8 bytes per pixel, native endian)
-        if channel_type == ChannelType::U16 {
-            match layout {
-                ChannelLayout::Rgba => {
-                    if let Some(img) = pixels.try_as_imgref::<rgb::Rgba<u16>>() {
-                        let mut out = Vec::with_capacity(img.buf().len() * 8);
-                        for p in *img.buf() {
-                            out.extend_from_slice(&p.r.to_ne_bytes());
-                            out.extend_from_slice(&p.g.to_ne_bytes());
-                            out.extend_from_slice(&p.b.to_ne_bytes());
-                            out.extend_from_slice(&p.a.to_ne_bytes());
-                        }
-                        return out;
-                    }
-                }
-                ChannelLayout::Rgb => {
-                    if let Some(img) = pixels.try_as_imgref::<rgb::Rgb<u16>>() {
-                        let mut out = Vec::with_capacity(img.buf().len() * 8);
-                        for p in *img.buf() {
-                            out.extend_from_slice(&p.r.to_ne_bytes());
-                            out.extend_from_slice(&p.g.to_ne_bytes());
-                            out.extend_from_slice(&p.b.to_ne_bytes());
-                            out.extend_from_slice(&65535u16.to_ne_bytes());
-                        }
-                        return out;
-                    }
-                }
-                ChannelLayout::Gray => {
-                    if let Some(img) = pixels.try_as_imgref::<rgb::Gray<u16>>() {
-                        let mut out = Vec::with_capacity(img.buf().len() * 8);
-                        for p in *img.buf() {
-                            let v = p.value();
-                            out.extend_from_slice(&v.to_ne_bytes());
-                            out.extend_from_slice(&v.to_ne_bytes());
-                            out.extend_from_slice(&v.to_ne_bytes());
-                            out.extend_from_slice(&65535u16.to_ne_bytes());
-                        }
-                        return out;
-                    }
-                }
-                ChannelLayout::GrayAlpha => {
-                    if let Some(img) = pixels.try_as_imgref::<GrayAlpha16>() {
-                        let mut out = Vec::with_capacity(img.buf().len() * 8);
-                        for p in *img.buf() {
-                            out.extend_from_slice(&p.v.to_ne_bytes());
-                            out.extend_from_slice(&p.v.to_ne_bytes());
-                            out.extend_from_slice(&p.v.to_ne_bytes());
-                            out.extend_from_slice(&p.a.to_ne_bytes());
-                        }
-                        return out;
-                    }
-                }
-                _ => {}
-            }
-        }
-        // 8-bit sources upscaled to 16-bit
-        let rgba8 = promote_to_rgba(pixels, false);
-        let mut out = Vec::with_capacity(rgba8.len() * 2);
-        for chunk in rgba8.as_chunks::<4>().0.iter() {
-            for &b in chunk {
-                let v16 = b as u16 * 257;
-                out.extend_from_slice(&v16.to_ne_bytes());
-            }
-        }
-        out
-    } else {
-        // Promote to RGBA8 (4 bytes per pixel)
-        if channel_type == ChannelType::U8 {
-            match layout {
-                ChannelLayout::Rgba => {
-                    if let Some(img) = pixels.try_as_imgref::<rgb::Rgba<u8>>() {
-                        use rgb::ComponentBytes;
-                        return img.buf().as_bytes().to_vec();
-                    }
-                }
-                ChannelLayout::Rgb => {
-                    if let Some(img) = pixels.try_as_imgref::<rgb::Rgb<u8>>() {
-                        let mut out = Vec::with_capacity(img.buf().len() * 4);
-                        for p in *img.buf() {
-                            out.extend_from_slice(&[p.r, p.g, p.b, 255]);
-                        }
-                        return out;
-                    }
-                }
-                ChannelLayout::Gray => {
-                    if let Some(img) = pixels.try_as_imgref::<rgb::Gray<u8>>() {
-                        let mut out = Vec::with_capacity(img.buf().len() * 4);
-                        for p in *img.buf() {
-                            let v = p.value();
-                            out.extend_from_slice(&[v, v, v, 255]);
-                        }
-                        return out;
-                    }
-                }
-                _ => {}
-            }
-        }
-        // 16-bit sources downscaled to 8-bit
-        if channel_type == ChannelType::U16 {
-            match layout {
-                ChannelLayout::Rgba => {
-                    if let Some(img) = pixels.try_as_imgref::<rgb::Rgba<u16>>() {
-                        let mut out = Vec::with_capacity(img.buf().len() * 4);
-                        for p in *img.buf() {
-                            out.extend_from_slice(&[
-                                ((p.r as u32 * 255 + 32768) >> 16) as u8,
-                                ((p.g as u32 * 255 + 32768) >> 16) as u8,
-                                ((p.b as u32 * 255 + 32768) >> 16) as u8,
-                                ((p.a as u32 * 255 + 32768) >> 16) as u8,
-                            ]);
-                        }
-                        return out;
-                    }
-                }
-                ChannelLayout::Rgb => {
-                    if let Some(img) = pixels.try_as_imgref::<rgb::Rgb<u16>>() {
-                        let mut out = Vec::with_capacity(img.buf().len() * 4);
-                        for p in *img.buf() {
-                            out.extend_from_slice(&[
-                                ((p.r as u32 * 255 + 32768) >> 16) as u8,
-                                ((p.g as u32 * 255 + 32768) >> 16) as u8,
-                                ((p.b as u32 * 255 + 32768) >> 16) as u8,
-                                255,
-                            ]);
-                        }
-                        return out;
-                    }
-                }
-                ChannelLayout::Gray => {
-                    if let Some(img) = pixels.try_as_imgref::<rgb::Gray<u16>>() {
-                        let mut out = Vec::with_capacity(img.buf().len() * 4);
-                        for p in *img.buf() {
-                            let v = ((p.value() as u32 * 255 + 32768) >> 16) as u8;
-                            out.extend_from_slice(&[v, v, v, 255]);
-                        }
-                        return out;
-                    }
-                }
-                ChannelLayout::GrayAlpha => {
-                    if let Some(img) = pixels.try_as_imgref::<GrayAlpha16>() {
-                        let mut out = Vec::with_capacity(img.buf().len() * 4);
-                        for p in *img.buf() {
-                            let v = ((p.v as u32 * 255 + 32768) >> 16) as u8;
-                            let a = ((p.a as u32 * 255 + 32768) >> 16) as u8;
-                            out.extend_from_slice(&[v, v, v, a]);
-                        }
-                        return out;
-                    }
-                }
-                _ => {}
-            }
-        }
-        Vec::new()
-    }
-}
-
-/// Composite subframe onto canvas at the given offset with the given blend mode.
+/// Composite one subframe, converting only one row of scratch at a time.
 fn composite_frame(
     fctl: &FrameControl,
-    subframe_rgba: &[u8],
+    pixels: &PixelBuffer,
     canvas: &mut [u8],
     canvas_w: usize,
     is_16bit: bool,
-) {
+    cancel: &dyn Stop,
+) -> crate::error::Result<()> {
     let bpp = if is_16bit { 8 } else { 4 };
     let x = fctl.x_offset as usize;
     let y = fctl.y_offset as usize;
-    let w = fctl.width as usize;
-    let h = fctl.height as usize;
-    let canvas_row_stride = canvas_w * bpp;
-    let sub_row_stride = w * bpp;
-
-    for row in 0..h {
-        let canvas_row_start = (y + row) * canvas_row_stride + x * bpp;
-        let sub_row_start = row * sub_row_stride;
-
-        if fctl.blend_op == 0 {
-            // SOURCE: overwrite directly
-            canvas[canvas_row_start..canvas_row_start + sub_row_stride]
-                .copy_from_slice(&subframe_rgba[sub_row_start..sub_row_start + sub_row_stride]);
+    let width = fctl.width as usize;
+    let descriptor = pixels.descriptor();
+    let source_16 = match descriptor.channel_type() {
+        ChannelType::U8 => false,
+        ChannelType::U16 => true,
+        _ => {
+            return Err(at!(PngError::Internal(
+                zencodec::InternalKind::Bug,
+                "unexpected APNG sample type".into()
+            )));
+        }
+    };
+    let channels = match descriptor.layout() {
+        ChannelLayout::Gray => 1,
+        ChannelLayout::GrayAlpha => 2,
+        ChannelLayout::Rgb => 3,
+        ChannelLayout::Rgba => 4,
+        _ => {
+            return Err(at!(PngError::Internal(
+                zencodec::InternalKind::Bug,
+                "unexpected APNG channel layout".into()
+            )));
+        }
+    };
+    let direct = channels == 4 && source_16 == is_16bit;
+    let mut converted = if direct {
+        Vec::new()
+    } else {
+        crate::alloc_util::vec_with_capacity(
+            zencodec::AllocPreference::Fallible,
+            true,
+            width * bpp,
+        )?
+    };
+    let view = pixels.as_slice();
+    for row in 0..fctl.height {
+        cancel.check().map_err(|e| at!(PngError::from(e)))?;
+        let source = view.row(row);
+        let rgba = if direct {
+            source
         } else {
-            // OVER: alpha composite
-            if is_16bit {
-                blend_over_row_16(
-                    &mut canvas[canvas_row_start..canvas_row_start + sub_row_stride],
-                    &subframe_rgba[sub_row_start..sub_row_start + sub_row_stride],
-                );
-            } else {
-                blend_over_row_8(
-                    &mut canvas[canvas_row_start..canvas_row_start + sub_row_stride],
-                    &subframe_rgba[sub_row_start..sub_row_start + sub_row_stride],
-                );
+            converted.clear();
+            let source_bpp = channels * if source_16 { 2 } else { 1 };
+            for pixel in source.chunks_exact(source_bpp) {
+                let sample = |channel: usize| -> u16 {
+                    if source_16 {
+                        u16::from_ne_bytes([pixel[channel * 2], pixel[channel * 2 + 1]])
+                    } else {
+                        u16::from(pixel[channel]) * 257
+                    }
+                };
+                let rgba = match channels {
+                    1 => [sample(0), sample(0), sample(0), 65535],
+                    2 => [sample(0), sample(0), sample(0), sample(1)],
+                    3 => [sample(0), sample(1), sample(2), 65535],
+                    _ => [sample(0), sample(1), sample(2), sample(3)],
+                };
+                for value in rgba {
+                    if is_16bit {
+                        converted.extend_from_slice(&value.to_ne_bytes());
+                    } else {
+                        converted.push(((u32::from(value) * 255 + 32767) / 65535) as u8);
+                    }
+                }
             }
+            &converted
+        };
+        let start = ((y + row as usize) * canvas_w + x) * bpp;
+        let destination = &mut canvas[start..start + width * bpp];
+        if fctl.blend_op == 0 {
+            destination.copy_from_slice(rgba);
+        } else if is_16bit {
+            blend_over_row_16(destination, rgba);
+        } else {
+            blend_over_row_8(destination, rgba);
         }
     }
+    Ok(())
 }
 
 /// Per-pixel alpha composite for RGBA8.

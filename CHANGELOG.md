@@ -6,6 +6,26 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- **Incremental APNG decode now returns composited canvases.** The adapter used
+  to expose raw subframe rectangles, so repeated frames could become 1×1 images
+  and frame skipping lost disposal/blending history. It now shares the native
+  compositor, including 8/16-bit SOURCE/OVER and NONE/BACKGROUND/PREVIOUS modes.
+  Conversion scratch is one row; the default output borrows the canvas.
+- **Animation timing is exact.** The codec trait preserves rational APNG delays,
+  including zero and the specified zero-denominator interpretation of 100.
+  Unrepresentable timing is rejected before accepting a frame; integral delays
+  above 65.535 seconds are no longer clipped.
+- **APNG encoding accepts 16-bit integer frames** without reducing precision,
+  uses big-endian samples on the wire, and preserves descriptor CICP and frame
+  ICC context. Frames must agree on precision and color interpretation. The
+  16-bit path uses exact delta rectangles; the existing blend optimizer remains
+  specific to 8-bit input. Float, premultiplied, undefined-alpha, and narrow-range
+  inputs require explicit conversion first.
+- Job and per-call cancellation are combined during animation encode/decode;
+  admission checks precede buffer allocation/state mutation. Decode job limits
+  now reach the native animation decoder. An error during compositing prevents
+  subsequent frames from being returned from a partially updated canvas.
+
 - **HDR and wide-gamut pixels are no longer silently mislabelled or rejected.**
   `ENCODE_DESCRIPTORS` / `DECODE_DESCRIPTORS` advertised only sRGB and linear
   forms, and the two failure modes that produced were opposite and both bad. A

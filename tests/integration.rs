@@ -25,3 +25,9 @@ mod truncation_series;
 
 #[path = "integration/apng_alloc.rs"]
 mod apng_alloc;
+
+#[path = "integration/animation_timing.rs"]
+mod animation_timing;
+
+#[path = "integration/animation_compositing.rs"]
+mod animation_compositing;

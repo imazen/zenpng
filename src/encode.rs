@@ -965,13 +965,54 @@ pub fn encode_apng(
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> crate::error::Result<Vec<u8>> {
+    encode_apng_depth(
+        frames,
+        canvas_width,
+        canvas_height,
+        8,
+        config,
+        metadata,
+        cancel,
+        deadline,
+    )
+}
+
+/// Internal typed-adapter seam: 16-bit frame buffers are already big endian.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_apng_depth(
+    frames: &[ApngFrameInput<'_>],
+    canvas_width: u32,
+    canvas_height: u32,
+    bit_depth: u8,
+    config: &ApngEncodeConfig,
+    metadata: Option<&Metadata>,
+    cancel: &dyn Stop,
+    deadline: &dyn Stop,
+) -> crate::error::Result<Vec<u8>> {
     // Validation
     if frames.is_empty() {
         return Err(at!(PngError::InvalidInput(
             "APNG requires at least one frame".into(),
         )));
     }
-    let expected_len = canvas_width as usize * canvas_height as usize * 4;
+    if canvas_width == 0
+        || canvas_height == 0
+        || canvas_width > 0x7fff_ffff
+        || canvas_height > 0x7fff_ffff
+    {
+        return Err(at!(PngError::InvalidInput(
+            "invalid APNG canvas dimensions".into()
+        )));
+    }
+    if !matches!(bit_depth, 8 | 16) {
+        return Err(at!(PngError::InvalidInput(
+            "APNG requires 8- or 16-bit samples".into()
+        )));
+    }
+    let expected_len = (canvas_width as usize)
+        .checked_mul(canvas_height as usize)
+        .and_then(|n| n.checked_mul(usize::from(bit_depth) / 2))
+        .ok_or_else(|| at!(PngError::OutOfMemory("APNG frame size overflow".into())))?;
     for (i, frame) in frames.iter().enumerate() {
         if frame.pixels.len() < expected_len {
             return Err(at!(PngError::InvalidBuffer(alloc::format!(
@@ -1004,10 +1045,11 @@ pub fn encode_apng(
         .clone_from(&config.encode.text_chunks);
     write_meta.last_modified = config.encode.last_modified;
 
-    crate::encoder::apng::encode_apng_truecolor(
+    crate::encoder::apng::encode_apng_truecolor_depth(
         frames,
         canvas_width,
         canvas_height,
+        bit_depth,
         &write_meta,
         config.num_plays,
         effort,

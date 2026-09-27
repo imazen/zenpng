@@ -1037,6 +1037,7 @@ fn all_frames_opaque(frames: &[ApngFrameInput<'_>], expected_len: usize) -> bool
 /// optimization to find the best per-frame combination, then compresses each
 /// optimized subframe at the target effort level.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn encode_apng_truecolor(
     frames: &[ApngFrameInput<'_>],
     canvas_width: u32,
@@ -1047,12 +1048,46 @@ pub(crate) fn encode_apng_truecolor(
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> crate::error::Result<Vec<u8>> {
-    let num_frames = frames.len() as u32;
-    let expected_rgba = canvas_width as usize * canvas_height as usize * 4;
+    encode_apng_truecolor_depth(
+        frames,
+        canvas_width,
+        canvas_height,
+        8,
+        write_meta,
+        num_plays,
+        effort,
+        cancel,
+        deadline,
+    )
+}
+
+/// RGBA16 input is in PNG's big-endian order. The 8-bit optimizer is bypassed
+/// at 16 bits; byte-exact delta regions still avoid encoding unchanged areas.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_apng_truecolor_depth(
+    frames: &[ApngFrameInput<'_>],
+    canvas_width: u32,
+    canvas_height: u32,
+    bit_depth: u8,
+    write_meta: &PngWriteMetadata<'_>,
+    num_plays: u32,
+    effort: u32,
+    cancel: &dyn Stop,
+    deadline: &dyn Stop,
+) -> crate::error::Result<Vec<u8>> {
+    let num_frames = u32::try_from(frames.len())
+        .map_err(|_| at!(PngError::InvalidInput("too many APNG frames".into())))?;
+    let expected_rgba = canvas_width as usize * canvas_height as usize * usize::from(bit_depth) / 2;
 
     // Detect all-opaque → use RGB (color_type=2, bpp=3, 25% raw savings)
-    let is_opaque = all_frames_opaque(frames, expected_rgba);
-    let (bpp, color_type): (usize, u8) = if is_opaque { (3, 2) } else { (4, 6) };
+    let is_opaque = bit_depth == 8 && all_frames_opaque(frames, expected_rgba);
+    let (bpp, color_type): (usize, u8) = if bit_depth == 16 {
+        (8, 6)
+    } else if is_opaque {
+        (3, 2)
+    } else {
+        (4, 6)
+    };
 
     // Convert frames to RGB if opaque
     let rgb_frames: Vec<Vec<u8>>;
@@ -1067,7 +1102,7 @@ pub(crate) fn encode_apng_truecolor(
     };
 
     // Run optimizer when effort > 2 and >1 frame (otherwise trial = final, no benefit)
-    let use_optimizer = effort > 2 && frames.len() > 1;
+    let use_optimizer = bit_depth == 8 && effort > 2 && frames.len() > 1;
     let optimized = if use_optimizer {
         Some(optimize_apng_truecolor(
             frames,
@@ -1094,7 +1129,7 @@ pub(crate) fn encode_apng_truecolor(
     let mut ihdr = [0u8; 13];
     ihdr[0..4].copy_from_slice(&canvas_width.to_be_bytes());
     ihdr[4..8].copy_from_slice(&canvas_height.to_be_bytes());
-    ihdr[8] = 8; // bit depth
+    ihdr[8] = bit_depth;
     ihdr[9] = color_type;
     write_chunk(&mut out, b"IHDR", &ihdr);
 
@@ -1157,7 +1192,7 @@ pub(crate) fn encode_apng_truecolor(
                 sub_data,
                 sub_row_bytes,
                 sub_height,
-                RowFormat::truecolor8(bpp),
+                RowFormat::from_png(color_type, bit_depth),
                 effort,
                 opts,
                 None,
@@ -1201,7 +1236,7 @@ pub(crate) fn encode_apng_truecolor(
             frame_data[0],
             row_bytes,
             height,
-            RowFormat::truecolor8(bpp),
+            RowFormat::from_png(color_type, bit_depth),
             effort,
             opts,
             None,
@@ -1255,7 +1290,7 @@ pub(crate) fn encode_apng_truecolor(
                 &subframe,
                 sub_row_bytes,
                 sub_height,
-                RowFormat::truecolor8(bpp),
+                RowFormat::from_png(color_type, bit_depth),
                 effort,
                 opts,
                 None,

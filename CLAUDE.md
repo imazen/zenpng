@@ -23,7 +23,21 @@ PNG encoder/decoder with SIMD-accelerated unfiltering and zenflate decompression
 - `src/decode.rs` — Public decode API facade
 - `src/encode.rs` — Public encode API facade
 - `src/error.rs` — Error types
-- `src/zencodec.rs` — zencodec trait integration
+- `src/codec.rs` — zencodec trait integration
+
+### Animation correctness (2026-09-27)
+
+`ApngDecoder::next_frame` returns **raw rectangles**. Both public decode routes
+must pass them through `ApngCompositor`, including frames skipped before the
+requested start index. Do not return a raw subframe as a displayed canvas.
+`tests/integration/animation_compositing.rs` authors 8/16-bit containers with
+native zenpng-compressed pixels and hand-derived expected canvases, covering
+disposal, blending, an excluded default image, and frame skipping.
+
+The animation adapter stores exact rational delays and RGBA8 or big-endian
+RGBA16 frames. The 16-bit encoder uses delta rectangles with SOURCE/NONE; the
+existing six-way optimizer is 8-bit-specific. Encode still buffers all input
+frames and returns a complete output Vec; this is not a streaming writer API.
 
 ### Dependencies
 
