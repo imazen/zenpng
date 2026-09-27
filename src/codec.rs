@@ -701,6 +701,8 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         );
         enc.loop_count = self.loop_count.unwrap_or(0);
         enc.limits = self.limits;
+        enc.stop = self.stop;
+        enc.policy = self.policy;
         Ok(enc)
     }
 }
@@ -1534,13 +1536,14 @@ impl PngEncoder {
 
 /// Accumulated frame data for APNG encoding.
 struct AccumulatedFrame {
-    pixels: Vec<u8>, // RGBA8 canvas-sized
-    duration_ms: u32,
+    pixels: Vec<u8>, // Canvas-sized RGBA8 or big-endian RGBA16.
+    delay_num: u16,
+    delay_den: u16,
 }
 
 /// APNG frame-by-frame encoder implementing [`AnimationFrameEncoder`](zencodec::encode::AnimationFrameEncoder).
 ///
-/// Accumulates canvas-sized RGBA8 frames, then encodes them all on [`finish()`](PngAnimationFrameEncoder::do_finish).
+/// Accumulates canvas-sized RGBA8/16 frames, then encodes them all on [`finish()`](PngAnimationFrameEncoder::do_finish).
 pub struct PngAnimationFrameEncoder {
     frames: Vec<AccumulatedFrame>,
     canvas_width: u32,
@@ -1554,6 +1557,23 @@ pub struct PngAnimationFrameEncoder {
     limits: Option<ResourceLimits>,
     /// Cumulative pixel data size across all accumulated frames.
     cumulative_pixel_bytes: u64,
+    stop: Option<zencodec::StopToken>,
+    frame_descriptor: Option<PixelDescriptor>,
+    frame_color: Option<alloc::sync::Arc<zenpixels::ColorContext>>,
+    policy: Option<zencodec::encode::EncodePolicy>,
+}
+
+struct AnimationStops<'a>(&'a dyn enough::Stop, &'a dyn enough::Stop);
+
+impl enough::Stop for AnimationStops<'_> {
+    fn check(&self) -> Result<(), enough::StopReason> {
+        self.0.check()?;
+        self.1.check()
+    }
+
+    fn may_stop(&self) -> bool {
+        self.0.may_stop() || self.1.may_stop()
+    }
 }
 
 /// State for row-by-row frame construction.
@@ -1580,50 +1600,92 @@ impl PngAnimationFrameEncoder {
             building_frame: None,
             limits: None,
             cumulative_pixel_bytes: 0,
+            stop: None,
+            frame_descriptor: None,
+            frame_color: None,
+            policy: None,
         }
     }
 
-    /// Extract RGBA8 bytes from a PixelSlice, converting as needed.
-    ///
-    /// Supports RGBA8, BGRA8, RGB8, and Gray8 inputs. Other formats
-    /// (16-bit, float) are rejected with a clear error listing the
-    /// supported formats.
-    fn pixels_to_rgba8(pixels: &PixelSlice<'_>) -> Result<Vec<u8>, At<PngError>> {
+    /// Pack a frame as RGBA8 or big-endian RGBA16, preserving sample codes.
+    fn pixels_to_rgba(
+        pixels: &PixelSlice<'_>,
+        stop: &dyn enough::Stop,
+    ) -> Result<Vec<u8>, At<PngError>> {
+        use zenpixels::{AlphaMode, ChannelLayout, ChannelType, SignalRange};
         let desc = pixels.descriptor();
-        match (desc.channel_type(), desc.layout()) {
-            (zenpixels::ChannelType::U8, zenpixels::ChannelLayout::Rgba) => {
-                Ok(contiguous_bytes(pixels).into_owned())
+        let sample_bytes = match desc.channel_type() {
+            ChannelType::U8 => 1,
+            ChannelType::U16 => 2,
+            _ => {
+                return Err(at!(PngError::from(
+                    zencodec::UnsupportedOperation::PixelFormat
+                )));
             }
-            (zenpixels::ChannelType::U8, zenpixels::ChannelLayout::Bgra) => {
-                let src = contiguous_bytes(pixels);
-                Ok(src
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .flat_map(|c| [c[2], c[1], c[0], c[3]])
-                    .collect())
+        };
+        let channels = match desc.layout() {
+            ChannelLayout::Gray => 1,
+            ChannelLayout::GrayAlpha => 2,
+            ChannelLayout::Rgb => 3,
+            ChannelLayout::Rgba | ChannelLayout::Bgra => 4,
+            _ => {
+                return Err(at!(PngError::from(
+                    zencodec::UnsupportedOperation::PixelFormat
+                )));
             }
-            (zenpixels::ChannelType::U8, zenpixels::ChannelLayout::Rgb) => {
-                let src = contiguous_bytes(pixels);
-                Ok(src
-                    .as_chunks::<3>()
-                    .0
-                    .iter()
-                    .flat_map(|c| [c[0], c[1], c[2], 255])
-                    .collect())
-            }
-            (zenpixels::ChannelType::U8, zenpixels::ChannelLayout::Gray) => {
-                let src = contiguous_bytes(pixels);
-                Ok(src.iter().flat_map(|&g| [g, g, g, 255]).collect())
-            }
-            // A well-formed request for a pixel format this codec doesn't
-            // negotiate — the caller-request `UnsupportedOperation` axis, not a
-            // malformed buffer. Matches the same `PixelFormat` routing used by
-            // `push_rows` elsewhere in this file.
-            _ => Err(at!(PngError::from(
+        };
+        if matches!(
+            desc.alpha(),
+            Some(AlphaMode::Premultiplied | AlphaMode::Undefined)
+        ) || desc.signal_range != SignalRange::Full
+        {
+            return Err(at!(PngError::from(
                 zencodec::UnsupportedOperation::PixelFormat
-            ))),
+            )));
         }
+        let len = (pixels.width() as usize)
+            .checked_mul(pixels.rows() as usize)
+            .and_then(|n| n.checked_mul(4 * sample_bytes))
+            .ok_or_else(|| {
+                at!(PngError::OutOfMemory(
+                    "APNG frame exceeds address space".into()
+                ))
+            })?;
+        let mut out = Vec::new();
+        out.try_reserve_exact(len)
+            .map_err(|e| at!(PngError::OutOfMemory(e.to_string())))?;
+        let max = if sample_bytes == 1 { 255 } else { 65535 };
+        for y in 0..pixels.rows() {
+            stop.check().map_err(|e| at!(PngError::from(e)))?;
+            for p in pixels.row(y).chunks_exact(channels * sample_bytes) {
+                let sample = |c: usize| {
+                    if sample_bytes == 1 {
+                        u16::from(p[c])
+                    } else {
+                        u16::from_ne_bytes([p[c * 2], p[c * 2 + 1]])
+                    }
+                };
+                let mut rgba = match desc.layout() {
+                    ChannelLayout::Gray => [sample(0), sample(0), sample(0), max],
+                    ChannelLayout::GrayAlpha => [sample(0), sample(0), sample(0), sample(1)],
+                    ChannelLayout::Rgb => [sample(0), sample(1), sample(2), max],
+                    ChannelLayout::Rgba => [sample(0), sample(1), sample(2), sample(3)],
+                    ChannelLayout::Bgra => [sample(2), sample(1), sample(0), sample(3)],
+                    _ => unreachable!("layout checked above"),
+                };
+                if desc.alpha() == Some(AlphaMode::Opaque) {
+                    rgba[3] = max;
+                }
+                for value in rgba {
+                    if sample_bytes == 1 {
+                        out.push(value as u8);
+                    } else {
+                        out.extend_from_slice(&value.to_be_bytes());
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -1638,25 +1700,126 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
         &mut self,
         pixels: PixelSlice<'_>,
         duration_ms: u32,
-        _stop: Option<&dyn enough::Stop>,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<(), At<CodecError>> {
-        let rgba = Self::pixels_to_rgba8(&pixels).map_err(CodecError::of)?;
-        // Check resource limits before accumulating
+        self.push_frame_timed(
+            pixels,
+            zencodec::animation::FrameDuration::from_millis(duration_ms),
+            stop,
+        )
+    }
+
+    fn push_frame_timed(
+        &mut self,
+        pixels: PixelSlice<'_>,
+        duration: zencodec::animation::FrameDuration,
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<(), At<CodecError>> {
+        let delay_num = u16::try_from(duration.numerator())
+            .map_err(|_| Self::reject(zencodec::UnsupportedOperation::AnimationTiming))?;
+        let delay_den = u16::try_from(duration.denominator())
+            .map_err(|_| Self::reject(zencodec::UnsupportedOperation::AnimationTiming))?;
+        let cancel = AnimationStops(
+            self.stop
+                .as_ref()
+                .map_or(&enough::Unstoppable as &dyn enough::Stop, |s| s),
+            stop.unwrap_or(&enough::Unstoppable),
+        );
+        enough::Stop::check(&cancel).map_err(|e| CodecError::of(at!(PngError::from(e))))?;
+        let (width, height) = (pixels.width(), pixels.rows());
+        let descriptor = pixels.descriptor();
+        if let Some(first) = self.frame_descriptor
+            && (first.channel_type() != descriptor.channel_type()
+                || first.transfer != descriptor.transfer
+                || first.primaries != descriptor.primaries
+                || first.signal_range != descriptor.signal_range
+                || self.frame_color.as_ref() != pixels.color_context())
+        {
+            return Err(Self::reject(zencodec::UnsupportedOperation::PixelFormat));
+        }
+        let canvas_unset = self.canvas_width == 0 && self.canvas_height == 0;
+        if width == 0
+            || height == 0
+            || (!canvas_unset && (width != self.canvas_width || height != self.canvas_height))
+        {
+            return Err(CodecError::of(at!(PngError::InvalidInput(
+                "APNG frame dimensions must match its nonempty canvas".into()
+            ))));
+        }
+        let new_count = u32::try_from(self.frames.len())
+            .ok()
+            .and_then(|n| n.checked_add(1))
+            .ok_or_else(|| {
+                CodecError::of(at!(PngError::InvalidInput("too many APNG frames".into())))
+            })?;
+        let new_cumulative = u64::from(width)
+            .checked_mul(u64::from(height))
+            .and_then(|n| {
+                n.checked_mul(
+                    if descriptor.channel_type() == zenpixels::ChannelType::U16 {
+                        8
+                    } else {
+                        4
+                    },
+                )
+            })
+            .and_then(|n| n.checked_add(self.cumulative_pixel_bytes))
+            .ok_or_else(|| {
+                CodecError::of(at!(PngError::OutOfMemory(
+                    "APNG frame accumulation overflow".into()
+                )))
+            })?;
+        // Admission checks precede frame allocation and state mutation.
         if let Some(ref limits) = self.limits {
+            limits
+                .check_dimensions(width, height)
+                .map_err(|e| CodecError::of(at!(PngError::LimitExceeded(e))))?;
             // Check max_frames (new frame count = current + 1)
             limits
-                .check_frames(self.frames.len() as u32 + 1)
+                .check_frames(new_count)
                 .map_err(|e| CodecError::of(at!(PngError::LimitExceeded(e))))?;
             // Check max_memory (cumulative pixel data size)
-            let new_cumulative = self.cumulative_pixel_bytes + rgba.len() as u64;
             limits
                 .check_memory(new_cumulative)
                 .map_err(|e| CodecError::of(at!(PngError::LimitExceeded(e))))?;
         }
-        self.cumulative_pixel_bytes += rgba.len() as u64;
+        let rgba = Self::pixels_to_rgba(&pixels, &cancel).map_err(CodecError::of)?;
+        self.frames
+            .try_reserve(1)
+            .map_err(|e| CodecError::of(at!(PngError::OutOfMemory(e.to_string()))))?;
+        self.cumulative_pixel_bytes = new_cumulative;
+        if self.frame_descriptor.is_none() {
+            self.frame_color = pixels.color_context().cloned();
+            if let Some(context) = pixels.color_context() {
+                let mut metadata = self.metadata.clone().unwrap_or_else(Metadata::none);
+                if metadata.icc_profile.is_none() {
+                    metadata.icc_profile = context.icc.clone();
+                }
+                if metadata.cicp.is_none() {
+                    metadata.cicp = context.cicp;
+                }
+                self.metadata = Some(metadata);
+            }
+            if self.config.cicp.is_none()
+                && self.metadata.as_ref().and_then(|m| m.cicp).is_none()
+                && self
+                    .metadata
+                    .as_ref()
+                    .and_then(|m| m.icc_profile.as_ref())
+                    .is_none()
+            {
+                self.config.cicp = zenpixels::Cicp::from_descriptor(&descriptor);
+            }
+            self.frame_descriptor = Some(descriptor);
+        }
+        if canvas_unset {
+            self.canvas_width = width;
+            self.canvas_height = height;
+        }
         self.frames.push(AccumulatedFrame {
             pixels: rgba,
-            duration_ms,
+            delay_num,
+            delay_den,
         });
         Ok(())
     }
@@ -1668,8 +1831,13 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
 
 impl PngAnimationFrameEncoder {
     fn do_finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, At<PngError>> {
-        let cancel: &dyn enough::Stop = stop.unwrap_or(&enough::Unstoppable);
-        cancel.check().map_err(|e| at!(PngError::from(e)))?;
+        let cancel = AnimationStops(
+            self.stop
+                .as_ref()
+                .map_or(&enough::Unstoppable as &dyn enough::Stop, |s| s),
+            stop.unwrap_or(&enough::Unstoppable),
+        );
+        enough::Stop::check(&cancel).map_err(|e| at!(PngError::from(e)))?;
 
         if self.frames.is_empty() {
             return Err(at!(PngError::InvalidState(
@@ -1681,14 +1849,10 @@ impl PngAnimationFrameEncoder {
         let inputs: Vec<crate::encode::ApngFrameInput<'_>> = self
             .frames
             .iter()
-            .map(|f| {
-                // Convert ms to delay_num/delay_den
-                // Use den=1000 for ms precision
-                crate::encode::ApngFrameInput {
-                    pixels: &f.pixels,
-                    delay_num: f.duration_ms.min(65535) as u16,
-                    delay_den: 1000,
-                }
+            .map(|f| crate::encode::ApngFrameInput {
+                pixels: &f.pixels,
+                delay_num: f.delay_num,
+                delay_den: f.delay_den,
             })
             .collect();
 
@@ -1699,15 +1863,31 @@ impl PngAnimationFrameEncoder {
 
         let deadline = default_deadline();
 
-        let data = crate::encode::encode_apng(
+        let metadata = apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref(), Some(4))?;
+        let bit_depth = if self
+            .frame_descriptor
+            .is_some_and(|d| d.channel_type() == zenpixels::ChannelType::U16)
+        {
+            16
+        } else {
+            8
+        };
+        let data = crate::encode::encode_apng_depth(
             &inputs,
             self.canvas_width,
             self.canvas_height,
+            bit_depth,
             &apng_config,
-            self.metadata.as_ref(),
-            cancel,
+            metadata.as_ref(),
+            &cancel,
             &deadline,
         )?;
+
+        if let Some(limits) = &self.limits {
+            limits
+                .check_output_size(data.len() as u64)
+                .map_err(|e| at!(PngError::LimitExceeded(e)))?;
+        }
 
         Ok(EncodeOutput::new(data, ImageFormat::Png))
     }
@@ -2014,8 +2194,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
             .check_input_size(data.len() as u64)
             .map_err(|e| CodecError::of(at!(PngError::LimitExceeded(e))))?;
         PngAnimationFrameDecoder::new(
-            &data,
-            &self.config,
+            data,
+            effective_limits,
             self.stop,
             self.policy.as_ref(),
             preferred,
@@ -2589,35 +2769,72 @@ pub struct PngAnimationFrameDecoder {
     start_frame_index: u32,
     /// Number of frames decoded so far (used to track position vs `start_frame_index`).
     frames_decoded: u32,
+    compositor: crate::decoder::apng::ApngCompositor,
+    failed: bool,
+    cicp: Option<zencodec::Cicp>,
+    color_context: Option<alloc::sync::Arc<zenpixels::ColorContext>>,
 }
 
 impl PngAnimationFrameDecoder {
     fn new(
-        data: &[u8],
-        config: &PngDecoderConfig,
+        data: Cow<'_, [u8]>,
+        limits: &ResourceLimits,
         stop: Option<zencodec::StopToken>,
         policy: Option<&zencodec::decode::DecodePolicy>,
         preferred: &[PixelDescriptor],
         start_frame_index: u32,
     ) -> Result<Self, At<PngError>> {
-        let probe_info = crate::decode::probe(data)?;
+        let probe_info = crate::decode::probe(&data)?;
+        limits
+            .check_dimensions(probe_info.width, probe_info.height)
+            .map_err(|e| at!(PngError::LimitExceeded(e)))?;
         let mut image_info = convert_info(&probe_info);
         apply_policy_to_info(&mut image_info, policy);
 
-        let decode_config = PngDecodeConfig {
-            max_pixels: config.limits.max_pixels,
-            max_memory_bytes: config.limits.max_memory_bytes,
-            skip_decompression_checksum: true,
-            skip_critical_chunk_crc: true,
-            alloc_pref: config.limits.prefer_fallible_allocations,
-        };
+        let decode_config = apply_decode_policy(
+            PngDecodeConfig {
+                max_pixels: limits.max_pixels,
+                max_memory_bytes: limits.max_memory_bytes,
+                skip_decompression_checksum: true,
+                skip_critical_chunk_crc: true,
+                alloc_pref: limits.prefer_fallible_allocations,
+            },
+            policy,
+        );
 
         // Create ApngDecoder once and save its state for O(1) resumption.
-        let decoder = crate::decoder::apng::ApngDecoder::new(data, &decode_config)?;
+        let decoder = crate::decoder::apng::ApngDecoder::new(&data, &decode_config)?;
+        limits
+            .check_frames(decoder.num_frames)
+            .map_err(|e| at!(PngError::LimitExceeded(e)))?;
+        let compositor = crate::decoder::apng::ApngCompositor::new(decoder.ihdr(), &decode_config)?;
         let decoder_state = decoder.save_state();
+        let color_context = if probe_info.icc_profile.is_some() || probe_info.cicp.is_some() {
+            let mut context = zenpixels::ColorContext::default();
+            context.icc = probe_info
+                .icc_profile
+                .as_ref()
+                .map(|icc| alloc::sync::Arc::from(icc.as_slice()));
+            context.cicp = probe_info.cicp;
+            Some(alloc::sync::Arc::new(context))
+        } else {
+            None
+        };
+        let file_data = match data {
+            Cow::Owned(bytes) => bytes,
+            Cow::Borrowed(bytes) => {
+                let mut copy = crate::alloc_util::vec_with_capacity(
+                    decode_config.alloc_pref,
+                    true,
+                    bytes.len(),
+                )?;
+                copy.extend_from_slice(bytes);
+                copy
+            }
+        };
 
         Ok(Self {
-            file_data: data.to_vec(),
+            file_data,
             info: image_info,
             decoder_state,
             preferred: preferred.to_vec(),
@@ -2625,6 +2842,10 @@ impl PngAnimationFrameDecoder {
             stop,
             start_frame_index,
             frames_decoded: 0,
+            compositor,
+            failed: false,
+            cicp: probe_info.cicp,
+            color_context,
         })
     }
 }
@@ -2660,14 +2881,18 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
         &mut self,
         stop: Option<&dyn enough::Stop>,
     ) -> Result<Option<AnimationFrame<'_>>, At<CodecError>> {
-        // Use per-call stop token, fall back to stored job-level token, then unstoppable.
-        let cancel: &dyn enough::Stop = if let Some(s) = stop {
-            s
-        } else if let Some(ref s) = self.stop {
-            s as &dyn enough::Stop
-        } else {
-            &enough::Unstoppable
-        };
+        if self.failed {
+            return Err(CodecError::of(at!(PngError::InvalidState(
+                "APNG decoder failed during a prior frame".into()
+            ))));
+        }
+        let cancel = AnimationStops(
+            self.stop
+                .as_ref()
+                .map_or(&enough::Unstoppable as &dyn enough::Stop, |s| s),
+            stop.unwrap_or(&enough::Unstoppable),
+        );
+        enough::Stop::check(&cancel).map_err(|e| CodecError::of(at!(PngError::from(e))))?;
         loop {
             // Restore decoder from saved state (O(1), no re-scanning)
             let mut decoder = crate::decoder::apng::ApngDecoder::from_state(
@@ -2675,10 +2900,19 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
                 self.decoder_state.clone(),
             );
 
-            let raw = match decoder.next_frame(cancel).map_err(CodecError::of)? {
+            self.failed = true;
+            let raw = match decoder.next_frame(&cancel).map_err(CodecError::of)? {
                 Some(f) => f,
-                None => return Ok(None),
+                None => {
+                    self.failed = false;
+                    return Ok(None);
+                }
             };
+
+            // Disposal and blending apply even to frames skipped by the caller.
+            self.compositor
+                .render(&raw, &cancel)
+                .map_err(CodecError::of)?;
 
             // Save updated state (chunk_pos / current_frame advanced)
             let idx = self.decoder_state.current_frame;
@@ -2689,25 +2923,45 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
             // (not skip) because APNG compositing depends on prior frame disposal
             // and blending, but we don't yield them to the caller.
             if idx < self.start_frame_index {
+                self.failed = false;
                 continue;
             }
 
-            let delay_ms = raw.fctl.delay_ms();
+            let denominator = if raw.fctl.delay_den == 0 {
+                100
+            } else {
+                u32::from(raw.fctl.delay_den)
+            };
+            let duration =
+                zencodec::animation::FrameDuration::new(u64::from(raw.fctl.delay_num), denominator)
+                    .expect("APNG denominator normalized to a positive value");
 
             // Apply format negotiation to frame pixels if preferred formats specified
-            let pixels = if self.preferred.is_empty() {
-                raw.pixels
+            self.canvas = if self.preferred.is_empty() {
+                None
             } else {
-                negotiate_and_convert(raw.pixels, &self.preferred)
+                let pixels = self.compositor.copy_canvas().map_err(CodecError::of)?;
+                let descriptor = enrich_descriptor_from_cicp(pixels.descriptor(), self.cicp);
+                let mut pixels = pixels.with_descriptor(descriptor);
+                if let Some(context) = &self.color_context {
+                    pixels = pixels.with_color_context(context.clone());
+                }
+                Some(negotiate_and_convert(pixels, &self.preferred))
             };
-
-            // Store the rendered frame in the internal canvas buffer
-            self.canvas = Some(pixels);
-
-            // Borrow from the canvas we just stored
-            let canvas = self.canvas.as_ref().unwrap();
-            let pixel_slice = canvas.as_slice();
-            let frame = AnimationFrame::new(pixel_slice, delay_ms, idx);
+            let pixel_slice = if let Some(canvas) = &self.canvas {
+                canvas.as_slice()
+            } else {
+                let canvas = self.compositor.canvas();
+                let mut pixels = canvas
+                    .as_slice()
+                    .with_descriptor(enrich_descriptor_from_cicp(canvas.descriptor(), self.cicp));
+                if let Some(context) = &self.color_context {
+                    pixels = pixels.with_color_context(context.clone());
+                }
+                pixels
+            };
+            self.failed = false;
+            let frame = AnimationFrame::with_duration(pixel_slice, duration, idx);
 
             return Ok(Some(frame));
         }
@@ -6286,7 +6540,7 @@ mod tests {
 
         // Both should decode correctly
         let dec = PngDecoderConfig::new();
-        let d_lossless = dec.decode(out_lossless.data()).unwrap();
+        let d_lossless = dec.clone().decode(out_lossless.data()).unwrap();
         let d_lossy = dec.decode(out_lossy.data()).unwrap();
         assert_eq!(d_lossless.width(), 2);
         assert_eq!(d_lossy.width(), 2);
@@ -8140,19 +8394,19 @@ mod tests {
             .with_loop_count(Some(0));
         let mut enc = job.animation_frame_encoder().unwrap();
 
-        // Try pushing a 16-bit frame, which is not supported by the APNG encoder
-        let pixels: Vec<Rgba<u16>> = vec![
+        // Float input needs an explicit transfer/depth conversion before APNG.
+        let pixels: Vec<Rgba<f32>> = vec![
             Rgba {
-                r: 1000,
-                g: 2000,
-                b: 3000,
-                a: 65535,
+                r: 0.1,
+                g: 0.2,
+                b: 0.3,
+                a: 1.0,
             };
             16
         ];
         let img = imgref::ImgVec::new(pixels, 4, 4);
         let result = enc.push_frame(PixelSlice::from(img.as_ref()).erase(), 100, None);
-        assert!(result.is_err(), "16-bit RGBA should be rejected");
+        assert!(result.is_err(), "float RGBA should be rejected");
         let err = result.unwrap_err();
         // A well-formed request for a pixel format this encoder doesn't
         // negotiate is the caller-request `UnsupportedOperation` axis, not a
