@@ -6,6 +6,11 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- Honor an exact native decode preference even when file CICP describes a
+  format absent from the static advertised list, including linear RGBA16.
+  Preserve unrecognized CICP primaries/transfers as `Unknown` rather than
+  assuming sRGB; the raw code points remain available on the pixel context.
+
 - **Incremental APNG decode now returns composited canvases.** The adapter used
   to expose raw subframe rectangles, so repeated frames could become 1×1 images
   and frame skipping lost disposal/blending history. It now shares the native

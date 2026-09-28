@@ -2359,20 +2359,21 @@ fn native_output_descriptor(color_type: u8, bit_depth: u8, has_trns: bool) -> Pi
 /// values are *interpreted*, not the bytes — so an HDR (PQ/HLG) PNG keeps its
 /// native code values while the descriptor stops claiming sRGB. Downstream
 /// conversion (zenpixels-convert) then applies the right EOTF instead of the
-/// sRGB curve. Unrecognized code points leave the descriptor unchanged
-/// (sRGB-assumed, matching the color-emit resolver's fallback).
+/// sRGB curve. Unrecognized code points remain Unknown; they do not imply
+/// sRGB. The raw CICP stays available on the pixel context and source metadata.
 fn enrich_descriptor_from_cicp(
     mut desc: PixelDescriptor,
     cicp: Option<zencodec::Cicp>,
 ) -> PixelDescriptor {
     let Some(c) = cicp else { return desc };
-    if let Some(tf) = zenpixels::TransferFunction::from_cicp(c.transfer_characteristics) {
-        desc = desc.with_transfer(tf);
-    }
-    if let Some(p) = zenpixels::ColorPrimaries::from_cicp(c.color_primaries) {
-        desc = desc.with_primaries(p);
-    }
-    desc
+    desc = desc.with_transfer(
+        zenpixels::TransferFunction::from_cicp(c.transfer_characteristics)
+            .unwrap_or(zenpixels::TransferFunction::Unknown),
+    );
+    desc.with_primaries(
+        zenpixels::ColorPrimaries::from_cicp(c.color_primaries)
+            .unwrap_or(zenpixels::ColorPrimaries::Unknown),
+    )
 }
 
 /// Native row-streaming push decoder. Decodes PNG rows one at a time
@@ -2986,6 +2987,11 @@ use zenpixels_convert::{PixelBufferConvertExt as _, PixelBufferConvertTypedExt a
 /// to detect the all-opaque case for sources that *do* carry alpha.)
 fn negotiate_and_convert(pixels: PixelBuffer, preferred: &[PixelDescriptor]) -> PixelBuffer {
     let native_desc = pixels.descriptor();
+    // File CICP can describe native formats beyond the static advertised list.
+    // An exact requested native format is already available, without conversion.
+    if preferred.contains(&native_desc) {
+        return pixels;
+    }
     let target = zencodec::decode::negotiate_pixel_format(preferred, DECODE_DESCRIPTORS);
 
     // Already in the target format — no conversion needed
