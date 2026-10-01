@@ -197,6 +197,22 @@ impl From<zencodec::LimitExceeded> for PngError {
     }
 }
 
+impl PngError {
+    /// Returns true if this error indicates premature end of input / incomplete data.
+    pub fn is_truncated(&self) -> bool {
+        match self {
+            Self::Truncated(_) => true,
+            Self::NotPng(msg) if msg.contains("missing PNG signature") => true,
+            Self::Decode(msg) => {
+                msg.contains("truncated")
+                    || msg.contains("unexpected end")
+                    || msg.contains("empty PNG")
+            }
+            _ => false,
+        }
+    }
+}
+
 // Codec-agnostic error taxonomy (zencodec's origin-first two-level
 // ErrorCategory: Image/Request/Resource/Policy/Stopped/Io/Internal). Maps
 // every `PngError` variant to exactly one coarse `ErrorCategory` so consumers

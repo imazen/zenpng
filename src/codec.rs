@@ -10,7 +10,10 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use whereat::{At, at};
-use zencodec::decode::{AnimationFrame, DecodeCapabilities, DecodeOutput, OutputInfo};
+use zencodec::decode::{
+    AnimationFrame, DecodeCapabilities, DecodeOutput, IncrementalDecode, OutputInfo, PushOutcome,
+    PushStatus,
+};
 use zencodec::encode::{EncodeCapabilities, EncodeOutput};
 use zencodec::{CodecError, ImageFormat, ImageInfo, Metadata, ResourceLimits};
 use zenpixels::{
@@ -1859,6 +1862,7 @@ static PNG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_native_16bit(true)
     .with_native_alpha(true)
     .with_streaming(true)
+    .with_incremental(true)
     .with_decode_into(true)
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
@@ -2032,9 +2036,38 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
     ) -> Result<OutputInfo, At<CodecError>> {
         push_decoder_native(self, data, sink, preferred)
     }
+
+    fn dyn_incremental_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+    ) -> Result<
+        alloc::boxed::Box<dyn zencodec::decode::DynIncrementalDecoder>,
+        zencodec::decode::BoxedError,
+    > {
+        let dec = self
+            .into_incremental_decoder(preferred)
+            .map_err(|e| alloc::boxed::Box::new(e) as zencodec::decode::BoxedError)?;
+        Ok(alloc::boxed::Box::new(
+            zencodec::decode::IncrementalDecoderShim(dec),
+        ))
+    }
 }
 
 impl PngDecodeJob {
+    /// Create an incremental push/pull decoder from this job.
+    pub fn into_incremental_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+    ) -> Result<PngIncrementalDecoder, At<CodecError>> {
+        Ok(PngIncrementalDecoder::new(
+            self.config,
+            self.stop,
+            self.limits,
+            self.policy,
+            preferred,
+        ))
+    }
+
     /// Build the concrete [`PngDecoder`] (infallible). Shared by the
     /// [`DecodeJob::decoder`](zencodec::decode::DecodeJob::decoder) trait method
     /// (which returns the `At<CodecError>` envelope) and the codec's inherent
@@ -2561,6 +2594,256 @@ impl PngStreamingDecoder<'_> {
         })?;
 
         Ok(Some((y, slice)))
+    }
+}
+
+// ── PngIncrementalDecoder ──────────────────────────────────────────────────
+
+/// Incremental PNG decoder implementing [`zencodec::decode::IncrementalDecode`].
+///
+/// Accepts compressed input bytes in arbitrary chunks without performing any I/O,
+/// decoding and yielding scanlines/batches as soon as sufficient data has been pushed.
+pub struct PngIncrementalDecoder {
+    config: PngDecoderConfig,
+    stop: Option<zencodec::StopToken>,
+    limits: Option<ResourceLimits>,
+    policy: Option<zencodec::decode::DecodePolicy>,
+    preferred: Vec<PixelDescriptor>,
+    descriptor: Option<PixelDescriptor>,
+    info: Option<ImageInfo>,
+
+    buffer: Vec<u8>,
+    header_parsed: bool,
+    is_interlaced: bool,
+
+    streaming_dec: Option<PngStreamingDecoder<'static>>,
+
+    interlaced_output: Option<zenpixels::PixelBuffer>,
+    row_buf: Vec<u8>,
+    current_row: u32,
+    total_rows: u32,
+
+    is_eof: bool,
+    is_complete: bool,
+    total_input_bytes: u64,
+}
+
+impl PngIncrementalDecoder {
+    fn new(
+        config: PngDecoderConfig,
+        stop: Option<zencodec::StopToken>,
+        limits: Option<ResourceLimits>,
+        policy: Option<zencodec::decode::DecodePolicy>,
+        preferred: &[PixelDescriptor],
+    ) -> Self {
+        Self {
+            config,
+            stop,
+            limits,
+            policy,
+            preferred: preferred.to_vec(),
+            descriptor: None,
+            info: None,
+            buffer: Vec::new(),
+            header_parsed: false,
+            is_interlaced: false,
+            streaming_dec: None,
+            interlaced_output: None,
+            row_buf: Vec::new(),
+            current_row: 0,
+            total_rows: 0,
+            is_eof: false,
+            is_complete: false,
+            total_input_bytes: 0,
+        }
+    }
+}
+
+impl IncrementalDecode for PngIncrementalDecoder {
+    type Error = At<CodecError>;
+
+    fn push_chunk(
+        &mut self,
+        chunk: &[u8],
+        is_eof: bool,
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<PushOutcome, Self::Error> {
+        if let Some(stop) = stop {
+            stop.check().map_err(|e| at!(PngError::from(e))).map_err(CodecError::of)?;
+        }
+        if let Some(ref stop) = self.stop {
+            let cancel: &dyn enough::Stop = stop;
+            cancel.check().map_err(|e| at!(PngError::from(e))).map_err(CodecError::of)?;
+        }
+
+        if self.is_complete {
+            return Ok(PushOutcome::new(0, PushStatus::Complete));
+        }
+
+        self.total_input_bytes = self.total_input_bytes.saturating_add(chunk.len() as u64);
+        if let Some(ref limits) = self.limits {
+            limits
+                .check_input_size(self.total_input_bytes)
+                .map_err(|e| at!(PngError::LimitExceeded(e)))
+                .map_err(CodecError::of)?;
+        }
+
+        if is_eof {
+            self.is_eof = true;
+        }
+
+        self.buffer.extend_from_slice(chunk);
+
+        // Try probing metadata if not yet done
+        if !self.header_parsed {
+            match crate::decode::probe(&self.buffer) {
+                Ok(probe_info) => {
+                    let mut info = convert_info(&probe_info);
+                    apply_policy_to_info(&mut info, self.policy.as_ref());
+                    self.is_interlaced = probe_info.interlaced;
+
+                    if let Some(ref limits) = self.limits {
+                        limits
+                            .check_dimensions(probe_info.width, probe_info.height)
+                            .map_err(|e| at!(PngError::LimitExceeded(e)))
+                            .map_err(CodecError::of)?;
+                    }
+
+                    let intrinsic_alpha = probe_info.color_type == 4 || probe_info.color_type == 6;
+                    let has_trns = probe_info.has_alpha && !intrinsic_alpha;
+                    let native_desc = enrich_descriptor_from_cicp(
+                        native_output_descriptor(
+                            probe_info.color_type,
+                            probe_info.bit_depth,
+                            has_trns,
+                        ),
+                        probe_info.cicp,
+                    );
+                    self.descriptor = Some(native_desc);
+                    self.total_rows = probe_info.height;
+                    self.info = Some(info);
+                    self.header_parsed = true;
+                }
+                Err(e) if !is_eof && matches!(e.error(), PngError::Truncated(_) | PngError::NotPng(_)) => {
+                    return Ok(PushOutcome::new(chunk.len(), PushStatus::NeedMoreInput));
+                }
+                Err(e) => {
+                    return Err(CodecError::of(e));
+                }
+            }
+        }
+
+        if !self.is_eof {
+            return Ok(PushOutcome::new(chunk.len(), PushStatus::NeedMoreInput));
+        }
+
+        // is_eof is true and headers parsed. Initialize decoder.
+        if self.is_interlaced {
+            if self.interlaced_output.is_none() {
+                let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
+                let png_config = PngDecodeConfig {
+                    max_pixels: effective_limits.max_pixels,
+                    max_memory_bytes: effective_limits.max_memory_bytes,
+                    skip_decompression_checksum: true,
+                    skip_critical_chunk_crc: true,
+                    alloc_pref: effective_limits.prefer_fallible_allocations,
+                };
+                let png_config = apply_decode_policy(png_config, self.policy.as_ref());
+                let cancel: &dyn enough::Stop = match &self.stop {
+                    Some(s) => s,
+                    None => &enough::Unstoppable,
+                };
+                let out = crate::decode::decode(
+                    &self.buffer,
+                    &png_config,
+                    cancel,
+                )
+                .map_err(CodecError::of)?;
+                self.interlaced_output = Some(out.pixels);
+            }
+        } else if self.streaming_dec.is_none() {
+            let data = core::mem::take(&mut self.buffer);
+            let dec = PngStreamingDecoder::new(
+                Cow::Owned(data),
+                &self.config,
+                self.stop.clone(),
+                self.limits.as_ref(),
+                self.policy.as_ref(),
+                &self.preferred,
+            )
+            .map_err(CodecError::of)?;
+            self.streaming_dec = Some(dec);
+        }
+
+        let status = if self.is_complete {
+            PushStatus::Complete
+        } else {
+            PushStatus::OutputReady
+        };
+
+        Ok(PushOutcome::new(chunk.len(), status))
+    }
+
+    fn pull_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, Self::Error> {
+        if let Some(ref stop) = self.stop {
+            let cancel: &dyn enough::Stop = stop;
+            cancel.check().map_err(|e| at!(PngError::from(e))).map_err(CodecError::of)?;
+        }
+
+        if self.is_complete {
+            return Ok(None);
+        }
+
+        if self.is_interlaced {
+            let pixels = match self.interlaced_output.as_ref() {
+                Some(p) => p,
+                None => return Ok(None),
+            };
+            if self.current_row >= self.total_rows {
+                self.is_complete = true;
+                return Ok(None);
+            }
+            let y = self.current_row;
+            self.current_row += 1;
+            let width = self.info.as_ref().map(|i| i.width).unwrap_or(0);
+            let desc = self.descriptor.unwrap_or(PixelDescriptor::RGBA8_SRGB);
+            let slice = pixels.as_slice();
+            let row_bytes = slice.row(y);
+            self.row_buf.clear();
+            self.row_buf.extend_from_slice(row_bytes);
+            let row_slice = PixelSlice::new(&self.row_buf, width, 1, self.row_buf.len(), desc)
+                .map_err(|e| {
+                    at!(PngError::Internal(
+                        zencodec::InternalKind::Bug,
+                        alloc::format!("pixel slice: {e}"),
+                    ))
+                })
+                .map_err(CodecError::of)?;
+            if self.current_row >= self.total_rows {
+                self.is_complete = true;
+            }
+            Ok(Some((y, row_slice)))
+        } else {
+            let dec = match self.streaming_dec.as_mut() {
+                Some(d) => d,
+                None => return Ok(None),
+            };
+            match dec.next_batch_inner().map_err(CodecError::of)? {
+                Some((y, slice)) => Ok(Some((y, slice))),
+                None => {
+                    self.is_complete = true;
+                    Ok(None)
+                }
+            }
+        }
+    }
+
+    fn info(&self) -> Option<&ImageInfo> {
+        self.info.as_ref()
+    }
+
+    fn is_complete(&self) -> bool {
+        self.is_complete
     }
 }
 
@@ -6286,7 +6569,7 @@ mod tests {
 
         // Both should decode correctly
         let dec = PngDecoderConfig::new();
-        let d_lossless = dec.decode(out_lossless.data()).unwrap();
+        let d_lossless = dec.clone().decode(out_lossless.data()).unwrap();
         let d_lossy = dec.decode(out_lossy.data()).unwrap();
         assert_eq!(d_lossless.width(), 2);
         assert_eq!(d_lossy.width(), 2);
@@ -8385,4 +8668,185 @@ mod tests {
             Some(AlphaMode::Straight),
         );
     }
+
+    #[test]
+    fn test_png_incremental_chunk_sizes() {
+        use zencodec::decode::{DecoderConfig as _, IncrementalDecode as _};
+
+        let enc = PngEncoderConfig::new();
+        let mut pixels = Vec::with_capacity(32 * 32 * 3);
+        for y in 0..32u8 {
+            for x in 0..32u8 {
+                pixels.push(x.wrapping_mul(7));
+                pixels.push(y.wrapping_mul(11));
+                pixels.push((x ^ y).wrapping_mul(13));
+            }
+        }
+        let img = imgref::Img::new(
+            bytemuck::cast_slice::<u8, rgb::Rgb<u8>>(&pixels).to_vec(),
+            32,
+            32,
+        );
+        let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
+        let data = encoded.data();
+
+        // Reference one-shot decode
+        let dec_ref = PngDecoderConfig::new();
+        let ref_output = dec_ref.decode(data).unwrap();
+        let ref_bytes = ref_output.into_buffer().copy_to_contiguous_bytes();
+
+        let chunk_sizes = [1, 2, 3, 7, 13, 64, 256, 1024, 4096, data.len()];
+
+        for &chunk_size in &chunk_sizes {
+            let job = PngDecoderConfig::new().job();
+            let mut inc = job.into_incremental_decoder(&[]).unwrap();
+            let mut offset = 0;
+            let mut pulled_rows = 0;
+            let mut collected = Vec::new();
+
+            while !inc.is_complete() {
+                let end = (offset + chunk_size).min(data.len());
+                let chunk = &data[offset..end];
+                let is_eof = end == data.len();
+                let outcome = inc.push_chunk(chunk, is_eof, None).unwrap();
+                offset += outcome.bytes_consumed;
+
+                while let Some((y, strip)) = inc.pull_batch().unwrap() {
+                    assert_eq!(y, pulled_rows);
+                    pulled_rows += 1;
+                    collected.extend_from_slice(&strip.contiguous_bytes());
+                }
+
+                if is_eof && outcome.bytes_consumed == 0 && !inc.is_complete() {
+                    break;
+                }
+            }
+
+            assert!(inc.is_complete(), "chunk_size {chunk_size} did not complete");
+            assert_eq!(pulled_rows, 32);
+            assert_eq!(collected, ref_bytes, "pixel mismatch for chunk_size {chunk_size}");
+            let info = inc.info().expect("info present");
+            assert_eq!(info.width, 32);
+            assert_eq!(info.height, 32);
+        }
+    }
+
+    #[test]
+    fn test_png_incremental_dyn_dispatch() {
+        use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
+
+        let enc = PngEncoderConfig::new();
+        let mut pixels = Vec::with_capacity(16 * 16 * 4);
+        for y in 0..16u8 {
+            for x in 0..16u8 {
+                pixels.push(x.wrapping_mul(5));
+                pixels.push(y.wrapping_mul(9));
+                pixels.push((x ^ y).wrapping_mul(15));
+                pixels.push(200);
+            }
+        }
+        let img = imgref::Img::new(
+            bytemuck::cast_slice::<u8, rgb::Rgba<u8>>(&pixels).to_vec(),
+            16,
+            16,
+        );
+        let encoded = enc.encode_rgba8(img.as_ref()).unwrap();
+        let data = encoded.data();
+
+        let job = PngDecoderConfig::new().job();
+        let mut dyn_dec = job.dyn_incremental_decoder(&[]).unwrap();
+
+        let mut offset = 0;
+        let chunk_size = 37;
+        let mut row_count = 0;
+
+        while !dyn_dec.is_complete() {
+            let end = (offset + chunk_size).min(data.len());
+            let chunk = &data[offset..end];
+            let is_eof = end == data.len();
+            let outcome = dyn_dec.push_chunk(chunk, is_eof, None).unwrap();
+            offset += outcome.bytes_consumed;
+
+            while let Some((y, _strip)) = dyn_dec.pull_batch().unwrap() {
+                assert_eq!(y, row_count);
+                row_count += 1;
+            }
+
+            if is_eof && outcome.bytes_consumed == 0 && !dyn_dec.is_complete() {
+                break;
+            }
+        }
+
+        assert!(dyn_dec.is_complete());
+        assert_eq!(row_count, 16);
+        let info = dyn_dec.info().unwrap();
+        assert_eq!(info.width, 16);
+        assert_eq!(info.height, 16);
+    }
+
+    #[test]
+    fn test_png_incremental_interlaced() {
+        use zencodec::decode::{DecoderConfig as _, IncrementalDecode as _};
+        let path = std::path::Path::new("/Users/lilith/work/zen/codec-corpus/image-rs/test-images/png/interlaced/basi2c08.png");
+        if !path.exists() {
+            return;
+        }
+        let data = std::fs::read(path).unwrap();
+
+        let dec_ref = PngDecoderConfig::new();
+        let ref_output = dec_ref.decode(&data).unwrap();
+        let ref_bytes = ref_output.into_buffer().copy_to_contiguous_bytes();
+
+        let chunk_sizes = [1, 2, 5, 17, 64, 128, data.len()];
+
+        for &chunk_size in &chunk_sizes {
+            let job = PngDecoderConfig::new().job();
+            let mut inc = job.into_incremental_decoder(&[]).unwrap();
+            let mut offset = 0;
+            let mut pulled_rows = 0;
+            let mut collected = Vec::new();
+
+            while !inc.is_complete() {
+                let end = (offset + chunk_size).min(data.len());
+                let chunk = &data[offset..end];
+                let is_eof = end == data.len();
+                let outcome = inc.push_chunk(chunk, is_eof, None).unwrap();
+                offset += outcome.bytes_consumed;
+
+                while let Some((y, strip)) = inc.pull_batch().unwrap() {
+                    assert_eq!(y, pulled_rows);
+                    pulled_rows += 1;
+                    collected.extend_from_slice(&strip.contiguous_bytes());
+                }
+
+                if is_eof && outcome.bytes_consumed == 0 && !inc.is_complete() {
+                    break;
+                }
+            }
+
+            assert!(inc.is_complete());
+            assert_eq!(pulled_rows, 32);
+            assert_eq!(collected, ref_bytes);
+        }
+    }
+
+    #[test]
+    fn test_png_incremental_truncation() {
+        use zencodec::decode::{DecoderConfig as _, IncrementalDecode as _};
+
+        let enc = PngEncoderConfig::new();
+        let pixels = vec![rgb::Rgb { r: 10, g: 20, b: 30 }; 64]; // 8x8
+        let img = imgref::Img::new(pixels, 8, 8);
+        let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
+        let data = encoded.data();
+
+        // Push only half of the data with is_eof: true -> must report error
+        let half = data.len() / 2;
+        let job = PngDecoderConfig::new().job();
+        let mut inc = job.into_incremental_decoder(&[]).unwrap();
+        let res = inc.push_chunk(&data[..half], true, None);
+        assert!(res.is_err(), "Premature EOF must return error");
+    }
 }
+
+

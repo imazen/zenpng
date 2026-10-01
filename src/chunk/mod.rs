@@ -92,7 +92,7 @@ impl<'a> Iterator for ChunkIter<'a> {
             };
 
             if crc_end > self.data.len() {
-                return Some(Err(PngError::Decode(alloc::format!(
+                return Some(Err(PngError::Truncated(alloc::format!(
                     "truncated chunk {:?} at offset {}",
                     core::str::from_utf8(&chunk_type).unwrap_or("????"),
                     self.pos

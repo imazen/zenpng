@@ -73,7 +73,7 @@ pub mod sweep;
 
 pub use codec::{
     PngAnimationFrameDecoder, PngAnimationFrameEncoder, PngDecodeJob, PngDecoder, PngDecoderConfig,
-    PngEncodeJob, PngEncoder, PngEncoderConfig,
+    PngEncodeJob, PngEncoder, PngEncoderConfig, PngIncrementalDecoder, PngStreamingDecoder,
 };
 #[allow(deprecated)]
 pub use decode::PngLimits;
