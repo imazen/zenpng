@@ -311,6 +311,14 @@ strategies, zenquant perceptual quantization. Optimizations worth adopting from 
 4. **Duplicate frame merging** — combine identical consecutive frames
 5. ~~**Exact-palette detection**~~ — done (try_build_exact_palette)
 
+## Apple `iDOT` parallel PNG (investigation, not implemented)
+
+See `docs/IDOT_PARALLEL_PNG.md`. Verified layout: `u32 N` then N×`{first_row,
+row_count, offset}` (offset from the iDOT chunk's length field). The parallel
+decode path must be serial-equivalent (Buchanan's ambiguous-PNG samples are the
+adversarial fixtures). On hybrid CPUs an unpinned 2-way split measured slower
+than serial. Probe: `examples/idot_probe.rs` (`--features _dev`).
+
 ## Known Issues
 
 - **Fixed 2026-08-27 — GA16 corrupted by RGBA8 transparent zeroing.** The

@@ -1,0 +1,24 @@
+command: cargo build --release --example idot_probe --features _dev
+         taskset -c 0-7  target/release/examples/idot_probe <files>      (P-cores)
+         taskset -c 0-19 target/release/examples/idot_probe <files>      (all cores)
+         IDOT_ENC=1 taskset -c 0-7 target/release/examples/idot_probe w46 w39 w37
+base commit: cfccd88f77cce5836c25bb70534fa49e4a5cd3c0 (+ examples/idot_probe.rs, uncommitted at run time)
+zenflate: 0.3.6 (crates.io, as resolved by zenpng)
+host: i265 — Intel Core Ultra 7 265K, 8 P-cores (cpu 0-7, 5.5 GHz) + 12 E-cores (cpu 8-19, 4.6 GHz), 30 GiB, native Linux
+      Shared box: load average ~10 from other users' jobs during the runs; timings are medians of 9 iterations.
+files (Apple-written PNGs with iDOT, from Wikimedia Commons; not committed):
+  w33 Firefox_93_on_macOS_11_screenshot_(zh-hant).png       2880x1800 RGBA8  sha256 prefix 4f7700887f98eaef
+  w37 Pale_Moon_Browser_v35.2.1_on_macOS_Sonoma.png          3350x2274 RGBA8  040c0d4d06ad3fe9
+  w38 Safari's_Web_Inspector_in_macOS_Sonoma.png             3638x2212 RGBA8  e57236139af2e25e
+  w39 Safari_17_on_macOS_Monterey.png                        2784x1626 RGBA8  3a7d89d6ae85973a
+  w40 Safari_17_on_macOS_Sonoma.png                          3644x2212 RGBA8  62503bc0e078b4d8
+  w42 Screenshot_of_Homebrew_Man_Page_on_MacOS_Sonoma.png    1204x918  RGBA8  8062eb6af1134b5a
+  w43 Screenshot_of_Meld_Studio_running_on_macOS.png         3080x2292 RGBA8  0727ee0550baafc1
+  w46 Transmission_3.0.0_on_macOS_12.png                     1160x556  RGBA8  490762ed1e42ce18
+  URLs: https://commons.wikimedia.org/wiki/File:<name>
+caveats: content is all macOS screenshots (one class); no tiny (<64px) images exist
+  with iDOT in this set. The "FUSED" path is the probe's own streaming loop
+  (an extra row copy vs RowDecoder), so "vs zenpng::decode" understates what a
+  RowDecoder-per-segment implementation would reach. ENC rows compress Apple's
+  own filtered bytes (None/Sub only) at zenflate effort 1/7/13/19/24.
+See docs/IDOT_PARALLEL_PNG.md.

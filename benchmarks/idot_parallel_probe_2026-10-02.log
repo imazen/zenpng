@@ -1,0 +1,80 @@
+# idot_probe results, zenpng cfccd88+wip, host i265, 2026-10-02T10:04:36Z
+# --- run 1: fused + two-pass, taskset 0-7 (P-cores) vs 0-19 (all cores; box load avg ~10 from other jobs)
+##### taskset 0-7
+== /home/lilith/tmp/mtpng/samples/w46.png: 1160x556 bitdepth=8 color_type=6 interlace=0
+   FUSED: serial 3.00 ms | 2-thread segment-parallel 1.61 ms -> 1.86x vs fused serial, 0.83x vs zenpng::decode (identical: true)
+   segment start filters=[0, 1] (independent: true); parallel==serial: true; manual==zenpng::decode: true
+   zenpng::decode 1.33 ms (483 MP/s) | manual serial inflate 0.95 ms + unfilter 0.44 ms = 1.39 ms | 2-thread segment-parallel 1.22 ms -> 1.15x vs manual serial
+== /home/lilith/tmp/mtpng/samples/w42.png: 1204x918 bitdepth=8 color_type=6 interlace=0
+   FUSED: serial 5.78 ms | 2-thread segment-parallel 3.42 ms -> 1.69x vs fused serial, 0.93x vs zenpng::decode (identical: true)
+   segment start filters=[0, 0] (independent: true); parallel==serial: true; manual==zenpng::decode: true
+   zenpng::decode 3.16 ms (350 MP/s) | manual serial inflate 2.30 ms + unfilter 1.08 ms = 3.38 ms | 2-thread segment-parallel 2.45 ms -> 1.38x vs manual serial
+== /home/lilith/tmp/mtpng/samples/w39.png: 2784x1626 bitdepth=8 color_type=6 interlace=0
+   FUSED: serial 11.43 ms | 2-thread segment-parallel 6.58 ms -> 1.74x vs fused serial, 1.06x vs zenpng::decode (identical: true)
+   segment start filters=[0, 1] (independent: true); parallel==serial: true; manual==zenpng::decode: true
+   zenpng::decode 6.96 ms (651 MP/s) | manual serial inflate 5.48 ms + unfilter 5.25 ms = 10.74 ms | 2-thread segment-parallel 7.37 ms -> 1.46x vs manual serial
+== /home/lilith/tmp/mtpng/samples/w33.png: 2880x1800 bitdepth=8 color_type=6 interlace=0
+   FUSED: serial 14.92 ms | 2-thread segment-parallel 8.56 ms -> 1.74x vs fused serial, 1.20x vs zenpng::decode (identical: true)
+   segment start filters=[1, 1] (independent: true); parallel==serial: true; manual==zenpng::decode: true
+   zenpng::decode 10.31 ms (503 MP/s) | manual serial inflate 8.35 ms + unfilter 6.25 ms = 14.59 ms | 2-thread segment-parallel 9.20 ms -> 1.59x vs manual serial
+== /home/lilith/tmp/mtpng/samples/w37.png: 3350x2274 bitdepth=8 color_type=6 interlace=0
+   FUSED: serial 21.30 ms | 2-thread segment-parallel 11.87 ms -> 1.79x vs fused serial, 1.30x vs zenpng::decode (identical: true)
+   segment start filters=[0, 1] (independent: true); parallel==serial: true; manual==zenpng::decode: true
+   zenpng::decode 15.44 ms (493 MP/s) | manual serial inflate 12.74 ms + unfilter 9.42 ms = 22.17 ms | 2-thread segment-parallel 13.86 ms -> 1.60x vs manual serial
+== /home/lilith/tmp/mtpng/samples/w43.png: 3080x2292 bitdepth=8 color_type=6 interlace=0
+   FUSED: serial 21.71 ms | 2-thread segment-parallel 12.29 ms -> 1.77x vs fused serial, 1.28x vs zenpng::decode (identical: true)
+   segment start filters=[0, 1] (independent: true); parallel==serial: true; manual==zenpng::decode: true
+   zenpng::decode 15.76 ms (448 MP/s) | manual serial inflate 12.74 ms + unfilter 8.96 ms = 21.70 ms | 2-thread segment-parallel 13.56 ms -> 1.60x vs manual serial
+##### taskset 0-19
+== /home/lilith/tmp/mtpng/samples/w46.png: 1160x556 bitdepth=8 color_type=6 interlace=0
+   FUSED: serial 2.94 ms | 2-thread segment-parallel 3.29 ms -> 0.90x vs fused serial, 0.62x vs zenpng::decode (identical: true)
+   segment start filters=[0, 1] (independent: true); parallel==serial: true; manual==zenpng::decode: true
+   zenpng::decode 2.04 ms (316 MP/s) | manual serial inflate 1.00 ms + unfilter 0.47 ms = 1.47 ms | 2-thread segment-parallel 2.09 ms -> 0.70x vs manual serial
+== /home/lilith/tmp/mtpng/samples/w42.png: 1204x918 bitdepth=8 color_type=6 interlace=0
+   FUSED: serial 5.86 ms | 2-thread segment-parallel 5.87 ms -> 1.00x vs fused serial, 0.54x vs zenpng::decode (identical: true)
+   segment start filters=[0, 0] (independent: true); parallel==serial: true; manual==zenpng::decode: true
+   zenpng::decode 3.15 ms (351 MP/s) | manual serial inflate 2.28 ms + unfilter 1.11 ms = 3.39 ms | 2-thread segment-parallel 3.84 ms -> 0.89x vs manual serial
+== /home/lilith/tmp/mtpng/samples/w39.png: 2784x1626 bitdepth=8 color_type=6 interlace=0
+   FUSED: serial 11.41 ms | 2-thread segment-parallel 15.20 ms -> 0.75x vs fused serial, 0.46x vs zenpng::decode (identical: true)
+   segment start filters=[0, 1] (independent: true); parallel==serial: true; manual==zenpng::decode: true
+   zenpng::decode 6.97 ms (649 MP/s) | manual serial inflate 5.74 ms + unfilter 5.20 ms = 10.94 ms | 2-thread segment-parallel 12.15 ms -> 0.90x vs manual serial
+== /home/lilith/tmp/mtpng/samples/w33.png: 2880x1800 bitdepth=8 color_type=6 interlace=0
+   FUSED: serial 15.06 ms | 2-thread segment-parallel 18.79 ms -> 0.80x vs fused serial, 0.55x vs zenpng::decode (identical: true)
+   segment start filters=[1, 1] (independent: true); parallel==serial: true; manual==zenpng::decode: true
+   zenpng::decode 10.24 ms (506 MP/s) | manual serial inflate 8.38 ms + unfilter 6.03 ms = 14.41 ms | 2-thread segment-parallel 14.91 ms -> 0.97x vs manual serial
+== /home/lilith/tmp/mtpng/samples/w37.png: 3350x2274 bitdepth=8 color_type=6 interlace=0
+   FUSED: serial 21.50 ms | 2-thread segment-parallel 27.05 ms -> 0.79x vs fused serial, 0.58x vs zenpng::decode (identical: true)
+   segment start filters=[0, 1] (independent: true); parallel==serial: true; manual==zenpng::decode: true
+   zenpng::decode 15.57 ms (489 MP/s) | manual serial inflate 12.62 ms + unfilter 8.68 ms = 21.30 ms | 2-thread segment-parallel 22.71 ms -> 0.94x vs manual serial
+== /home/lilith/tmp/mtpng/samples/w43.png: 3080x2292 bitdepth=8 color_type=6 interlace=0
+   FUSED: serial 21.64 ms | 2-thread segment-parallel 26.96 ms -> 0.80x vs fused serial, 0.58x vs zenpng::decode (identical: true)
+   segment start filters=[0, 1] (independent: true); parallel==serial: true; manual==zenpng::decode: true
+   zenpng::decode 15.72 ms (449 MP/s) | manual serial inflate 12.88 ms + unfilter 8.51 ms = 21.40 ms | 2-thread segment-parallel 22.10 ms -> 0.97x vs manual serial
+# --- run 2: encode segment cost, IDOT_ENC=1 taskset -c 0-7
+== /home/lilith/tmp/mtpng/samples/w46.png: 1160x556 bitdepth=8 color_type=6 interlace=0
+   ENC effort  1:  N=1: 228664 B (+0.000%) 2.6 ms  N=2: 228483 B (-0.079%) 2.8 ms  N=4: 228527 B (-0.060%) 2.7 ms  N=8: 229618 B (+0.417%) 2.7 ms
+   ENC effort  7:  N=1: 197720 B (+0.000%) 2.6 ms  N=2: 197392 B (-0.166%) 2.0 ms  N=4: 197432 B (-0.146%) 1.6 ms  N=8: 198653 B (+0.472%) 1.6 ms
+   ENC effort 13:  N=1: 156907 B (+0.000%) 8.9 ms  N=2: 156961 B (+0.034%) 4.8 ms  N=4: 156787 B (-0.076%) 5.2 ms  N=8: 158123 B (+0.775%) 4.0 ms
+   ENC effort 19:  N=1: 149956 B (+0.000%) 40.8 ms  N=2: 150306 B (+0.233%) 23.4 ms  N=4: 150301 B (+0.230%) 14.5 ms  N=8: 150936 B (+0.654%) 9.7 ms
+   ENC effort 24:  N=1: 138812 B (+0.000%) 154.3 ms  N=2: 138996 B (+0.133%) 83.3 ms  N=4: 139232 B (+0.303%) 43.8 ms  N=8: 140603 B (+1.290%) 52.8 ms
+== /home/lilith/tmp/mtpng/samples/w39.png: 2784x1626 bitdepth=8 color_type=6 interlace=0
+   ENC effort  1:  N=1: 736379 B (+0.000%) 9.6 ms  N=2: 736441 B (+0.008%) 6.1 ms  N=4: 736458 B (+0.011%) 4.2 ms  N=8: 736765 B (+0.052%) 5.1 ms
+   ENC effort  7:  N=1: 653043 B (+0.000%) 10.4 ms  N=2: 653027 B (-0.002%) 6.7 ms  N=4: 653131 B (+0.013%) 4.7 ms  N=8: 653509 B (+0.071%) 5.0 ms
+   ENC effort 13:  N=1: 526151 B (+0.000%) 34.2 ms  N=2: 525740 B (-0.078%) 18.3 ms  N=4: 525481 B (-0.127%) 10.1 ms  N=8: 525742 B (-0.078%) 12.2 ms
+   ENC effort 19:  N=1: 510340 B (+0.000%) 95.2 ms  N=2: 510714 B (+0.073%) 49.6 ms  N=4: 510506 B (+0.033%) 27.6 ms  N=8: 510645 B (+0.060%) 39.6 ms
+   ENC effort 24:  N=1: 475488 B (+0.000%) 584.5 ms  N=2: 475901 B (+0.087%) 309.3 ms  N=4: 476193 B (+0.148%) 184.0 ms  N=8: 476153 B (+0.140%) 178.9 ms
+== /home/lilith/tmp/mtpng/samples/w37.png: 3350x2274 bitdepth=8 color_type=6 interlace=0
+   ENC effort  1:  N=1: 2268720 B (+0.000%) 22.6 ms  N=2: 2269550 B (+0.037%) 13.7 ms  N=4: 2270723 B (+0.088%) 11.7 ms  N=8: 2270261 B (+0.068%) 13.9 ms
+   ENC effort  7:  N=1: 2150251 B (+0.000%) 26.3 ms  N=2: 2151047 B (+0.037%) 14.7 ms  N=4: 2151986 B (+0.081%) 8.8 ms  N=8: 2151837 B (+0.074%) 10.0 ms
+   ENC effort 13:  N=1: 1958926 B (+0.000%) 71.2 ms  N=2: 1959934 B (+0.051%) 38.0 ms  N=4: 1960508 B (+0.081%) 24.7 ms  N=8: 1961062 B (+0.109%) 22.3 ms
+   ENC effort 19:  N=1: 1942218 B (+0.000%) 173.3 ms  N=2: 1942756 B (+0.028%) 95.4 ms  N=4: 1943708 B (+0.077%) 54.5 ms  N=8: 1942867 B (+0.033%) 53.9 ms
+   ENC effort 24:  N=1: 1849336 B (+0.000%) 1280.7 ms  N=2: 1850262 B (+0.050%) 707.7 ms  N=4: 1851121 B (+0.097%) 403.1 ms  N=8: 1851193 B (+0.100%) 400.1 ms
+# --- run 3: core-placement check, w33, IDOT_TRACE=1 (two-pass variant)
+## taskset 0-7
+   FUSED: serial 15.07 ms | 2-thread segment-parallel 8.60 ms -> 1.75x vs fused serial, 1.19x vs zenpng::decode (identical: true)
+   segment start filters=[1, 1] (independent: true); parallel==serial: true; manual==zenpng::decode: true
+   zenpng::decode 10.25 ms (506 MP/s) | manual serial inflate 8.70 ms + unfilter 6.41 ms = 15.11 ms | 2-thread segment-parallel 9.98 ms -> 1.51x vs manual serial
+## taskset 8-19
+   FUSED: serial 36.36 ms | 2-thread segment-parallel 18.95 ms -> 1.92x vs fused serial, 0.62x vs zenpng::decode (identical: true)
+   segment start filters=[1, 1] (independent: true); parallel==serial: true; manual==zenpng::decode: true
+   zenpng::decode 11.83 ms (438 MP/s) | manual serial inflate 8.71 ms + unfilter 16.69 ms = 25.40 ms | 2-thread segment-parallel 15.20 ms -> 1.67x vs manual serial

@@ -106,6 +106,10 @@ name = "unfilter_bench"
 required-features = ["_dev"]
 
 [[example]]
+name = "idot_probe"
+required-features = ["_dev"]
+
+[[example]]
 name = "joint_bench"
 required-features = ["joint"]
 
