@@ -74,12 +74,13 @@ jobs:
           key: cross-i686
 
       # The cross container may lack git for codec-corpus downloads; fetch the
-      # iDOT fixtures on the host into the (mounted) workspace instead.
+      # iDOT fixtures on the host into the mounted workspace (not target/, which
+      # cross mounts separately) instead.
       - name: Fetch png-idot corpus
         run: |
-          git clone --depth 1 --filter=blob:none --sparse https://github.com/imazen/codec-corpus target/codec-corpus
-          git -C target/codec-corpus sparse-checkout set png-idot
-          echo "ZENPNG_IDOT_CORPUS=$GITHUB_WORKSPACE/target/codec-corpus/png-idot" >> "$GITHUB_ENV"
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/imazen/codec-corpus .ci-corpus
+          git -C .ci-corpus sparse-checkout set png-idot
+          echo "ZENPNG_IDOT_CORPUS=$GITHUB_WORKSPACE/.ci-corpus/png-idot" >> "$GITHUB_ENV"
 
       - name: Test (i686)
         run: cross test --target i686-unknown-linux-gnu

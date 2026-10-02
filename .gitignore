@@ -68,3 +68,4 @@ Cargo.toml.original.txt
 
 .workongoing
 .jj/
+.ci-corpus/
