@@ -468,6 +468,11 @@ fn butteraugli_to_quality(distance: f32) -> f32 {
     (95.0 - (distance - 0.5) * 10.0).clamp(30.0, 100.0)
 }
 
+/// Thread budget for `iDOT` parallel decode under a zencodec threading policy.
+fn decode_threads(policy: zencodec::ThreadingPolicy) -> usize {
+    if policy.is_parallel() { 0 } else { 1 }
+}
+
 /// Apply threading policy to PNG encode config fields.
 fn apply_threading(config: &mut crate::encode::EncodeConfig, policy: zencodec::ThreadingPolicy) {
     if policy.is_parallel() {
@@ -2089,6 +2094,7 @@ impl PngDecoder<'_> {
             max_memory_bytes: limits.max_memory_bytes,
             skip_decompression_checksum: true,
             skip_critical_chunk_crc: true,
+            max_threads: decode_threads(limits.threading()),
             alloc_pref: limits.prefer_fallible_allocations,
         };
         apply_decode_policy(config, self.policy.as_ref())
@@ -2254,6 +2260,7 @@ fn push_decoder_native_noninterlaced<'a>(
         max_memory_bytes: limits.max_memory_bytes,
         skip_decompression_checksum: true,
         skip_critical_chunk_crc: true,
+        max_threads: decode_threads(limits.threading()),
         alloc_pref: limits.prefer_fallible_allocations,
     };
     let png_config = apply_decode_policy(png_config, job.policy.as_ref());
@@ -2440,6 +2447,7 @@ impl<'a> PngStreamingDecoder<'a> {
             max_memory_bytes: effective_limits.max_memory_bytes,
             skip_decompression_checksum: true,
             skip_critical_chunk_crc: true,
+            max_threads: decode_threads(effective_limits.threading()),
             alloc_pref: effective_limits.prefer_fallible_allocations,
         };
         let png_config = apply_decode_policy(png_config, policy);
@@ -2609,6 +2617,7 @@ impl PngAnimationFrameDecoder {
             max_memory_bytes: config.limits.max_memory_bytes,
             skip_decompression_checksum: true,
             skip_critical_chunk_crc: true,
+            max_threads: decode_threads(config.limits.threading()),
             alloc_pref: config.limits.prefer_fallible_allocations,
         };
 

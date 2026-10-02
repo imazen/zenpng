@@ -37,6 +37,7 @@ extern crate std;
 
 whereat::define_at_crate_info!();
 
+mod affinity;
 mod alloc_util;
 mod chunk;
 mod codec;
@@ -118,6 +119,15 @@ pub use crate::encoder::{PhaseStat, PhaseStats};
 #[doc(hidden)]
 pub fn __bench_unfilter_row(filter_type: u8, row: &mut [u8], prev: &[u8], bpp: usize) {
     simd::bench_unfilter_row(filter_type, row, prev, bpp);
+}
+
+/// `iDOT` parallel decode counters: `(completed, fell_back)` since start.
+#[cfg(feature = "_dev")]
+#[doc(hidden)]
+pub fn __idot_stats() -> (usize, usize) {
+    use core::sync::atomic::Ordering::Relaxed;
+    let s = &decoder::idot::STATS;
+    (s[0].load(Relaxed), s[1].load(Relaxed))
 }
 
 /// Benchmarking access to the SIMD downcast predicates. Public via `_dev`

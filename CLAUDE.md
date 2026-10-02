@@ -311,13 +311,19 @@ strategies, zenquant perceptual quantization. Optimizations worth adopting from 
 4. **Duplicate frame merging** — combine identical consecutive frames
 5. ~~**Exact-palette detection**~~ — done (try_build_exact_palette)
 
-## Apple `iDOT` parallel PNG (investigation, not implemented)
+## Apple `iDOT` parallel PNG
 
-See `docs/IDOT_PARALLEL_PNG.md`. Verified layout: `u32 N` then N×`{first_row,
-row_count, offset}` (offset from the iDOT chunk's length field). The parallel
-decode path must be serial-equivalent (Buchanan's ambiguous-PNG samples are the
-adversarial fixtures). On hybrid CPUs an unpinned 2-way split measured slower
-than serial. Probe: `examples/idot_probe.rs` (`--features _dev`).
+Implemented decode + encode; see `docs/IDOT_PARALLEL_PNG.md`. Layout: `u32 N`
+then N×`{first_row, row_count, offset}` (offset from the iDOT chunk's length
+field). Decoder: `src/decoder/idot.rs` (validate, work-queue workers, fallback
+to serial on anything unproven), `src/affinity.rs` (Linux core-tier pinning).
+Encoder: `src/encoder/segments.rs`. The parallel path must stay
+byte-identical to serial — `tests/idot.rs` runs the codec-corpus `png-idot`
+set (real Apple, Buchanan adversarial, 26 generated). Thresholds:
+`idot::workers_for_bytes` (2 workers ≥ 2 MiB, +1 per 4 MiB). Bench:
+`examples/idot_bench.rs`, `examples/idot_encode.rs` (`--features _dev`;
+`ZENPNG_PIN`, `ZENPNG_IDOT_MIN_BYTES`, `ZENPNG_IDOT_TRACE` overrides).
+zenflate is `[patch.crates-io]`'d to imazen/zenflate#9 until released.
 
 ## Known Issues
 

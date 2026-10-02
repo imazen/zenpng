@@ -1,35 +1,33 @@
-# Apple `iDOT` parallel PNG: format, measurements, and a design for zenpng
+# Apple `iDOT` parallel PNG: format, implementation, measurements
 
-Status: investigation (2026-10-02). Nothing here is implemented in the decoder or
-encoder yet. The probe harness is `examples/idot_probe.rs`; raw results are in
+Status (2026-10-02): **implemented** in zenpng for both decode and encode, on
+top of zenflate's segment APIs ([imazen/zenflate#9](https://github.com/imazen/zenflate/pull/9),
+patched in via `[patch.crates-io]` until released). Fixtures:
+[codec-corpus `png-idot/`](https://github.com/imazen/codec-corpus/tree/main/png-idot).
+Raw results: `benchmarks/idot_decode_2026-10-02.{log,meta}`,
+`benchmarks/idot_encode_2026-10-02.{log,meta}`, and the original investigation in
 `benchmarks/idot_parallel_probe_2026-10-02.{log,meta}`.
 
 ## TL;DR
 
 - `iDOT` is an unregistered ancillary chunk that Apple software has written since
   about 2011. It splits the IDAT stream into independently inflatable horizontal
-  strips so that two cores can decode one PNG. Every other decoder ignores it, and
+  strips so several cores can decode one PNG. Every other decoder ignores it, and
   the strips are ordinary DEFLATE, so the files stay standard PNGs.
-- The layout below is **verified on 8 real Apple-written PNGs**. It is a clean
-  generalisation that also explains every published reverse-engineering note.
-- **Decode:** with segments decoded on two P-cores, the probe's fused
-  inflate+unfilter loop scales **1.69–1.86×** over the same loop run serially.
-  It is **1.06–1.30×** faster than today's `zenpng::decode` on images of 4.5 MP and
-  up, and **0.83–0.93×** (slower) at 0.6–1.1 MP. The probe loop carries an extra row
-  copy that `RowDecoder` does not, so the real gain should sit between those two
-  figures. That is untested until a RowDecoder-per-segment version exists. When the
-  same run was unpinned on a hybrid CPU under load, it was **slower** than serial
-  (0.46–0.62×), because the second thread landed on an E-core. Scheduling policy
-  matters as much as the format.
-- **Encode:** splitting into 2 independent segments costs **−0.17% to +0.23%**
-  in size (median about +0.04%) and roughly halves deflate wall time at effort
-  13–24. This parallel-encode benefit applies to every decoder, not only Apple's.
-- **Conformance hazard:** a naive parallel decoder can produce a *different image*
-  from a serial one (Buchanan's "ambiguous PNG"; its README says Apple appears to have patched it).
-  zenpng must only take the parallel path when it can prove the result is
-  byte-identical to the serial decode, and must fall back to serial otherwise.
-  The probe reproduces both published attack shapes, and the validation rules
-  below reject both.
+- The layout (§1) is **verified on 8 real Apple-written PNGs**.
+- **Decode** (Core Ultra 7 265K, 8P+12E, unpinned shell, median of 41): Apple's
+  own 2-segment files decode **1.57–1.71×** faster than `max_threads = 1` at
+  1.1–8 MP. zenpng-written files with more segments reach **2.05–2.48×** (4),
+  **2.66–3.20×** (8) and **3.99×** (16, 7.6 MP). Every output was byte-identical
+  to the serial decode.
+- **Encode:** `EncodeConfig::with_decode_segments(n)` costs **−0.09% to +0.40%**
+  in size for N ≤ 8 (+0.50% worst case at N = 16) and **+1–8%** encode time at
+  efforts 7–19. It is off by default; unsegmented output is byte-identical to
+  before.
+- **Conformance:** the parallel path is only used when it provably matches the
+  serial decode (§2); anything else falls back. A corpus of real, adversarial
+  (Buchanan's "ambiguous PNG") and 26 generated cases checks this on every
+  build, and mutation tests confirm the checks are load-bearing.
 
 ## 1. Wire format
 
@@ -147,15 +145,17 @@ either decodes to exactly the serial result or falls back to the serial path.
    serial output, because a serial decoder would compute the same bytes from the
    same symbols.
 4. **Filter dependency:** if the first row of segment k > 0 uses Up, Average or
-   Paeth, it needs segment k-1's last row. The fallback is a deferred unfilter
-   (see §3). Apple never emits this, but it is conformant PNG.
-5. **Last segment:** must end with BFINAL. The bytes that follow are handled
-   exactly as the serial path handles them (Adler-32 trailer, trailing data), so
-   warnings and errors match.
-6. **Checksums:** the CRC-32 check per chunk is unchanged. When Adler-32 is
-   verified (`PngDecodeConfig::strict()`), each worker computes Adler-32 over its
-   filtered bytes and the results are joined with `zenflate::adler32_combine`, so
-   a mismatch raises the same error the serial path raises.
+   Paeth, it needs segment k-1's last row. zenpng falls back to serial (a
+   deferred unfilter is possible but not implemented). Apple never emits this,
+   but it is conformant PNG.
+5. **Last segment:** must end with BFINAL and produce no extra rows; anything
+   else falls back.
+6. **Checksums:** the CRC-32 check per chunk is unchanged (bounded IDAT sources
+   check it per segment). The per-segment Adler-32s, which zenflate computes
+   anyway, are joined with `zenflate::adler32_combine` and compared with the
+   zlib footer on **every** parallel decode, strict or not. A mismatch falls
+   back, so the serial decoder decides what to report (a warning by default,
+   an error in strict mode).
 
 Failure of any check means discarding the parallel result and running the
 unchanged serial decoder. Decoders must not reject a file for a bad `iDOT`: it
@@ -163,166 +163,152 @@ is ancillary, and the only consequence is losing parallelism. That differs from
 Apple, which raises "iDOT doesn't point to valid IDAT chunk", and at least once
 crashed on a bad iDOT (CVE-2016-1811).
 
-## 3. Decoder design
+## 3. What zenpng implements
 
-Scope for the first version: full-frame `decode()` and the zencodec full-frame
-path, non-interlaced, single image (not APNG `fdAT`). Streaming row-by-row
-decode stays serial.
+### Decode (`src/decoder/idot.rs`, `src/affinity.rs`)
 
-1. **Parse:** add `idot: Option<IdotTable>` to `PngAncillary` (crate-private),
-   recording the chunk position and the validated `(first_row, row_count,
-   chunk_pos)` triples. `ancillary.rs` currently drops unknown chunks
-   (`_ => {}`), so nothing round-trips today. That is good: a stale `iDOT` must
-   never be copied (its 4th letter is uppercase, meaning not safe to copy), and
-   oxipng also strips it.
-2. **Gate:** use the parallel path only when the static checks pass, the thread
-   budget is above 1 (`max_threads`, or zencodec `ThreadingPolicy`), and the image
-   is at least about 1 MP (to be set from the RowDecoder-based measurement; the
-   probe breaks even somewhere between 1.1 and 4.5 MP).
-3. **Execution:** allocate the output once, as today, and split it at segment row
-   boundaries with `split_at_mut` (disjoint `&mut`, no unsafe code).
-   **Segment 0 runs on the calling thread.** Segments 1..N run in
-   `std::thread::scope`. Running segment 0 locally avoids a spawn and keeps half
-   the work on the core the caller is already using, which matters on hybrid
-   CPUs (§4). Each worker gets:
-   - an `IdatSource` bounded to the chunk range `[offset[k], offset[k+1])`;
-   - a `StreamDecompressor` (zlib for segment 0, raw DEFLATE after that);
-   - a `RowDecoder` writing rows straight into its output slice, with a zeroed
-     "previous row" for the segment's first row, which is valid for filter
-     None or Sub.
-   Per-row post-processing (the non-passthrough formats) is row-local, so it runs
-   inside the worker.
-4. **Deferred unfilter (obligation 4):** if segment k's first filter byte is Up,
-   Average or Paeth, the worker inflates into a filtered scratch buffer. That
-   costs `row_count · (stride+1)` extra bytes, counted against `max_memory_bytes`.
-   It unfilters after joining segment k-1. Inflate, the larger share of the work,
-   stays parallel.
-5. **Fallback:** on any worker error or failed obligation, run the existing
-   serial decode from the start. Segment 0 is byte-for-byte a prefix of the
-   serial decode, so a later version could resume from it. That is not worth the
-   complexity at first.
+- `RowDecoder::new` records the `iDOT` chunk (a second `iDOT` disables it) and
+  `idot::validate` applies the static checks of §2 (1 < N ≤ 64, contiguous rows
+  covering the image, offsets on IDAT chunk headers in increasing order, the
+  first at the first IDAT, interlace 0).
+- `decode_png` tries the parallel path on both the RGB8/RGBA8 passthrough path
+  and the post-processed path (every other format), before the serial row loop.
+  On `Outcome::Fallback` the untouched serial decoder runs.
+- Each segment is a work unit: a bounded `IdatSource` over its IDAT chunks, a
+  `StreamDecompressor` (`zlib` for segment 0, `zlib_continuation` after) with
+  `with_segment_end(true)`, and rows unfiltered (and post-processed) straight
+  into that segment's disjoint slice of the output buffer. Workers claim units
+  from a shared queue, so a fast core takes more segments; the calling thread
+  is one of the workers. Any failure sets an abort flag and falls back.
+- Output buffers come from `alloc_util::alloc_zeroed`, which now uses
+  `bytemuck::allocation::try_zeroed_vec` (fallible calloc) instead of
+  `try_reserve_exact` + `resize`. The old path zero-filled the whole output on
+  the calling thread before any worker started. On w33 (20 MB RGBA) a trace
+  showed ~6 ms of a 10.9 ms parallel decode spent outside the workers; the
+  calloc change cut that decode from 10.1 to 8.4 ms in the same benchmark
+  (log section A predates it). Serial decode time is unchanged by it.
 
-### zenflate API needed (additive, no semver break)
+**API:** `PngDecodeConfig::max_threads` / `with_max_threads(n)`: 0 = automatic
+(default), 1 = never parallel, N = cap. zencodec's `ThreadingPolicy::Sequential`
+maps to 1. Files without `iDOT` are unaffected.
 
-- A way to tell, once the source reports EOF, whether a `StreamDecompressor` is
-  at a byte-aligned block boundary with no BFINAL seen. That could be a
-  `segment` constructor/mode that returns `Ok` at a clean boundary instead of a
-  truncation error, plus an accessor like `ended_at_block_boundary()`. Today an
-  EOF mid-stream is treated as truncation.
-- Optional: a per-segment Adler-32 value from the raw-mode decoder (it can also
-  be computed in zenpng).
+### Thresholds
 
-## 4. Measurements (decode)
+`workers = min(threads, segments, workers_for_bytes(rows × stride))`, where
+`workers_for_bytes` allows 2 workers from 2 MiB of filtered data and one more
+per additional 4 MiB (`idot::MIN_BYTES_PER_WORKER`, `EXTRA_WORKER_BYTES`). From
+the forced-worker sweep (benchmark log section B):
 
-From `benchmarks/idot_parallel_probe_2026-10-02.log`: `i265`, Core Ultra 7 265K
-(8 P-cores plus 12 E-cores), a shared box with load average around 10, medians of
-9 runs. "Fused" is the probe's streaming inflate+unfilter loop, the same shape
-as `RowDecoder` but with one extra row copy.
+| filtered data | 2 workers | 4 workers | 8 workers |
+|---|---|---|---|
+| 1.0 MB (512² RGBA) | 1.19× / 1.02× | noisy | slower |
+| 4.2 MB (1024² RGBA) | 1.43× / 1.33× | 1.20× | 1.04× |
+| 8.4–8.6 MB (2048×1024, 1448² RGBA) | 1.21–1.73× | 1.46–1.64× | 1.41–1.58× |
+| 13–30 MB (4.5–7.6 MP) | 1.6–1.8× | 1.86–2.47× | best only at 7.6 MP |
 
-| image | MP | zenpng::decode (ms) | fused serial (ms) | fused 2-seg on P-cores (ms) | scaling | vs zenpng::decode |
-|---|---|---|---|---|---|---|
-| w46 1160×556 | 0.64 | 1.33 | 3.00 | 1.61 | 1.86× | 0.83× |
-| w42 1204×918 | 1.1 | 3.16 | 5.78 | 3.42 | 1.69× | 0.93× |
-| w39 2784×1626 | 4.5 | 6.96 | 11.43 | 6.58 | 1.74× | 1.06× |
-| w33 2880×1800 | 5.2 | 10.31 | 14.92 | 8.56 | 1.74× | 1.20× |
-| w37 3350×2274 | 7.6 | 15.44 | 21.30 | 11.87 | 1.79× | 1.30× |
-| w43 3080×2292 | 7.1 | 15.76 | 21.71 | 12.29 | 1.77× | 1.28× |
+### Core tiers
 
-All parallel outputs were byte-identical to `zenpng::decode`.
+On hybrid CPUs, an equal split finishes when its slowest strip does. Linux
+workers can be pinned (via `rustix::thread::sched_setaffinity`, no `unsafe` in
+zenpng) to the fastest tier, detected from sysfs `cpu_capacity` or
+`cpuinfo_max_freq` (CPUs within 15% of the fastest; one tier = no pinning).
+The calling thread is pinned for the duration and restored afterwards.
 
-**Hybrid-CPU result.** Unpinned (`taskset 0-19`), the 2-segment fused path ran at
-**0.46–0.62×** of `zenpng::decode`, which is slower than serial. Pinned to E-cores, the
-whole-image unfilter took 16.69 ms against 6.41 ms on a P-core (w33, log run 3). A 2-way split
-can only finish when its slowest segment finishes, so one segment on an E-core
-erases the gain. This is the reason for "segment 0 on the calling thread". It also
-means parallel decode should be opt-in, or limited to callers that hand zenpng a
-thread budget, rather than on by default. Not yet measured: the same experiment
-on a homogeneous box (`dev`, Zen 5) and on ARM.
+Policy, from measurement (log sections A, C, D):
 
-The probe's two-pass variant (inflate the whole segment, then unfilter) scaled
-only 1.15–1.60×. The likely cause, not profiled, is the 10–16 MB intermediate
-buffers falling out of cache. Either way, the per-row fused shape is the one to
-build.
+- **Pin when every worker gets one segment and they fill at most half the fast
+  tier** (Apple's N = 2; N = 4 on an 8-P-core part). Apple originals, unpinned
+  shell: pinned 1.57–1.71× vs unpinned 1.31–1.48×.
+- **Otherwise don't pin**: with more segments than workers the queue balances
+  across all cores, and filling the whole P tier measured slower (w37 N = 8:
+  2.49× pinned to 8 P-cores vs 3.20× spread over all 20).
+- Not implemented: macOS (no affinity API; QoS classes would be the analogue)
+  and Windows (CPU sets). Not measured: Zen 5 (`dev`), ARM big.LITTLE.
 
-## 5. Encoder design
+### Results (log section C, final policy, unpinned shell, median of 41)
 
-Parallel encoding is the larger win. Compression dominates encode time, the
-output stays a standard PNG for every decoder, and Apple decoders also get
-parallel decode.
+| file | MP | segments | serial ms | auto ms | speedup |
+|---|---|---|---|---|---|
+| Apple w42 | 1.11 | 2 | 2.76 | 1.76 | 1.57× |
+| Apple w33 | 5.18 | 2 | 8.57 | 5.02 | 1.71× |
+| Apple w37 | 7.62 | 2 | 13.07 | 8.35 | 1.57× |
+| zenpng w39 | 4.53 | 4 | 7.37 | 3.60 | 2.05× |
+| zenpng w39 | 4.53 | 8 | 7.37 | 2.77 | 2.66× |
+| zenpng w37 | 7.62 | 4 | 17.73 | 7.15 | 2.48× |
+| zenpng w37 | 7.62 | 8 | 17.86 | 5.58 | 3.20× |
+| zenpng w37 | 7.62 | 16 | 17.81 | 4.47 | 3.99× |
 
-1. **Option (needs API approval):** for example
-   `EncodeConfig::with_parallel_segments(Segments::Off | Segments::Apple2)`.
-   Default Off, so existing outputs stay byte-identical and the effort
-   monotonicity tables stay valid.
-2. **Layout: emit exactly what Apple emits.** `N = 2`, `first_row = [0, ⌈H/2⌉]`
-   (or `⌊H/2⌋`; it is untested which one ImageIO prefers for odd H, so this needs
-   a macOS check). `iDOT` goes immediately before the first IDAT, so
-   `offset[0] = 40`. Segment 1 starts a new IDAT chunk. Do not emit `N > 2`: if
-   ImageIO rejects it, Apple users get an error dialog rather than a slower
-   decode. Skip the chunk entirely when H < 2, for interlaced images, and for APNG.
-3. **Filtering:** pick filters per segment as usual, but restrict each
-   non-first segment's first row to None or Sub. That costs one row per segment.
-   Apple decoders may rely on it, and `mARK` requires it.
-4. **Compression:** compress each segment as independent raw DEFLATE (no preset
-   dictionary). Non-final segments end with BFINAL = 0 plus an empty stored block,
-   so they finish byte-aligned. zenflate already has this, privately:
-   `Compressor::deflate_compress_chunk` with `force_nonfinal`, used by
-   `gzip_compress_parallel` (zenflate `src/compress/mod.rs`). It needs a public
-   additive entry point with `chunk_start = 0`. The zlib header goes before
-   segment 0, and the Adler-32 trailer is `adler32_combine` of the per-segment
-   Adler values. FullOptimal/zenzop recompression runs per segment.
-5. **Size cost**, measured by compressing Apple's own filtered bytes as N
-   independent segments (`IDOT_ENC=1`, P-cores):
+(zenpng's effort-7 re-encodes decode slower serially than Apple's originals,
+probably because they use Up/Average/Paeth where Apple uses only None/Sub; not
+profiled.)
 
-   | image | effort | N=2 size Δ | N=2 deflate wall | N=4 size Δ |
-   |---|---|---|---|---|
-   | w46 0.64 MP | 13 / 19 / 24 | +0.03% / +0.23% / +0.13% | 8.9→4.8 / 40.8→23.4 / 154→83 ms | −0.08% / +0.23% / +0.30% |
-   | w39 4.5 MP | 13 / 19 / 24 | −0.08% / +0.07% / +0.09% | 34→18 / 95→50 / 585→309 ms | −0.13% / +0.03% / +0.15% |
-   | w37 7.6 MP | 13 / 19 / 24 | +0.05% / +0.03% / +0.05% | 71→38 / 173→95 / 1281→708 ms | +0.08% / +0.08% / +0.10% |
+### Encode (`src/encoder/segments.rs`)
 
-   Caveats: this is one content class (screenshots) and three images. It does not
-   include zenpng's own filter search or the effects of the effort pipeline.
-   Before any default changes, the full sweep discipline applies: sizes from tiny
-   to large, effort 0–200, and photo, screen and line-art content.
-6. **Parallelism beyond N = 2 without iDOT.** For encode speed alone, segments
-   could be split further (pigz style) without making the extra boundaries
-   public. Only the boundary recorded in `iDOT` has to match Apple's layout.
+`EncodeConfig::decode_segments` / `with_decode_segments(n)` (0/1 = off, the
+default; 2 = Apple's layout; more = more strips, untested on Apple software).
+After the normal pipeline picks filters and produces one zlib stream, the
+encoder:
 
-## 6. Test plan
+1. re-inflates it to recover the chosen filter bytes,
+2. re-filters each non-first segment's first row as None or Sub (smaller
+   absolute byte sum) if it used Up/Average/Paeth,
+3. compresses the segments in parallel with
+   `Compressor::deflate_compress_segment` at the pipeline's final level
+   (`compress::segment_level`: FullOptimal at 31+, else the largest refine
+   level),
+4. writes `iDOT` immediately before the first IDAT (`offset[0] = 40`, as Apple
+   does) and one IDAT chunk per segment.
 
-- **Fixtures (`codec-corpus`, not git):** several real Apple iDOT PNGs
-  (Wikimedia Commons, freely licensed; see the `.meta` file),
-  `mac_vs_ibm_output.png` and `race_condition.png` (MIT), plus synthetic edge
-  cases:
-  - offset pointing into the middle of a chunk, to a non-IDAT chunk, or past EOF;
-  - N = 0, N = 1, N > H, overlapping or gapped row ranges;
-  - an Up/Avg/Paeth first row in segment 1;
-  - a back-reference across the boundary;
-  - BFINAL inside segment 0;
-  - `iDOT` after IDAT; interlaced with `iDOT`;
-  - a valid layout with corrupt Adler-32 in strict mode.
-- **Invariant tests:** for every fixture, parallel decode output, warnings and
-  error equal the serial decode. Tests must not skip silently; the corpus is
-  fetched explicitly.
-- **Encoder round-trip:** zenpng decode (serial and parallel), plus a second
-  decoder (`png` crate or libdeflater dev-dep) for standard-PNG validity, plus
-  serial == parallel.
-- **Apple acceptance (CI):** a `macos-latest` job that decodes zenpng `iDOT`
-  outputs through ImageIO (a small Swift script using `CGImageSourceCreateImageAtIndex`,
-  or `sips`). It compares pixels to the source and fails on any
-  "iDOT doesn't point to valid IDAT" log line. Without it, the encoder half cannot
-  be called conformant.
-- **Fuzzing:** add an `iDOT`-aware fuzz target asserting parallel == serial on
-  arbitrary inputs. This is the property that would have caught Apple's bug.
+The segment count follows the decoder's thresholds, so images under 2 MiB of
+filtered data get no `iDOT`. It applies to non-interlaced still images at
+effort ≥ 1 (truecolor, gray, sub-byte gray, indexed); APNG is unaffected.
+zenzop (effort 46+) output is re-compressed with zenflate's FullOptimal
+instead, because zenzop has no segment mode.
 
-## 7. Order of work
+| image | effort | N=2 size | N=4 | N=8 | time N=1 → N=2 |
+|---|---|---|---|---|---|
+| w39 4.5 MP | 7 | −0.02% | +0.05% | +0.28% | 288 → 293 ms |
+| w37 7.6 MP | 7 | +0.06% | +0.11% | +0.17% | 544 → 564 ms |
+| w39 4.5 MP | 13 | −0.09% | +0.12% | +0.28% | 733 → 745 ms |
+| w37 7.6 MP | 13 | +0.09% | +0.10% | +0.24% | 1441 → 1546 ms |
+| w39 4.5 MP | 19 | +0.11% | +0.40% | +0.39% | 3989 → 4282 ms |
+| w37 7.6 MP | 19 | +0.06% | +0.12% | +0.22% | 8452 → 9134 ms |
 
-1. zenflate: the segment-end API (decode) and a public non-final segment
-   compressor (encode). Both are additive.
-2. Decoder: parse + validate + fallback, passthrough path first (it covers every
-   Apple sample), with the corpus fixtures and the parallel == serial invariant.
-3. Measure the RowDecoder-based version on `i265` (hybrid), `dev` (Zen 5) and ARM,
-   then set the size threshold and the default policy from those numbers.
-4. Encoder `Apple2` mode with macOS CI acceptance.
-5. Optional: `mARK` decode (same machinery), deferred unfilter, more than 2
-   internal encode segments.
+The re-segment pass costs extra time rather than saving it, because the
+pipeline still compresses the whole stream first. Folding segments into the
+pipeline's final compression would turn this into an encode-time *speedup*
+(the probe measured 1.87–1.89× on the deflate phase at efforts 13–24 with
+N = 2); not implemented.
+
+## 4. Tests
+
+- `tests/idot.rs`: every file in codec-corpus `png-idot/` (3 Apple, 2
+  adversarial, 26 generated) decodes identically with `max_threads` 1, 0, 2, 3
+  and 8, under default and strict configs (pixels, warnings, or error). With
+  `--features _dev`, it also asserts which files completed in parallel (all
+  Apple files and manifest entries marked `parallel_usable`) and that the rest
+  never did. Mutation-checked: disabling the boundary-filter check fails on
+  `boundary_row_average.png`, and disabling the segment-boundary check fails on
+  `complete_stream_in_segment0.png`.
+- `tests/idot_encode.rs`: the size rule; `decode_segments` 0/1 byte-identical
+  to the default; round-trips at efforts 1/7/13 × N = 2/3/8 through the `png`
+  crate and through zenpng serially and in parallel.
+- zenflate `tests/segments.rs`: segment round-trips at efforts 0–31,
+  continuation checksums, and the adversarial stream shapes.
+- CI runs the iDOT tests with `_dev` on every platform; the i686 `cross` job
+  fetches the corpus on the host.
+
+## 5. Not done
+
+- **Apple acceptance of zenpng output.** Nothing here has been decoded by
+  ImageIO. A macOS CI job that decodes zenpng `iDOT` files through
+  `CGImageSource` and checks for "iDOT doesn't point to valid IDAT chunk" is
+  required before calling the encoder Apple-conformant, and before claiming
+  N > 2 is safe for Apple software.
+- Deferred unfilter for segments starting with Up/Average/Paeth (falls back).
+- Pinning on macOS/Windows; measurements on Zen 5 and ARM.
+- Segment-aware final compression in the encode pipeline (an encode speedup
+  instead of a +1–8% cost).
+- `mARK` (the W3C restart-marker proposal) decode would reuse this machinery.
+- zenflate#9 must be released, and the `[patch.crates-io]` entry removed,
+  before a zenpng release.

@@ -917,6 +917,21 @@ impl RowFormat {
 ///   PNG cost biases, at effort >= 28. Optionally also tries zopfli (with `zopfli` feature).
 ///
 /// Each phase checks the deadline before starting.
+/// zenflate level for re-compressing `iDOT` segments at `effort`: the
+/// pipeline's own final compressor (FullOptimal at 31+).
+pub(crate) fn segment_level(effort: u32) -> zenflate::CompressionLevel {
+    let p = EffortParams::from_effort(effort);
+    let e = p.full_optimal_effort.unwrap_or_else(|| {
+        p.refine_efforts
+            .iter()
+            .copied()
+            .chain([p.zenflate_effort, p.screen_effort])
+            .max()
+            .unwrap_or(p.zenflate_effort)
+    });
+    zenflate::CompressionLevel::new(e)
+}
+
 pub(crate) fn compress_filtered(
     packed_rows: &[u8],
     row_bytes: usize,
@@ -2601,6 +2616,7 @@ mod tests {
             parallel: false,
             remaining_ns: None,
             max_threads: 0,
+            decode_segments: 0,
         };
         let result =
             compress_filtered(&data, 12, 4, RowFormat::truecolor8(3), 0, opts, None).unwrap();
@@ -2618,6 +2634,7 @@ mod tests {
             parallel: false,
             remaining_ns: None,
             max_threads: 0,
+            decode_segments: 0,
         };
         let result =
             compress_filtered(&data, 12, 4, RowFormat::truecolor8(3), 1, opts, None).unwrap();
@@ -2635,6 +2652,7 @@ mod tests {
             parallel: false,
             remaining_ns: None,
             max_threads: 0,
+            decode_segments: 0,
         };
         let mut stats = PhaseStats::default();
         let result = compress_filtered(
@@ -2668,6 +2686,7 @@ mod tests {
             parallel: true,
             remaining_ns: None,
             max_threads: 0,
+            decode_segments: 0,
         };
         let result =
             compress_filtered(&data, 12, 4, RowFormat::truecolor8(3), 7, opts, None).unwrap();
@@ -2691,6 +2710,7 @@ mod tests {
             parallel: false,
             remaining_ns: None,
             max_threads: 0,
+            decode_segments: 0,
         };
         let result =
             compress_filtered(&data, 16, 4, RowFormat::truecolor8(4), 2, opts, None).unwrap();

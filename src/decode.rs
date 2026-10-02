@@ -233,6 +233,20 @@ pub struct PngDecodeConfig {
     pub skip_decompression_checksum: bool,
     /// Skip CRC verification on critical chunks (IHDR, PLTE, IDAT).
     pub skip_critical_chunk_crc: bool,
+    /// Thread budget for decoding PNGs that carry an `iDOT` segment table
+    /// (written by Apple software, and by zenpng's encoder with
+    /// [`EncodeConfig::with_decode_segments`](crate::EncodeConfig::with_decode_segments)).
+    ///
+    /// - `0` (default): automatic. Parallel only when the file has a valid
+    ///   segment table and each thread gets enough rows to pay for itself
+    ///   (about 1 MiB of filtered data per thread).
+    /// - `1`: always decode on the calling thread.
+    /// - `N > 1`: at most `N` threads, same size threshold.
+    ///
+    /// The output is byte-identical to a single-threaded decode; any segment
+    /// that does not prove that falls back to the serial decoder. Files
+    /// without `iDOT` are unaffected.
+    pub max_threads: usize,
     /// Caller preference for allocation fallibility, applied per call site.
     ///
     /// Internal carrier (`pub(crate)`): the zencodec decode path sets it from
@@ -278,6 +292,7 @@ impl PngDecodeConfig {
             max_memory_bytes: None,
             skip_decompression_checksum: true,
             skip_critical_chunk_crc: true,
+            max_threads: 0,
             alloc_pref: zencodec::AllocPreference::CodecDefault,
         }
     }
@@ -305,6 +320,7 @@ impl PngDecodeConfig {
             max_memory_bytes: None,
             skip_decompression_checksum: false,
             skip_critical_chunk_crc: false,
+            max_threads: 0,
             alloc_pref: zencodec::AllocPreference::CodecDefault,
         }
     }
@@ -339,6 +355,14 @@ impl PngDecodeConfig {
     #[must_use]
     pub const fn with_skip_critical_chunk_crc(mut self, skip: bool) -> Self {
         self.skip_critical_chunk_crc = skip;
+        self
+    }
+
+    /// Set the thread budget for `iDOT` parallel decode (see
+    /// [`max_threads`](Self::max_threads)). `1` disables it.
+    #[must_use]
+    pub const fn with_max_threads(mut self, max_threads: usize) -> Self {
+        self.max_threads = max_threads;
         self
     }
 
@@ -381,6 +405,7 @@ impl Default for PngDecodeConfig {
             max_memory_bytes: Some(Self::DEFAULT_MAX_MEMORY),
             skip_decompression_checksum: true,
             skip_critical_chunk_crc: true,
+            max_threads: 0,
             alloc_pref: zencodec::AllocPreference::CodecDefault,
         }
     }

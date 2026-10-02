@@ -1,0 +1,12 @@
+commands:
+  cargo build --release --features _dev --example idot_bench --example idot_encode
+  idot_encode OUT 7 w*.png            (and IDOT_CROP=WxH ZENPNG_IDOT_MIN_BYTES=1 for crops)
+  [ZENPNG_PIN=off|all] taskset -c 0-19|0-7 target/release/examples/idot_bench --iters 41 FILES
+host: i265 — Intel Core Ultra 7 265K, 8 P-cores (cpu 0-7) + 12 E-cores (cpu 8-19), 30 GiB, Linux;
+      shared box, load average 0.2-1.7 during these runs. Zen 5 / ARM: not measured.
+inputs: Apple-written iDOT PNGs from Wikimedia Commons (w33 Firefox, w37 Pale Moon, w39/w40 Safari,
+  w42 Homebrew; see benchmarks/idot_parallel_probe_2026-10-02.meta for URLs and hashes), and
+  zenpng re-encodes of them (wNN_e7_nN = effort 7, N segments; _WxH = top-left crop).
+  The CC0 ones are in codec-corpus png-idot/apple/.
+content: macOS screenshots only (one content class).
+see: docs/IDOT_PARALLEL_PNG.md

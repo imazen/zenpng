@@ -255,6 +255,32 @@ Checksums are skipped by default for speed. When CRC is skipped, computation
 is elided entirely. The decoder handles 8-bit and 16-bit, truecolor and indexed,
 interlaced and non-interlaced PNGs.
 
+## Multi-threaded decode of `iDOT` PNGs
+
+PNGs written by Apple software carry an `iDOT` chunk that splits the image
+data into strips which inflate independently. zenpng decodes those strips on
+several cores, and can write such files itself:
+
+```rust
+use zenpng::{EncodeConfig, PngDecodeConfig};
+
+// Decode: automatic by default (max_threads = 0). 1 forces single-threaded.
+let config = PngDecodeConfig::default().with_max_threads(0);
+
+// Encode: 2 strips is Apple's layout; more strips decode faster in zenpng.
+let config = EncodeConfig::default().with_decode_segments(4);
+```
+
+The result is always byte-identical to a single-threaded decode. If the
+segment table doesn't prove that, for example a crafted
+["ambiguous PNG"](https://github.com/DavidBuchanan314/ambiguous-png-packer),
+zenpng decodes serially. Images under about 2 MiB of row data stay serial
+because threads would not pay off. On a Core Ultra 7 265K, Apple's 2-strip
+screenshots (1–8 MP) decode 1.6–1.7× faster, and zenpng files with 4–16 strips
+decode 2.0–4.0× faster. Segmenting costs up to 0.4% in file size. Other decoders
+ignore `iDOT` and read a normal PNG. Details:
+[docs/IDOT_PARALLEL_PNG.md](https://github.com/imazen/zenpng/blob/main/docs/IDOT_PARALLEL_PNG.md).
+
 ## Metadata
 
 ICC profiles, EXIF, and XMP roundtrip through encode/decode — **but only if you

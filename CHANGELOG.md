@@ -4,6 +4,34 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-threaded decode of Apple `iDOT` PNGs** (`PngDecodeConfig::max_threads`,
+  default 0 = automatic; 1 = single-threaded). Strips are decoded on a work
+  queue straight into the output buffer. On hybrid CPUs (Linux), workers are
+  pinned to the fastest core tier when the strips fill at most half of it.
+  Output is byte-identical to the serial decode; any table that doesn't prove
+  that (malformed, Buchanan's "ambiguous PNG", Up/Average/Paeth at a boundary,
+  Adler-32 mismatch) falls back to the serial decoder. Apple's 2-strip files
+  decode 1.57–1.71× faster at 1–8 MP; zenpng files with 4–16 strips decode
+  2.05–3.99× faster (Core Ultra 7 265K, `docs/IDOT_PARALLEL_PNG.md`).
+- **`EncodeConfig::with_decode_segments(n)`** writes an `iDOT` table and
+  independently decodable strips (2 = Apple's layout). Off by default; output
+  is unchanged unless it is set. Costs −0.09% to +0.40% in size for n ≤ 8, and
+  1–8% in encode time at efforts 7–19. Images under ~2 MiB of row data get no
+  strips.
+- New Linux-only dependency `rustix` (safe `sched_setaffinity` wrappers) for
+  core-tier pinning.
+
+### Changed
+
+- Large zeroed buffers (decode output) are now allocated zeroed by the
+  allocator (fallible calloc via `bytemuck`) instead of reserve + fill, so page
+  zeroing is no longer an up-front serial pass on the calling thread.
+- zenflate requirement raised to 0.4.0, temporarily patched to
+  imazen/zenflate#9 for the segment APIs. The patch must be replaced with a
+  release before zenpng is published.
+
 ### Fixed
 
 - **HDR and wide-gamut pixels are no longer silently mislabelled or rejected.**

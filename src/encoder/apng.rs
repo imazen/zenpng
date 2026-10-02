@@ -118,6 +118,7 @@ fn trial_compress_size(
         deadline: &enough::Unstoppable,
         remaining_ns: None,
         max_threads: 0,
+        decode_segments: 0,
     };
     let compressed = compress_filtered(
         subframe,
@@ -1152,6 +1153,7 @@ pub(crate) fn encode_apng_truecolor(
                 deadline,
                 remaining_ns: None,
                 max_threads: 0,
+                decode_segments: 0,
             };
             let compressed = compress_filtered(
                 sub_data,
@@ -1196,6 +1198,7 @@ pub(crate) fn encode_apng_truecolor(
             deadline,
             remaining_ns: None,
             max_threads: 0,
+            decode_segments: 0,
         };
         let compressed0 = compress_filtered(
             frame_data[0],
@@ -1250,6 +1253,7 @@ pub(crate) fn encode_apng_truecolor(
                 deadline,
                 remaining_ns: None,
                 max_threads: 0,
+                decode_segments: 0,
             };
             let compressed = compress_filtered(
                 &subframe,
@@ -1480,6 +1484,7 @@ pub(crate) fn encode_apng_indexed_from_indices(
                 deadline,
                 remaining_ns: None,
                 max_threads: 0,
+                decode_segments: 0,
             };
             let compressed = compress_filtered(
                 &packed,
@@ -1557,6 +1562,7 @@ pub(crate) fn encode_apng_indexed_from_indices(
                 deadline,
                 remaining_ns: None,
                 max_threads: 0,
+                decode_segments: 0,
             };
             let compressed = compress_filtered(
                 &packed,

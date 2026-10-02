@@ -1,5 +1,5 @@
 [build.env]
-passthrough = ["RUST_BACKTRACE"]
+passthrough = ["RUST_BACKTRACE", "ZENPNG_IDOT_CORPUS"]
 
 [target.aarch64-unknown-linux-gnu]
 volumes = ["/home/lilith/work/zen", "/home/lilith/work/archmage"]

@@ -1,0 +1,48 @@
+# iDOT segmented encode — zenpng 2af2a80+wip, host i265, 2026-10-02
+# examples/idot_encode: re-encode Apple screenshots (decoded to RGBA8) with with_decode_segments(N); single run per cell.
+# encode_ms includes the pipeline plus the re-segment pass; segments are capped by the 2 MiB + 4 MiB/extra-worker rule.
+
+## effort 7
+file	effort	segments	bytes	delta_vs_1	encode_ms	idot_written	roundtrip_ok
+w46	7	1	188190	+0.000%	60.3	false	true
+w46	7	2	188161	-0.015%	59.2	true	true
+w46	7	4	188161	-0.015%	55.2	true	true
+w46	7	8	188161	-0.015%	58.1	true	true
+w46	7	16	188161	-0.015%	57.3	true	true
+w39	7	1	559401	+0.000%	288.4	false	true
+w39	7	2	559273	-0.023%	293.1	true	true
+w39	7	4	559674	+0.049%	291.0	true	true
+w39	7	8	560986	+0.283%	290.2	true	true
+w39	7	16	562201	+0.501%	292.0	true	true
+w33	7	1	1092970	+0.000%	290.6	false	true
+w33	7	2	1093509	+0.049%	301.5	true	true
+w33	7	4	1093735	+0.070%	300.6	true	true
+w33	7	8	1094689	+0.157%	298.8	true	true
+w33	7	16	1095806	+0.259%	297.8	true	true
+w37	7	1	1934329	+0.000%	543.7	false	true
+w37	7	2	1935399	+0.055%	563.7	true	true
+w37	7	4	1936490	+0.112%	560.4	true	true
+w37	7	8	1937568	+0.167%	553.9	true	true
+w37	7	16	1939621	+0.274%	553.2	true	true
+
+## efforts 13 and 19
+w39	13	1	370539	+0.000%	733.0	false	true
+w39	13	2	370191	-0.094%	744.9	true	true
+w39	13	4	370998	+0.124%	733.0	true	true
+w39	13	8	371582	+0.281%	719.9	true	true
+w39	13	16	371582	+0.281%	721.2	true	true
+w37	13	1	1681394	+0.000%	1441.2	false	true
+w37	13	2	1682850	+0.087%	1545.5	true	true
+w37	13	4	1683092	+0.101%	1496.6	true	true
+w37	13	8	1685385	+0.237%	1485.8	true	true
+w37	13	16	1685385	+0.237%	1481.8	true	true
+w39	19	1	349021	+0.000%	3988.5	false	true
+w39	19	2	349407	+0.111%	4282.2	true	true
+w39	19	4	350401	+0.395%	4100.4	true	true
+w39	19	8	350378	+0.389%	4082.4	true	true
+w39	19	16	350378	+0.389%	4133.6	true	true
+w37	19	1	1585273	+0.000%	8452.2	false	true
+w37	19	2	1586201	+0.059%	9133.9	true	true
+w37	19	4	1587209	+0.122%	8977.6	true	true
+w37	19	8	1588823	+0.224%	8706.6	true	true
+w37	19	16	1588823	+0.224%	8696.5	true	true

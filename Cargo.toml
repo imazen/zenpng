@@ -30,7 +30,7 @@ zenquant = { version = "0.1.1", optional = true }
 imagequant = { version = "4", optional = true }
 quantette = { version = "0.6.0", optional = true, default-features = false, features = ["kmeans", "std"] }
 whereat = "0.1.4"
-zenflate = { version = "0.3.2" }
+zenflate = { version = "0.4.0" }
 memchr = { version = "2.8.0", default-features = false }
 archmage = { version = "0.9.23", default-features = false, features = ["macros", "std", "avx512"] }
 magetypes = { version = "0.9.23", default-features = false, features = ["std", "w512", "avx512"] }
@@ -39,6 +39,10 @@ linear-srgb = "0.6.5"
 zenzop = { version = "0.4.1", optional = true, default-features = false, features = ["zlib", "std"] }
 # zennode = { git = "https://github.com/imazen/zennode.git", optional = true, default-features = false, features = ["derive"] }
 almost-enough = { version = "0.4.2", features = ["std"] }
+
+# Pins parallel-decode workers to one CPU core tier (safe syscall wrappers).
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.1.5", default-features = false, features = ["std", "thread"] }
 
 [dev-dependencies]
 png = "0.18"
@@ -110,6 +114,14 @@ name = "idot_probe"
 required-features = ["_dev"]
 
 [[example]]
+name = "idot_bench"
+required-features = ["_dev"]
+
+[[example]]
+name = "idot_encode"
+required-features = ["_dev"]
+
+[[example]]
 name = "joint_bench"
 required-features = ["joint"]
 
@@ -152,3 +164,7 @@ required-features = ["_dev"]
 # commit 998edf5f, byte-identical to the published crate — keep this in sync
 # with the `zencodec-testkit` dev-dep's tag above.
 zencodec = { git = "https://github.com/imazen/zencodec", tag = "v0.1.26" }
+# DEV-ONLY: zenflate's segment APIs (`deflate_compress_segment`,
+# `StreamDecompressor::with_segment_end`) are in imazen/zenflate#9, not yet
+# released. Replace with the released version once it ships.
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "2d4b05e03421cf13900d41adb7a255aa2a075983" }

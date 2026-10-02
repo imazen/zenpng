@@ -4,6 +4,7 @@ pub(crate) mod apng;
 pub(crate) mod compress;
 pub(crate) mod filter;
 pub(crate) mod metadata;
+pub(crate) mod segments;
 
 use alloc::string::ToString;
 use alloc::vec;
@@ -34,6 +35,8 @@ pub(crate) struct CompressOptions<'a> {
     pub remaining_ns: Option<&'a dyn Fn() -> Option<u64>>,
     /// Maximum thread count for compression. 0 = no limit, 1 = single-threaded.
     pub max_threads: usize,
+    /// Requested `iDOT` segment count (0/1 = one plain zlib stream).
+    pub decode_segments: u32,
 }
 
 /// Statistics for one compression phase.
@@ -53,6 +56,28 @@ pub struct PhaseStat {
 pub struct PhaseStats {
     pub phases: Vec<PhaseStat>,
     pub raw_size: usize,
+}
+
+/// Optionally split the pipeline's zlib stream into `iDOT` segments.
+fn finish_idat(
+    compressed: Vec<u8>,
+    row_bytes: usize,
+    height: usize,
+    bpp: usize,
+    effort: u32,
+    (requested, max_threads, cancel): (u32, usize, &dyn Stop),
+) -> crate::error::Result<segments::Idat> {
+    let n = segments::plan(requested, row_bytes, height);
+    segments::segment(
+        compressed,
+        row_bytes,
+        height,
+        bpp,
+        n,
+        effort,
+        max_threads,
+        cancel,
+    )
 }
 
 /// Encode palette-indexed pixel data into a complete PNG file.
@@ -88,6 +113,7 @@ pub(crate) fn write_indexed_png(
     let row_bytes = packed_row_bytes(w, bit_depth);
 
     // Compress with multi-strategy filter selection (bpp=1 for indexed)
+    let seg_req = (opts.decode_segments, opts.max_threads, opts.cancel);
     let compressed = compress_filtered(
         &packed_rows,
         row_bytes,
@@ -97,6 +123,14 @@ pub(crate) fn write_indexed_png(
         opts,
         None,
     )?;
+    let idat = finish_idat(
+        compressed,
+        row_bytes,
+        h,
+        RowFormat::INDEXED.bpp,
+        effort,
+        seg_req,
+    )?;
 
     // Assemble PNG
     let trns_data = truncate_trns(palette_alpha);
@@ -104,7 +138,7 @@ pub(crate) fn write_indexed_png(
         + 25
         + (12 + n_colors * 3)
         + trns_data.as_ref().map_or(0, |t| 12 + t.len())
-        + (12 + compressed.len())
+        + idat.file_len()
         + 12
         + metadata_size_estimate(write_meta);
     let mut out = Vec::with_capacity(est);
@@ -131,7 +165,7 @@ pub(crate) fn write_indexed_png(
     }
 
     // IDAT
-    write_chunk(&mut out, b"IDAT", &compressed);
+    segments::write_idat(&mut out, &idat);
 
     // IEND
     write_chunk(&mut out, b"IEND", &[]);
@@ -176,6 +210,7 @@ pub(crate) fn write_truecolor_png(
         let packed = pack_all_rows(pixel_bytes, w, h, bit_depth);
         let row_bytes = packed_row_bytes(w, bit_depth);
 
+        let seg_req = (opts.decode_segments, opts.max_threads, opts.cancel);
         let compressed = compress_filtered(
             &packed,
             row_bytes,
@@ -185,10 +220,17 @@ pub(crate) fn write_truecolor_png(
             opts,
             None,
         )?;
+        let idat = finish_idat(
+            compressed,
+            row_bytes,
+            h,
+            RowFormat::INDEXED.bpp,
+            effort,
+            seg_req,
+        )?;
 
         let trns_size = trns.map_or(0, |t| 12 + t.len());
-        let est =
-            8 + 25 + trns_size + (12 + compressed.len()) + 12 + metadata_size_estimate(write_meta);
+        let est = 8 + 25 + trns_size + idat.file_len() + 12 + metadata_size_estimate(write_meta);
         let mut out = Vec::with_capacity(est);
 
         out.extend_from_slice(&PNG_SIGNATURE);
@@ -205,7 +247,7 @@ pub(crate) fn write_truecolor_png(
             write_chunk(&mut out, b"tRNS", trns_data);
         }
 
-        write_chunk(&mut out, b"IDAT", &compressed);
+        segments::write_idat(&mut out, &idat);
         write_chunk(&mut out, b"IEND", &[]);
 
         return Ok(out);
@@ -287,6 +329,7 @@ pub(crate) fn write_truecolor_png(
     }
 
     // Compress with multi-strategy filter selection
+    let seg_req = (opts.decode_segments, opts.max_threads, opts.cancel);
     let compressed = compress_filtered(
         &pixel_bytes[..expected_len],
         row_bytes,
@@ -296,11 +339,18 @@ pub(crate) fn write_truecolor_png(
         opts,
         None,
     )?;
+    let idat = finish_idat(
+        compressed,
+        row_bytes,
+        h,
+        RowFormat::from_png(color_type, bit_depth).bpp,
+        effort,
+        seg_req,
+    )?;
 
     // Assemble PNG
     let trns_size = trns.map_or(0, |t| 12 + t.len());
-    let est =
-        8 + 25 + trns_size + (12 + compressed.len()) + 12 + metadata_size_estimate(write_meta);
+    let est = 8 + 25 + trns_size + idat.file_len() + 12 + metadata_size_estimate(write_meta);
     let mut out = Vec::with_capacity(est);
 
     out.extend_from_slice(&PNG_SIGNATURE);
@@ -325,7 +375,7 @@ pub(crate) fn write_truecolor_png(
     }
 
     // IDAT
-    write_chunk(&mut out, b"IDAT", &compressed);
+    segments::write_idat(&mut out, &idat);
 
     // IEND
     write_chunk(&mut out, b"IEND", &[]);
@@ -363,6 +413,7 @@ pub(crate) fn write_truecolor_png_with_stats(
         let packed = pack_all_rows(pixel_bytes, w, h, bit_depth);
         let row_bytes = packed_row_bytes(w, bit_depth);
 
+        let seg_req = (opts.decode_segments, opts.max_threads, opts.cancel);
         let compressed = compress_filtered(
             &packed,
             row_bytes,
@@ -372,10 +423,17 @@ pub(crate) fn write_truecolor_png_with_stats(
             opts,
             Some(stats),
         )?;
+        let idat = finish_idat(
+            compressed,
+            row_bytes,
+            h,
+            RowFormat::INDEXED.bpp,
+            effort,
+            seg_req,
+        )?;
 
         let trns_size = trns.map_or(0, |t| 12 + t.len());
-        let est =
-            8 + 25 + trns_size + (12 + compressed.len()) + 12 + metadata_size_estimate(write_meta);
+        let est = 8 + 25 + trns_size + idat.file_len() + 12 + metadata_size_estimate(write_meta);
         let mut out = Vec::with_capacity(est);
 
         out.extend_from_slice(&PNG_SIGNATURE);
@@ -390,7 +448,7 @@ pub(crate) fn write_truecolor_png_with_stats(
         if let Some(trns_data) = trns {
             write_chunk(&mut out, b"tRNS", trns_data);
         }
-        write_chunk(&mut out, b"IDAT", &compressed);
+        segments::write_idat(&mut out, &idat);
         write_chunk(&mut out, b"IEND", &[]);
 
         return Ok(out);
@@ -424,6 +482,7 @@ pub(crate) fn write_truecolor_png_with_stats(
         ))));
     }
 
+    let seg_req = (opts.decode_segments, opts.max_threads, opts.cancel);
     let compressed = compress_filtered(
         &pixel_bytes[..expected_len],
         row_bytes,
@@ -433,10 +492,17 @@ pub(crate) fn write_truecolor_png_with_stats(
         opts,
         Some(stats),
     )?;
+    let idat = finish_idat(
+        compressed,
+        row_bytes,
+        h,
+        RowFormat::from_png(color_type, bit_depth).bpp,
+        effort,
+        seg_req,
+    )?;
 
     let trns_size = trns.map_or(0, |t| 12 + t.len());
-    let est =
-        8 + 25 + trns_size + (12 + compressed.len()) + 12 + metadata_size_estimate(write_meta);
+    let est = 8 + 25 + trns_size + idat.file_len() + 12 + metadata_size_estimate(write_meta);
     let mut out = Vec::with_capacity(est);
 
     out.extend_from_slice(&PNG_SIGNATURE);
@@ -452,7 +518,7 @@ pub(crate) fn write_truecolor_png_with_stats(
     if let Some(trns_data) = trns {
         write_chunk(&mut out, b"tRNS", trns_data);
     }
-    write_chunk(&mut out, b"IDAT", &compressed);
+    segments::write_idat(&mut out, &idat);
     write_chunk(&mut out, b"IEND", &[]);
 
     Ok(out)
@@ -544,6 +610,7 @@ mod tests {
             deadline: &Unstoppable,
             remaining_ns: None,
             max_threads: 0,
+            decode_segments: 0,
         }
     }
 

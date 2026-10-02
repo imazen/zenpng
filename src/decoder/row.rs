@@ -31,6 +31,9 @@ pub(crate) struct IdatSource<'a> {
     pub post_idat_pos: usize,
     /// Whether to skip CRC validation on IDAT chunks.
     skip_crc: bool,
+    /// Stop before the chunk whose header starts at or after this offset
+    /// (`usize::MAX` = the whole IDAT run). Used to feed one `iDOT` segment.
+    end_pos: usize,
 }
 
 impl<'a> IdatSource<'a> {
@@ -78,7 +81,21 @@ impl<'a> IdatSource<'a> {
             done: false,
             post_idat_pos: 0,
             skip_crc,
+            end_pos: usize::MAX,
         })
+    }
+
+    /// Like [`new`](Self::new), but stops before the IDAT chunk whose header
+    /// is at `end_pos` — one segment of an `iDOT` table.
+    pub fn new_bounded(
+        data: Cow<'a, [u8]>,
+        first_idat_pos: usize,
+        end_pos: usize,
+        skip_crc: bool,
+    ) -> Result<Self, PngError> {
+        let mut s = Self::new(data, first_idat_pos, skip_crc)?;
+        s.end_pos = end_pos;
+        Ok(s)
     }
 }
 
@@ -96,6 +113,10 @@ impl zenflate::InputSource for IdatSource<'_> {
 
         // Advance to next chunk
         loop {
+            if self.chunk_pos >= self.end_pos {
+                self.done = true;
+                return Ok(&[]);
+            }
             if self.chunk_pos + 12 > self.data.len() {
                 self.done = true;
                 self.post_idat_pos = self.chunk_pos;
@@ -331,6 +352,9 @@ pub(crate) struct RowDecoder<'a> {
 
     /// Warnings collected from chunk CRC validation.
     chunk_warnings: Vec<crate::decode::PngWarning>,
+
+    /// Validated `iDOT` segment table, if the file has a usable one.
+    idot: Option<alloc::vec::Vec<super::idot::IdotSegment>>,
 }
 
 impl<'a> RowDecoder<'a> {
@@ -363,9 +387,20 @@ impl<'a> RowDecoder<'a> {
         // Collect pre-IDAT ancillary chunks
         let mut ancillary = PngAncillary::default();
         let mut first_idat_pos = None;
+        // (chunk position, data range) of the iDOT chunk; a second iDOT
+        // makes the table ambiguous, so it is dropped (`Some(None)`).
+        let mut idot_chunk: Option<Option<(usize, usize, usize)>> = None;
 
-        for chunk_result in &mut chunks {
+        while let Some(chunk_result) = chunks.next() {
             let chunk = chunk_result?;
+            if chunk.chunk_type == *b"iDOT" {
+                let pos = chunks.pos() - 12 - chunk.data.len();
+                idot_chunk = Some(match idot_chunk {
+                    None => Some((pos, pos + 8, pos + 8 + chunk.data.len())),
+                    Some(_) => None,
+                });
+                continue;
+            }
             if chunk.chunk_type == *b"IDAT" {
                 // Record position of the IDAT chunk header
                 // The iterator has advanced past this chunk, so back-calculate:
@@ -407,6 +442,13 @@ impl<'a> RowDecoder<'a> {
         let prev_row = crate::alloc_util::alloc_zeroed(config.alloc_pref, false, raw_row_bytes)?;
         let current_row = crate::alloc_util::alloc_zeroed(config.alloc_pref, false, raw_row_bytes)?;
 
+        let idot = match idot_chunk {
+            Some(Some((pos, ds, de))) => {
+                super::idot::validate(&data, pos, &data[ds..de], &ihdr, first_idat_pos)
+            }
+            _ => None,
+        };
+
         // Create IDAT source and decompressor — data is moved into IdatSource
         let source = IdatSource::new(data, first_idat_pos, config.skip_critical_chunk_crc)?;
         let decompressor = zenflate::StreamDecompressor::zlib(source, capacity)
@@ -423,7 +465,13 @@ impl<'a> RowDecoder<'a> {
             stride,
             bpp,
             chunk_warnings,
+            idot,
         })
+    }
+
+    /// The validated `iDOT` segment table, if any.
+    pub fn idot_segments(&self) -> Option<&[super::idot::IdotSegment]> {
+        self.idot.as_deref()
     }
 
     /// Get the IHDR info.

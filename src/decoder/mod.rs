@@ -1,6 +1,7 @@
 //! PNG decode pipeline: chunk parsing, row decoding, color conversion, info assembly.
 
 pub(crate) mod apng;
+pub(crate) mod idot;
 pub(crate) mod interlace;
 pub(crate) mod postprocess;
 pub(crate) mod row;
@@ -283,8 +284,21 @@ pub(crate) fn decode_png(
         // by the row width → default infallible (fast single calloc).
         let mut all_pixels = crate::alloc_util::alloc_zeroed(alloc_pref, true, total)?;
 
+        // Parallel decode of an `iDOT` segment table, when present and worth it.
+        let parallel_done = match try_idot_parallel(
+            data,
+            &reader,
+            limits,
+            idot::Sink::Raw,
+            &mut all_pixels,
+            cancel,
+        )? {
+            idot::Outcome::Done => true,
+            idot::Outcome::Fallback => false,
+        };
+
         // Row 0: prev is zeros (already zeroed by alloc_zeroed)
-        if h > 0 {
+        if h > 0 && !parallel_done {
             let zeros = crate::alloc_util::alloc_zeroed(alloc_pref, false, raw_row_bytes)?;
             match reader.next_raw_row_direct(&mut all_pixels[..raw_row_bytes], &zeros) {
                 Some(Ok(())) => {}
@@ -299,7 +313,7 @@ pub(crate) fn decode_png(
         }
 
         // Rows 1..h: prev is the previous row in the output buffer
-        for y in 1..h {
+        for y in (1..h).filter(|_| !parallel_done) {
             let (prev_part, cur_part) = all_pixels.split_at_mut(y * raw_row_bytes);
             let prev = &prev_part[(y - 1) * raw_row_bytes..];
             let dest = &mut cur_part[..raw_row_bytes];
@@ -365,11 +379,34 @@ pub(crate) fn decode_png(
     // Full-image accumulator sized from the (untrusted) IHDR → default
     // fallible; the single raw-row copy is bounded by the row width → default
     // infallible.
-    let mut all_pixels = crate::alloc_util::vec_with_capacity(alloc_pref, true, out_total)?;
+    // Parallel decode of an `iDOT` segment table, when present and worth it.
+    let mut parallel_pixels = None;
+    if reader.idot_segments().is_some_and(|segs| {
+        ihdr.stride().is_ok_and(|stride| {
+            idot::plan_workers(segs, stride, limits.max_threads, None).is_some()
+        })
+    }) {
+        let mut buf = crate::alloc_util::alloc_zeroed(alloc_pref, true, out_total)?;
+        let sink = idot::Sink::Post {
+            ancillary: reader.ancillary(),
+            out_row_bytes,
+        };
+        if let idot::Outcome::Done =
+            try_idot_parallel(data, &reader, limits, sink, &mut buf, cancel)?
+        {
+            parallel_pixels = Some(buf);
+        }
+    }
+
+    let parallel_done = parallel_pixels.is_some();
+    let mut all_pixels = match parallel_pixels {
+        Some(p) => p,
+        None => crate::alloc_util::vec_with_capacity(alloc_pref, true, out_total)?,
+    };
     let mut row_buf = Vec::new();
     let mut raw_copy = crate::alloc_util::alloc_zeroed(alloc_pref, false, ihdr.raw_row_bytes()?)?;
 
-    while let Some(result) = reader.next_raw_row() {
+    while let Some(result) = (!parallel_done).then(|| reader.next_raw_row()).flatten() {
         let raw = result?;
         cancel.check().map_err(|e| at!(PngError::from(e)))?;
         raw_copy[..raw.len()].copy_from_slice(raw);
@@ -403,6 +440,52 @@ pub(crate) fn decode_png(
         info,
         warnings,
     })
+}
+
+/// Run the `iDOT` parallel decoder if the file has a usable segment table and
+/// the image is large enough. `Fallback` means "decode serially".
+fn try_idot_parallel(
+    data: &[u8],
+    reader: &RowDecoder<'_>,
+    limits: &crate::decode::PngDecodeConfig,
+    sink: idot::Sink<'_>,
+    out: &mut [u8],
+    cancel: &dyn Stop,
+) -> crate::error::Result<idot::Outcome> {
+    let Some(segs) = reader.idot_segments() else {
+        return Ok(idot::Outcome::Fallback);
+    };
+    let ihdr = reader.ihdr();
+    let stride = ihdr.stride()?;
+    // Cheap size/thread check first; only then look up core tiers.
+    let Some(free) = idot::plan_workers(segs, stride, limits.max_threads, None) else {
+        return Ok(idot::Outcome::Fallback);
+    };
+    // One segment per worker leaves no room for load balancing, so a strip
+    // on a slow core delays the whole image: keep those workers on the
+    // fastest core tier — but only while they fill at most half of it
+    // (filling the whole tier measured slower than spreading out). With more
+    // segments than workers, the work queue balances on its own and every
+    // core helps. See docs/IDOT_PARALLEL_PNG.md ("Core tiers").
+    let (workers, pin) = if free >= segs.len() {
+        match crate::affinity::worker_pin() {
+            Some(p) if segs.len() * 2 <= p.cpus() => (segs.len(), Some(p)),
+            _ => (free, None),
+        }
+    } else {
+        (free, None)
+    };
+    idot::decode_parallel(
+        data,
+        ihdr,
+        segs,
+        workers,
+        sink,
+        out,
+        limits.skip_critical_chunk_crc,
+        pin.as_ref(),
+        cancel,
+    )
 }
 
 /// Reinterpret `Vec<u8>` as `Vec<Rgba<u8>>` without copying.

@@ -89,6 +89,21 @@ pub struct EncodeConfig {
     pub text_chunks: Vec<TextChunk>,
     /// Last modification time for tIME chunk.
     pub last_modified: Option<PngTime>,
+    /// Split the image data into this many independently decodable strips and
+    /// record them in an `iDOT` chunk, so decoders that support it (Apple
+    /// ImageIO, zenpng with [`PngDecodeConfig::max_threads`](crate::PngDecodeConfig::max_threads))
+    /// can decode the strips on separate cores.
+    ///
+    /// - `0` or `1` (default): one plain zlib stream, no `iDOT`.
+    /// - `2`: Apple's layout (two halves).
+    /// - `N > 2`: more strips. zenpng decodes these in parallel; how Apple
+    ///   software treats more than two is untested.
+    ///
+    /// The output stays a standard PNG — other decoders ignore `iDOT`. Images
+    /// too small to benefit (under about 1 MiB of filtered data per strip)
+    /// get fewer strips or none. Costs typically 0.0–0.3% in size. Applies to
+    /// non-interlaced still images at effort ≥ 1; APNG output is unaffected.
+    pub decode_segments: u32,
     /// Lossless color-type and bit-depth downcast options.
     ///
     /// Each flag controls one optimization that detects when the input has
@@ -275,6 +290,14 @@ impl EncodeConfig {
         self
     }
 
+    /// Split the image data into `segments` independently decodable strips
+    /// with an `iDOT` table. See [`decode_segments`](Self::decode_segments).
+    #[must_use]
+    pub fn with_decode_segments(mut self, segments: u32) -> Self {
+        self.decode_segments = segments;
+        self
+    }
+
     /// Replace the downcast flag set wholesale.
     #[must_use]
     pub fn with_downcast(mut self, flags: DowncastFlags) -> Self {
@@ -295,6 +318,7 @@ impl EncodeConfig {
             deadline,
             remaining_ns,
             max_threads: self.max_threads,
+            decode_segments: self.decode_segments,
         }
     }
 }
