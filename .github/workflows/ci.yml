@@ -80,7 +80,9 @@ jobs:
         run: |
           git clone --depth 1 --filter=blob:none --sparse https://github.com/imazen/codec-corpus .ci-corpus
           git -C .ci-corpus sparse-checkout set png-idot
-          echo "ZENPNG_IDOT_CORPUS=$GITHUB_WORKSPACE/.ci-corpus/png-idot" >> "$GITHUB_ENV"
+          # Relative: cross mounts the project at a different path inside the
+          # container, and cargo runs tests from the package root.
+          echo "ZENPNG_IDOT_CORPUS=.ci-corpus/png-idot" >> "$GITHUB_ENV"
 
       - name: Test (i686)
         run: cross test --target i686-unknown-linux-gnu
