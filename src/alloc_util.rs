@@ -100,23 +100,27 @@ pub(crate) fn resolve_fallible(
 /// `pref` is the caller's [`AllocPreference`](zencodec::AllocPreference);
 /// `site_default_fallible` is this site's default when `pref` is `CodecDefault`.
 ///
-/// * fallible → `try_reserve_exact` then zero-fill, returning
-///   [`PngError::LimitExceeded`] on allocation failure.
+/// * fallible → one zeroed allocation (`calloc`-style, via bytemuck's safe
+///   wrapper), returning [`PngError::OutOfMemory`] on allocation failure.
 /// * infallible → `vec![0u8; n]` (single `calloc`, aborts on OOM).
+///
+/// Both paths get their zeroes from the allocator, so large buffers come
+/// back as untouched zero pages: the page faults happen where the buffer is
+/// first written (in parallel, for the `iDOT` decoder) rather than in an
+/// up-front single-threaded fill. The old `try_reserve_exact` +
+/// `resize(n, 0)` path made a 20 MB RGBA8 parallel decode 10.1 ms instead of
+/// 8.4 ms (`docs/IDOT_PARALLEL_PNG.md`).
 pub(crate) fn alloc_zeroed(
     pref: zencodec::AllocPreference,
     site_default_fallible: bool,
     n: usize,
 ) -> Result<Vec<u8>, At<PngError>> {
     if resolve_fallible(pref, site_default_fallible) {
-        let mut v = Vec::new();
-        v.try_reserve_exact(n).map_err(|_| {
+        bytemuck::allocation::try_zeroed_vec::<u8>(n).map_err(|()| {
             at!(PngError::OutOfMemory(alloc::format!(
                 "out of memory allocating {n} bytes"
             )))
-        })?;
-        v.resize(n, 0);
-        Ok(v)
+        })
     } else {
         Ok(vec![0u8; n])
     }
