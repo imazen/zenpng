@@ -4,6 +4,7 @@
 //! with scalar fallback for all filter types and bpp values.
 
 mod avg;
+mod fixed;
 mod paeth;
 pub(crate) mod scan;
 mod sub;

@@ -34,6 +34,9 @@ pub(crate) fn unfilter_sub(row: &mut [u8], bpp: usize) {
 
 fn unfilter_sub_scalar_any(row: &mut [u8], bpp: usize) {
     let len = row.len();
+    if super::fixed::by_bpp!(bpp, len, sub(row)).is_some() {
+        return;
+    }
     for i in bpp..len {
         row[i] = row[i].wrapping_add(row[i - bpp]);
     }

@@ -54,6 +54,9 @@ fn paeth_predictor(a: u8, b: u8, c: u8) -> u8 {
 
 fn unfilter_paeth_scalar_any(row: &mut [u8], prev: &[u8], bpp: usize) {
     let len = row.len();
+    if prev.len() == len && super::fixed::by_bpp!(bpp, len, paeth(row, prev)).is_some() {
+        return;
+    }
     for i in 0..bpp.min(len) {
         row[i] = row[i].wrapping_add(paeth_predictor(0, prev[i], 0));
     }

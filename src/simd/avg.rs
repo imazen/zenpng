@@ -29,6 +29,9 @@ pub(crate) fn unfilter_avg(row: &mut [u8], prev: &[u8], bpp: usize) {
 
 fn unfilter_avg_scalar_any(row: &mut [u8], prev: &[u8], bpp: usize) {
     let len = row.len();
+    if prev.len() == len && super::fixed::by_bpp!(bpp, len, avg(row, prev)).is_some() {
+        return;
+    }
     for i in 0..bpp.min(len) {
         row[i] = row[i].wrapping_add(prev[i] >> 1);
     }
