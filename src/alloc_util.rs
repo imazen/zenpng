@@ -75,6 +75,23 @@ pub(crate) fn stream_capacity(stride: usize) -> Result<usize, At<PngError>> {
     alloc_len(capacity).ok_or_else(too_large)
 }
 
+/// Minimum output window for a decoding [`zenflate::StreamDecompressor`].
+///
+/// zenflate keeps a 32 KiB lookback ahead of its output buffer and moves it to
+/// the front each time the buffer fills. With only two rows of capacity that
+/// meant a ~32 KiB memmove every row or two (about 15 MB of copying for a
+/// 1024-px RGB8 image); at 256 KiB the copy happens once per 256 KiB of
+/// output.
+const MIN_DECODE_BUFFER: usize = 256 * 1024;
+
+/// [`stream_capacity`] for decoders: at least two rows, and at least
+/// [`MIN_DECODE_BUFFER`] unless the whole image (`rows` × `stride`) is
+/// smaller, so tiny images don't pay for a buffer they can't fill.
+pub(crate) fn decode_buffer_capacity(stride: usize, rows: u32) -> Result<usize, At<PngError>> {
+    let whole = stride.saturating_mul(rows as usize);
+    Ok(stream_capacity(stride)?.max(MIN_DECODE_BUFFER.min(whole)))
+}
+
 /// Resolve the 3-mode [`AllocPreference`](zencodec::AllocPreference) against
 /// THIS site's default fallibility.
 ///

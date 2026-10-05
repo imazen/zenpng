@@ -274,7 +274,7 @@ impl<'a> ApngDecoder<'a> {
         let raw_row_bytes = frame_ihdr.raw_row_bytes()?;
         let bpp = frame_ihdr.filter_bpp();
 
-        let capacity = crate::alloc_util::stream_capacity(stride)?;
+        let capacity = crate::alloc_util::decode_buffer_capacity(stride, frame_ihdr.height)?;
         let source = IdatSource::new(
             Cow::Borrowed(self.file_data),
             self.first_idat_pos,
@@ -342,6 +342,9 @@ impl<'a> ApngDecoder<'a> {
 
             core::mem::swap(&mut current_row, &mut prev_row);
         }
+        if !self.config.skip_decompression_checksum {
+            super::row::drain_stream(&mut decompressor, true)?;
+        }
 
         build_pixel_data(&frame_ihdr, &self.ancillary, all_pixels, w, h)
     }
@@ -407,7 +410,7 @@ impl<'a> ApngDecoder<'a> {
             self.config.skip_critical_chunk_crc,
         )
         .map_err(|e| at!(e))?;
-        let capacity = crate::alloc_util::stream_capacity(stride)?;
+        let capacity = crate::alloc_util::decode_buffer_capacity(stride, frame_ihdr.height)?;
         let mut decompressor = zenflate::StreamDecompressor::zlib(source, capacity)
             .with_skip_checksum(self.config.skip_decompression_checksum);
 
@@ -466,6 +469,9 @@ impl<'a> ApngDecoder<'a> {
             all_pixels.extend_from_slice(&row_buf);
 
             core::mem::swap(&mut current_row, &mut prev_row);
+        }
+        if !self.config.skip_decompression_checksum {
+            super::row::drain_stream(&mut decompressor, true)?;
         }
 
         // Advance chunk_pos past the fdAT chunks we consumed

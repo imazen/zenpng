@@ -2369,6 +2369,7 @@ fn push_decoder_native_noninterlaced<'a>(
         drop(dst);
     }
 
+    reader.finish_stream()?;
     reader.finish_metadata();
     sink.finish().map_err(wrap_sink)?;
 
@@ -2506,7 +2507,10 @@ impl PngStreamingDecoder<'_> {
         let raw = match self.reader.next_raw_row() {
             Some(Ok(row)) => row,
             Some(Err(e)) => return Err(e),
-            None => return Ok(None),
+            None => {
+                self.reader.finish_stream()?;
+                return Ok(None);
+            }
         };
 
         let y = self.y;

@@ -135,7 +135,7 @@ pub(crate) fn decode_interlaced(
     // otherwise the fill loop cannot accumulate a full row and spins forever.
     // Pass 7 (x_step=1) gives the widest rows: full image width.
     let max_pass_stride = ihdr.stride()?; // 1 + raw_row_bytes for full width
-    let capacity = crate::alloc_util::stream_capacity(max_pass_stride)?;
+    let capacity = crate::alloc_util::decode_buffer_capacity(max_pass_stride, height)?;
     let source = IdatSource::new(
         Cow::Borrowed(data),
         first_idat_pos,
@@ -219,6 +219,9 @@ pub(crate) fn decode_interlaced(
             core::mem::swap(&mut current_row, &mut prev_row);
         }
     }
+
+    // Verify the zlib footer (strict) or note a mismatch (default).
+    super::row::drain_stream(&mut decompressor, !config.skip_decompression_checksum)?;
 
     // Collect post-IDAT metadata: scan forward from first_idat_pos, skip IDATs
     {

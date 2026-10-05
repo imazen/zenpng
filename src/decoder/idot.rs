@@ -279,7 +279,7 @@ pub(crate) fn decode_parallel(
         raw_row_bytes,
         bpp: ihdr.filter_bpp(),
         out_row_bytes,
-        capacity: crate::alloc_util::stream_capacity(stride)?,
+        capacity: crate::alloc_util::decode_buffer_capacity(stride, ihdr.height)?,
         skip_crc,
     };
     debug_assert_eq!(out.len(), ihdr.height as usize * out_row_bytes);

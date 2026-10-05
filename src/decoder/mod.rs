@@ -329,6 +329,9 @@ pub(crate) fn decode_png(
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
         }
 
+        if !parallel_done {
+            reader.finish_stream()?;
+        }
         reader.finish_metadata();
 
         let mut warnings = reader.collect_decode_warnings();
@@ -422,6 +425,9 @@ pub(crate) fn decode_png(
         }
     }
 
+    if !parallel_done {
+        reader.finish_stream()?;
+    }
     reader.finish_metadata();
 
     let mut warnings = reader.collect_decode_warnings();
@@ -801,6 +807,51 @@ fn decode_interlaced_to_output(
 
 #[cfg(test)]
 mod tests {
+    /// Strict decoding must verify Adler-32 even when the footer lies far
+    /// beyond the last row: here 400 KB of extra (valid) deflate output sits
+    /// between the image rows and the corrupted checksum, more than one
+    /// decode buffer, so only an explicit drain after the last row reaches it.
+    /// Default decoding still decodes, with a checksum warning.
+    #[test]
+    fn strict_decode_verifies_adler_after_last_row() {
+        let (w, h) = (64usize, 64usize);
+        let mut raw = Vec::new();
+        for y in 0..h {
+            raw.push(0u8); // filter None
+            raw.extend((0..w).map(|x| (x * 3 + y) as u8));
+        }
+        raw.extend(core::iter::repeat_n(7u8, 400 * 1024)); // trailing data
+        let mut c = zenflate::Compressor::new(zenflate::CompressionLevel::new(6));
+        let mut z = vec![0u8; zenflate::Compressor::zlib_compress_bound(raw.len())];
+        let n = c.zlib_compress(&raw, &mut z, enough::Unstoppable).unwrap();
+        z.truncate(n);
+        let last = z.len() - 1;
+        z[last] ^= 1; // corrupt Adler-32
+        let mut png = crate::chunk::PNG_SIGNATURE.to_vec();
+        let mut ihdr = [0u8; 13];
+        ihdr[0..4].copy_from_slice(&(w as u32).to_be_bytes());
+        ihdr[4..8].copy_from_slice(&(h as u32).to_be_bytes());
+        ihdr[8] = 8; // gray8
+        crate::chunk::write::write_chunk(&mut png, b"IHDR", &ihdr);
+        crate::chunk::write::write_chunk(&mut png, b"IDAT", &z);
+        crate::chunk::write::write_chunk(&mut png, b"IEND", &[]);
+
+        let strict = crate::PngDecodeConfig::strict();
+        assert!(crate::decode(&png, &strict, &enough::Unstoppable).is_err());
+        let out = crate::decode(
+            &png,
+            &crate::PngDecodeConfig::default(),
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert!(
+            out.warnings
+                .contains(&crate::decode::PngWarning::DecompressionChecksumSkipped),
+            "default decode should warn about the checksum: {:?}",
+            out.warnings
+        );
+    }
+
     use super::*;
     use crate::chunk::ihdr::Ihdr;
     use crate::decoder::postprocess::scale_to_8bit;

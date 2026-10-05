@@ -98,7 +98,15 @@ fn tiny_idot_fixtures() {
         let before = zenpng::__idot_stats();
         for base in [PngDecodeConfig::default(), PngDecodeConfig::strict()] {
             let serial = decode(&data, &base.clone().with_max_threads(1), &Unstoppable);
-            assert_eq!(serial.is_ok(), fx.serial_ok, "{name}: serial ok mismatch");
+            // Strict decoding verifies Adler-32, so the one fixture with a
+            // corrupt checksum must fail there (default mode only warns).
+            let strict = !base.skip_decompression_checksum;
+            let expect_ok = fx.serial_ok && !(strict && name == "bad_adler.png");
+            assert_eq!(
+                serial.is_ok(),
+                expect_ok,
+                "{name}: serial ok mismatch (strict={strict})"
+            );
             for threads in [0usize, 2, 4] {
                 let par = decode(&data, &base.clone().with_max_threads(threads), &Unstoppable);
                 match (&serial, &par) {

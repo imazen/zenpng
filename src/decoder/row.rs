@@ -175,6 +175,42 @@ impl zenflate::InputSource for IdatSource<'_> {
     }
 }
 
+/// Read a zlib stream to its end, discarding output (see
+/// [`RowDecoder::finish_stream`]). `strict`: errors are returned rather than
+/// ignored.
+pub(crate) fn drain_stream<S: zenflate::InputSource>(
+    d: &mut zenflate::StreamDecompressor<S>,
+    strict: bool,
+) -> crate::error::Result<()>
+where
+    S::Error: core::fmt::Debug,
+{
+    while !d.is_done() {
+        match d.fill() {
+            Ok(out) => {
+                let n = out.len();
+                d.advance(n);
+                if n == 0 && !d.is_done() && d.fill().map(|o| o.is_empty()).unwrap_or(true) {
+                    // No progress and not finished: the stream ends early.
+                    if strict {
+                        return Err(at!(PngError::Decode(
+                            "zlib stream ends before its checksum".into()
+                        )));
+                    }
+                    return Ok(());
+                }
+            }
+            Err(e) if strict => {
+                return Err(at!(PngError::Decode(alloc::format!(
+                    "decompression error after the last row: {e:?}"
+                ))));
+            }
+            Err(_) => return Ok(()),
+        }
+    }
+    Ok(())
+}
+
 // ── FdatSource — InputSource for fdAT chunks ────────────────────────
 
 /// Streams raw fdAT chunk payload bytes to `StreamDecompressor`.
@@ -355,6 +391,9 @@ pub(crate) struct RowDecoder<'a> {
 
     /// Validated `iDOT` segment table, if the file has a usable one.
     idot: Option<alloc::vec::Vec<super::idot::IdotSegment>>,
+
+    /// Adler-32 is verified (strict decoding).
+    verify_checksum: bool,
 }
 
 impl<'a> RowDecoder<'a> {
@@ -432,9 +471,10 @@ impl<'a> RowDecoder<'a> {
         let stride = ihdr.stride()?;
         let raw_row_bytes = ihdr.raw_row_bytes()?;
         let bpp = ihdr.filter_bpp();
-        // Two rows of inflate buffer, checked: `stride * 2` wrapped on 32-bit
-        // for a max-width gray8 IHDR (stride == 2^31).
-        let capacity = crate::alloc_util::stream_capacity(stride)?;
+        // Inflate buffer: at least two rows (checked: `stride * 2` wrapped on
+        // 32-bit for a max-width gray8 IHDR, stride == 2^31), and large enough
+        // that zenflate's lookback compaction stays rare.
+        let capacity = crate::alloc_util::decode_buffer_capacity(stride, ihdr.height)?;
 
         // The two one-row scratches are bounded by the row width → default
         // infallible, but honor an explicit `AllocPreference`. See
@@ -466,6 +506,7 @@ impl<'a> RowDecoder<'a> {
             bpp,
             chunk_warnings,
             idot,
+            verify_checksum: !config.skip_decompression_checksum,
         })
     }
 
@@ -592,6 +633,16 @@ impl<'a> RowDecoder<'a> {
                 }
             }
         }
+    }
+
+    /// After the last row: read the rest of the zlib stream so its Adler-32
+    /// footer is checked. Rows are complete before the stream is, so without
+    /// this the footer was only checked when the last buffer fill happened to
+    /// reach it. When the checksum is verified (strict), a mismatch, a missing
+    /// footer or corrupt trailing data is an error; otherwise this only feeds
+    /// the `DecompressionChecksumSkipped` warning and never fails.
+    pub fn finish_stream(&mut self) -> crate::error::Result<()> {
+        drain_stream(&mut self.decompressor, self.verify_checksum)
     }
 
     /// After all rows consumed, parse post-IDAT chunks for late metadata.
