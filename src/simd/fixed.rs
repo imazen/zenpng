@@ -70,25 +70,30 @@ pub(super) fn paeth<const N: usize>(row: &mut [u8], prev: &[u8]) {
 }
 
 /// Dispatch a const-generic kernel on a runtime pixel size; `None` when the
-/// size has no specialisation or the row is not whole pixels.
+/// size has no specialisation or the row is not whole pixels. Invoke from a
+/// sibling module of `fixed` (paths resolve at the call site).
 macro_rules! by_bpp {
     ($bpp:expr, $len:expr, $f:ident ( $($arg:expr),* )) => {
         if $len % $bpp != 0 {
             None
         } else {
             match $bpp {
-                1 => Some($crate::simd::fixed::$f::<1>($($arg),*)),
-                2 => Some($crate::simd::fixed::$f::<2>($($arg),*)),
-                3 => Some($crate::simd::fixed::$f::<3>($($arg),*)),
-                4 => Some($crate::simd::fixed::$f::<4>($($arg),*)),
-                6 => Some($crate::simd::fixed::$f::<6>($($arg),*)),
-                8 => Some($crate::simd::fixed::$f::<8>($($arg),*)),
+                1 => Some(super::fixed::$f::<1>($($arg),*)),
+                2 => Some(super::fixed::$f::<2>($($arg),*)),
+                3 => Some(super::fixed::$f::<3>($($arg),*)),
+                4 => Some(super::fixed::$f::<4>($($arg),*)),
+                6 => Some(super::fixed::$f::<6>($($arg),*)),
+                8 => Some(super::fixed::$f::<8>($($arg),*)),
                 _ => None,
             }
         }
     };
 }
 pub(super) use by_bpp;
+
+// Lets the tests below invoke `by_bpp!`, whose paths resolve via `super::fixed`.
+#[cfg(test)]
+use super::fixed;
 
 #[cfg(test)]
 mod tests {

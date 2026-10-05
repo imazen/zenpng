@@ -6,6 +6,10 @@
 //! Run: `cargo bench --bench unfilter_tiers --features _dev`.
 
 #[cfg(target_arch = "aarch64")]
+#[allow(dead_code)]
+#[path = "../src/simd/fixed.rs"]
+mod fixed;
+#[cfg(target_arch = "aarch64")]
 // Source modules include unit-test imports unused by this harness-free bench.
 #[allow(dead_code, unused_imports)]
 #[path = "../src/simd/avg.rs"]
