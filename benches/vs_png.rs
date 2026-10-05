@@ -159,4 +159,19 @@ fn bench_encode(suite: &mut Suite) {
     }
 }
 
-zenbench::main!(bench_decode, bench_encode);
+fn main() {
+    // zenbench's resource gate waits up to 30 s per round while it sees other
+    // heavy processes. On a shared box that stretched a ~10 s group to two
+    // minutes without measuring anything differently: the arms are already
+    // interleaved within each round, and runs are pinned to one core. So this
+    // bench runs ungated; `--group=` filtering and the report are unchanged.
+    let group_filter = std::env::args().find_map(|a| a.strip_prefix("--group=").map(String::from));
+    let result = zenbench::run_gated(zenbench::GateConfig::disabled(), |suite| {
+        if let Some(f) = &group_filter {
+            suite.set_group_filter(f.clone());
+        }
+        bench_decode(suite);
+        bench_encode(suite);
+    });
+    zenbench::postprocess_result(&result);
+}
