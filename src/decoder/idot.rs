@@ -163,7 +163,20 @@ pub(crate) enum Sink<'a> {
 /// each extra worker needs [`EXTRA_WORKER_BYTES`] more.
 pub(crate) const MIN_BYTES_PER_WORKER: usize = 1 << 20;
 
+/// Test/benchmark override of [`MIN_BYTES_PER_WORKER`] (0 = none), so tiny
+/// fixtures can exercise the parallel path. `_dev` only.
+#[cfg(feature = "_dev")]
+pub(crate) static MIN_BYTES_OVERRIDE: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
 fn min_bytes_per_worker() -> usize {
+    #[cfg(feature = "_dev")]
+    {
+        let v = MIN_BYTES_OVERRIDE.load(core::sync::atomic::Ordering::Relaxed);
+        if v != 0 {
+            return v;
+        }
+    }
     #[cfg(feature = "_dev")]
     if let Some(v) = std::env::var("ZENPNG_IDOT_MIN_BYTES")
         .ok()

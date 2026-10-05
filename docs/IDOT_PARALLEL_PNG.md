@@ -290,6 +290,15 @@ N = 2); not implemented.
   never did. Mutation-checked: disabling the boundary-filter check fails on
   `boundary_row_average.png`, and disabling the segment-boundary check fails on
   `complete_stream_in_segment0.png`.
+- `tests/idot_tiny.rs`: 40 tiny fixtures in `tests/fixtures/idot/` (50 KB
+  total, from `generate.py` there): every color type and bit depth (RGBA8,
+  RGB8, Gray8, GA8, Gray16, RGB16, RGBA16, palette 8/4-bit with tRNS, Gray
+  1/2-bit) plus the same valid/malformed cases as the corpus, and a
+  stored-block split. The generator records the SHA-256 of the scanlines it
+  encoded; the `png` crate must reproduce it, zenpng must match serial vs
+  parallel, and for RGB8/RGBA8/Gray8 zenpng's pixels must equal it. With
+  `_dev` the size threshold is lowered (`__set_idot_min_bytes`) so these
+  tiny images take the parallel path, covering both worker output paths.
 - `tests/idot_encode.rs`: the size rule; `decode_segments` 0/1 byte-identical
   to the default; round-trips at efforts 1/7/13 × N = 2/3/8 through the `png`
   crate and through zenpng serially and in parallel.
@@ -300,6 +309,11 @@ N = 2); not implemented.
 
 ## 5. Not done
 
+- **Mac-native fixtures.** Nothing here was produced or decoded on a Mac,
+  and no Apple-written file under 0.5 MB has been tested (the `mac` host was
+  not reachable from the build box). Next: write tiny PNGs through ImageIO /
+  `sips` on macOS, record ImageIO's decoded-pixel hashes, add them to the
+  fixtures.
 - **Apple acceptance of zenpng output.** Nothing here has been decoded by
   ImageIO. A macOS CI job that decodes zenpng `iDOT` files through
   `CGImageSource` and checks for "iDOT doesn't point to valid IDAT chunk" is

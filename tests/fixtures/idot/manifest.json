@@ -1,0 +1,402 @@
+{
+ "bad_adler.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "correct segments, wrong Adler-32 trailer",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "bfinal_in_segment0.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "segment 0 ends with BFINAL",
+  "parallel_usable": false,
+  "raw_sha256": null,
+  "serial_ok": false,
+  "width": 24
+ },
+ "boundary_row_average.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "segment 1 starts with filter average",
+  "parallel_usable": false,
+  "raw_sha256": "bda30f395288ba364722b7e40aba4045443fcf0e2f04589017c8fce5c1c5266d",
+  "serial_ok": true,
+  "width": 24
+ },
+ "boundary_row_paeth.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "segment 1 starts with filter paeth",
+  "parallel_usable": false,
+  "raw_sha256": "bda30f395288ba364722b7e40aba4045443fcf0e2f04589017c8fce5c1c5266d",
+  "serial_ok": true,
+  "width": 24
+ },
+ "boundary_row_up.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "segment 1 starts with filter up",
+  "parallel_usable": false,
+  "raw_sha256": "bda30f395288ba364722b7e40aba4045443fcf0e2f04589017c8fce5c1c5266d",
+  "serial_ok": true,
+  "width": 24
+ },
+ "complete_stream_in_segment0.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "segment 0 is a whole zlib stream; serial decode stops at row 8",
+  "parallel_usable": false,
+  "raw_sha256": null,
+  "serial_ok": false,
+  "width": 24
+ },
+ "ga8_n2.png": {
+  "bit_depth": 8,
+  "color_type": 4,
+  "height": 16,
+  "note": "ga8, two 8-row segments",
+  "parallel_usable": true,
+  "raw_sha256": "3bfad03e9af80c26b6d09ec9ac56aa9add3a5271da69b367d8f57344fa543648",
+  "serial_ok": true,
+  "width": 24
+ },
+ "gray16_n2.png": {
+  "bit_depth": 16,
+  "color_type": 0,
+  "height": 16,
+  "note": "gray16, two 8-row segments",
+  "parallel_usable": true,
+  "raw_sha256": "7363cc99b81f89de6aa2fa1a48404edc900c00da360a0eff67576b43e80ed393",
+  "serial_ok": true,
+  "width": 24
+ },
+ "gray1_n2.png": {
+  "bit_depth": 1,
+  "color_type": 0,
+  "height": 16,
+  "note": "gray1, two 8-row segments",
+  "parallel_usable": true,
+  "raw_sha256": "53c7a139dbe1d6337fba0ba72bdbd7786b24d5bc38013eafaba90ec04933311f",
+  "serial_ok": true,
+  "width": 24
+ },
+ "gray2_n2.png": {
+  "bit_depth": 2,
+  "color_type": 0,
+  "height": 16,
+  "note": "gray2, two 8-row segments",
+  "parallel_usable": true,
+  "raw_sha256": "bcef3e98bb5d576fcf27f40588abdaf4eca61cbbde29e4fcc8fc6c6da1cabca2",
+  "serial_ok": true,
+  "width": 24
+ },
+ "gray8_n2.png": {
+  "bit_depth": 8,
+  "color_type": 0,
+  "height": 16,
+  "note": "gray8, two 8-row segments",
+  "parallel_usable": true,
+  "raw_sha256": "95b2675d81d5bd7efa2fa9e8d89dbb43e06805298dea77230cf600adc02ab84a",
+  "serial_ok": true,
+  "width": 24
+ },
+ "idot_after_idat.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "iDOT after the image data",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "interlaced_with_idot.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "Adam7 image with an iDOT chunk",
+  "parallel_usable": false,
+  "raw_sha256": "454e70031eb09a6e69aa18875d30dd0187a736f760141fade4557078a097e0c4",
+  "serial_ok": true,
+  "width": 16
+ },
+ "no_flush_at_offset.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "one deflate stream, iDOT offset at an arbitrary chunk boundary",
+  "parallel_usable": false,
+  "raw_sha256": "4547ffce8a45bc2fba1880049aa5f7d6b3946072b2e375cbda3231e234db466d",
+  "serial_ok": true,
+  "width": 24
+ },
+ "pal4_trns_n2.png": {
+  "bit_depth": 4,
+  "color_type": 3,
+  "height": 16,
+  "note": "pal4_trns, two 8-row segments",
+  "parallel_usable": true,
+  "raw_sha256": "3c00803e4ee8ee04cddd04ef855c46b5b5671e120930f48362d9375076c73028",
+  "serial_ok": true,
+  "width": 24
+ },
+ "pal8_trns_n2.png": {
+  "bit_depth": 8,
+  "color_type": 3,
+  "height": 16,
+  "note": "pal8_trns, two 8-row segments",
+  "parallel_usable": true,
+  "raw_sha256": "7bf5cccd6e6be56ac034da3bb8d1718f36f946bfcec109081013ac1454e41a3c",
+  "serial_ok": true,
+  "width": 24
+ },
+ "rgb16_n2.png": {
+  "bit_depth": 16,
+  "color_type": 2,
+  "height": 16,
+  "note": "rgb16, two 8-row segments",
+  "parallel_usable": true,
+  "raw_sha256": "08b60c2fd5e0ecf2b586f109b2bdd06cad81e83562c0d09735720362fffcc420",
+  "serial_ok": true,
+  "width": 24
+ },
+ "rgb8_n2.png": {
+  "bit_depth": 8,
+  "color_type": 2,
+  "height": 16,
+  "note": "rgb8, two 8-row segments",
+  "parallel_usable": true,
+  "raw_sha256": "9d34385d43404a3a271f72b24a8d11aca03125ea8d6e3b7eec3c0e3b5ab60840",
+  "serial_ok": true,
+  "width": 24
+ },
+ "rgba16_n2.png": {
+  "bit_depth": 16,
+  "color_type": 6,
+  "height": 16,
+  "note": "rgba16, two 8-row segments",
+  "parallel_usable": true,
+  "raw_sha256": "bcade1bbc48078f2f0f73a32835d0bceb1b19bb29c0c30958817d515a679ed2c",
+  "serial_ok": true,
+  "width": 24
+ },
+ "rgba8_n2.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "rgba8, two 8-row segments",
+  "parallel_usable": true,
+  "raw_sha256": "f8a0e5d6eb10df65c4424e67b34bb7c30346e050e847600032072384563c2422",
+  "serial_ok": true,
+  "width": 24
+ },
+ "rgba8_n2_one_row_first.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "segments [1, 15]",
+  "parallel_usable": true,
+  "raw_sha256": "df4d4ed79fc4e46834eebaa354bdb502034e262fe7840a6039ec15c08da05bfe",
+  "serial_ok": true,
+  "width": 24
+ },
+ "rgba8_n3_uneven.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "segments [3, 9, 4]",
+  "parallel_usable": true,
+  "raw_sha256": "df4d4ed79fc4e46834eebaa354bdb502034e262fe7840a6039ec15c08da05bfe",
+  "serial_ok": true,
+  "width": 24
+ },
+ "rgba8_n8.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "segments [2, 2, 2, 2, 2, 2, 2, 2], 7-byte IDAT chunks",
+  "parallel_usable": true,
+  "raw_sha256": "df4d4ed79fc4e46834eebaa354bdb502034e262fe7840a6039ec15c08da05bfe",
+  "serial_ok": true,
+  "width": 24
+ },
+ "row_counts_disagree_with_stream.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "table says 7/9 rows, flush is after row 8",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "stored_block_split.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "segment 0 ends inside a stored block header (the ambiguous-PNG shape)",
+  "parallel_usable": false,
+  "raw_sha256": "4547ffce8a45bc2fba1880049aa5f7d6b3946072b2e375cbda3231e234db466d",
+  "serial_ok": true,
+  "width": 24
+ },
+ "sync_flush_backrefs.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "sync flush keeps the window; segment 1 may back-reference segment 0",
+  "parallel_usable": false,
+  "raw_sha256": "cd2250e14c223dc9a001618886ae0d4fecb9a05284298c7e56105b41c7bb7f04",
+  "serial_ok": true,
+  "width": 24
+ },
+ "table_empty.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "zero-length iDOT",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "table_first_not_first_idat.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "segment 0 not at the first IDAT; offsets not increasing",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "table_gap_rows.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "row 7 belongs to no segment",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "table_huge_n.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "N = 2^32-1 with a 28-byte body",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "table_n0.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "N = 0",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "table_n1.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "N = 1",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "table_offset_mid_chunk.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "segment 1 offset inside an IDAT chunk",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "table_offset_past_eof.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "segment 1 offset past end of file",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "table_offset_wraps.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "offset 2^32-1 (pointer arithmetic overflow on 32-bit)",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "table_overlapping_rows.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "both segments claim every row",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "table_rows_exceed_height.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "rows sum past the height",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "table_truncated.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "length not 4 + 12N",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "table_zero_rows.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "a segment with zero rows",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ },
+ "two_idot_chunks.png": {
+  "bit_depth": 8,
+  "color_type": 6,
+  "height": 16,
+  "note": "a second iDOT before the real one",
+  "parallel_usable": false,
+  "raw_sha256": "4ca0b47aef65343009ca944212cb48a30cf034f9dce8b66aa83f29fb6940dba9",
+  "serial_ok": true,
+  "width": 24
+ }
+}

@@ -20,6 +20,8 @@ All notable changes to zenpng are documented here.
   is unchanged unless it is set. Costs −0.09% to +0.40% in size for n ≤ 8, and
   1–8% in encode time at efforts 7–19. Images under ~2 MiB of row data get no
   strips.
+- 40 tiny `iDOT` test fixtures (`tests/fixtures/idot/`, 50 KB) covering every
+  color type and bit depth, with generator-computed pixel hashes.
 - New Linux-only dependency `rustix` (safe `sched_setaffinity` wrappers) for
   core-tier pinning.
 
