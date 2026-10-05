@@ -2,7 +2,8 @@
 ///
 /// Usage:
 ///   cargo build --release --example decode_only
-///   valgrind --tool=callgrind target/release/examples/decode_only [image.png]
+///   valgrind --tool=callgrind target/release/examples/decode_only [image.png] [iterations]
+///   perf record -g target/release/examples/decode_only image.png 200
 use enough::Unstoppable;
 
 fn main() {
@@ -17,8 +18,9 @@ fn main() {
     let config = zenpng::PngDecodeConfig::none();
     // Warmup
     let _ = zenpng::decode(&source, &config, &Unstoppable).unwrap();
-    // Profile iterations
-    for _ in 0..3 {
+    // Profile iterations (default 3; pass more for sampling profilers)
+    let iters: usize = std::env::args().nth(2).and_then(|n| n.parse().ok()).unwrap_or(3);
+    for _ in 0..iters {
         let d = zenpng::decode(&source, &config, &Unstoppable).unwrap();
         std::hint::black_box(&d);
     }

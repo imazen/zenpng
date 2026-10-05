@@ -51,6 +51,8 @@ png_main = { package = "png", git = "https://github.com/image-rs/image-png", rev
 sha2 = "0.11.0"
 flate2 = "1"
 miniz_oxide = "0.9.1"
+# image-png's inflater, for examples/inflate_bench.rs.
+fdeflate = "0.3.7"
 zopfli = "0.8"
 lodepng = "3.12.2"
 # zencodec conformance harness (unpublished companion crate). Git-pinned to the

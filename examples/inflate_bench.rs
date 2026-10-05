@@ -1,4 +1,5 @@
-/// Compare raw inflate speed: zenflate vs miniz_oxide vs flate2 vs libdeflater.
+/// Compare raw inflate speed: zenflate vs fdeflate (image-png's inflater) vs
+/// miniz_oxide vs flate2 vs libdeflater.
 ///
 /// Extracts zlib data from IDAT chunks, then benchmarks inflate only.
 ///
@@ -103,6 +104,23 @@ fn main() {
         println!(
             "{:<16} {:>8.1}ms  ({:.0} MB/s)",
             "zenflate-stream",
+            ms,
+            dec_size as f64 / ms / 1000.0
+        );
+    }
+
+    // --- fdeflate (image-png's inflater; zlib wrapper included) ---
+    {
+        let _ = fdeflate::decompress_to_vec(&zlib_data).unwrap();
+        let t = Instant::now();
+        for _ in 0..iters {
+            let r = fdeflate::decompress_to_vec(&zlib_data).unwrap();
+            std::hint::black_box(&r);
+        }
+        let ms = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+        println!(
+            "{:<16} {:>8.1}ms  ({:.0} MB/s)",
+            "fdeflate",
             ms,
             dec_size as f64 / ms / 1000.0
         );
