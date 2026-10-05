@@ -148,10 +148,15 @@ enum Expand {
     Copy,
     /// Big-endian 16-bit samples → native endian, same channel count.
     Swap16,
-    /// Sub-byte gray → Gray8 (`trns: None`) or RGBA8.
-    SubByteGray {
+    /// Sub-byte gray without tRNS → Gray8, one table lookup per input byte.
+    PackedGray {
         bits: u8,
-        trns: Option<u8>,
+        table: alloc::boxed::Box<[[u8; 8]; 256]>,
+    },
+    /// Sub-byte gray with tRNS → RGBA8 (rare; per sample).
+    SubByteGrayTrns {
+        bits: u8,
+        trns: u8,
     },
     Gray8Trns(u8),
     Gray16Trns(u16),
@@ -159,11 +164,13 @@ enum Expand {
     Rgb16Trns([u16; 3]),
     GrayAlpha8,
     /// Palette indices (1/2/4/8-bit) through a 256-entry RGBA table;
-    /// `alpha` selects RGBA8 output (tRNS present) over RGB8.
+    /// `alpha` selects RGBA8 output (tRNS present) over RGB8. Sub-byte
+    /// indices are unpacked one input byte at a time through `unpack`.
     Palette {
         bits: u8,
         alpha: bool,
         lut: alloc::boxed::Box<[[u8; 4]; 256]>,
+        unpack: Option<alloc::boxed::Box<[[u8; 8]; 256]>>,
     },
 }
 
@@ -196,14 +203,18 @@ impl RowExpander {
                 0
             }),
             (0, 8, None) | (2, 8, None) | (6, 8, _) => Expand::Copy,
-            (0, bits, t) => Expand::SubByteGray {
+            (0, bits, None) => Expand::PackedGray {
+                bits,
+                table: unpack_table(bits, scale_to_8bit(1, bits)),
+            },
+            (0, bits, Some(t)) => Expand::SubByteGrayTrns {
                 bits,
                 // A tRNS value outside the bit depth never matches; u8::MAX
                 // can't be a 1/2/4-bit sample either.
-                trns: t.map(|t| {
+                trns: {
                     let v = if t.len() >= 2 { trns_u16(t, 0) } else { 0 };
                     u8::try_from(v).unwrap_or(u8::MAX)
-                }),
+                },
             },
             (2, _, Some(t)) => Expand::Rgb8Trns(if t.len() >= 6 {
                 [
@@ -230,6 +241,7 @@ impl RowExpander {
                     bits,
                     alpha: t.is_some(),
                     lut,
+                    unpack: (bits < 8).then(|| unpack_table(bits, 1)),
                 }
             }
             _ => unreachable!("validated in IHDR parsing"),
@@ -339,60 +351,109 @@ impl RowExpander {
                     *o = [i[0], i[0], i[0], i[1]];
                 }
             }
-            &Expand::SubByteGray { bits, trns } => {
+            Expand::PackedGray { bits, table } => match bits {
+                1 => packed_gray::<8>(raw, out, self.width, table),
+                2 => packed_gray::<4>(raw, out, self.width, table),
+                _ => packed_gray::<2>(raw, out, self.width, table),
+            },
+            &Expand::SubByteGrayTrns { bits, trns } => {
                 let scale = scale_to_8bit(1, bits);
-                match trns {
-                    None => {
-                        for (x, o) in out.iter_mut().enumerate().take(self.width) {
-                            let Some(v) = sub_byte(raw, x, bits) else {
-                                break;
-                            };
-                            *o = v * scale;
-                        }
-                    }
-                    Some(t) => {
-                        for (x, o) in out.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-                            let Some(v) = sub_byte(raw, x, bits) else {
-                                break;
-                            };
-                            let g = v * scale;
-                            *o = [g, g, g, if v == t { 0 } else { 255 }];
-                        }
-                    }
+                for (x, o) in out.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                    let Some(v) = sub_byte(raw, x, bits) else {
+                        break;
+                    };
+                    let g = v * scale;
+                    *o = [g, g, g, if v == trns { 0 } else { 255 }];
                 }
             }
-            Expand::Palette { bits, alpha, lut } => {
-                let index = |x: usize| -> Option<u8> {
-                    if *bits == 8 {
-                        raw.get(x).copied()
-                    } else {
-                        sub_byte(raw, x, *bits)
-                    }
-                };
-                if *alpha {
-                    if *bits == 8 {
+            Expand::Palette {
+                bits,
+                alpha,
+                lut,
+                unpack,
+            } => {
+                let w = self.width;
+                match (unpack, *alpha) {
+                    (None, true) => {
                         for (o, &i) in out.as_chunks_mut::<4>().0.iter_mut().zip(raw) {
                             *o = lut[i as usize];
                         }
-                    } else {
-                        for (x, o) in out.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-                            let Some(i) = index(x) else { break };
-                            *o = lut[i as usize];
+                    }
+                    (None, false) => {
+                        for (o, &i) in out.as_chunks_mut::<3>().0.iter_mut().zip(raw) {
+                            let e = lut[i as usize];
+                            *o = [e[0], e[1], e[2]];
                         }
                     }
-                } else if *bits == 8 {
-                    for (o, &i) in out.as_chunks_mut::<3>().0.iter_mut().zip(raw) {
-                        let e = lut[i as usize];
-                        *o = [e[0], e[1], e[2]];
-                    }
-                } else {
-                    for (x, o) in out.as_chunks_mut::<3>().0.iter_mut().enumerate() {
-                        let Some(i) = index(x) else { break };
-                        let e = lut[i as usize];
-                        *o = [e[0], e[1], e[2]];
-                    }
+                    (Some(t), true) => match bits {
+                        1 => packed_palette::<8, 4>(raw, out, w, t, lut),
+                        2 => packed_palette::<4, 4>(raw, out, w, t, lut),
+                        _ => packed_palette::<2, 4>(raw, out, w, t, lut),
+                    },
+                    (Some(t), false) => match bits {
+                        1 => packed_palette::<8, 3>(raw, out, w, t, lut),
+                        2 => packed_palette::<4, 3>(raw, out, w, t, lut),
+                        _ => packed_palette::<2, 3>(raw, out, w, t, lut),
+                    },
                 }
             }
+        }
+    }
+}
+
+/// For every byte value, its samples at `bits` per sample (MSB first, up to
+/// 8 of them), each multiplied by `scale`.
+fn unpack_table(bits: u8, scale: u8) -> alloc::boxed::Box<[[u8; 8]; 256]> {
+    let per = 8 / bits as usize;
+    let mask = (1u8 << bits) - 1;
+    let mut t = alloc::boxed::Box::new([[0u8; 8]; 256]);
+    for (b, e) in t.iter_mut().enumerate() {
+        for (k, v) in e.iter_mut().take(per).enumerate() {
+            *v = ((b as u8 >> (8 - bits as usize * (k + 1))) & mask) * scale;
+        }
+    }
+    t
+}
+
+/// Packed gray row (`P` samples per byte) → one output byte per sample.
+fn packed_gray<const P: usize>(raw: &[u8], out: &mut [u8], width: usize, table: &[[u8; 8]; 256]) {
+    let full = (width / P).min(raw.len());
+    for (o, &b) in out[..full * P].as_chunks_mut::<P>().0.iter_mut().zip(raw) {
+        o.copy_from_slice(&table[b as usize][..P]);
+    }
+    let rem = width - full * P;
+    if rem > 0
+        && rem < P
+        && let Some(&b) = raw.get(full)
+    {
+        out[full * P..full * P + rem].copy_from_slice(&table[b as usize][..rem]);
+    }
+}
+
+/// Packed palette row (`P` indices per byte) → `C`-byte pixels (RGB or RGBA).
+fn packed_palette<const P: usize, const C: usize>(
+    raw: &[u8],
+    out: &mut [u8],
+    width: usize,
+    unpack: &[[u8; 8]; 256],
+    lut: &[[u8; 4]; 256],
+) {
+    let full = (width / P).min(raw.len());
+    for (o, &b) in out[..full * P * C].chunks_exact_mut(P * C).zip(raw) {
+        let idx = &unpack[b as usize];
+        for k in 0..P {
+            o[k * C..k * C + C].copy_from_slice(&lut[idx[k] as usize][..C]);
+        }
+    }
+    let rem = width - full * P;
+    if rem > 0
+        && rem < P
+        && let Some(&b) = raw.get(full)
+    {
+        let idx = &unpack[b as usize];
+        for k in 0..rem {
+            let at = (full * P + k) * C;
+            out[at..at + C].copy_from_slice(&lut[idx[k] as usize][..C]);
         }
     }
 }

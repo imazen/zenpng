@@ -38,7 +38,12 @@ pub(super) fn sub<const N: usize>(row: &mut [u8]) {
 #[inline(always)]
 pub(super) fn avg<const N: usize>(row: &mut [u8], prev: &[u8]) {
     let mut left = [0u8; N];
-    for (px, up) in row.as_chunks_mut::<N>().0.iter_mut().zip(prev.as_chunks::<N>().0) {
+    for (px, up) in row
+        .as_chunks_mut::<N>()
+        .0
+        .iter_mut()
+        .zip(prev.as_chunks::<N>().0)
+    {
         for k in 0..N {
             px[k] = px[k].wrapping_add(((left[k] as u16 + up[k] as u16) >> 1) as u8);
         }
@@ -50,7 +55,12 @@ pub(super) fn avg<const N: usize>(row: &mut [u8], prev: &[u8]) {
 pub(super) fn paeth<const N: usize>(row: &mut [u8], prev: &[u8]) {
     let mut left = [0u8; N];
     let mut up_left = [0u8; N];
-    for (px, up) in row.as_chunks_mut::<N>().0.iter_mut().zip(prev.as_chunks::<N>().0) {
+    for (px, up) in row
+        .as_chunks_mut::<N>()
+        .0
+        .iter_mut()
+        .zip(prev.as_chunks::<N>().0)
+    {
         for k in 0..N {
             px[k] = px[k].wrapping_add(paeth_branchless(left[k], up[k], up_left[k]));
         }
@@ -102,7 +112,11 @@ mod tests {
         for a in 0..=255u8 {
             for b in 0..=255u8 {
                 for c in 0..=255u8 {
-                    assert_eq!(paeth_branchless(a, b, c), paeth_spec(a, b, c), "{a} {b} {c}");
+                    assert_eq!(
+                        paeth_branchless(a, b, c),
+                        paeth_spec(a, b, c),
+                        "{a} {b} {c}"
+                    );
                 }
             }
         }
