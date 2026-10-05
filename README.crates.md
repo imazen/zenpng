@@ -269,7 +269,8 @@ use zenpng::{EncodeConfig, PngDecodeConfig};
 // Decode: automatic by default (max_threads = 0). 1 forces single-threaded.
 let config = PngDecodeConfig::default().with_max_threads(0);
 
-// Encode: 2 strips is Apple's layout; more strips decode faster in zenpng.
+// Encode: off by default. 2 strips is Apple's layout; more strips decode
+// faster in zenpng (up to 16).
 let config = EncodeConfig::default().with_decode_segments(4);
 ```
 
@@ -279,8 +280,22 @@ segment table doesn't prove that, for example a crafted
 zenpng decodes serially. Images under about 2 MiB of row data stay serial
 because threads would not pay off. On a Core Ultra 7 265K, Apple's 2-strip
 screenshots (1–8 MP) decode 1.6–1.7× faster, and zenpng files with 4–16 strips
-decode 2.0–4.0× faster. Segmenting costs up to 0.4% in file size. Other decoders
-ignore `iDOT` and read a normal PNG. Details:
+decode 2.0–4.0× faster. Other decoders ignore `iDOT` and read a normal PNG.
+
+**When to turn segments on.** Writing strips is off by default because it is
+not free: up to about 0.4% more bytes and 1–8% more encode time (efforts
+7–19). It pays when the same file is decoded many times on multi-core
+machines, by zenpng or by Apple's ImageIO (measured on macOS). It doesn't
+help any other decoder. Images under about 2 MiB of row data never get strips.
+
+**Compatibility.** zenpng only writes the shape that decodes identically
+everywhere it was tested: Apple ImageIO (macOS 27, through both its parallel
+and its serial path), the `png` crate, `lodepng`, and zenpng itself. ImageIO's
+parallel path mis-decodes some files that are valid PNG (strips starting with
+Up/Average/Paeth rows, tables with row gaps, 1/2/4-bit grayscale), so the
+encoder never writes those: strips start with None or Sub rows, cover every
+row, and 1/2/4-bit grayscale gets no `iDOT`. A macOS CI job re-checks
+zenpng's output against ImageIO on every push. Details:
 [docs/IDOT_PARALLEL_PNG.md](https://github.com/imazen/zenpng/blob/main/docs/IDOT_PARALLEL_PNG.md).
 
 ## Metadata
