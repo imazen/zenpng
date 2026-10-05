@@ -126,6 +126,24 @@ pub(crate) fn alloc_zeroed(
     }
 }
 
+/// [`alloc_zeroed`] for any zeroable element type (e.g. `u16` sample
+/// buffers, which then cast to 16-bit pixel types without copying).
+pub(crate) fn alloc_zeroed_typed<T: bytemuck::Zeroable + Clone>(
+    pref: zencodec::AllocPreference,
+    site_default_fallible: bool,
+    n: usize,
+) -> Result<Vec<T>, At<PngError>> {
+    if resolve_fallible(pref, site_default_fallible) {
+        bytemuck::allocation::try_zeroed_vec::<T>(n).map_err(|()| {
+            at!(PngError::OutOfMemory(alloc::format!(
+                "out of memory allocating {n} elements"
+            )))
+        })
+    } else {
+        Ok(vec![T::zeroed(); n])
+    }
+}
+
 /// Allocate an empty `Vec<u8>` with reserved capacity for `cap` bytes, honoring
 /// the per-site fallibility (for the `Vec::with_capacity` + extend sites).
 ///

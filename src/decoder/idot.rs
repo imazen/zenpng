@@ -26,11 +26,10 @@ use enough::Stop;
 #[allow(unused_imports)]
 use whereat::at;
 
-use crate::chunk::ancillary::PngAncillary;
 use crate::chunk::ihdr::Ihdr;
 use crate::error::PngError;
 
-use super::postprocess::post_process_row;
+use super::postprocess::RowExpander;
 use super::row::{IdatSource, unfilter_row};
 
 /// Upper bound on accepted segment counts. Apple writes 2; zenpng's encoder
@@ -146,11 +145,8 @@ pub(crate) enum Outcome {
 pub(crate) enum Sink<'a> {
     /// Unfiltered raw rows (`raw_row_bytes` each) are the output.
     Raw,
-    /// Rows go through [`post_process_row`]; output rows are `out_row_bytes`.
-    Post {
-        ancillary: &'a PngAncillary,
-        out_row_bytes: usize,
-    },
+    /// Rows are expanded by a [`RowExpander`] into its output row size.
+    Post { expander: &'a RowExpander },
 }
 
 /// Filtered bytes (rows × stride) per worker for the first two workers.
@@ -255,7 +251,6 @@ struct Geometry {
     out_row_bytes: usize,
     capacity: usize,
     skip_crc: bool,
-    ihdr: Ihdr,
 }
 
 /// Decode `segs` in parallel into `out` (`height × out_row_bytes` bytes).
@@ -277,7 +272,7 @@ pub(crate) fn decode_parallel(
     let stride = ihdr.stride()?;
     let out_row_bytes = match sink {
         Sink::Raw => raw_row_bytes,
-        Sink::Post { out_row_bytes, .. } => out_row_bytes,
+        Sink::Post { expander } => expander.out_row_bytes(),
     };
     let geo = Geometry {
         stride,
@@ -286,7 +281,6 @@ pub(crate) fn decode_parallel(
         out_row_bytes,
         capacity: crate::alloc_util::stream_capacity(stride)?,
         skip_crc,
-        ihdr: *ihdr,
     };
     debug_assert_eq!(out.len(), ihdr.height as usize * out_row_bytes);
 
@@ -443,13 +437,12 @@ fn run_worker(
 ) -> Result<WorkerOk, WorkerErr> {
     let mut adlers = Vec::with_capacity(segs.len());
     let mut footer = None;
-    // Raw-row scratch for Sink::Post (prev + current), and the post-processed row.
-    let (mut prev_raw, mut cur_raw, mut row_buf) = match sink {
-        Sink::Raw => (Vec::new(), Vec::new(), Vec::new()),
+    // Raw-row scratch for Sink::Post (prev + current).
+    let (mut prev_raw, mut cur_raw) = match sink {
+        Sink::Raw => (Vec::new(), Vec::new()),
         Sink::Post { .. } => (
             alloc::vec![0u8; geo.raw_row_bytes],
             alloc::vec![0u8; geo.raw_row_bytes],
-            Vec::with_capacity(geo.out_row_bytes),
         ),
     };
     let zero_row = match sink {
@@ -505,22 +498,15 @@ fn run_worker(
                     };
                     unfilter_row(filter, dest, prev, geo.bpp).map_err(|_| WorkerErr::Fallback)?;
                 }
-                Sink::Post {
-                    ancillary,
-                    out_row_bytes,
-                } => {
+                Sink::Post { expander } => {
                     cur_raw.copy_from_slice(&peeked[1..geo.stride]);
                     if worker_first {
                         prev_raw.fill(0);
                     }
                     unfilter_row(filter, &mut cur_raw, &prev_raw, geo.bpp)
                         .map_err(|_| WorkerErr::Fallback)?;
-                    post_process_row(&cur_raw, &geo.ihdr, ancillary, &mut row_buf);
-                    if row_buf.len() != out_row_bytes {
-                        return Err(WorkerErr::Fallback);
-                    }
-                    out[out_row * out_row_bytes..(out_row + 1) * out_row_bytes]
-                        .copy_from_slice(&row_buf);
+                    let n = geo.out_row_bytes;
+                    expander.expand(&cur_raw, &mut out[out_row * n..(out_row + 1) * n]);
                     core::mem::swap(&mut prev_raw, &mut cur_raw);
                 }
             }

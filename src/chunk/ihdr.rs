@@ -218,6 +218,7 @@ impl Ihdr {
     }
 
     /// Whether the image uses sub-8-bit depth (1, 2, or 4).
+    #[cfg(test)]
     pub fn is_sub_byte(&self) -> bool {
         self.bit_depth < 8
     }

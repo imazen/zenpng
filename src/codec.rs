@@ -2246,7 +2246,6 @@ fn push_decoder_native_noninterlaced<'a>(
     // by the caller), so the preference list is unused here.
     _preferred: &[PixelDescriptor],
 ) -> Result<OutputInfo, At<PngError>> {
-    use crate::decoder::postprocess::post_process_row;
     use crate::decoder::row::RowDecoder;
 
     let wrap_sink = |e: zencodec::decode::SinkError| -> At<PngError> {
@@ -2348,8 +2347,8 @@ fn push_decoder_native_noninterlaced<'a>(
         // General path: post-process each raw row, then write to sink.
         let out_bpp = descriptor.bytes_per_pixel();
         let out_row_bytes = w as usize * out_bpp;
-        let mut row_buf = Vec::new();
-        let mut raw_copy = alloc::vec![0u8; ihdr.raw_row_bytes()?];
+        let expander = crate::decoder::postprocess::RowExpander::new(&ihdr, reader.ancillary())?;
+        let mut row_buf = alloc::vec![0u8; expander.out_row_bytes()];
 
         let mut dst = sink
             .provide_next_buffer(0, h, w, descriptor)
@@ -2360,16 +2359,7 @@ fn push_decoder_native_noninterlaced<'a>(
             let raw = result?;
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
 
-            // Copy raw row data so the borrow on reader is released (NLL),
-            // allowing reader.ancillary() below.
-            raw_copy[..raw.len()].copy_from_slice(raw);
-
-            post_process_row(
-                &raw_copy[..ihdr.raw_row_bytes()?],
-                &ihdr,
-                reader.ancillary(),
-                &mut row_buf,
-            );
+            expander.expand(raw, &mut row_buf);
 
             let sink_row = dst.row_mut(y);
             let copy_len = out_row_bytes.min(row_buf.len()).min(sink_row.len());
@@ -2399,15 +2389,12 @@ pub struct PngStreamingDecoder<'a> {
     descriptor: PixelDescriptor,
     /// Post-processed row buffer, reused across calls.
     row_buf: Vec<u8>,
-    /// Raw row copy buffer (needed to release borrow on reader before
-    /// calling `reader.ancillary()` for post-processing).
-    raw_copy: Vec<u8>,
+    /// Raw row → output row conversion, built once.
+    expander: crate::decoder::postprocess::RowExpander,
     /// Current row index (y coordinate).
     y: u32,
     width: u32,
     height: u32,
-    /// True when the raw format is passthrough (no post-processing needed).
-    is_passthrough: bool,
     /// Cooperative cancellation token, checked per-row in `next_batch()`.
     stop: Option<zencodec::StopToken>,
 }
@@ -2474,22 +2461,19 @@ impl<'a> PngStreamingDecoder<'a> {
             probe_info.cicp,
         );
 
-        let is_passthrough =
-            !has_trns && ihdr.bit_depth == 8 && (ihdr.color_type == 6 || ihdr.color_type == 2);
-
-        let raw_row_bytes = ihdr.raw_row_bytes()?;
-        let out_row_bytes = w as usize * descriptor.bytes_per_pixel();
+        let expander = crate::decoder::postprocess::RowExpander::new(&ihdr, reader.ancillary())?;
+        let out_row_bytes =
+            (w as usize * descriptor.bytes_per_pixel()).max(expander.out_row_bytes());
 
         Ok(Self {
             reader,
             info,
             descriptor,
             row_buf: alloc::vec![0u8; out_row_bytes],
-            raw_copy: alloc::vec![0u8; raw_row_bytes],
+            expander,
             y: 0,
             width: w,
             height: h,
-            is_passthrough,
             stop,
         })
     }
@@ -2509,8 +2493,6 @@ impl zencodec::decode::StreamingDecode for PngStreamingDecoder<'_> {
 
 impl PngStreamingDecoder<'_> {
     fn next_batch_inner(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, At<PngError>> {
-        use crate::decoder::postprocess::post_process_row;
-
         if self.y >= self.height {
             return Ok(None);
         }
@@ -2530,25 +2512,7 @@ impl PngStreamingDecoder<'_> {
         let y = self.y;
         self.y += 1;
 
-        if self.is_passthrough {
-            // Raw unfiltered data IS the output — copy into row_buf
-            let copy_len = raw.len().min(self.row_buf.len());
-            self.row_buf[..copy_len].copy_from_slice(&raw[..copy_len]);
-        } else {
-            // Need post-processing: copy raw to release borrow on reader
-            self.raw_copy[..raw.len()].copy_from_slice(raw);
-            let raw_len = self.reader.ihdr().raw_row_bytes()?;
-
-            // Post-process expands/converts the raw row into row_buf
-            let mut tmp = core::mem::take(&mut self.row_buf);
-            post_process_row(
-                &self.raw_copy[..raw_len],
-                self.reader.ihdr(),
-                self.reader.ancillary(),
-                &mut tmp,
-            );
-            self.row_buf = tmp;
-        }
+        self.expander.expand(raw, &mut self.row_buf);
 
         // `row_buf`/`stride`/`descriptor` are all internal state this decoder
         // set up itself (not caller-supplied), so a construction failure here

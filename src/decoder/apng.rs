@@ -16,7 +16,7 @@ use crate::error::PngError;
 #[allow(unused_imports)]
 use whereat::at;
 
-use super::postprocess::{OutputFormat, build_pixel_data, post_process_row};
+use super::postprocess::{OutputFormat, RowExpander, build_pixel_data};
 use super::row::{FdatSource, IdatSource, unfilter_row};
 
 // ── Raw frame output ────────────────────────────────────────────────
@@ -305,7 +305,8 @@ impl<'a> ApngDecoder<'a> {
             crate::alloc_util::alloc_zeroed(self.config.alloc_pref, false, raw_row_bytes)?;
         let mut current_row =
             crate::alloc_util::alloc_zeroed(self.config.alloc_pref, false, raw_row_bytes)?;
-        let mut row_buf = Vec::new();
+        let expander = RowExpander::new(&frame_ihdr, &self.ancillary)?;
+        let mut row_buf = vec![0u8; expander.out_row_bytes()];
 
         for _y in 0..h {
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
@@ -336,12 +337,7 @@ impl<'a> ApngDecoder<'a> {
                 &prev_row,
                 bpp,
             )?;
-            post_process_row(
-                &current_row[..raw_row_bytes],
-                &frame_ihdr,
-                &self.ancillary,
-                &mut row_buf,
-            );
+            expander.expand(&current_row[..raw_row_bytes], &mut row_buf);
             all_pixels.extend_from_slice(&row_buf);
 
             core::mem::swap(&mut current_row, &mut prev_row);
@@ -435,7 +431,8 @@ impl<'a> ApngDecoder<'a> {
             crate::alloc_util::alloc_zeroed(self.config.alloc_pref, false, raw_row_bytes)?;
         let mut current_row =
             crate::alloc_util::alloc_zeroed(self.config.alloc_pref, false, raw_row_bytes)?;
-        let mut row_buf = Vec::new();
+        let expander = RowExpander::new(&frame_ihdr, &self.ancillary)?;
+        let mut row_buf = vec![0u8; expander.out_row_bytes()];
 
         for _y in 0..h {
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
@@ -465,12 +462,7 @@ impl<'a> ApngDecoder<'a> {
                 &prev_row,
                 bpp,
             )?;
-            post_process_row(
-                &current_row[..raw_row_bytes],
-                &frame_ihdr,
-                &self.ancillary,
-                &mut row_buf,
-            );
+            expander.expand(&current_row[..raw_row_bytes], &mut row_buf);
             all_pixels.extend_from_slice(&row_buf);
 
             core::mem::swap(&mut current_row, &mut prev_row);

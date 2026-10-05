@@ -96,43 +96,6 @@ pub(crate) fn scale_to_8bit(value: u8, bit_depth: u8) -> u8 {
     }
 }
 
-/// Unpack sub-8-bit grayscale pixels from a packed row.
-///
-/// `raw` must hold at least `ceil(width × bit_depth / 8)` bytes; callers in
-/// tree (`post_process_row` and the interlace path) always size the row to
-/// match. The defensive `break` below converts any future caller that
-/// violates the invariant into a partial-row truncation rather than a panic.
-fn unpack_sub_byte_gray(raw: &[u8], width: usize, bit_depth: u8, out: &mut Vec<u8>) {
-    let pixels_per_byte = 8 / bit_depth as usize;
-    let mask = (1u8 << bit_depth) - 1;
-
-    for x in 0..width {
-        let byte_idx = x / pixels_per_byte;
-        let Some(byte) = raw.get(byte_idx) else { break };
-        let bit_offset = (pixels_per_byte - 1 - x % pixels_per_byte) * bit_depth as usize;
-        let value = (byte >> bit_offset) & mask;
-        out.push(scale_to_8bit(value, bit_depth));
-    }
-}
-
-/// Unpack sub-8-bit indexed pixels from a packed row.
-///
-/// `raw` must hold at least `ceil(width × bit_depth / 8)` bytes; see the doc
-/// on [`unpack_sub_byte_gray`] for the invariant and the rationale for the
-/// `break`-on-short-input fallback.
-fn unpack_sub_byte_indexed(raw: &[u8], width: usize, bit_depth: u8, out: &mut Vec<u8>) {
-    let pixels_per_byte = 8 / bit_depth as usize;
-    let mask = (1u8 << bit_depth) - 1;
-
-    for x in 0..width {
-        let byte_idx = x / pixels_per_byte;
-        let Some(byte) = raw.get(byte_idx) else { break };
-        let bit_offset = (pixels_per_byte - 1 - x % pixels_per_byte) * bit_depth as usize;
-        let index = (byte >> bit_offset) & mask;
-        out.push(index);
-    }
-}
-
 /// Post-process a raw unfiltered row into output pixels.
 /// Returns the output pixel data for this row.
 ///
@@ -147,209 +110,381 @@ fn unpack_sub_byte_indexed(raw: &[u8], width: usize, bit_depth: u8, out: &mut Ve
 /// internal-API contract: violating it is a refactor bug, not an attacker
 /// surface, since untrusted input flows in via `decode_png` which sizes
 /// `raw` from the row decoder.
+#[cfg(test)]
 pub(crate) fn post_process_row(
     raw: &[u8],
     ihdr: &Ihdr,
     ancillary: &PngAncillary,
     out: &mut Vec<u8>,
 ) {
+    // One-off convenience for callers that process a single row; hot loops
+    // build a `RowExpander` once and reuse it.
+    let Ok(e) = RowExpander::new(ihdr, ancillary) else {
+        out.clear();
+        return;
+    };
     out.clear();
-    let width = ihdr.width as usize;
+    out.resize(e.out_row_bytes(), 0);
+    e.expand(raw, out);
+}
 
-    match ihdr.color_type {
-        0 => {
-            // Grayscale
-            if ihdr.is_sub_byte() {
-                if let Some(ref trns) = ancillary.trns {
-                    // tRNS value is in original bit depth range
-                    let trns_val = if trns.len() >= 2 {
-                        u16::from_be_bytes([trns[0], trns[1]])
-                    } else {
-                        0
-                    };
-                    // Unpack, compare raw values against tRNS, then scale
-                    let pixels_per_byte = 8 / ihdr.bit_depth as usize;
-                    let mask = (1u8 << ihdr.bit_depth) - 1;
-                    for x in 0..width {
-                        let byte_idx = x / pixels_per_byte;
-                        let bit_offset =
-                            (pixels_per_byte - 1 - x % pixels_per_byte) * ihdr.bit_depth as usize;
-                        let raw_val = (raw[byte_idx] >> bit_offset) & mask;
-                        let alpha = if raw_val as u16 == trns_val { 0u8 } else { 255 };
-                        let g = scale_to_8bit(raw_val, ihdr.bit_depth);
-                        out.extend_from_slice(&[g, g, g, alpha]);
-                    }
-                } else {
-                    // Sub-8-bit without tRNS: unpack and scale to 8-bit
-                    let mut gray_pixels = Vec::with_capacity(width);
-                    unpack_sub_byte_gray(raw, width, ihdr.bit_depth, &mut gray_pixels);
-                    out.extend_from_slice(&gray_pixels);
-                }
-            } else if ihdr.bit_depth == 16 {
-                if let Some(ref trns) = ancillary.trns {
-                    let trns_val = if trns.len() >= 2 {
-                        u16::from_be_bytes([trns[0], trns[1]])
-                    } else {
-                        0
-                    };
-                    // Gray16 + tRNS → GrayAlpha16 (4 bytes per pixel, native endian)
-                    for chunk in raw.as_chunks::<2>().0.iter() {
-                        let val = u16::from_be_bytes([chunk[0], chunk[1]]);
-                        let alpha: u16 = if val == trns_val { 0 } else { 65535 };
-                        out.extend_from_slice(&val.to_ne_bytes());
-                        out.extend_from_slice(&alpha.to_ne_bytes());
-                    }
-                } else {
-                    // Gray16 → native endian
-                    for chunk in raw.as_chunks::<2>().0.iter() {
-                        let val = u16::from_be_bytes([chunk[0], chunk[1]]);
-                        out.extend_from_slice(&val.to_ne_bytes());
-                    }
-                }
+// ── RowExpander: one raw row → one output row, written in place ──────
+
+/// How one raw (unfiltered) scanline maps to one output row.
+///
+/// Built once per image from the IHDR and ancillary chunks, then applied to
+/// every row with [`RowExpander::expand`], which writes straight into the
+/// caller's output slice. Output formats match [`post_process_row`] exactly:
+/// palette → RGB8/RGBA8, sub-byte gray → Gray8 (RGBA8 with tRNS), 16-bit →
+/// native-endian, GrayAlpha8 → RGBA8, Gray8/RGB8/RGB16 + tRNS → +alpha.
+pub(crate) struct RowExpander {
+    kind: Expand,
+    width: usize,
+    out_row_bytes: usize,
+}
+
+enum Expand {
+    /// Output bytes == raw bytes (Gray8, RGB8, RGBA8 without tRNS).
+    Copy,
+    /// Big-endian 16-bit samples → native endian, same channel count.
+    Swap16,
+    /// Sub-byte gray → Gray8 (`trns: None`) or RGBA8.
+    SubByteGray {
+        bits: u8,
+        trns: Option<u8>,
+    },
+    Gray8Trns(u8),
+    Gray16Trns(u16),
+    Rgb8Trns([u8; 3]),
+    Rgb16Trns([u16; 3]),
+    GrayAlpha8,
+    /// Palette indices (1/2/4/8-bit) through a 256-entry RGBA table;
+    /// `alpha` selects RGBA8 output (tRNS present) over RGB8.
+    Palette {
+        bits: u8,
+        alpha: bool,
+        lut: alloc::boxed::Box<[[u8; 4]; 256]>,
+    },
+}
+
+fn trns_u16(trns: &[u8], i: usize) -> u16 {
+    match trns.get(i * 2..i * 2 + 2) {
+        Some(b) => u16::from_be_bytes([b[0], b[1]]),
+        None => 0,
+    }
+}
+
+impl RowExpander {
+    /// Errors only when an output row would not fit the platform's address
+    /// space (wide images on 32-bit).
+    pub(crate) fn new(ihdr: &Ihdr, ancillary: &PngAncillary) -> crate::error::Result<Self> {
+        let width = ihdr.width as usize;
+        let trns = ancillary.trns.as_deref();
+        // tRNS shorter than its color type needs reads as 0 (matching the
+        // per-pixel code this replaced).
+        let kind = match (ihdr.color_type, ihdr.bit_depth, trns) {
+            (0, 16, None) | (2, 16, None) | (4, 16, _) | (6, 16, _) => Expand::Swap16,
+            (0, 16, Some(t)) => Expand::Gray16Trns(if t.len() >= 2 { trns_u16(t, 0) } else { 0 }),
+            (2, 16, Some(t)) => Expand::Rgb16Trns(if t.len() >= 6 {
+                [trns_u16(t, 0), trns_u16(t, 1), trns_u16(t, 2)]
             } else {
-                // Gray8
-                if let Some(ref trns) = ancillary.trns {
-                    let trns_val = if trns.len() >= 2 {
-                        u16::from_be_bytes([trns[0], trns[1]])
-                    } else {
-                        0
-                    };
-                    // Gray8 + tRNS → RGBA8
-                    for &g in raw.iter().take(width) {
-                        let alpha = if g as u16 == trns_val { 0u8 } else { 255 };
-                        out.extend_from_slice(&[g, g, g, alpha]);
+                [0; 3]
+            }),
+            (0, 8, Some(t)) => Expand::Gray8Trns(if t.len() >= 2 {
+                trns_u16(t, 0) as u8
+            } else {
+                0
+            }),
+            (0, 8, None) | (2, 8, None) | (6, 8, _) => Expand::Copy,
+            (0, bits, t) => Expand::SubByteGray {
+                bits,
+                // A tRNS value outside the bit depth never matches; u8::MAX
+                // can't be a 1/2/4-bit sample either.
+                trns: t.map(|t| {
+                    let v = if t.len() >= 2 { trns_u16(t, 0) } else { 0 };
+                    u8::try_from(v).unwrap_or(u8::MAX)
+                }),
+            },
+            (2, _, Some(t)) => Expand::Rgb8Trns(if t.len() >= 6 {
+                [
+                    trns_u16(t, 0) as u8,
+                    trns_u16(t, 1) as u8,
+                    trns_u16(t, 2) as u8,
+                ]
+            } else {
+                [0; 3]
+            }),
+            (4, _, _) => Expand::GrayAlpha8,
+            (3, bits, t) => {
+                let palette = ancillary.palette.as_deref().unwrap_or(&[]);
+                let mut lut = alloc::boxed::Box::new([[0u8, 0, 0, 255]; 256]);
+                for (i, e) in lut.iter_mut().enumerate() {
+                    if let Some(rgb) = palette.get(i * 3..i * 3 + 3) {
+                        e[..3].copy_from_slice(rgb);
                     }
-                } else {
-                    out.extend_from_slice(&raw[..width]);
+                    if let Some(&a) = t.and_then(|t| t.get(i)) {
+                        e[3] = a;
+                    }
+                }
+                Expand::Palette {
+                    bits,
+                    alpha: t.is_some(),
+                    lut,
                 }
             }
-        }
-        2 => {
-            // RGB
-            if ihdr.bit_depth == 16 {
-                if let Some(ref trns) = ancillary.trns {
-                    // tRNS for RGB: 6 bytes (R16, G16, B16)
-                    let (tr, tg, tb) = if trns.len() >= 6 {
-                        (
-                            u16::from_be_bytes([trns[0], trns[1]]),
-                            u16::from_be_bytes([trns[2], trns[3]]),
-                            u16::from_be_bytes([trns[4], trns[5]]),
-                        )
-                    } else {
-                        (0, 0, 0)
-                    };
-                    // RGB16 + tRNS → RGBA16 native endian
-                    for chunk in raw.as_chunks::<6>().0.iter() {
-                        let r = u16::from_be_bytes([chunk[0], chunk[1]]);
-                        let g = u16::from_be_bytes([chunk[2], chunk[3]]);
-                        let b = u16::from_be_bytes([chunk[4], chunk[5]]);
-                        let alpha: u16 = if r == tr && g == tg && b == tb {
-                            0
-                        } else {
-                            65535
-                        };
-                        out.extend_from_slice(&r.to_ne_bytes());
-                        out.extend_from_slice(&g.to_ne_bytes());
-                        out.extend_from_slice(&b.to_ne_bytes());
-                        out.extend_from_slice(&alpha.to_ne_bytes());
-                    }
-                } else {
-                    // RGB16 → native endian
-                    for chunk in raw.as_chunks::<2>().0.iter() {
-                        let val = u16::from_be_bytes([chunk[0], chunk[1]]);
-                        out.extend_from_slice(&val.to_ne_bytes());
-                    }
-                }
-            } else {
-                // RGB8
-                if let Some(ref trns) = ancillary.trns {
-                    let (tr, tg, tb) = if trns.len() >= 6 {
-                        (
-                            u16::from_be_bytes([trns[0], trns[1]]) as u8,
-                            u16::from_be_bytes([trns[2], trns[3]]) as u8,
-                            u16::from_be_bytes([trns[4], trns[5]]) as u8,
-                        )
-                    } else {
-                        (0, 0, 0)
-                    };
-                    // RGB8 + tRNS → RGBA8
-                    for chunk in raw.as_chunks::<3>().0.iter().take(width) {
-                        let alpha = if chunk[0] == tr && chunk[1] == tg && chunk[2] == tb {
-                            0u8
-                        } else {
-                            255
-                        };
-                        out.extend_from_slice(&[chunk[0], chunk[1], chunk[2], alpha]);
-                    }
-                } else {
-                    let row_bytes = width * 3;
-                    out.extend_from_slice(&raw[..row_bytes]);
+            _ => unreachable!("validated in IHDR parsing"),
+        };
+        let out_row_bytes = width
+            .checked_mul(output_bytes_per_pixel(ihdr, ancillary))
+            .ok_or_else(|| {
+                at!(PngError::OutOfMemory(
+                    "image too large for this platform".into()
+                ))
+            })?;
+        Ok(Self {
+            kind,
+            width,
+            out_row_bytes,
+        })
+    }
+
+    /// Bytes in one output row.
+    pub(crate) fn out_row_bytes(&self) -> usize {
+        self.out_row_bytes
+    }
+
+    /// True when output rows are byte-identical to raw rows.
+    pub(crate) fn is_copy(&self) -> bool {
+        matches!(self.kind, Expand::Copy)
+    }
+
+    /// Expand one raw row into `out` (`out_row_bytes()` bytes). `raw` holds
+    /// the unfiltered scanline; if it is shorter than the image width needs
+    /// (never the case for in-tree callers), the missing pixels are left as
+    /// they were in `out`.
+    pub(crate) fn expand(&self, raw: &[u8], out: &mut [u8]) {
+        let out = &mut out[..self.out_row_bytes];
+        match &self.kind {
+            Expand::Copy => {
+                let n = out.len().min(raw.len());
+                out[..n].copy_from_slice(&raw[..n]);
+            }
+            Expand::Swap16 => {
+                for (o, i) in out
+                    .as_chunks_mut::<2>()
+                    .0
+                    .iter_mut()
+                    .zip(raw.as_chunks::<2>().0)
+                {
+                    *o = u16::from_be_bytes(*i).to_ne_bytes();
                 }
             }
-        }
-        3 => {
-            // Indexed
-            let palette = ancillary.palette.as_deref().unwrap_or(&[]);
-            let trns = ancillary.trns.as_deref();
-            let has_trns = trns.is_some();
-
-            let indices: Vec<u8> = if ihdr.is_sub_byte() {
-                let mut idx = Vec::with_capacity(width);
-                unpack_sub_byte_indexed(raw, width, ihdr.bit_depth, &mut idx);
-                idx
-            } else {
-                raw[..width].to_vec()
-            };
-
-            for &index in &indices {
-                let i = index as usize;
-                let (r, g, b) = if i * 3 + 2 < palette.len() {
-                    (palette[i * 3], palette[i * 3 + 1], palette[i * 3 + 2])
-                } else {
-                    (0, 0, 0) // Out of range index
+            &Expand::Gray8Trns(t) => {
+                for (o, &g) in out.as_chunks_mut::<4>().0.iter_mut().zip(raw) {
+                    *o = [g, g, g, if g == t { 0 } else { 255 }];
+                }
+            }
+            &Expand::Gray16Trns(t) => {
+                for (o, i) in out
+                    .as_chunks_mut::<4>()
+                    .0
+                    .iter_mut()
+                    .zip(raw.as_chunks::<2>().0)
+                {
+                    let v = u16::from_be_bytes(*i);
+                    let a: u16 = if v == t { 0 } else { u16::MAX };
+                    let (v, a) = (v.to_ne_bytes(), a.to_ne_bytes());
+                    *o = [v[0], v[1], a[0], a[1]];
+                }
+            }
+            &Expand::Rgb8Trns(t) => {
+                for (o, i) in out
+                    .as_chunks_mut::<4>()
+                    .0
+                    .iter_mut()
+                    .zip(raw.as_chunks::<3>().0)
+                {
+                    *o = [i[0], i[1], i[2], if *i == t { 0 } else { 255 }];
+                }
+            }
+            &Expand::Rgb16Trns(t) => {
+                for (o, i) in out
+                    .as_chunks_mut::<8>()
+                    .0
+                    .iter_mut()
+                    .zip(raw.as_chunks::<6>().0)
+                {
+                    let c = [
+                        u16::from_be_bytes([i[0], i[1]]),
+                        u16::from_be_bytes([i[2], i[3]]),
+                        u16::from_be_bytes([i[4], i[5]]),
+                    ];
+                    let a: u16 = if c == t { 0 } else { u16::MAX };
+                    let (r, g, b, a) = (
+                        c[0].to_ne_bytes(),
+                        c[1].to_ne_bytes(),
+                        c[2].to_ne_bytes(),
+                        a.to_ne_bytes(),
+                    );
+                    *o = [r[0], r[1], g[0], g[1], b[0], b[1], a[0], a[1]];
+                }
+            }
+            Expand::GrayAlpha8 => {
+                for (o, i) in out
+                    .as_chunks_mut::<4>()
+                    .0
+                    .iter_mut()
+                    .zip(raw.as_chunks::<2>().0)
+                {
+                    *o = [i[0], i[0], i[0], i[1]];
+                }
+            }
+            &Expand::SubByteGray { bits, trns } => {
+                let scale = scale_to_8bit(1, bits);
+                match trns {
+                    None => {
+                        for (x, o) in out.iter_mut().enumerate().take(self.width) {
+                            let Some(v) = sub_byte(raw, x, bits) else {
+                                break;
+                            };
+                            *o = v * scale;
+                        }
+                    }
+                    Some(t) => {
+                        for (x, o) in out.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                            let Some(v) = sub_byte(raw, x, bits) else {
+                                break;
+                            };
+                            let g = v * scale;
+                            *o = [g, g, g, if v == t { 0 } else { 255 }];
+                        }
+                    }
+                }
+            }
+            Expand::Palette { bits, alpha, lut } => {
+                let index = |x: usize| -> Option<u8> {
+                    if *bits == 8 {
+                        raw.get(x).copied()
+                    } else {
+                        sub_byte(raw, x, *bits)
+                    }
                 };
-                if has_trns {
-                    let alpha = trns.and_then(|t| t.get(i)).copied().unwrap_or(255);
-                    out.extend_from_slice(&[r, g, b, alpha]);
+                if *alpha {
+                    if *bits == 8 {
+                        for (o, &i) in out.as_chunks_mut::<4>().0.iter_mut().zip(raw) {
+                            *o = lut[i as usize];
+                        }
+                    } else {
+                        for (x, o) in out.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                            let Some(i) = index(x) else { break };
+                            *o = lut[i as usize];
+                        }
+                    }
+                } else if *bits == 8 {
+                    for (o, &i) in out.as_chunks_mut::<3>().0.iter_mut().zip(raw) {
+                        let e = lut[i as usize];
+                        *o = [e[0], e[1], e[2]];
+                    }
                 } else {
-                    out.extend_from_slice(&[r, g, b]);
+                    for (x, o) in out.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+                        let Some(i) = index(x) else { break };
+                        let e = lut[i as usize];
+                        *o = [e[0], e[1], e[2]];
+                    }
                 }
             }
         }
-        4 => {
-            // GrayAlpha
-            if ihdr.bit_depth == 16 {
-                // GrayAlpha16 → native endian
-                for chunk in raw.as_chunks::<4>().0.iter() {
-                    let v = u16::from_be_bytes([chunk[0], chunk[1]]);
-                    let a = u16::from_be_bytes([chunk[2], chunk[3]]);
-                    out.extend_from_slice(&v.to_ne_bytes());
-                    out.extend_from_slice(&a.to_ne_bytes());
-                }
-            } else {
-                // GrayAlpha8 → RGBA8 (matches decode.rs:182-192 behavior)
-                for chunk in raw.as_chunks::<2>().0.iter().take(width) {
-                    let g = chunk[0];
-                    let a = chunk[1];
-                    out.extend_from_slice(&[g, g, g, a]);
-                }
-            }
+    }
+}
+
+/// Sample `x` of a row packed at `bits` (1, 2 or 4) per sample, MSB first.
+#[inline(always)]
+fn sub_byte(raw: &[u8], x: usize, bits: u8) -> Option<u8> {
+    let per_byte = 8 / bits as usize;
+    let byte = *raw.get(x / per_byte)?;
+    let shift = (per_byte - 1 - x % per_byte) * bits as usize;
+    Some((byte >> shift) & ((1u8 << bits) - 1))
+}
+
+/// A decoded image buffer, typed by sample width so 16-bit output can be
+/// handed to `PixelBuffer` without the realignment copy a `Vec<u8>` needs.
+pub(crate) enum OutBuf {
+    U8(Vec<u8>),
+    U16(Vec<u16>),
+}
+
+impl OutBuf {
+    /// Zeroed buffer of `bytes` bytes; 16-bit samples when `sixteen`.
+    pub(crate) fn alloc(
+        pref: zencodec::AllocPreference,
+        bytes: usize,
+        sixteen: bool,
+    ) -> crate::error::Result<Self> {
+        Ok(if sixteen {
+            OutBuf::U16(crate::alloc_util::alloc_zeroed_typed(
+                pref,
+                true,
+                bytes / 2,
+            )?)
+        } else {
+            OutBuf::U8(crate::alloc_util::alloc_zeroed(pref, true, bytes)?)
+        })
+    }
+
+    pub(crate) fn bytes_mut(&mut self) -> &mut [u8] {
+        match self {
+            OutBuf::U8(v) => v,
+            OutBuf::U16(v) => bytemuck::cast_slice_mut(v),
         }
-        6 => {
-            // RGBA
-            if ihdr.bit_depth == 16 {
-                // RGBA16 → native endian
-                for chunk in raw.as_chunks::<2>().0.iter() {
-                    let val = u16::from_be_bytes([chunk[0], chunk[1]]);
-                    out.extend_from_slice(&val.to_ne_bytes());
-                }
-            } else {
-                // RGBA8 — pass through
-                let row_bytes = width * 4;
-                out.extend_from_slice(&raw[..row_bytes]);
-            }
-        }
-        _ => unreachable!("validated in IHDR parsing"),
+    }
+}
+
+/// Wrap a decoded buffer (rows from [`RowExpander`]) as a `PixelBuffer`,
+/// without copying.
+pub(crate) fn build_pixel_buffer(
+    ihdr: &Ihdr,
+    ancillary: &PngAncillary,
+    buf: OutBuf,
+    w: usize,
+    h: usize,
+) -> crate::error::Result<PixelBuffer> {
+    let erased = |r: Result<PixelBuffer, whereat::At<zenpixels::BufferError>>| -> crate::error::Result<PixelBuffer> {
+        r.map_err(|e: whereat::At<zenpixels::BufferError>| at!(PngError::Decode(alloc::format!("{e}"))))
+    };
+    let (w32, h32) = (w as u32, h as u32);
+    let trns = ancillary.trns.is_some();
+    match buf {
+        OutBuf::U16(v) => match (ihdr.color_type, trns) {
+            (0, false) => erased(PixelBuffer::from_pixels_erased(
+                bytemuck::cast_vec::<u16, Gray<u16>>(v),
+                w32,
+                h32,
+            )),
+            (0, true) | (4, _) => erased(PixelBuffer::from_pixels_erased(
+                bytemuck::cast_vec::<u16, GrayAlpha16>(v),
+                w32,
+                h32,
+            )),
+            (2, false) => erased(PixelBuffer::from_pixels_erased(
+                bytemuck::cast_vec::<u16, Rgb<u16>>(v),
+                w32,
+                h32,
+            )),
+            (2, true) | (6, _) => erased(PixelBuffer::from_pixels_erased(
+                bytemuck::cast_vec::<u16, Rgba<u16>>(v),
+                w32,
+                h32,
+            )),
+            _ => build_pixel_data(ihdr, ancillary, bytemuck::cast_slice(&v).to_vec(), w, h),
+        },
+        OutBuf::U8(v) => match (ihdr.color_type, trns) {
+            (0, false) => erased(PixelBuffer::from_pixels_erased(
+                bytemuck::cast_vec::<u8, Gray<u8>>(v),
+                w32,
+                h32,
+            )),
+            _ => build_pixel_data(ihdr, ancillary, v, w, h),
+        },
     }
 }
 
@@ -493,7 +628,7 @@ pub(crate) fn build_pixel_data(
                 .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))
         }
         (0, _, false) if ihdr.bit_depth <= 8 => {
-            let gray: Vec<Gray<u8>> = pixels.iter().map(|&g| Gray(g)).collect();
+            let gray: Vec<Gray<u8>> = bytemuck::cast_vec(pixels);
             Ok(PixelBuffer::from_imgvec(ImgVec::new(gray, w, h)).into())
         }
         (0, _, true) if ihdr.bit_depth <= 8 => {
@@ -1038,23 +1173,34 @@ mod tests {
         assert_eq!(result.width(), 1);
     }
 
-    // ── unpack functions ──
+    // ── sub-byte sample extraction ──
 
     #[test]
-    fn unpack_sub_byte_gray_1bit() {
-        // 0b11001100 = pixels [1,1,0,0,1,1,0,0]
-        let raw = vec![0b11001100];
-        let mut out = Vec::new();
-        unpack_sub_byte_gray(&raw, 8, 1, &mut out);
-        assert_eq!(out, vec![255, 255, 0, 0, 255, 255, 0, 0]);
+    fn sub_byte_1bit_and_4bit() {
+        // 0b11001100 = samples [1,1,0,0,1,1,0,0]
+        let raw = [0b11001100];
+        let got: Vec<u8> = (0..8).map(|x| sub_byte(&raw, x, 1).unwrap()).collect();
+        assert_eq!(got, [1, 1, 0, 0, 1, 1, 0, 0]);
+        // 0xA3 = high nibble 10, low nibble 3; past the end is None
+        let raw = [0xA3];
+        assert_eq!(
+            (sub_byte(&raw, 0, 4), sub_byte(&raw, 1, 4)),
+            (Some(10), Some(3))
+        );
+        assert_eq!(sub_byte(&raw, 2, 4), None);
     }
 
     #[test]
-    fn unpack_sub_byte_indexed_4bit() {
-        // 0xA3 = high nibble 10, low nibble 3
-        let raw = vec![0xA3];
+    fn sub_byte_gray_expands_scaled() {
+        let ihdr = Ihdr {
+            width: 8,
+            height: 1,
+            bit_depth: 1,
+            color_type: 0,
+            interlace: 0,
+        };
         let mut out = Vec::new();
-        unpack_sub_byte_indexed(&raw, 2, 4, &mut out);
-        assert_eq!(out, vec![10, 3]);
+        post_process_row(&[0b11001100], &ihdr, &empty_anc(), &mut out);
+        assert_eq!(out, [255, 255, 0, 0, 255, 255, 0, 0]);
     }
 }

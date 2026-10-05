@@ -23,7 +23,7 @@ use crate::error::PngError;
 use whereat::at;
 
 use self::interlace::decode_interlaced;
-use self::postprocess::{OutputFormat, build_pixel_data, post_process_row};
+use self::postprocess::{OutBuf, RowExpander, build_pixel_buffer, build_pixel_data};
 use self::row::RowDecoder;
 
 // ── PngInfo construction ────────────────────────────────────────────
@@ -221,7 +221,7 @@ pub(crate) fn decode_png(
     let h = ihdr.height as usize;
 
     // Fast path: RGBA8 or RGB8 without tRNS — raw unfiltered data IS the output.
-    // Skip post_process_row (passthrough copy), skip build_pixel_data (cast + clone).
+    // Rows unfilter straight into the output buffer; no post-processing or cast copy.
     let is_passthrough =
         !has_trns && ihdr.bit_depth == 8 && (ihdr.color_type == 6 || ihdr.color_type == 2); // RGBA8 or RGB8
 
@@ -361,62 +361,65 @@ pub(crate) fn decode_png(
         });
     }
 
-    // General path for all other formats
+    // General path for all other formats: each unfiltered row is expanded
+    // straight into its slot in the output buffer.
     let alloc_pref = limits.alloc_pref;
-    let fmt = OutputFormat::from_ihdr(&ihdr, reader.ancillary())?;
-    let pixel_bytes = fmt.channels * fmt.bytes_per_channel;
-    // The output row can be far wider than the raw row (1-bit indexed → RGBA8
-    // is 32×), so it gets its own checked math rather than riding on the
-    // IHDR row-size check.
-    let too_large = || {
+    let expander = RowExpander::new(&ihdr, reader.ancillary())?;
+    let out_row_bytes = expander.out_row_bytes();
+    let out_total = out_row_bytes.checked_mul(h).ok_or_else(|| {
         at!(PngError::OutOfMemory(
             "image too large for this platform".into()
         ))
-    };
-    let out_row_bytes = w.checked_mul(pixel_bytes).ok_or_else(too_large)?;
+    })?;
+    // Full-image buffer sized from the (untrusted) IHDR → default fallible.
+    let mut buf = OutBuf::alloc(alloc_pref, out_total, ihdr.bit_depth == 16)?;
 
-    let out_total = out_row_bytes.checked_mul(h).ok_or_else(too_large)?;
-    // Full-image accumulator sized from the (untrusted) IHDR → default
-    // fallible; the single raw-row copy is bounded by the row width → default
-    // infallible.
     // Parallel decode of an `iDOT` segment table, when present and worth it.
-    let mut parallel_pixels = None;
-    if reader.idot_segments().is_some_and(|segs| {
-        ihdr.stride().is_ok_and(|stride| {
-            idot::plan_workers(segs, stride, limits.max_threads, None).is_some()
-        })
-    }) {
-        let mut buf = crate::alloc_util::alloc_zeroed(alloc_pref, true, out_total)?;
-        let sink = idot::Sink::Post {
-            ancillary: reader.ancillary(),
-            out_row_bytes,
-        };
-        if let idot::Outcome::Done =
-            try_idot_parallel(data, &reader, limits, sink, &mut buf, cancel)?
-        {
-            parallel_pixels = Some(buf);
+    let sink = if expander.is_copy() {
+        idot::Sink::Raw
+    } else {
+        idot::Sink::Post {
+            expander: &expander,
         }
-    }
-
-    let parallel_done = parallel_pixels.is_some();
-    let mut all_pixels = match parallel_pixels {
-        Some(p) => p,
-        None => crate::alloc_util::vec_with_capacity(alloc_pref, true, out_total)?,
     };
-    let mut row_buf = Vec::new();
-    let mut raw_copy = crate::alloc_util::alloc_zeroed(alloc_pref, false, ihdr.raw_row_bytes()?)?;
+    let parallel_done = matches!(
+        try_idot_parallel(data, &reader, limits, sink, buf.bytes_mut(), cancel)?,
+        idot::Outcome::Done
+    );
 
-    while let Some(result) = (!parallel_done).then(|| reader.next_raw_row()).flatten() {
-        let raw = result?;
-        cancel.check().map_err(|e| at!(PngError::from(e)))?;
-        raw_copy[..raw.len()].copy_from_slice(raw);
-        post_process_row(
-            &raw_copy[..raw.len()],
-            &ihdr,
-            reader.ancillary(),
-            &mut row_buf,
-        );
-        all_pixels.extend_from_slice(&row_buf);
+    if !parallel_done {
+        let out = buf.bytes_mut();
+        let end = |y: usize| {
+            at!(PngError::Decode(alloc::format!(
+                "unexpected end of image data at row {y}"
+            )))
+        };
+        if expander.is_copy() {
+            // Output rows are the raw rows: unfilter in place, using the
+            // previous output row as the filter's predecessor.
+            let zeros = crate::alloc_util::alloc_zeroed(alloc_pref, false, out_row_bytes)?;
+            for y in 0..h {
+                let (done, rest) = out.split_at_mut(y * out_row_bytes);
+                let prev = if y == 0 {
+                    &zeros[..]
+                } else {
+                    &done[(y - 1) * out_row_bytes..]
+                };
+                match reader.next_raw_row_direct(&mut rest[..out_row_bytes], prev) {
+                    Some(r) => r?,
+                    None => return Err(end(y)),
+                }
+                cancel.check().map_err(|e| at!(PngError::from(e)))?;
+            }
+        } else {
+            for (y, row) in out.chunks_exact_mut(out_row_bytes).enumerate() {
+                match reader.next_raw_row() {
+                    Some(r) => expander.expand(r?, row),
+                    None => return Err(end(y)),
+                }
+                cancel.check().map_err(|e| at!(PngError::from(e)))?;
+            }
+        }
     }
 
     reader.finish_metadata();
@@ -425,7 +428,7 @@ pub(crate) fn decode_png(
 
     let ancillary = reader.ancillary();
     let info = build_png_info(&ihdr, ancillary);
-    let pixels = build_pixel_data(&ihdr, ancillary, all_pixels, w, h)?;
+    let pixels = build_pixel_buffer(&ihdr, ancillary, buf, w, h)?;
 
     warnings.extend(crate::decode::detect_color_warnings(
         ancillary.srgb_intent,

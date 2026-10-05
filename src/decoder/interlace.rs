@@ -13,7 +13,7 @@ use crate::error::PngError;
 #[allow(unused_imports)]
 use whereat::at;
 
-use super::postprocess::{OutputFormat, post_process_row};
+use super::postprocess::{OutputFormat, RowExpander};
 use super::row::{IdatSource, unfilter_row};
 
 // ── Adam7 interlacing ───────────────────────────────────────────────
@@ -158,7 +158,15 @@ pub(crate) fn decode_interlaced(
 
         let mut prev_row = vec![0u8; raw_row_bytes];
         let mut current_row = vec![0u8; raw_row_bytes];
-        let mut row_buf = Vec::new();
+        // One expander per pass (its rows are `pw` pixels wide).
+        let sub_ihdr = Ihdr {
+            width: pw,
+            height: ph,
+            ..ihdr
+        };
+        let expander = RowExpander::new(&sub_ihdr, &ancillary)?;
+        let mut row_buf = vec![0u8; expander.out_row_bytes()];
+        let pixel_bytes = fmt.channels * fmt.bytes_per_channel;
 
         for pass_y in 0..ph as usize {
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
@@ -193,35 +201,17 @@ pub(crate) fn decode_interlaced(
                 bpp,
             )?;
 
-            // Post-process this sub-image row
-            // Create a temporary Ihdr with the sub-image width for post-processing
-            let sub_ihdr = Ihdr {
-                width: pw,
-                height: ph,
-                ..ihdr
-            };
-            post_process_row(
-                &current_row[..raw_row_bytes],
-                &sub_ihdr,
-                &ancillary,
-                &mut row_buf,
-            );
+            expander.expand(&current_row[..raw_row_bytes], &mut row_buf);
 
-            // Scatter pixels to final positions
-            let pixel_bytes = fmt.channels * fmt.bytes_per_channel;
+            // Scatter the pass's pixels to their final positions.
             let dest_y = y_off + pass_y * y_step;
             if dest_y < height as usize {
-                for px in 0..pw as usize {
-                    let dest_x = x_off + px * x_step;
-                    if dest_x < width as usize {
-                        let src_offset = px * pixel_bytes;
-                        let dst_offset = dest_y * out_row_bytes + dest_x * pixel_bytes;
-                        if src_offset + pixel_bytes <= row_buf.len()
-                            && dst_offset + pixel_bytes <= final_pixels.len()
-                        {
-                            final_pixels[dst_offset..dst_offset + pixel_bytes]
-                                .copy_from_slice(&row_buf[src_offset..src_offset + pixel_bytes]);
-                        }
+                let dst_row =
+                    &mut final_pixels[dest_y * out_row_bytes..(dest_y + 1) * out_row_bytes];
+                for (px, src) in row_buf.chunks_exact(pixel_bytes).enumerate() {
+                    let at = (x_off + px * x_step) * pixel_bytes;
+                    if let Some(dst) = dst_row.get_mut(at..at + pixel_bytes) {
+                        dst.copy_from_slice(src);
                     }
                 }
             }
