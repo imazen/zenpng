@@ -46,6 +46,8 @@ rustix = { version = "1.1.5", default-features = false, features = ["std", "thre
 
 [dev-dependencies]
 png = "0.18"
+# image-rs/image-png main, for benches/vs_png.rs (pinned commit; 2026-10-05).
+png_main = { package = "png", git = "https://github.com/image-rs/image-png", rev = "b2f10c6a7e3127d4aaf231f3eae731a33e6eb0bc" }
 sha2 = "0.11.0"
 flate2 = "1"
 miniz_oxide = "0.9.1"
@@ -151,6 +153,10 @@ required-features = ["_dev"]
 name = "unfilter_tiers"
 harness = false
 required-features = ["_dev"]
+
+[[bench]]
+name = "vs_png"
+harness = false
 
 [[bench]]
 name = "scalar_vs_simd"
