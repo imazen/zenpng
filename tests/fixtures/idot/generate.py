@@ -59,8 +59,8 @@ def make_rows(w, h, ct, bd, seed):
             x ^= (x << 5) & 0xFFFFFFFF
             smooth = (i * 3 + y * 5) & 0xFF
             r[i] = smooth if (i // 7 + y) % 3 else (x & 0xFF)
-        if ct == 3:  # palette indices must stay below the palette size (16)
-            r = bytearray(b & 0xFF if bd < 8 else b & 0x0F for b in r)
+        if ct == 3 and bd == 8:  # palette indices must stay below the palette size (16)
+            r = bytearray(b & 0x0F for b in r)
         rows.append(bytes(r))
     return rows
 
@@ -182,7 +182,8 @@ def main():
     formats = [
         (6, 8, "rgba8"), (2, 8, "rgb8"), (0, 8, "gray8"), (4, 8, "ga8"),
         (0, 16, "gray16"), (2, 16, "rgb16"), (6, 16, "rgba16"),
-        (3, 8, "pal8_trns"), (3, 4, "pal4_trns"), (0, 1, "gray1"), (0, 2, "gray2"),
+        (3, 8, "pal8_trns"), (3, 4, "pal4_trns"), (3, 2, "pal2_trns"), (3, 1, "pal1_trns"),
+        (0, 1, "gray1"), (0, 2, "gray2"), (0, 4, "gray4"), (4, 16, "ga16"),
     ]
     for k, (ct, bd, tag) in enumerate(formats):
         segs = [8, 8]

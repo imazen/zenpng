@@ -324,6 +324,10 @@ set (real Apple, Buchanan adversarial, 26 generated). Thresholds:
 `examples/idot_bench.rs`, `examples/idot_encode.rs` (`--features _dev`;
 `ZENPNG_PIN`, `ZENPNG_IDOT_MIN_BYTES`, `ZENPNG_IDOT_TRACE` overrides).
 zenflate is `[patch.crates-io]`'d to imazen/zenflate#9 until released.
+Apple ImageIO's own iDOT path is buggy (boundary Up/Avg/Paeth rows, gapped
+tables, 1/2/4-bit gray); the encoder avoids all three. Mac tooling:
+`tests/fixtures/idot/mac/` (`ssh mac`, macOS 27; `log` is a zsh builtin there,
+use `/usr/bin/log`).
 
 ## Known Issues
 

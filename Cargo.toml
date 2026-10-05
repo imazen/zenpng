@@ -123,6 +123,10 @@ name = "idot_encode"
 required-features = ["_dev"]
 
 [[example]]
+name = "idot_imageio_compare"
+required-features = ["_dev"]
+
+[[example]]
 name = "joint_bench"
 required-features = ["joint"]
 

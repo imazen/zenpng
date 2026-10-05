@@ -62,6 +62,19 @@ jobs:
       - name: Test (iDOT parallel decode, _dev counters)
         run: cargo test --features _dev --test idot --test idot_encode --test idot_tiny
 
+  imageio:
+    # zenpng's iDOT output must decode in Apple ImageIO exactly as ImageIO's
+    # own serial decoder (and zenpng) decode it. ImageIO's iDOT path has known
+    # bugs on inputs zenpng never writes; see docs/IDOT_PARALLEL_PNG.md.
+    name: ImageIO iDOT compatibility (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Check zenpng iDOT output against ImageIO
+        run: tests/fixtures/idot/mac/check_imageio.sh
+
   i686:
     name: Test (i686)
     runs-on: ubuntu-latest

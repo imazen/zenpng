@@ -56,6 +56,11 @@ impl Idat {
 /// How many segments to emit for a `requested` count. zenpng's decoder would
 /// never use more workers than [`workers_for_bytes`] allows, so more segments
 /// would only cost bytes; images under about 2 MiB of filtered data get none.
+/// Most segments the encoder writes: the largest count verified to decode
+/// identically through Apple ImageIO's parallel path (macOS 27). The decoder
+/// accepts up to [`MAX_SEGMENTS`].
+pub(crate) const MAX_WRITTEN_SEGMENTS: usize = 16;
+
 pub(crate) fn plan(requested: u32, row_bytes: usize, height: usize) -> usize {
     if requested < 2 {
         return 1;
@@ -64,6 +69,7 @@ pub(crate) fn plan(requested: u32, row_bytes: usize, height: usize) -> usize {
     let n = (requested as usize)
         .min(height)
         .min(MAX_SEGMENTS)
+        .min(MAX_WRITTEN_SEGMENTS)
         .min(workers_for_bytes(filtered));
     if n < 2 { 1 } else { n }
 }

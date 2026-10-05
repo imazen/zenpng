@@ -210,7 +210,10 @@ pub(crate) fn write_truecolor_png(
         let packed = pack_all_rows(pixel_bytes, w, h, bit_depth);
         let row_bytes = packed_row_bytes(w, bit_depth);
 
-        let seg_req = (opts.decode_segments, opts.max_threads, opts.cancel);
+        // No iDOT for sub-byte grayscale: Apple ImageIO's parallel path
+        // decodes 1/2/4-bit gray wrong (macOS 27, see
+        // docs/IDOT_PARALLEL_PNG.md), while its serial path is fine.
+        let seg_req = (0, opts.max_threads, opts.cancel);
         let compressed = compress_filtered(
             &packed,
             row_bytes,
@@ -413,7 +416,10 @@ pub(crate) fn write_truecolor_png_with_stats(
         let packed = pack_all_rows(pixel_bytes, w, h, bit_depth);
         let row_bytes = packed_row_bytes(w, bit_depth);
 
-        let seg_req = (opts.decode_segments, opts.max_threads, opts.cancel);
+        // No iDOT for sub-byte grayscale: Apple ImageIO's parallel path
+        // decodes 1/2/4-bit gray wrong (macOS 27, see
+        // docs/IDOT_PARALLEL_PNG.md), while its serial path is fine.
+        let seg_req = (0, opts.max_threads, opts.cancel);
         let compressed = compress_filtered(
             &packed,
             row_bytes,

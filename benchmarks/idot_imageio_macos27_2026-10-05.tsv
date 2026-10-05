@@ -1,0 +1,94 @@
+# Apple ImageIO (macOS 27.0 26A428, arm64) vs zenpng, 2026-10-05. examples/idot_imageio_compare over
+# tests/fixtures/idot (tiny), codec-corpus png-idot (corpus), and zenpng-written iDOT files (zenpng: w42 crops 64x48/200x120 and w39 4.5 MP at 1-16 segments).
+# zenpng_vs_imageio_serial compares zenpng to ImageIO decoding the file with iDOT removed; imageio_idot_path_vs_its_serial compares ImageIO's iDOT path to that.
+file	zenpng_serial	zenpng_parallel==serial	zenpng_vs_imageio_serial	imageio_idot_path_vs_its_serial	imageio_idot_log
+tiny/bad_adler.png	ok	true	IDENTICAL	same	
+tiny/bfinal_in_segment0.png	err	true	zenpng rejects (PNG decode error: unexpected end of image data at row 8), ImageIO decodes	same	
+tiny/boundary_row_average.png	ok	true	IDENTICAL	DIFFERS: 192 bytes from row 8	
+tiny/boundary_row_paeth.png	ok	true	IDENTICAL	DIFFERS: 190 bytes from row 8	
+tiny/boundary_row_up.png	ok	true	IDENTICAL	DIFFERS: 192 bytes from row 8	
+tiny/complete_stream_in_segment0.png	err	true	zenpng rejects (PNG decode error: unexpected end of image data at row 8), ImageIO decodes	same	
+tiny/ga16_n2.png	ok	true	IDENTICAL	same	
+tiny/ga8_n2.png	ok	true	IDENTICAL	same	
+tiny/gray1_n2.png	ok	true	IDENTICAL	DIFFERS: 191 bytes from row 0	
+tiny/gray16_n2.png	ok	true	IDENTICAL	same	
+tiny/gray2_n2.png	ok	true	IDENTICAL	DIFFERS: 294 bytes from row 0	
+tiny/gray4_n2.png	ok	true	IDENTICAL	DIFFERS: 376 bytes from row 0	
+tiny/gray8_n2.png	ok	true	IDENTICAL	same	
+tiny/idot_after_idat.png	ok	true	IDENTICAL	same	
+tiny/interlaced_with_idot.png	ok	true	IDENTICAL	same	
+tiny/no_flush_at_offset.png	ok	true	IDENTICAL	same	
+tiny/pal1_trns_n2.png	ok	true	IDENTICAL	same	
+tiny/pal2_trns_n2.png	ok	true	IDENTICAL	same	
+tiny/pal4_trns_n2.png	ok	true	IDENTICAL	same	
+tiny/pal8_trns_n2.png	ok	true	IDENTICAL	same	
+tiny/rgb16_n2.png	ok	true	IDENTICAL	same	
+tiny/rgb8_n2.png	ok	true	IDENTICAL	same	
+tiny/rgba16_n2.png	ok	true	IDENTICAL	same	
+tiny/rgba8_n2_one_row_first.png	ok	true	IDENTICAL	same	
+tiny/rgba8_n2.png	ok	true	IDENTICAL	same	
+tiny/rgba8_n3_uneven.png	ok	true	IDENTICAL	same	
+tiny/rgba8_n8.png	ok	true	IDENTICAL	same	
+tiny/row_counts_disagree_with_stream.png	ok	true	IDENTICAL	same	
+tiny/stored_block_split.png	ok	true	IDENTICAL	same	
+tiny/sync_flush_backrefs.png	ok	true	IDENTICAL	same	
+tiny/table_empty.png	ok	true	IDENTICAL	same	invalid 'iDOT' chunk (count = 0)
+tiny/table_first_not_first_idat.png	ok	true	IDENTICAL	same	
+tiny/table_gap_rows.png	ok	true	IDENTICAL	DIFFERS: 96 bytes from row 7	
+tiny/table_huge_n.png	ok	true	IDENTICAL	same	invalid 'iDOT' chunk (count = -1)
+tiny/table_n0.png	ok	true	IDENTICAL	same	invalid 'iDOT' chunk (count = 0)
+tiny/table_n1.png	ok	true	IDENTICAL	same	invalid 'iDOT' chunk (count = 1)
+tiny/table_offset_mid_chunk.png	ok	true	IDENTICAL	same	*** ERROR: invalid PNG file: iDOT doesn't point to valid IDAT chunk
+tiny/table_offset_past_eof.png	ok	true	IDENTICAL	same	*** ERROR: invalid PNG file: iDOT doesn't point to valid IDAT chunk
+tiny/table_offset_wraps.png	ok	true	IDENTICAL	same	*** ERROR: invalid PNG file: iDOT doesn't point to valid IDAT chunk
+tiny/table_overlapping_rows.png	ok	true	IDENTICAL	same	
+tiny/table_rows_exceed_height.png	ok	true	IDENTICAL	same	
+tiny/table_truncated.png	ok	true	IDENTICAL	same	
+tiny/table_zero_rows.png	ok	true	IDENTICAL	same	
+tiny/two_idot_chunks.png	ok	true	IDENTICAL	same	invalid 'iDOT' chunk (count = 1)
+corpus/ambiguous_mac_vs_ibm.png	ok	true	IDENTICAL	same	
+corpus/bad_adler.png	ok	true	IDENTICAL	same	
+corpus/bfinal_in_segment0.png	err	true	zenpng rejects (PNG decode error: unexpected end of image data at row 300), ImageIO decodes	same	
+corpus/boundary_row_average.png	ok	true	IDENTICAL	DIFFERS: 20206 bytes from row 300	
+corpus/boundary_row_paeth.png	ok	true	IDENTICAL	DIFFERS: 20184 bytes from row 300	
+corpus/boundary_row_up.png	ok	true	IDENTICAL	DIFFERS: 20184 bytes from row 300	
+corpus/complete_stream_in_segment0.png	err	true	zenpng rejects (PNG decode error: unexpected end of image data at row 300), ImageIO decodes	same	
+corpus/homebrew_man_page_macos_sonoma.png	ok	true	IDENTICAL	same	
+corpus/idot_after_idat.png	ok	true	IDENTICAL	same	
+corpus/interlaced_with_idot.png	ok	true	IDENTICAL	same	
+corpus/no_flush_at_offset.png	ok	true	IDENTICAL	same	
+corpus/overlapping_segments_race.png	ok	true	IDENTICAL	same	
+corpus/pale_moon_macos_sonoma.png	ok	true	IDENTICAL	same	
+corpus/row_counts_disagree_with_stream.png	ok	true	IDENTICAL	same	
+corpus/safari17_macos_sonoma.png	ok	true	IDENTICAL	same	
+corpus/sync_flush_backrefs.png	ok	true	IDENTICAL	same	
+corpus/table_first_offset_wrong.png	ok	true	IDENTICAL	same	
+corpus/table_gap_rows.png	ok	true	IDENTICAL	DIFFERS: 40320 bytes from row 290	
+corpus/table_huge_n.png	ok	true	IDENTICAL	same	invalid 'iDOT' chunk (count = -1)
+corpus/table_n0.png	ok	true	IDENTICAL	same	invalid 'iDOT' chunk (count = 0)
+corpus/table_n1.png	ok	true	IDENTICAL	same	invalid 'iDOT' chunk (count = 1)
+corpus/table_offset_mid_chunk.png	ok	true	IDENTICAL	same	*** ERROR: invalid PNG file: iDOT doesn't point to valid IDAT chunk
+corpus/table_offset_to_iend.png	ok	true	IDENTICAL	same	*** ERROR: invalid PNG file: iDOT doesn't point to valid IDAT chunk
+corpus/table_overlapping_rows.png	ok	true	IDENTICAL	same	
+corpus/table_rows_exceed_height.png	ok	true	IDENTICAL	same	
+corpus/table_truncated.png	ok	true	IDENTICAL	same	
+corpus/two_idot_chunks.png	ok	true	IDENTICAL	same	invalid 'iDOT' chunk (count = 1)
+corpus/valid_n2_apple_layout.png	ok	true	IDENTICAL	same	
+corpus/valid_n2_one_row_first.png	ok	true	IDENTICAL	same	
+corpus/valid_n3_uneven.png	ok	true	IDENTICAL	same	
+corpus/valid_n8.png	ok	true	IDENTICAL	same	
+zenpng/w39_e7_n1.png	ok	true	IDENTICAL	same	
+zenpng/w39_e7_n16.png	ok	true	IDENTICAL	same	
+zenpng/w39_e7_n2.png	ok	true	IDENTICAL	same	
+zenpng/w39_e7_n4.png	ok	true	IDENTICAL	same	
+zenpng/w39_e7_n8.png	ok	true	IDENTICAL	same	
+zenpng/w42_200x120_e7_n1.png	ok	true	IDENTICAL	same	
+zenpng/w42_200x120_e7_n16.png	ok	true	IDENTICAL	same	
+zenpng/w42_200x120_e7_n2.png	ok	true	IDENTICAL	same	
+zenpng/w42_200x120_e7_n4.png	ok	true	IDENTICAL	same	
+zenpng/w42_200x120_e7_n8.png	ok	true	IDENTICAL	same	
+zenpng/w42_64x48_e7_n1.png	ok	true	IDENTICAL	same	
+zenpng/w42_64x48_e7_n16.png	ok	true	IDENTICAL	same	
+zenpng/w42_64x48_e7_n2.png	ok	true	IDENTICAL	same	
+zenpng/w42_64x48_e7_n4.png	ok	true	IDENTICAL	same	
+zenpng/w42_64x48_e7_n8.png	ok	true	IDENTICAL	same	

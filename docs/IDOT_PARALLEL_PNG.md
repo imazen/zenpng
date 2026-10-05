@@ -1,6 +1,6 @@
 # Apple `iDOT` parallel PNG: format, implementation, measurements
 
-Status (2026-10-02): **implemented** in zenpng for both decode and encode, on
+Status (2026-10-05): **implemented**; ImageIO-verified on macOS 27 in zenpng for both decode and encode, on
 top of zenflate's segment APIs ([imazen/zenflate#9](https://github.com/imazen/zenflate/pull/9),
 patched in via `[patch.crates-io]` until released). Fixtures:
 [codec-corpus `png-idot/`](https://github.com/imazen/codec-corpus/tree/main/png-idot).
@@ -24,6 +24,11 @@ Raw results: `benchmarks/idot_decode_2026-10-02.{log,meta}`,
   in size for N ≤ 8 (+0.50% worst case at N = 16) and **+1–8%** encode time at
   efforts 7–19. It is off by default; unsegmented output is byte-identical to
   before.
+- **Apple ImageIO (macOS 27):** every zenpng-written `iDOT` file (1–16
+  segments) decodes identically in ImageIO, and zenpng matches ImageIO's
+  serial decode on 86 of 90 test files (the rest are truncated streams
+  ImageIO pads). ImageIO's *own* iDOT path mis-decodes three shapes (§5);
+  zenpng never writes them.
 - **Conformance:** the parallel path is only used when it provably matches the
   serial decode (§2); anything else falls back. A corpus of real, adversarial
   (Buchanan's "ambiguous PNG") and 26 generated cases checks this on every
@@ -245,7 +250,7 @@ profiled.)
 ### Encode (`src/encoder/segments.rs`)
 
 `EncodeConfig::decode_segments` / `with_decode_segments(n)` (0/1 = off, the
-default; 2 = Apple's layout; more = more strips, untested on Apple software).
+default; 2 = Apple's layout; up to 16 verified identical in ImageIO on macOS 27).
 After the normal pipeline picks filters and produces one zlib stream, the
 encoder:
 
@@ -290,10 +295,10 @@ N = 2); not implemented.
   never did. Mutation-checked: disabling the boundary-filter check fails on
   `boundary_row_average.png`, and disabling the segment-boundary check fails on
   `complete_stream_in_segment0.png`.
-- `tests/idot_tiny.rs`: 40 tiny fixtures in `tests/fixtures/idot/` (50 KB
+- `tests/idot_tiny.rs`: 44 tiny fixtures in `tests/fixtures/idot/` (53 KB
   total, from `generate.py` there): every color type and bit depth (RGBA8,
-  RGB8, Gray8, GA8, Gray16, RGB16, RGBA16, palette 8/4-bit with tRNS, Gray
-  1/2-bit) plus the same valid/malformed cases as the corpus, and a
+  RGB8, Gray8, GA8, GA16, Gray16, RGB16, RGBA16, palette 8/4/2/1-bit with
+  tRNS, Gray 1/2/4-bit) plus the same valid/malformed cases as the corpus, and a
   stored-block split. The generator records the SHA-256 of the scanlines it
   encoded; the `png` crate must reproduce it, zenpng must match serial vs
   parallel, and for RGB8/RGBA8/Gray8 zenpng's pixels must equal it. With
@@ -302,23 +307,71 @@ N = 2); not implemented.
 - `tests/idot_encode.rs`: the size rule; `decode_segments` 0/1 byte-identical
   to the default; round-trips at efforts 1/7/13 × N = 2/3/8 through the `png`
   crate and through zenpng serially and in parallel.
+- `tests/idot_imageio.rs`: zenpng's decode of every tiny fixture, converted
+  to ImageIO's buffer layout, must hash to what Apple ImageIO produced on
+  macOS 27 with the iDOT chunk removed (`tests/fixtures/idot/mac/
+  imageio_macos27.tsv`, recorded with `mac/imageio_tool.swift`).
+- `tests/idot_encode_subbyte.rs`: the encoder never writes iDOT for 1/2/4-bit
+  gray (and does for 8-bit gray).
+- `tests/idot_encode.rs` also decodes every segmented output with `lodepng`.
+- CI job **ImageIO iDOT compatibility (macOS)** runs
+  `tests/fixtures/idot/mac/check_imageio.sh`: zenpng encodes small images at
+  1–16 segments, and each must decode in ImageIO identically through its iDOT
+  path, its serial path, and zenpng.
 - zenflate `tests/segments.rs`: segment round-trips at efforts 0–31,
   continuation checksums, and the adversarial stream shapes.
 - CI runs the iDOT tests with `_dev` on every platform; the i686 `cross` job
   fetches the corpus on the host.
 
-## 5. Not done
+## 5. Apple ImageIO (macOS 27, measured 2026-10-05)
 
-- **Mac-native fixtures.** Nothing here was produced or decoded on a Mac,
-  and no Apple-written file under 0.5 MB has been tested (the `mac` host was
-  not reachable from the build box). Next: write tiny PNGs through ImageIO /
-  `sips` on macOS, record ImageIO's decoded-pixel hashes, add them to the
-  fixtures.
-- **Apple acceptance of zenpng output.** Nothing here has been decoded by
-  ImageIO. A macOS CI job that decodes zenpng `iDOT` files through
-  `CGImageSource` and checks for "iDOT doesn't point to valid IDAT chunk" is
-  required before calling the encoder Apple-conformant, and before claiming
-  N > 2 is safe for Apple software.
+Measured on `mac` (macOS 27.0, build 26A428, Apple Silicon) with
+`tests/fixtures/idot/mac/imageio_tool.swift`, which decodes each file twice:
+as written, and with `iDOT` removed so ImageIO takes its serial path. Full
+table: `benchmarks/idot_imageio_macos27_2026-10-05.tsv`.
+
+- **ImageIO's encoder never writes `iDOT`** (`CGImageDestination`, 16² to
+  4096×1024). Apple's screenshot path does; `screencapture` can't run over
+  SSH, so no Mac-written iDOT file smaller than the corpus screenshots exists
+  yet.
+- **Everything zenpng writes is compatible:** 20 zenpng files (64×48 to
+  4.5 MP, 1–16 segments) decode byte-identically through ImageIO's iDOT path,
+  its serial path and zenpng, with no iDOT log messages. ImageIO accepts
+  N > 2.
+- **zenpng = ImageIO serial** on 86 of 90 files (tiny, corpus, zenpng-written);
+  the other 4 are files whose stream ends early (BFINAL or a whole zlib stream
+  in segment 0): zenpng reports an error, ImageIO returns padded pixels.
+- **ImageIO's iDOT path is not serial-equivalent.** On 11 files it returns
+  different pixels from its own serial decode:
+  - segment boundary rows using Up/Average/Paeth (decoded as if the previous
+    row were zero) — a new ambiguous-PNG construction against current macOS;
+  - a table with a row gap (the uncovered row is left wrong);
+  - **1/2/4-bit grayscale with any valid table**: the iDOT path returns the
+    packed scanline bytes as 8-bit samples.
+  zenpng never writes the first two shapes, and does not write `iDOT` for
+  sub-byte grayscale.
+- ImageIO's own validation messages (debug-level unified log,
+  `Read_user_chunkIDOT`): "iDOT doesn't point to valid IDAT chunk" (offsets
+  not on an IDAT, past EOF), "invalid 'iDOT' chunk (count = N)" for N = 0, 1,
+  −1, and "extra chunks between iDOT and IDAT" (string present; requires
+  `iDOT` immediately before the first IDAT, which zenpng does). It did not
+  complain about overlapping, gapped or overlong row tables.
+
+### Compatibility policy (encoder)
+
+zenpng writes `iDOT` only in the shape verified to decode identically in
+ImageIO and in decoders that ignore it (the `png` crate, `lodepng`, zenpng
+serial): `iDOT` directly before the first IDAT, 2–16 contiguous segments
+covering every row, each starting a new IDAT chunk after a full flush, first
+rows None/Sub, never for 1/2/4-bit grayscale. There is no separate
+"compatibility mode" because this is the only mode.
+
+## 6. Not done
+
+- **Tiny Apple-written iDOT files.** Needs `screencapture` in a logged-in
+  GUI session on the Mac (not possible over SSH).
+- ImageIO on older macOS: only macOS 27 was measured locally; the CI job runs
+  whatever `macos-latest` provides.
 - Deferred unfilter for segments starting with Up/Average/Paeth (falls back).
 - Pinning on macOS/Windows; measurements on Zen 5 and ARM.
 - Segment-aware final compression in the encode pipeline (an encode speedup

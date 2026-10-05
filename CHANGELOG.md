@@ -20,8 +20,13 @@ All notable changes to zenpng are documented here.
   is unchanged unless it is set. Costs −0.09% to +0.40% in size for n ≤ 8, and
   1–8% in encode time at efforts 7–19. Images under ~2 MiB of row data get no
   strips.
-- 40 tiny `iDOT` test fixtures (`tests/fixtures/idot/`, 50 KB) covering every
-  color type and bit depth, with generator-computed pixel hashes.
+- 44 tiny `iDOT` test fixtures (`tests/fixtures/idot/`, 53 KB) covering every
+  color type and bit depth, with generator-computed pixel hashes and Apple
+  ImageIO (macOS 27) decode hashes; a macOS CI job checks zenpng's `iDOT`
+  output against ImageIO on every push.
+- The encoder never writes `iDOT` for 1/2/4-bit grayscale, and at most 16
+  segments: Apple ImageIO's parallel path mis-decodes sub-byte gray (its
+  serial path is fine), and 16 is the largest count verified in ImageIO.
 - New Linux-only dependency `rustix` (safe `sched_setaffinity` wrappers) for
   core-tier pinning.
 

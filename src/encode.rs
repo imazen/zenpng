@@ -96,13 +96,15 @@ pub struct EncodeConfig {
     ///
     /// - `0` or `1` (default): one plain zlib stream, no `iDOT`.
     /// - `2`: Apple's layout (two halves).
-    /// - `N > 2`: more strips. zenpng decodes these in parallel; how Apple
-    ///   software treats more than two is untested.
+    /// - `N > 2`: more strips, up to 16 (verified to decode identically in
+    ///   Apple ImageIO on macOS 27). zenpng decodes them in parallel.
     ///
     /// The output stays a standard PNG — other decoders ignore `iDOT`. Images
-    /// too small to benefit (under about 1 MiB of filtered data per strip)
-    /// get fewer strips or none. Costs typically 0.0–0.3% in size. Applies to
-    /// non-interlaced still images at effort ≥ 1; APNG output is unaffected.
+    /// too small to benefit (under about 2 MiB of filtered data) get fewer
+    /// strips or none, and 1/2/4-bit grayscale never gets them (Apple
+    /// ImageIO's parallel path mis-decodes those). Costs up to about 0.4% in
+    /// size. Applies to non-interlaced still images at effort ≥ 1; APNG
+    /// output is unaffected.
     pub decode_segments: u32,
     /// Lossless color-type and bit-depth downcast options.
     ///

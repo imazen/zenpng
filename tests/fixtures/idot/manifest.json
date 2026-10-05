@@ -59,6 +59,16 @@
   "serial_ok": false,
   "width": 24
  },
+ "ga16_n2.png": {
+  "bit_depth": 16,
+  "color_type": 4,
+  "height": 16,
+  "note": "ga16, two 8-row segments",
+  "parallel_usable": true,
+  "raw_sha256": "2e3f94f426a85c6669026ca335485ff5c541890cdf7b29cec38e854a1fed6586",
+  "serial_ok": true,
+  "width": 24
+ },
  "ga8_n2.png": {
   "bit_depth": 8,
   "color_type": 4,
@@ -85,7 +95,7 @@
   "height": 16,
   "note": "gray1, two 8-row segments",
   "parallel_usable": true,
-  "raw_sha256": "53c7a139dbe1d6337fba0ba72bdbd7786b24d5bc38013eafaba90ec04933311f",
+  "raw_sha256": "a34f020434b88dc88333f2d9a7b1832893e71de5babddb7d3fcffd1b61837635",
   "serial_ok": true,
   "width": 24
  },
@@ -95,7 +105,17 @@
   "height": 16,
   "note": "gray2, two 8-row segments",
   "parallel_usable": true,
-  "raw_sha256": "bcef3e98bb5d576fcf27f40588abdaf4eca61cbbde29e4fcc8fc6c6da1cabca2",
+  "raw_sha256": "8be320c8d85f910c7130872cdf6a2952d01dd48feddec2da2091e0c7f1eac678",
+  "serial_ok": true,
+  "width": 24
+ },
+ "gray4_n2.png": {
+  "bit_depth": 4,
+  "color_type": 0,
+  "height": 16,
+  "note": "gray4, two 8-row segments",
+  "parallel_usable": true,
+  "raw_sha256": "1446916075311374966d095054f920fdd7537859854aa1406860f0349a9d0153",
   "serial_ok": true,
   "width": 24
  },
@@ -136,6 +156,26 @@
   "note": "one deflate stream, iDOT offset at an arbitrary chunk boundary",
   "parallel_usable": false,
   "raw_sha256": "4547ffce8a45bc2fba1880049aa5f7d6b3946072b2e375cbda3231e234db466d",
+  "serial_ok": true,
+  "width": 24
+ },
+ "pal1_trns_n2.png": {
+  "bit_depth": 1,
+  "color_type": 3,
+  "height": 16,
+  "note": "pal1_trns, two 8-row segments",
+  "parallel_usable": true,
+  "raw_sha256": "3ba795551a9341c8fd76c7ee6d1e31950f54feeb4edf8f24f812b70be961ca14",
+  "serial_ok": true,
+  "width": 24
+ },
+ "pal2_trns_n2.png": {
+  "bit_depth": 2,
+  "color_type": 3,
+  "height": 16,
+  "note": "pal2_trns, two 8-row segments",
+  "parallel_usable": true,
+  "raw_sha256": "25d06b056bac3dbf40d1b4838b30e2a08c8c3a1778bfc9878d3a80455b0a12e4",
   "serial_ok": true,
   "width": 24
  },
