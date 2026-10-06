@@ -1,0 +1,32 @@
+# zenpng vs image-rs/image-png decode, 2026-10-06
+
+Bench:    benches/vs_png.rs (zenbench, resource gate disabled, arms interleaved
+          per round), `cargo bench --bench vs_png --features _dev -- --group=decode`.
+Inputs:   106 PNGs built by scripts/vs_png_inputs.sh from 20 imazen-26 png-v3
+          renders (one per category): RGB8 at long edge 64/256/1024/2560 for
+          all 20; RGBA8, gray8, pal8, RGB16, Adam7 at 1024 for 5; gray1 for 1.
+Compared: image-png main b2f10c6 (dev-dep `png_main`), ignore_checksums(true),
+          Transformations::EXPAND; zenpng PngDecodeConfig::default() (checksums
+          skipped). An untimed assert checks both decode to identical 8-bit
+          output for every input.
+Metric:   mean wall time per decode; ratio = zenpng / image-png (lower is better).
+
+x86: Intel Core Ultra 7 265K (host i265), pinned to P-core 2 (`taskset -c 2`),
+     nice 19; other users' training jobs were running on other cores.
+     vs_png_decode_x86_2026-10-06.txt: zenpng 396f4b0. Median ratio 1.14
+     (min 0.26, max 1.39, n=106). "before" column = zenpng ca36ec7.
+ARM: Ampere Altra Neoverse-N1 (Hetzner cax31, `arm-big`), core 3, nice 19.
+     vs_png_decode_arm_2026-10-06.txt: zenpng 396f4b0 (before) vs the 8f790fe
+     routing change (after). Median ratio 1.13 -> 1.14 (flat), max 1.44 ->
+     1.31; RGBA8 and Sub-heavy RGB8 up to 1.21x faster.
+
+Pre-session baseline (zenpng 8949ffe, 5 groups only, x86, gated run):
+  1207 gray8 4.04 ms (png 1.97), interlaced 6.26 (4.85), pal8 2.68 (1.27),
+  rgb16 11.18 (5.64), rgb8 5.35 (4.24); median ratio 1.98.
+
+Raw zenbench result files (55-65 KB each, not committed): host i265
+~/tmp/mtpng/results/ only (Tower is mounted read-only on i265; not mirrored).
+
+Remaining gap: zenflate StreamDecompressor::fill is ~70% of decode
+instructions (callgrind, image 9097); fdeflate inflates the same IDAT
+streams 1.04-1.6x faster (examples/inflate_bench.rs).
