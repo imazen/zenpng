@@ -55,7 +55,7 @@ All notable changes to zenpng are documented here.
   Adler-32) match the serial decoder (`tests/decode_pipeline.rs`). Single runs
   on i265: 1024 px RGB8/RGBA8 1.34-1.51x faster, 4096 px RGB8 1.70-1.93x.
 - **Multi-threaded strip encode for efforts without brute-force or recompress
-  phases (1-17).** With
+  phases (1-16, 18, 20, 21).** With
   `with_parallel(true)`, the image is split into strips of about 512 KiB of
   filtered data; worker threads filter each strip with every screening
   strategy, recompress its best candidates at the refine levels, and compress
