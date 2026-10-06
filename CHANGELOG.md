@@ -48,6 +48,14 @@ All notable changes to zenpng are documented here.
 - Effort 4 now uses effort 5's settings (5 strategies at FastHt-5). It ran 9
   strategies at Turbo, matched effort 3's output on 27 of 36 test images, and
   was slower than effort 7 (29.8 → 18.0 ms median).
+- **Multi-threaded encode for screen-only efforts (1-7).** With
+  `with_parallel(true)`, the image is split into strips of about 512 KiB of
+  filtered data; worker threads filter each strip with every screening
+  strategy and compress it independently (`zenflate::png::StripCompressor`),
+  keeping the smallest. The concatenation is one ordinary zlib stream, and the
+  output does not depend on the thread count. Five 4096 px images on 8 cores:
+  effort 1 184-303 ms -> 30-51 ms, effort 5 1.53-2.18 s -> 193-252 ms, sizes
+  -0.37% to +0.25%. Off by default (as `parallel` is).
 - **Release builds no longer decompress every compressed candidate during
   encode.** The check was a decode-only workaround for a February 2026 zenflate
   bug, cost 17-23% of encode instructions at efforts 1-7, and dropped failing

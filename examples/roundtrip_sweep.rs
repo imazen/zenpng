@@ -26,13 +26,17 @@ fn main() {
     files.sort();
     let mut n = 0;
     let verbose = std::env::var_os("ROUNDTRIP_SIZES").is_some();
+    // ROUNDTRIP_THREADS: 1 (default) single-threaded, 0 all cores, N at most N.
+    let threads: usize = std::env::var("ROUNDTRIP_THREADS").map_or(1, |t| t.parse().unwrap());
     for f in &files {
         let data = std::fs::read(f).unwrap();
         let d = zenpng::decode(&data, &zenpng::PngDecodeConfig::default(), &Unstoppable).unwrap();
         let src = rgba16(&d.pixels);
         for &e in &efforts {
-            let cfg =
-                zenpng::EncodeConfig::default().with_compression(zenpng::Compression::Effort(e));
+            let mut cfg = zenpng::EncodeConfig::default()
+                .with_compression(zenpng::Compression::Effort(e))
+                .with_parallel(threads != 1);
+            cfg.max_threads = threads;
             let px = &d.pixels;
             let t = std::time::Instant::now();
             let r = if let Some(i) = px.try_as_imgref::<rgb::Rgb<u8>>() {
