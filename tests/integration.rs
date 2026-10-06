@@ -25,3 +25,6 @@ mod truncation_series;
 
 #[path = "integration/apng_alloc.rs"]
 mod apng_alloc;
+
+#[path = "integration/sink_truncation.rs"]
+mod sink_truncation;

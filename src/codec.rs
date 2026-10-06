@@ -2344,27 +2344,34 @@ fn push_decoder_native_noninterlaced<'a>(
         }
         drop(dst);
     } else {
-        // General path: post-process each raw row, then write to sink.
-        let out_bpp = descriptor.bytes_per_pixel();
-        let out_row_bytes = w as usize * out_bpp;
+        // General path: expand each raw row straight into the sink row.
         let expander = crate::decoder::postprocess::RowExpander::new(&ihdr, reader.ancillary())?;
-        let mut row_buf = alloc::vec![0u8; expander.out_row_bytes()];
+        let out_row_bytes = expander.out_row_bytes();
+        if out_row_bytes != w as usize * descriptor.bytes_per_pixel() {
+            return Err(at!(PngError::Internal(
+                zencodec::InternalKind::Bug,
+                alloc::format!(
+                    "expander row {out_row_bytes} B != descriptor row {} B",
+                    w as usize * descriptor.bytes_per_pixel()
+                )
+            )));
+        }
 
         let mut dst = sink
             .provide_next_buffer(0, h, w, descriptor)
             .map_err(wrap_sink)?;
 
-        let mut y = 0u32;
-        while let Some(result) = reader.next_raw_row() {
-            let raw = result?;
+        for y in 0..h {
+            let raw = match reader.next_raw_row() {
+                Some(r) => r?,
+                None => {
+                    return Err(at!(PngError::Decode(alloc::format!(
+                        "unexpected end of image data at row {y}"
+                    ))));
+                }
+            };
+            expander.expand(raw, &mut dst.row_mut(y)[..out_row_bytes]);
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
-
-            expander.expand(raw, &mut row_buf);
-
-            let sink_row = dst.row_mut(y);
-            let copy_len = out_row_bytes.min(row_buf.len()).min(sink_row.len());
-            sink_row[..copy_len].copy_from_slice(&row_buf[..copy_len]);
-            y += 1;
         }
         drop(dst);
     }
@@ -2508,8 +2515,10 @@ impl PngStreamingDecoder<'_> {
             Some(Ok(row)) => row,
             Some(Err(e)) => return Err(e),
             None => {
-                self.reader.finish_stream()?;
-                return Ok(None);
+                return Err(at!(PngError::Decode(alloc::format!(
+                    "unexpected end of image data at row {}",
+                    self.y
+                ))));
             }
         };
 
@@ -2517,6 +2526,10 @@ impl PngStreamingDecoder<'_> {
         self.y += 1;
 
         self.expander.expand(raw, &mut self.row_buf);
+        if self.y == self.height {
+            // Reach the zlib footer so strict mode verifies the Adler-32.
+            self.reader.finish_stream()?;
+        }
 
         // `row_buf`/`stride`/`descriptor` are all internal state this decoder
         // set up itself (not caller-supplied), so a construction failure here

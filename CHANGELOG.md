@@ -56,6 +56,16 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- **The zencodec row-sink and streaming decoders no longer return a partial
+  image as success.** When the image data ended early, `push_decoder` (for
+  every format except RGB8/RGBA8) and the streaming decoder stopped quietly,
+  leaving the remaining rows unwritten, while `decode()` reported "unexpected
+  end of image data". Both now return that error. The streaming decoder also
+  never reached the zlib footer, so a strict `DecodePolicy` did not verify its
+  Adler-32; it does now. `push_decoder` expands rows straight into the sink
+  buffer instead of through a temporary row. Tests:
+  `tests/integration/sink_truncation.rs` (also checks `push_decoder` against
+  `decode()` on all 44 tiny fixtures).
 - **`PngDecodeConfig::strict()` now always verifies the Adler-32.** When the
   last image row was produced before the zlib footer was read (trailing data
   after the image, or a large inflate buffer), the checksum was never
