@@ -66,6 +66,10 @@ All notable changes to zenpng are documented here.
   buffer instead of through a temporary row. Tests:
   `tests/integration/sink_truncation.rs` (also checks `push_decoder` against
   `decode()` on all 44 tiny fixtures).
+- Image data that ends early is now `PngError::Truncated` (category
+  `UnexpectedEof`) on every decode path. It was `Decode` for non-interlaced
+  and interlaced images and `Truncated` only for APNG frames. All row loops
+  share one `fill_row` helper.
 - **`PngDecodeConfig::strict()` now always verifies the Adler-32.** When the
   last image row was produced before the zlib footer was read (trailing data
   after the image, or a large inflate buffer), the checksum was never

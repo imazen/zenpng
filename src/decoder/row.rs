@@ -175,6 +175,32 @@ impl zenflate::InputSource for IdatSource<'_> {
     }
 }
 
+/// Fill `d` until one filtered row (`stride` bytes: filter byte + data) is
+/// available. A stream that ends first is `Truncated` ("image data ends at
+/// row `y`") for every decode path, so callers report it identically.
+pub(crate) fn fill_row<S: zenflate::InputSource>(
+    d: &mut zenflate::StreamDecompressor<S>,
+    stride: usize,
+    y: usize,
+) -> crate::error::Result<()>
+where
+    S::Error: core::fmt::Debug,
+{
+    while d.peek().len() < stride {
+        if d.is_done() {
+            return Err(at!(PngError::Truncated(alloc::format!(
+                "image data ends at row {y}"
+            ))));
+        }
+        d.fill().map_err(|e| {
+            at!(PngError::Decode(alloc::format!(
+                "decompression error: {e:?}"
+            )))
+        })?;
+    }
+    Ok(())
+}
+
 /// Read a zlib stream to its end, discarding output (see
 /// [`RowDecoder::finish_stream`]). `strict`: errors are returned rather than
 /// ignored.
@@ -539,9 +565,6 @@ impl<'a> RowDecoder<'a> {
         if let Err(e) = self.fill_stride() {
             return Some(Err(e));
         }
-        if self.decompressor.peek().len() < self.stride {
-            return None;
-        }
 
         let peeked = self.decompressor.peek();
         let filter_byte = peeked[0];
@@ -585,9 +608,6 @@ impl<'a> RowDecoder<'a> {
         if let Err(e) = self.fill_stride() {
             return Some(Err(e));
         }
-        if self.decompressor.peek().len() < self.stride {
-            return None;
-        }
 
         let peeked = self.decompressor.peek();
         let filter_byte = peeked[0];
@@ -606,33 +626,13 @@ impl<'a> RowDecoder<'a> {
         Some(Ok(()))
     }
 
-    /// Fill the decompressor until at least one full stride is available.
+    /// Fill the decompressor until the next row's stride is available.
     fn fill_stride(&mut self) -> crate::error::Result<()> {
-        loop {
-            let available = self.decompressor.peek().len();
-            if available >= self.stride {
-                return Ok(());
-            }
-            if self.decompressor.is_done() {
-                if available > 0 && available < self.stride {
-                    return Err(at!(PngError::Decode(alloc::format!(
-                        "truncated row data: got {} bytes, expected {} (row {})",
-                        available,
-                        self.stride,
-                        self.rows_yielded
-                    ))));
-                }
-                return Ok(());
-            }
-            match self.decompressor.fill() {
-                Ok(_) => {}
-                Err(e) => {
-                    return Err(at!(PngError::Decode(alloc::format!(
-                        "decompression error: {e:?}"
-                    ))));
-                }
-            }
-        }
+        fill_row(
+            &mut self.decompressor,
+            self.stride,
+            self.rows_yielded as usize,
+        )
     }
 
     /// After the last row: read the rest of the zlib stream so its Adler-32

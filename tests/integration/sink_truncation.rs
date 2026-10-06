@@ -68,9 +68,12 @@ fn push_decoder_rejects_short_image_data_like_decode() {
         ("gray+alpha8 (expander)", png::ColorType::GrayscaleAlpha, 2),
     ] {
         let data = short_png(color, channels, 40, 16);
+        let err = decode(&data, &PngDecodeConfig::default(), &Unstoppable)
+            .expect_err("decode() accepts the short stream");
         assert!(
-            decode(&data, &PngDecodeConfig::default(), &Unstoppable).is_err(),
-            "{name}: decode() accepts the short stream"
+            matches!(err.error(), zenpng::PngError::Truncated(_)),
+            "{name}: short image data should be Truncated, got {}",
+            err.error()
         );
         let mut sink = CollectSink(Vec::new());
         let res =

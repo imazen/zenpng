@@ -170,24 +170,7 @@ pub(crate) fn decode_interlaced(
 
         for pass_y in 0..ph as usize {
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
-            // Fill decompressor until we have a full stride
-            loop {
-                let available = decompressor.peek().len();
-                if available >= pass_stride {
-                    break;
-                }
-                if decompressor.is_done() {
-                    return Err(at!(PngError::Decode(alloc::format!(
-                        "truncated interlaced data in pass {}",
-                        pass + 1
-                    ))));
-                }
-                decompressor.fill().map_err(|e| {
-                    at!(PngError::Decode(alloc::format!(
-                        "decompression error: {e:?}"
-                    )))
-                })?;
-            }
+            super::row::fill_row(&mut decompressor, pass_stride, y_off + pass_y * y_step)?;
 
             let peeked = decompressor.peek();
             let filter_byte = peeked[0];

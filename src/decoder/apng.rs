@@ -308,23 +308,9 @@ impl<'a> ApngDecoder<'a> {
         let expander = RowExpander::new(&frame_ihdr, &self.ancillary)?;
         let mut row_buf = vec![0u8; expander.out_row_bytes()];
 
-        for _y in 0..h {
+        for y in 0..h {
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
-            // Fill until we have a stride
-            loop {
-                let available = decompressor.peek().len();
-                if available >= stride {
-                    break;
-                }
-                if decompressor.is_done() {
-                    return Err(at!(PngError::Truncated("APNG: truncated IDAT data".into())));
-                }
-                decompressor.fill().map_err(|e| {
-                    at!(PngError::Decode(alloc::format!(
-                        "APNG IDAT decompression error: {e:?}"
-                    )))
-                })?;
-            }
+            super::row::fill_row(&mut decompressor, stride, y)?;
 
             let peeked = decompressor.peek();
             let filter_byte = peeked[0];
@@ -437,22 +423,9 @@ impl<'a> ApngDecoder<'a> {
         let expander = RowExpander::new(&frame_ihdr, &self.ancillary)?;
         let mut row_buf = vec![0u8; expander.out_row_bytes()];
 
-        for _y in 0..h {
+        for y in 0..h {
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
-            loop {
-                let available = decompressor.peek().len();
-                if available >= stride {
-                    break;
-                }
-                if decompressor.is_done() {
-                    return Err(at!(PngError::Truncated("APNG: truncated fdAT data".into())));
-                }
-                decompressor.fill().map_err(|e| {
-                    at!(PngError::Decode(alloc::format!(
-                        "APNG fdAT decompression error: {e:?}"
-                    )))
-                })?;
-            }
+            super::row::fill_row(&mut decompressor, stride, y)?;
 
             let peeked = decompressor.peek();
             let filter_byte = peeked[0];

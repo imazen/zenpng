@@ -304,9 +304,7 @@ pub(crate) fn decode_png(
                 Some(Ok(())) => {}
                 Some(Err(e)) => return Err(e),
                 None => {
-                    return Err(at!(PngError::Decode(
-                        "unexpected end of image data at row 0".into(),
-                    )));
+                    return Err(at!(PngError::Truncated("image data ends at row 0".into())));
                 }
             }
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
@@ -321,8 +319,8 @@ pub(crate) fn decode_png(
                 Some(Ok(())) => {}
                 Some(Err(e)) => return Err(e),
                 None => {
-                    return Err(at!(PngError::Decode(alloc::format!(
-                        "unexpected end of image data at row {y}"
+                    return Err(at!(PngError::Truncated(alloc::format!(
+                        "image data ends at row {y}"
                     ))));
                 }
             }
@@ -393,8 +391,8 @@ pub(crate) fn decode_png(
     if !parallel_done {
         let out = buf.bytes_mut();
         let end = |y: usize| {
-            at!(PngError::Decode(alloc::format!(
-                "unexpected end of image data at row {y}"
+            at!(PngError::Truncated(alloc::format!(
+                "image data ends at row {y}"
             )))
         };
         if expander.is_copy() {
