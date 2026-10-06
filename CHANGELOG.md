@@ -54,6 +54,10 @@ All notable changes to zenpng are documented here.
   unfilters and expands them. Output, warnings and errors (truncation, strict
   Adler-32) match the serial decoder (`tests/decode_pipeline.rs`). Single runs
   on i265: 1024 px RGB8/RGBA8 1.34-1.51x faster, 4096 px RGB8 1.70-1.93x.
+- Paeth unfiltering for pixel sizes without a SIMD kernel (RGB8 included) uses
+  a min-select predictor on aarch64: 1.35x faster on Neoverse-N1 (1920 px RGB8
+  row 13.2 -> 9.8 us). x86 and wasm32 keep the stb form, which measured faster
+  there.
 - **Multi-threaded strip encode for efforts without brute-force or recompress
   phases (1-16, 18, 20, 21).** With
   `with_parallel(true)`, the image is split into strips of about 512 KiB of

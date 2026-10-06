@@ -60,8 +60,10 @@ measured NEON against the pre-fixed-kernel scalar path.)
 
 Every pixel size without a SIMD kernel (see tier table) uses the const-generic kernels in `src/simd/fixed.rs`
 (`sub::<N>`, `avg::<N>`, `paeth::<N>` over `[u8; N]` chunks, dispatched by
-`by_bpp!`). `paeth_branchless` is the stb formulation, checked exhaustively
-against the spec predictor over all 2^24 inputs.
+`by_bpp!`). The Paeth predictor is per target: `paeth_minselect` (pairwise
+minimum, image-png's non-x86 choice) on aarch64, `paeth_branchless` (stb) on
+x86 and wasm32; both are checked exhaustively against the spec predictor over
+all 2^24 inputs. Neoverse-N1 RGB8 Paeth row: 13.2 -> 9.8 us with min-select.
 
 ### SIMD Tier Assignments
 

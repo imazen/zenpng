@@ -24,6 +24,26 @@ pub(super) fn paeth_branchless(a: u8, b: u8, c: u8) -> u8 {
     (if thresh <= lo { hi } else { t0 }) as u8
 }
 
+/// Paeth predictor as pairwise minimum selection over `|b-c|`, `|a-c|`,
+/// `|a+b-2c|` (the spec's distances). Exactly equal to the spec predictor;
+/// `paeth_matches_spec_exhaustively` checks all 2^24 cases.
+#[inline(always)]
+pub(super) fn paeth_minselect(a: u8, b: u8, c: u8) -> u8 {
+    let (ia, ib, ic) = (a as i16, b as i16, c as i16);
+    let pa = (ib - ic).abs();
+    let pb = (ia - ic).abs();
+    let pc = (ia + ib - 2 * ic).abs();
+    let (mut out, mut min) = (a, pa);
+    if pb < min {
+        min = pb;
+        out = b;
+    }
+    if pc < min {
+        out = c;
+    }
+    out
+}
+
 #[inline(always)]
 pub(super) fn sub<const N: usize>(row: &mut [u8]) {
     let mut left = [0u8; N];
@@ -51,6 +71,21 @@ pub(super) fn avg<const N: usize>(row: &mut [u8], prev: &[u8]) {
     }
 }
 
+/// The predictor the fixed Paeth kernel uses on this target. Measured with
+/// `benches/unfilter_tiers.rs` and `examples/unfilter_bench.rs` (2026-10-06):
+/// min-select is faster on aarch64 (Neoverse-N1, 1920 px RGB8 row 9.8 vs
+/// 13.2 us; RGBA8 16.6 vs 19.8 us), the branchless stb form is faster on x86
+/// (i265, 6.8 vs 7.1 us; 11.8 vs 14.1 us) and on wasm32 SIMD128 (wasmtime on
+/// Apple Silicon, 827 vs 530 MB/s). Apple Silicon native is not measured.
+#[inline(always)]
+fn paeth_pred(a: u8, b: u8, c: u8) -> u8 {
+    if cfg!(target_arch = "aarch64") {
+        paeth_minselect(a, b, c)
+    } else {
+        paeth_branchless(a, b, c)
+    }
+}
+
 #[inline(always)]
 pub(super) fn paeth<const N: usize>(row: &mut [u8], prev: &[u8]) {
     let mut left = [0u8; N];
@@ -62,7 +97,7 @@ pub(super) fn paeth<const N: usize>(row: &mut [u8], prev: &[u8]) {
         .zip(prev.as_chunks::<N>().0)
     {
         for k in 0..N {
-            px[k] = px[k].wrapping_add(paeth_branchless(left[k], up[k], up_left[k]));
+            px[k] = px[k].wrapping_add(paeth_pred(left[k], up[k], up_left[k]));
         }
         left = *px;
         up_left = *up;
@@ -117,11 +152,9 @@ mod tests {
         for a in 0..=255u8 {
             for b in 0..=255u8 {
                 for c in 0..=255u8 {
-                    assert_eq!(
-                        paeth_branchless(a, b, c),
-                        paeth_spec(a, b, c),
-                        "{a} {b} {c}"
-                    );
+                    let spec = paeth_spec(a, b, c);
+                    assert_eq!(paeth_branchless(a, b, c), spec, "{a} {b} {c}");
+                    assert_eq!(paeth_minselect(a, b, c), spec, "minselect {a} {b} {c}");
                 }
             }
         }
