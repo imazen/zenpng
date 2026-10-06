@@ -41,7 +41,7 @@ pub(crate) const NONE_PAETH_MINSUM_STRATEGIES: &[Strategy] = &[
     Strategy::Adaptive(AdaptiveHeuristic::MinSum),
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum Strategy {
     Single(u8),
     Adaptive(AdaptiveHeuristic),
@@ -94,7 +94,7 @@ pub(crate) enum Strategy {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum AdaptiveHeuristic {
     MinSum,
     Entropy,
