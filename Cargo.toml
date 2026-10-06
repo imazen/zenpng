@@ -66,6 +66,10 @@ zencodec-testkit = { git = "https://github.com/imazen/zencodec", tag = "v0.1.26"
 codec-corpus = "1.0.2"
 libdeflater = "1.25"
 zenbench = "0.1.8"
+# Pareto-bench competitors (benches/pareto.rs only).
+zune-png = "0.5.2"
+zune-core = "0.5.3"
+lodepng = "3.12.2"
 
 [profile.test]
 opt-level = 2
@@ -162,6 +166,10 @@ required-features = ["_dev"]
 
 [[bench]]
 name = "vs_png"
+harness = false
+
+[[bench]]
+name = "pareto"
 harness = false
 
 [[bench]]

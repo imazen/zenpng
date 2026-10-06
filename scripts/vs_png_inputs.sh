@@ -5,10 +5,14 @@
 #   scripts/vs_png_inputs.sh OUT_DIR
 #   ZENPNG_BENCH_DIR=OUT_DIR cargo bench --bench vs_png --features _dev
 #
-# Every source is resized (Mitchell, no upscale) to long edges 64/256/1024/2560
-# as RGB8; five sources also get RGBA8, gray8, palette, RGB16 and Adam7
-# variants at 1024, and the 1-bit patent scan a gray1 variant. Requires
-# ImageMagick 7 (`magick`) and curl.
+# Every source is resized (Mitchell) to each long edge in SIZES (default
+# "64 256 1024 2560") as RGB8 (PNG24, so ImageMagick can't pick gray or
+# palette); a size larger than the source is skipped, never upscaled. Five
+# sources also get RGBA8 at each size in RGBA_SIZES (default 1024) and gray8,
+# palette, RGB16 and Adam7 variants at 1024; the 1-bit patent scan gets a
+# gray1 variant. Requires ImageMagick 7 (`magick`) and curl.
+#
+# benches/pareto.rs inputs: SIZES="64 256 1024 4096" RGBA_SIZES="256 1024"
 set -euo pipefail
 out=${1:?usage: $0 OUT_DIR}
 src=$out/src
@@ -40,16 +44,23 @@ png-v3/9094-lilith-ai-illustrations/9097_gen_illustrations_autumn-deciduous-path
 png-v3/9226-lilith-ai-products/accessories/9227_gen_products-accessories_bucket-hat-checkerboard_p0002_1024x1536.sdr.png
 LIST
 cd "$src"
+SIZES=${SIZES:-64 256 1024 2560}
+RGBA_SIZES=${RGBA_SIZES:-1024}
 for f in *.png; do
   s=${f:0:4}
-  for L in 64 256 1024 2560; do
-    nice -n 19 magick "$f" -filter Mitchell -resize "${L}x${L}>" -strip "$out/${s}_rgb8_${L}.png"
+  edge=$(magick identify -format '%[fx:max(w,h)]' "$f")
+  for L in $SIZES; do
+    [ "$L" -le "$edge" ] || continue
+    nice -n 19 magick "$f" -filter Mitchell -resize "${L}x${L}>" -strip "PNG24:$out/${s}_rgb8_${L}.png"
   done
 done
 cd "$out"
 for s in 1207 8107 9007 5207 6807; do
+  for L in $RGBA_SIZES; do
+    [ -f "${s}_rgb8_${L}.png" ] || continue
+    nice -n 19 magick "${s}_rgb8_${L}.png" -alpha set -channel A -fx '0.5+0.5*sin(i/37)*cos(j/53)' +channel -strip "PNG32:${s}_rgba8_${L}.png"
+  done
   in=${s}_rgb8_1024.png
-  nice -n 19 magick "$in" -alpha set -channel A -fx '0.5+0.5*sin(i/37)*cos(j/53)' +channel -strip "PNG32:${s}_rgba8_1024.png"
   nice -n 19 magick "$in" -colorspace Gray -depth 8 -define png:color-type=0 -strip "${s}_gray8_1024.png"
   nice -n 19 magick "$in" -colors 256 -strip "PNG8:${s}_pal8_1024.png"
   nice -n 19 magick "$in" -depth 16 -strip "PNG48:${s}_rgb16_1024.png"
