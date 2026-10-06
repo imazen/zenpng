@@ -102,6 +102,19 @@ struct EffortParams {
 }
 
 impl EffortParams {
+    /// Whether [`compress_strips`] can run this effort: screening and refine
+    /// only, no brute-force, recompress or FullOptimal phases (those search
+    /// across the whole image).
+    fn strips_apply(&self) -> bool {
+        self.brute_configs.is_empty()
+            && self.block_brute_configs.is_empty()
+            && self.fork_brute_efforts.is_empty()
+            && self.adaptive_fork_configs.is_empty()
+            && self.beam_brute_configs.is_empty()
+            && !self.use_recompress
+            && self.full_optimal_effort.is_none()
+    }
+
     /// Map effort (0-30) to pipeline parameters.
     ///
     /// Monotonicity is enforced by `CompressionLevel::monotonicity_fallback()`:
@@ -1052,9 +1065,11 @@ fn try_compress_with_fallbacks(
 /// the thread count) so output does not depend on how many threads ran.
 const STRIP_BYTES: usize = 512 * 1024;
 
-/// Multi-threaded encode for screen-only efforts: split the image into strips
-/// of about [`STRIP_BYTES`] filtered bytes, and on worker threads filter each
-/// strip with every screening strategy and keep the smallest compression. Each
+/// Multi-threaded encode for efforts made of screening and refine only (see
+/// [`EffortParams::strips_apply`]): split the image into strips of about
+/// [`STRIP_BYTES`] filtered bytes; on worker threads, filter each strip with
+/// every screening strategy, recompress its best `top_k` candidates at the
+/// refine levels, and keep the smallest compression. Each
 /// strip is compressed without history from the strips before it
 /// ([`zenflate::png::StripCompressor`]), so the strips run concurrently and
 /// their concatenation is one ordinary zlib stream. Strip rows are filtered
@@ -1099,24 +1114,46 @@ fn compress_strips(
     let cancel = opts.cancel;
     let next = AtomicUsize::new(0);
 
-    // Fallback levels a single-strategy strip also tries (see compress_filtered).
-    let mut fallbacks = Vec::new();
-    if params.fallbacks && strategies.len() == 1 {
-        let mut l = level;
-        while let Some(fb) = l.monotonicity_fallback() {
-            fallbacks.push(fb);
+    // Levels each strip's best screened candidates are recompressed at:
+    // the refine tiers (with their fallback chains when enabled), or for a
+    // single screen-final strategy, its fallback chain.
+    let chain = |l: CompressionLevel, out: &mut Vec<CompressionLevel>| {
+        let mut l = l;
+        while let Some(fb) = l.monotonicity_fallback().filter(|_| params.fallbacks) {
+            if !out.contains(&fb) {
+                out.push(fb);
+            }
             l = fb;
         }
+    };
+    let mut refine_levels = Vec::new();
+    if params.screen_is_final {
+        if strategies.len() == 1 {
+            chain(level, &mut refine_levels);
+        }
+    } else {
+        for &t in params.refine_efforts {
+            if !refine_levels.contains(&t.level()) {
+                refine_levels.push(t.level());
+            }
+            chain(t.level(), &mut refine_levels);
+        }
     }
-    let fallbacks = &fallbacks;
+    let refine_levels = &refine_levels;
+    let top_k = if params.screen_is_final {
+        1
+    } else {
+        params.top_k.max(1)
+    };
 
     type Strip = Result<(Vec<u8>, u32, usize), zenflate::CompressionError>;
     let work = |c: &mut StripCompressor,
-                fbc: &mut Vec<StripCompressor>,
+                rc: &mut Vec<StripCompressor>,
                 scratch: &mut HeuristicScratch,
                 k: usize|
      -> Strip {
         let (a, b) = bounds[k];
+        let last = k + 1 == n;
         // Include the previous image row so row `a` filters against it, then
         // drop that row's output.
         let lead = usize::from(a > 0);
@@ -1126,6 +1163,8 @@ fn compress_strips(
         let mut filtered = Vec::with_capacity(h * stride);
         let mut out = vec![0u8; StripCompressor::bound((b - a) * stride)];
         let mut best: Option<(Vec<u8>, u32)> = None;
+        // Screened candidates kept for recompression: (size, strip bytes, adler).
+        let mut cands: Vec<(usize, Vec<u8>, u32)> = Vec::new();
         for &strategy in strategies {
             filtered.clear();
             match &pre {
@@ -1136,11 +1175,23 @@ fn compress_strips(
             }
             let data = &filtered[lead * stride..];
             let adler = zenflate::adler32(1, data);
-            for sc in core::iter::once(&mut *c).chain(fbc.iter_mut()) {
-                let len = sc.compress(data, k + 1 == n, &mut out, cancel)?;
+            let len = c.compress(data, last, &mut out, cancel)?;
+            if best.as_ref().is_none_or(|(z, _)| len < z.len()) {
+                debug_check_strip(c, &out[..len], data, last);
+                best = Some((out[..len].to_vec(), adler));
+            }
+            if !refine_levels.is_empty() {
+                cands.push((len, data.to_vec(), adler));
+                cands.sort_by_key(|c| c.0);
+                cands.truncate(top_k);
+            }
+        }
+        for (_, data, adler) in &cands {
+            for sc in rc.iter_mut() {
+                let len = sc.compress(data, last, &mut out, cancel)?;
                 if best.as_ref().is_none_or(|(z, _)| len < z.len()) {
-                    debug_check_strip(sc, &out[..len], data, k + 1 == n);
-                    best = Some((out[..len].to_vec(), adler));
+                    debug_check_strip(sc, &out[..len], data, last);
+                    best = Some((out[..len].to_vec(), *adler));
                 }
             }
         }
@@ -1156,8 +1207,10 @@ fn compress_strips(
                 let next = &next;
                 s.spawn(move || {
                     let mut c = StripCompressor::new(level);
-                    let mut fbc: Vec<StripCompressor> =
-                        fallbacks.iter().map(|&l| StripCompressor::new(l)).collect();
+                    let mut rc: Vec<StripCompressor> = refine_levels
+                        .iter()
+                        .map(|&l| StripCompressor::new(l))
+                        .collect();
                     let mut scratch = HeuristicScratch::new_universal();
                     let mut done = Vec::new();
                     loop {
@@ -1165,7 +1218,7 @@ fn compress_strips(
                         if k >= n {
                             break done;
                         }
-                        done.push((k, work(&mut c, &mut fbc, &mut scratch, k)));
+                        done.push((k, work(&mut c, &mut rc, &mut scratch, k)));
                     }
                 })
             })
@@ -1413,8 +1466,8 @@ pub(crate) fn compress_filtered(
     }
 
     // Multi-threaded screen-only efforts: compress strips concurrently.
-    if params.screen_is_final
-        && opts.parallel
+    if opts.parallel
+        && params.strips_apply()
         && let Some(z) = compress_strips(packed_rows, row_bytes, height, bpp, &params, &opts)?
     {
         return Ok(z);

@@ -54,11 +54,12 @@ All notable changes to zenpng are documented here.
   unfilters and expands them. Output, warnings and errors (truncation, strict
   Adler-32) match the serial decoder (`tests/decode_pipeline.rs`). Single runs
   on i265: 1024 px RGB8/RGBA8 1.34-1.51x faster, 4096 px RGB8 1.70-1.93x.
-- **Multi-threaded encode for screen-only efforts (1-7).** With
+- **Multi-threaded strip encode for efforts without brute-force or recompress
+  phases (1-17).** With
   `with_parallel(true)`, the image is split into strips of about 512 KiB of
   filtered data; worker threads filter each strip with every screening
-  strategy and compress it independently (`zenflate::png::StripCompressor`),
-  keeping the smallest. The concatenation is one ordinary zlib stream, and the
+  strategy, recompress its best candidates at the refine levels, and compress
+  it independently (`zenflate::png::StripCompressor`), keeping the smallest. The concatenation is one ordinary zlib stream, and the
   output does not depend on the thread count. Five 4096 px images on 8 cores:
   effort 1 184-303 ms -> 30-51 ms, effort 5 1.53-2.18 s -> 193-252 ms, sizes
   -0.37% to +0.25%. Off by default (as `parallel` is).

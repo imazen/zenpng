@@ -1,4 +1,5 @@
-//! Multi-threaded strip encode (`with_parallel(true)` at screen-only efforts):
+//! Multi-threaded strip encode (`with_parallel(true)` at efforts made of
+//! screening and refine only):
 //! output is the same for any thread count and decodes to the exact input.
 
 #![cfg(not(target_arch = "wasm32"))]
@@ -41,7 +42,7 @@ fn bytes(img: &ImgVec<Rgb<u8>>) -> Vec<u8> {
 fn strip_encode_is_thread_count_independent_and_lossless() {
     let img = image();
     let src = bytes(&img);
-    for effort in [1u32, 2, 5, 7] {
+    for effort in [1u32, 2, 5, 7, 9, 13] {
         let mut outs = Vec::new();
         for threads in [2usize, 3, 8] {
             let mut cfg = EncodeConfig::default()
