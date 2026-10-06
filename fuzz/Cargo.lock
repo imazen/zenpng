@@ -387,7 +387,6 @@ dependencies = [
 [[package]]
 name = "zenflate"
 version = "0.4.0"
-source = "git+https://github.com/imazen/zenflate?rev=2d4b05e03421cf13900d41adb7a255aa2a075983#2d4b05e03421cf13900d41adb7a255aa2a075983"
 dependencies = [
  "archmage",
  "enough",

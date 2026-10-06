@@ -181,7 +181,9 @@ required-features = ["_dev"]
 # commit 998edf5f, byte-identical to the published crate — keep this in sync
 # with the `zencodec-testkit` dev-dep's tag above.
 zencodec = { git = "https://github.com/imazen/zencodec", tag = "v0.1.26" }
-# DEV-ONLY: zenflate's segment APIs (`deflate_compress_segment`,
-# `StreamDecompressor::with_segment_end`) are in imazen/zenflate#9, not yet
-# released. Replace with the released version once it ships.
-zenflate = { git = "https://github.com/imazen/zenflate", rev = "2d4b05e03421cf13900d41adb7a255aa2a075983" }
+# DEV-ONLY: zenflate's PNG strip API (`zenflate::png::{StripCompressor,
+# StripDecoder}`, `CompressionLevel::png`) is in imazen/zenflate#10
+# (branch png-mode), not yet released. Local builds use the sibling checkout;
+# CI checks out png-mode at ../zenflate. Replace with the released version
+# once it ships.
+zenflate = { path = "../zenflate" }

@@ -30,6 +30,11 @@ jobs:
           - fuzz_probe
     steps:
       - uses: actions/checkout@v6
+      # DEV-ONLY: Cargo.toml patches zenflate to ../zenflate (imazen/zenflate#10,
+      # branch png-mode). Drop with the patch once zenflate releases.
+      - name: Check out zenflate png-mode at ../zenflate
+        shell: bash
+        run: git clone --depth 1 --branch png-mode https://github.com/imazen/zenflate ../zenflate
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
         with:
@@ -78,6 +83,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # DEV-ONLY: Cargo.toml patches zenflate to ../zenflate (imazen/zenflate#10,
+      # branch png-mode). Drop with the patch once zenflate releases.
+      - name: Check out zenflate png-mode at ../zenflate
+        shell: bash
+        run: git clone --depth 1 --branch png-mode https://github.com/imazen/zenflate ../zenflate
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build

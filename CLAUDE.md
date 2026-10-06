@@ -27,7 +27,7 @@ PNG encoder/decoder with SIMD-accelerated unfiltering and zenflate decompression
 
 ### Dependencies
 
-- **zenflate** (`../zenflate`) — deflate decompression (port of libdeflate to safe Rust)
+- **zenflate** (`../zenflate`, path patch) — DEFLATE compression and decompression, including the PNG strip API in `zenflate::png`
 - **archmage** — SIMD dispatch framework (`#[arcane]` entry points, `#[rite]` inlined helpers, `incant!` tier dispatch)
 - **safe_unaligned_simd** — Safe wrappers for unaligned SIMD loads/stores
 
@@ -362,7 +362,7 @@ set (real Apple, Buchanan adversarial, 26 generated). Thresholds:
 `idot::workers_for_bytes` (2 workers ≥ 2 MiB, +1 per 4 MiB). Bench:
 `examples/idot_bench.rs`, `examples/idot_encode.rs` (`--features _dev`;
 `ZENPNG_PIN`, `ZENPNG_IDOT_MIN_BYTES`, `ZENPNG_IDOT_TRACE` overrides).
-zenflate is `[patch.crates-io]`'d to imazen/zenflate#9 until released, in BOTH `Cargo.toml` and `fuzz/Cargo.toml` (separate workspace).
+zenflate is `[patch.crates-io]`'d to the sibling checkout `../zenflate` (imazen/zenflate#10, branch png-mode: `zenflate::png::{StripCompressor, StripDecoder}`, `CompressionLevel::png`) until released, in BOTH `Cargo.toml` and `fuzz/Cargo.toml` (separate workspace). CI clones png-mode into `../zenflate` after every checkout step.
 Apple ImageIO's own iDOT path is buggy (boundary Up/Avg/Paeth rows, gapped
 tables, 1/2/4-bit gray); the encoder avoids all three. Mac tooling:
 `tests/fixtures/idot/mac/` (`ssh mac`, macOS 27; `log` is a zsh builtin there,

@@ -461,12 +461,7 @@ fn run_worker(
             geo.skip_crc,
         )
         .map_err(|_| WorkerErr::Fallback)?;
-        let dec = if is_image_first {
-            zenflate::StreamDecompressor::zlib(source, geo.capacity)
-        } else {
-            zenflate::StreamDecompressor::zlib_continuation(source, geo.capacity)
-        };
-        let mut dec = dec.with_segment_end(true).with_skip_checksum(true);
+        let mut dec = zenflate::png::StripDecoder::new(source, is_image_first, geo.capacity);
 
         for r in 0..seg.rows as usize {
             // Fill until a whole filtered row is available.
@@ -530,14 +525,14 @@ fn run_worker(
             return Err(WorkerErr::Fallback);
         }
         if is_image_last {
-            if dec.ended_at_segment_boundary() {
+            if dec.ended_at_strip_boundary() {
                 return Err(WorkerErr::Fallback);
             }
-            footer = dec.footer_checksum();
-        } else if !dec.ended_at_segment_boundary() {
+            footer = dec.trailer();
+        } else if !dec.ended_at_strip_boundary() {
             return Err(WorkerErr::Fallback);
         }
-        adlers.push((dec.running_checksum(), seg.rows as usize * geo.stride));
+        adlers.push((dec.adler32(), seg.rows as usize * geo.stride));
     }
     Ok(WorkerOk { adlers, footer })
 }

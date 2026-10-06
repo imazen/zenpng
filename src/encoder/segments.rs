@@ -21,6 +21,7 @@ use alloc::vec::Vec;
 use enough::Stop;
 #[allow(unused_imports)]
 use whereat::at;
+use zenflate::png::StripCompressor;
 
 use crate::chunk::write::write_chunk;
 use crate::decoder::idot::{MAX_SEGMENTS, workers_for_bytes};
@@ -159,20 +160,23 @@ pub(crate) fn segment(
         max_threads
     }
     .clamp(1, n);
-    let compress_one = |k: usize, data: &[u8]| -> SegResult {
-        let mut c = zenflate::Compressor::new(level);
-        let mut out =
-            alloc::vec![0u8; zenflate::Compressor::deflate_compress_segment_bound(data.len())];
-        let len = c.deflate_compress_segment(data, k + 1 == n, &mut out, cancel)?;
+    let compress_one = |c: &mut StripCompressor, k: usize, data: &[u8]| -> SegResult {
+        let mut out = alloc::vec![0u8; StripCompressor::bound(data.len())];
+        let len = c.compress(data, k + 1 == n, &mut out, cancel)?;
         out.truncate(len);
         Ok(out)
     };
+    // One compressor per worker; strips don't depend on what it compressed
+    // before, so the output is the same for any thread count.
+    let mut main = StripCompressor::new(level);
+    let header = main.zlib_header();
     let mut parts: Vec<Option<SegResult>> = (0..n).map(|_| None).collect();
     if threads <= 1 {
         for (k, d) in slices.iter().enumerate() {
-            parts[k] = Some(compress_one(k, d));
+            parts[k] = Some(compress_one(&mut main, k, d));
         }
     } else {
+        drop(main);
         // Workers take segments round-robin by index.
         let results: Vec<Vec<(usize, SegResult)>> = std::thread::scope(|s| {
             let handles: Vec<_> = (0..threads)
@@ -180,9 +184,10 @@ pub(crate) fn segment(
                     let slices = &slices;
                     let compress_one = &compress_one;
                     s.spawn(move || {
+                        let mut c = StripCompressor::new(level);
                         (t..n)
                             .step_by(threads)
-                            .map(|k| (k, compress_one(k, slices[k])))
+                            .map(|k| (k, compress_one(&mut c, k, slices[k])))
                             .collect::<Vec<_>>()
                     })
                 })
@@ -213,10 +218,10 @@ pub(crate) fn segment(
         }
     }
 
-    // 4. zlib framing: the pipeline's header, combined Adler-32 trailer.
+    // 4. zlib framing: the strip level's header, combined Adler-32 trailer.
     let adler = zenflate::adler32(1, &filtered);
     let mut first = Vec::with_capacity(2 + out_parts[0].len());
-    first.extend_from_slice(&zlib[..2]);
+    first.extend_from_slice(&header);
     first.extend_from_slice(&out_parts[0]);
     out_parts[0] = first;
     out_parts[n - 1].extend_from_slice(&adler.to_be_bytes());

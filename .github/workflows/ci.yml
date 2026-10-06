@@ -36,6 +36,11 @@ jobs:
           - windows-11-arm
     steps:
       - uses: actions/checkout@v6
+      # DEV-ONLY: Cargo.toml patches zenflate to ../zenflate (imazen/zenflate#10,
+      # branch png-mode). Drop with the patch once zenflate releases.
+      - name: Check out zenflate png-mode at ../zenflate
+        shell: bash
+        run: git clone --depth 1 --branch png-mode https://github.com/imazen/zenflate ../zenflate
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -70,6 +75,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
+      # DEV-ONLY: Cargo.toml patches zenflate to ../zenflate (imazen/zenflate#10,
+      # branch png-mode). Drop with the patch once zenflate releases.
+      - name: Check out zenflate png-mode at ../zenflate
+        shell: bash
+        run: git clone --depth 1 --branch png-mode https://github.com/imazen/zenflate ../zenflate
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Check zenpng iDOT output against ImageIO
@@ -80,6 +90,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # DEV-ONLY: Cargo.toml patches zenflate to ../zenflate (imazen/zenflate#10,
+      # branch png-mode). Drop with the patch once zenflate releases.
+      - name: Check out zenflate png-mode at ../zenflate
+        shell: bash
+        run: git clone --depth 1 --branch png-mode https://github.com/imazen/zenflate ../zenflate
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cross
       - uses: Swatinem/rust-cache@v2
@@ -105,6 +120,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # DEV-ONLY: Cargo.toml patches zenflate to ../zenflate (imazen/zenflate#10,
+      # branch png-mode). Drop with the patch once zenflate releases.
+      - name: Check out zenflate png-mode at ../zenflate
+        shell: bash
+        run: git clone --depth 1 --branch png-mode https://github.com/imazen/zenflate ../zenflate
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip1
@@ -146,6 +166,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # DEV-ONLY: Cargo.toml patches zenflate to ../zenflate (imazen/zenflate#10,
+      # branch png-mode). Drop with the patch once zenflate releases.
+      - name: Check out zenflate png-mode at ../zenflate
+        shell: bash
+        run: git clone --depth 1 --branch png-mode https://github.com/imazen/zenflate ../zenflate
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -177,6 +202,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # DEV-ONLY: Cargo.toml patches zenflate to ../zenflate (imazen/zenflate#10,
+      # branch png-mode). Drop with the patch once zenflate releases.
+      - name: Check out zenflate png-mode at ../zenflate
+        shell: bash
+        run: git clone --depth 1 --branch png-mode https://github.com/imazen/zenflate ../zenflate
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -193,6 +223,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # DEV-ONLY: Cargo.toml patches zenflate to ../zenflate (imazen/zenflate#10,
+      # branch png-mode). Drop with the patch once zenflate releases.
+      - name: Check out zenflate png-mode at ../zenflate
+        shell: bash
+        run: git clone --depth 1 --branch png-mode https://github.com/imazen/zenflate ../zenflate
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -205,6 +240,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # DEV-ONLY: Cargo.toml patches zenflate to ../zenflate (imazen/zenflate#10,
+      # branch png-mode). Drop with the patch once zenflate releases.
+      - name: Check out zenflate png-mode at ../zenflate
+        shell: bash
+        run: git clone --depth 1 --branch png-mode https://github.com/imazen/zenflate ../zenflate
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
       - uses: Swatinem/rust-cache@v2
@@ -217,6 +257,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # DEV-ONLY: Cargo.toml patches zenflate to ../zenflate (imazen/zenflate#10,
+      # branch png-mode). Drop with the patch once zenflate releases.
+      - name: Check out zenflate png-mode at ../zenflate
+        shell: bash
+        run: git clone --depth 1 --branch png-mode https://github.com/imazen/zenflate ../zenflate
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
