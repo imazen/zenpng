@@ -147,7 +147,9 @@ impl EffortParams {
     /// `_dev` only: replace effort `e`'s settings from the environment, for
     /// ladder sweeps with `benches/pareto.rs` without rebuilding.
     /// `ZENPNG_LADDER_E<e>="<strategies>|<screen>[|<refine,...>[|<top_k>[|nofb]]]"`
-    /// (`nofb`: don't follow zenflate's monotonicity fallback chain).
+    /// (`nofb`: don't follow zenflate's monotonicity fallback chain; `fb` to
+    /// follow it). An optional sixth field `bf=<rows>:<level>,...` adds
+    /// brute-force filter configs.
     /// Strategies: `none sub up avg paeth minsum entropy bigrams bigent` or
     /// the sets `minimal fast heuristic`, comma-separated. Levels: `g<n>`
     /// (`CompressionLevel::new`) or `p<n>` (`CompressionLevel::png`). With no
@@ -200,6 +202,19 @@ impl EffortParams {
             .map(|k| k.trim().parse().expect("ZENPNG_LADDER top_k"))
             .unwrap_or(if refine.is_empty() { 1 } else { 3 });
         let fallbacks = parts.next().map(str::trim) != Some("nofb");
+        // Optional brute-force configs: `bf=<context_rows>:<eval_level>,...`.
+        let brute: Vec<(usize, u32)> = parts
+            .next()
+            .and_then(|t| t.trim().strip_prefix("bf="))
+            .map(|v| {
+                v.split(',')
+                    .map(|c| {
+                        let (r, e) = c.split_once(':').expect("bf=<rows>:<level>");
+                        (r.parse().expect("bf rows"), e.parse().expect("bf level"))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         Some(Self {
             zenflate_effort: refine.last().copied().unwrap_or(screen),
             strategies: Box::leak(strategies.into_boxed_slice()),
@@ -207,7 +222,7 @@ impl EffortParams {
             screen_is_final: refine.is_empty(),
             top_k,
             refine_efforts: Box::leak(refine.into_boxed_slice()),
-            brute_configs: &[],
+            brute_configs: Box::leak(brute.into_boxed_slice()),
             block_brute_configs: &[],
             fork_brute_efforts: &[],
             adaptive_fork_configs: &[],
