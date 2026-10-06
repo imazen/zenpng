@@ -25,6 +25,8 @@ at 1024 px across all categories). Medians:
 - e13's cost is the refine phase: 3 candidates × (Lazy-17 + the Greedy-10 and
   FastHt-9 monotonicity fallbacks), plus a roundtrip decompress of every
   compressed candidate (13.6% of instructions at e13, 23% at e1).
+- e4 runs the 9-strategy HEURISTIC set (with BigEnt) while e5–e7 run the
+  5-strategy FAST set, so e4 is slower than e7 and larger (ARM: 337 vs 198 ms).
 
 
 Empirical analysis of zenpng's compression pipeline to find where time goes

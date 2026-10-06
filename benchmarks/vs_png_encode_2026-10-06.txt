@@ -71,3 +71,16 @@ input                   e7     e13  MS+z17  MS+z20  pngBal
 # flush_block_inner      7.4%
 # bigram_entropy (BigEnt) 3.6%, bigrams 3.0%, log2 2.2%
 # Effort 1: verify is 23% of instructions; effort 7: 17.5%.
+
+## 6. ARM (partial run, 7 inputs at 1024 px; e4 uses the 9-strategy HEURISTIC set and is slower than e7)
+ARM Neoverse-N1 (arm-big, core 3), 7 RGB8 inputs at 1024 px (partial run), zenpng 726f280
+zenpng_e1               29.0 ms  size/png_high 1.096
+zenpng_e4              336.8 ms  size/png_high 1.089
+zenpng_e7              197.5 ms  size/png_high 1.077
+zenpng_e9              390.5 ms  size/png_high 1.054
+zenpng_e10             713.1 ms  size/png_high 1.035
+zenpng_e11             781.6 ms  size/png_high 1.019
+zenpng_e13             883.5 ms  size/png_high 1.008
+png_main_fast            8.7 ms  size/png_high 1.119
+png_main_balanced       77.6 ms  size/png_high 1.014
+png_main_high          411.2 ms  size/png_high 1.000
