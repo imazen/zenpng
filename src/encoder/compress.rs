@@ -101,7 +101,27 @@ struct EffortParams {
     /// (refine, single-strategy final pass, strips). Off for rungs inside the
     /// PNG ladder, whose levels only widen the search on filtered rows.
     fallbacks: bool,
+    /// Lower rungs' screens, as (strategy subset, level): each one's winner
+    /// among `strategies` is refined too, so this rung's search contains the
+    /// lower rungs' even where its own screen ranks differently.
+    anchors: &'static [Anchor],
 }
+
+/// A lower rung's screen: the subset of strategies it screened and the level.
+type Anchor = (&'static [Strategy], Zl);
+/// Screens of efforts 2-7 (Paeth and MinSum at png(1)).
+const ANCHORS_E8: &[Anchor] = &[(PAETH_MINSUM_STRATEGIES, P(1))];
+/// ... and of efforts 8-11 (None, Paeth, MinSum at png(4)).
+const ANCHORS_E12: &[Anchor] = &[
+    (PAETH_MINSUM_STRATEGIES, P(1)),
+    (NONE_PAETH_MINSUM_STRATEGIES, P(4)),
+];
+/// ... and of efforts 12-18 (the same three at png(10)).
+const ANCHORS_E19: &[Anchor] = &[
+    (PAETH_MINSUM_STRATEGIES, P(1)),
+    (NONE_PAETH_MINSUM_STRATEGIES, P(4)),
+    (NONE_PAETH_MINSUM_STRATEGIES, P(10)),
+];
 
 impl EffortParams {
     /// Whether [`compress_strips`] can run this effort: screening and refine
@@ -240,6 +260,7 @@ impl EffortParams {
             full_optimal_effort: None,
             full_optimal_only: false,
             fallbacks,
+            anchors: &[],
         })
     }
 
@@ -278,6 +299,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: &[],
             },
             // ── Effort ladder (2026-10-06) ──
             //
@@ -319,6 +341,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: false,
+                anchors: &[],
             },
             2 => Self {
                 zenflate_effort: P(2),
@@ -336,6 +359,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: false,
+                anchors: &[],
             },
             3 => Self {
                 zenflate_effort: P(4),
@@ -353,6 +377,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: false,
+                anchors: &[],
             },
             4 => Self {
                 zenflate_effort: P(6),
@@ -370,6 +395,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: false,
+                anchors: &[],
             },
             5 => Self {
                 zenflate_effort: P(8),
@@ -387,6 +413,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: false,
+                anchors: &[],
             },
             6 => Self {
                 zenflate_effort: P(10),
@@ -404,6 +431,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: &[],
             },
             7 => Self {
                 zenflate_effort: P(12),
@@ -421,6 +449,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: &[],
             },
             8 => Self {
                 zenflate_effort: P(12),
@@ -438,6 +467,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E8,
             },
             9 => Self {
                 zenflate_effort: P(14),
@@ -455,6 +485,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E8,
             },
             10 => Self {
                 zenflate_effort: P(16),
@@ -472,6 +503,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E8,
             },
             11 => Self {
                 zenflate_effort: P(17),
@@ -489,6 +521,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E8,
             },
             12 => Self {
                 zenflate_effort: P(17),
@@ -506,6 +539,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E12,
             },
             13 => Self {
                 zenflate_effort: P(19),
@@ -523,6 +557,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E12,
             },
             14 => Self {
                 zenflate_effort: P(24),
@@ -540,6 +575,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E12,
             },
             15 => Self {
                 zenflate_effort: P(26),
@@ -557,6 +593,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E12,
             },
             16 => Self {
                 zenflate_effort: P(26),
@@ -574,6 +611,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E12,
             },
             17 => Self {
                 zenflate_effort: P(26),
@@ -591,6 +629,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E12,
             },
             18 => Self {
                 zenflate_effort: P(26),
@@ -608,6 +647,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E12,
             },
             19 => Self {
                 zenflate_effort: P(26),
@@ -625,6 +665,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E19,
             },
             20 => Self {
                 zenflate_effort: P(26),
@@ -642,6 +683,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E19,
             },
             21 => Self {
                 zenflate_effort: P(26),
@@ -659,6 +701,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E19,
             },
             22 => Self {
                 zenflate_effort: P(26),
@@ -676,6 +719,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E19,
             },
             23 => Self {
                 zenflate_effort: P(26),
@@ -702,6 +746,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E19,
             },
             24 => Self {
                 zenflate_effort: P(26),
@@ -728,6 +773,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E19,
             },
             25 => Self {
                 zenflate_effort: P(26),
@@ -754,6 +800,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E19,
             },
             26 => Self {
                 zenflate_effort: P(26),
@@ -780,6 +827,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E19,
             },
             27 => Self {
                 zenflate_effort: P(26),
@@ -806,6 +854,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E19,
             },
             28 => Self {
                 zenflate_effort: P(26),
@@ -832,6 +881,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E19,
             },
             29 => Self {
                 zenflate_effort: P(26),
@@ -858,6 +908,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E19,
             },
             _ => Self {
                 // effort 30
@@ -885,6 +936,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                anchors: ANCHORS_E19,
             },
         }
     }
@@ -917,6 +969,7 @@ impl EffortParams {
             full_optimal_effort: Some(effort),
             full_optimal_only: false,
             fallbacks: true,
+            anchors: ANCHORS_E19,
         }
     }
 
@@ -938,6 +991,7 @@ impl EffortParams {
             full_optimal_effort: Some(effort),
             full_optimal_only: false,
             fallbacks: true,
+            anchors: ANCHORS_E19,
         }
     }
 
@@ -978,6 +1032,7 @@ impl EffortParams {
             full_optimal_effort: Some(effort),
             full_optimal_only: false,
             fallbacks: true,
+            anchors: ANCHORS_E19,
         }
     }
 }
@@ -1292,10 +1347,16 @@ fn compress_strips(
     } else {
         params.top_k.max(1)
     };
+    let anchors: &[Anchor] = if params.screen_is_final {
+        &[]
+    } else {
+        params.anchors
+    };
 
     type Strip = Result<(Vec<u8>, u32, usize), zenflate::CompressionError>;
     let work = |c: &mut StripCompressor,
                 rc: &mut Vec<StripCompressor>,
+                ac: &mut Vec<Option<StripCompressor>>,
                 scratch: &mut HeuristicScratch,
                 k: usize|
      -> Strip {
@@ -1336,11 +1397,42 @@ fn compress_strips(
             }
             if !refine_levels.is_empty() {
                 cands.push((len, data.to_vec(), adler));
-                cands.sort_by_key(|c| c.0);
-                cands.truncate(top_k);
             }
         }
-        for (_, data, adler) in &cands {
+        // As in `run_phase1_screen`: the top `top_k` by screen size plus the
+        // winner of each lower rung's screen (`anchors`). `cands` is in
+        // strategy order.
+        let mut picked: Vec<usize> = (0..cands.len()).collect();
+        picked.sort_by_key(|&i| cands[i].0);
+        picked.truncate(top_k);
+        for ((subset, _), ac) in anchors.iter().zip(ac.iter_mut()) {
+            let mut winner: Option<(usize, usize)> = None;
+            for (i, (len, data, adler)) in cands.iter().enumerate() {
+                if !subset.contains(&strategies[i]) {
+                    continue;
+                }
+                let len = match ac {
+                    None => *len,
+                    Some(c) => {
+                        let len = c.compress(data, last, &mut out, cancel)?;
+                        if best.as_ref().is_none_or(|(z, _)| len < z.len()) {
+                            debug_check_strip(c, &out[..len], data, last);
+                            best = Some((out[..len].to_vec(), *adler));
+                        }
+                        len
+                    }
+                };
+                if winner.is_none_or(|(_, w)| len < w) {
+                    winner = Some((i, len));
+                }
+            }
+            if let Some((i, _)) = winner
+                && !picked.contains(&i)
+            {
+                picked.push(i);
+            }
+        }
+        for (_, data, adler) in picked.iter().map(|&i| &cands[i]) {
             for sc in rc.iter_mut() {
                 let len = sc.compress(data, last, &mut out, cancel)?;
                 if best.as_ref().is_none_or(|(z, _)| len < z.len()) {
@@ -1365,6 +1457,13 @@ fn compress_strips(
                         .iter()
                         .map(|&l| StripCompressor::new(l))
                         .collect();
+                    // Anchors screened at this rung's own level reuse its sizes.
+                    let mut ac: Vec<Option<StripCompressor>> = anchors
+                        .iter()
+                        .map(|&(_, l)| {
+                            (l.level() != level).then(|| StripCompressor::new(l.level()))
+                        })
+                        .collect();
                     let mut scratch = HeuristicScratch::new_universal();
                     let mut done = Vec::new();
                     loop {
@@ -1372,7 +1471,7 @@ fn compress_strips(
                         if k >= n {
                             break done;
                         }
-                        done.push((k, work(&mut c, &mut rc, &mut scratch, k)));
+                        done.push((k, work(&mut c, &mut rc, &mut ac, &mut scratch, k)));
                     }
                 })
             })
@@ -1702,7 +1801,7 @@ pub(crate) fn compress_filtered(
         None
     };
 
-    let screen_results = run_phase1_screen(
+    let (screen_results, anchor_extra) = run_phase1_screen(
         &mut state,
         packed_rows,
         row_bytes,
@@ -1710,6 +1809,16 @@ pub(crate) fn compress_filtered(
         bpp,
         strategies,
         screen_effort,
+        if params.screen_is_final {
+            1
+        } else {
+            params.top_k
+        },
+        if params.screen_is_final {
+            &[]
+        } else {
+            params.anchors
+        },
         precomputed.as_deref(),
         &opts,
         stats.as_deref_mut(),
@@ -1762,6 +1871,7 @@ pub(crate) fn compress_filtered(
         &mut state,
         &screen_results,
         &params,
+        anchor_extra,
         &mut recompress_candidates,
         &opts,
         stats.as_deref_mut(),
@@ -1836,15 +1946,17 @@ fn is_filter_variance_low(screen_results: &ScreenResults) -> bool {
     if screen_results.len() < 3 {
         return false;
     }
-    let best = screen_results[0].0;
-    let worst = screen_results[screen_results.len() - 1].0;
+    let best = screen_results.iter().map(|r| r.0).min().unwrap_or(0);
+    let worst = screen_results.iter().map(|r| r.0).max().unwrap_or(0);
     best > 0 && (worst as f64 / best as f64) < 1.01
 }
 
 /// Phase 1 — Screen: apply each filter strategy and compress at `screen_effort`.
 ///
 /// Returns `(screen_size, filtered_bytes)` per surviving strategy, sorted
-/// ascending by size. Updates `state.best_compressed` if any strategy
+/// ascending by size except that the winners of `anchors` (lower rungs'
+/// screens) that are not in the first `top_k` follow right after it; the
+/// second value is how many were moved there. Updates `state.best_compressed` if any strategy
 /// produces a smaller output than the running best.
 #[allow(clippy::too_many_arguments)]
 fn run_phase1_screen(
@@ -1855,10 +1967,12 @@ fn run_phase1_screen(
     bpp: usize,
     strategies: &[Strategy],
     screen_effort: Zl,
+    top_k: usize,
+    anchors: &[Anchor],
     precomputed: Option<&[u8]>,
     opts: &super::CompressOptions<'_>,
     mut stats: Option<&mut PhaseStats>,
-) -> crate::error::Result<ScreenResults> {
+) -> crate::error::Result<(ScreenResults, usize)> {
     use std::time::Instant;
 
     let phase_start = stats.is_some().then(Instant::now);
@@ -1893,7 +2007,56 @@ fn run_phase1_screen(
         )?;
     }
 
-    screen_results.sort_by_key(|(size, _)| *size);
+    // Winners of the lower rungs' screens (`anchors`), by index into
+    // `strategies` (`screen_results` is still in strategy order here).
+    let mut anchor_winners: Vec<usize> = Vec::new();
+    for &(subset, level) in anchors {
+        let mut compressor = (level != screen_effort).then(|| take_compressor(level.level()));
+        let mut winner: Option<(usize, usize)> = None;
+        for (i, (size, filtered)) in screen_results.iter().enumerate() {
+            if !subset.contains(&strategies[i]) {
+                continue;
+            }
+            let size = match &mut compressor {
+                None => *size,
+                // The anchor's own output is a candidate too, as it was on
+                // the lower rung.
+                Some(c) => try_compress(
+                    filtered,
+                    core::slice::from_mut(c),
+                    &mut state.compress_buf,
+                    &mut state.best_compressed,
+                    opts.cancel,
+                )?,
+            };
+            if winner.is_none_or(|(_, w)| size < w) {
+                winner = Some((i, size));
+            }
+        }
+        if let Some(c) = compressor {
+            give_compressor(level.level(), c);
+        }
+        if let Some((i, _)) = winner
+            && !anchor_winners.contains(&i)
+        {
+            anchor_winners.push(i);
+        }
+    }
+
+    // Sort by screen size (stable: ties keep strategy order), then move
+    // anchor winners that missed the top `top_k` right behind it.
+    let mut order: Vec<usize> = (0..screen_results.len()).collect();
+    order.sort_by_key(|&i| screen_results[i].0);
+    let top = top_k.min(order.len());
+    let extra: Vec<usize> = anchor_winners
+        .iter()
+        .copied()
+        .filter(|i| !order[..top].contains(i))
+        .collect();
+    order.retain(|i| !extra.contains(i));
+    order.splice(top..top, extra.iter().copied());
+    let mut slots: Vec<Option<(usize, Vec<u8>)>> = screen_results.drain(..).map(Some).collect();
+    screen_results.extend(order.iter().map(|&i| slots[i].take().expect("permutation")));
 
     if let (Some(s), Some(t)) = (&mut stats, phase_start) {
         let tried = screen_results.len();
@@ -1905,7 +2068,7 @@ fn run_phase1_screen(
         });
     }
 
-    Ok(screen_results)
+    Ok((screen_results, extra.len()))
 }
 
 /// Parallel screening: each strategy runs in its own scoped thread with its
@@ -2072,6 +2235,7 @@ fn run_phase2_refine(
     state: &mut CompressState,
     screen_results: &ScreenResults,
     params: &EffortParams,
+    anchor_extra: usize,
     recompress_candidates: &mut RecompressCandidates,
     opts: &super::CompressOptions<'_>,
     mut stats: Option<&mut PhaseStats>,
@@ -2080,7 +2244,9 @@ fn run_phase2_refine(
 
     let refine_tiers = params.refine_efforts;
     let phase_start = stats.is_some().then(Instant::now);
-    let top_n = screen_results.len().min(params.top_k);
+    // The top-k screened candidates plus the lower rungs' screen winners
+    // `run_phase1_screen` placed right behind them.
+    let top_n = screen_results.len().min(params.top_k + anchor_extra);
 
     // If no refine tiers but recompress is requested, pass screen results
     // straight to Phase 4. Screen sizes serve as the ranking.
@@ -3136,6 +3302,27 @@ mod tests {
                 hi.screen_effort.rank() >= lo.screen_effort.rank(),
                 "e{effort}: screen level drops"
             );
+            // Every lower rung's screen (its own and its anchors) is a screen
+            // or an anchor here, so its winner is always refined. e1's
+            // single Paeth candidate is a member of e2's pair at png(1).
+            let screens = |p: &EffortParams| {
+                let mut v: Vec<(Vec<String>, String)> = p
+                    .anchors
+                    .iter()
+                    .map(|(s, l)| (s.iter().map(strat_key).collect(), alloc::format!("{l}")))
+                    .collect();
+                v.push((
+                    p.strategies.iter().map(strat_key).collect(),
+                    alloc::format!("{}", p.screen_effort),
+                ));
+                v
+            };
+            if effort > 2 {
+                let his = screens(&hi);
+                for s in screens(&lo) {
+                    assert!(his.contains(&s), "e{effort}: lost screen {s:?}");
+                }
+            }
             assert!(hi.top_k >= lo.top_k, "e{effort}: top_k shrinks");
             let top = |p: &EffortParams| {
                 p.refine_efforts
