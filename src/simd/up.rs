@@ -4,8 +4,6 @@
 //! or 16 bytes (SSE2) at a time.
 
 use archmage::prelude::*;
-#[cfg(target_arch = "aarch64")]
-use safe_unaligned_simd::aarch64::{vld1q_u8, vst1q_u8};
 #[cfg(target_arch = "wasm32")]
 use safe_unaligned_simd::wasm32::{v128_load, v128_store};
 #[cfg(target_arch = "x86_64")]
@@ -14,22 +12,10 @@ use safe_unaligned_simd::x86_64::{
 };
 
 pub(crate) fn unfilter_up(row: &mut [u8], prev: &[u8]) {
-    // aarch64: measured SLOWER than the scalar path. NEON is baseline on
-    // AArch64, so LLVM autovectorises the scalar body and the hand-written
-    // kernel competes with the autovectoriser, not with scalar code.
-    // Measured on a 1920-px row (benches/unfilter_tiers.rs): up/rgb8 0.24us vs 0.18us (0.72x); up/rgba8 0.30us vs 0.22us (0.71x).
-    // Unfiltering is exact integer arithmetic so the paths are identical by
-    // construction — verified 0 mismatching bytes across all filters, bpp and
-    // widths (1920/641/17/5/1).
-    if cfg!(target_arch = "aarch64") {
-        use archmage::SimdToken;
-        return unfilter_up_impl_scalar(
-            ScalarToken::summon().expect("scalar token is infallible"),
-            row,
-            prev,
-        );
-    }
-    incant!(unfilter_up_impl(row, prev), [v3, v1, neon, wasm128, scalar])
+    // No NEON kernel: on aarch64 LLVM autovectorises the scalar loop, which
+    // measured 1.5x faster than a hand-written vaddq_u8 kernel (Neoverse-N1,
+    // benches/unfilter_tiers.rs, 2026-10-06; kernel removed).
+    incant!(unfilter_up_impl(row, prev), [v3, v1, wasm128, scalar])
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -72,28 +58,6 @@ fn unfilter_up_impl_v1(_token: X64V1Token, row: &mut [u8], prev: &[u8]) {
         let vp = _mm_loadu_si128(<&[u8; 16]>::try_from(&prev[i..i + 16]).unwrap());
         let sum = _mm_add_epi8(vr, vp);
         _mm_storeu_si128(<&mut [u8; 16]>::try_from(&mut row[i..i + 16]).unwrap(), sum);
-        i += 16;
-    }
-
-    while i < len {
-        row[i] = row[i].wrapping_add(prev[i]);
-        i += 1;
-    }
-}
-
-// ── NEON (aarch64) ──────────────────────────────────────────────────
-
-#[cfg(target_arch = "aarch64")]
-#[arcane]
-pub(crate) fn unfilter_up_impl_neon(_token: NeonToken, row: &mut [u8], prev: &[u8]) {
-    let len = row.len().min(prev.len());
-    let mut i = 0;
-
-    while i + 16 <= len {
-        let vr = vld1q_u8(<&[u8; 16]>::try_from(&row[i..i + 16]).unwrap());
-        let vp = vld1q_u8(<&[u8; 16]>::try_from(&prev[i..i + 16]).unwrap());
-        let sum = vaddq_u8(vr, vp);
-        vst1q_u8(<&mut [u8; 16]>::try_from(&mut row[i..i + 16]).unwrap(), sum);
         i += 16;
     }
 

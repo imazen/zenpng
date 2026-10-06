@@ -66,7 +66,7 @@ against the spec predictor over all 2^24 inputs.
 
 - **Paeth**: bpp=4 `[v2, neon, wasm128]`; bpp=3 `[wasm128]`, else fixed kernel
 - **Sub**: bpp=4 `[v1, neon, wasm128]`; bpp=3 `[wasm128]`, else fixed kernel
-- **Up**: `[v3, v1, wasm128]`; aarch64 uses the autovectorised scalar loop
+- **Up**: `[v3, v1, wasm128]`; aarch64 uses the autovectorised scalar loop (NEON kernel removed, 0.66× of it)
 - **Avg**: bpp=4 `[v1, neon, wasm128]`; all other bpp use the fixed kernel
 
 The x86/NEON bpp=3 Sub and Paeth kernels were deleted 2026-10-06: the fixed

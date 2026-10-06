@@ -24,16 +24,11 @@ mod paeth;
 #[allow(dead_code, unused_imports)]
 #[path = "../src/simd/sub.rs"]
 mod sub;
-#[cfg(target_arch = "aarch64")]
-// Source modules include unit-test imports unused by this harness-free bench.
-#[allow(dead_code, unused_imports)]
-#[path = "../src/simd/up.rs"]
-mod up;
 
-/// Filters with a hand-written NEON kernel (Up for every bpp, the rest bpp=4).
+/// Filters with a hand-written NEON kernel: Sub, Average and Paeth at bpp=4.
 #[cfg(target_arch = "aarch64")]
 fn has_direct_neon(ft: u8, bpp: usize) -> bool {
-    ft == 2 || bpp == 4
+    ft != 2 && bpp == 4
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -42,7 +37,6 @@ fn direct_neon(ft: u8, row: &mut [u8], prev: &[u8], bpp: usize) {
     let t = archmage::NeonToken::summon().expect("native NEON enabled");
     match (ft, bpp) {
         (1, 4) => sub::unfilter_sub_bpp4_impl_neon(t, row),
-        (2, _) => up::unfilter_up_impl_neon(t, row, prev),
         (3, 4) => avg::unfilter_avg_bpp4_impl_neon(t, row, prev),
         (4, 4) => paeth::unfilter_paeth_bpp4_impl_neon(t, row, prev),
         _ => panic!("no explicit NEON kernel for this filter/bpp"),
