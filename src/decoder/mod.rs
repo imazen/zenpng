@@ -3,6 +3,7 @@
 pub(crate) mod apng;
 pub(crate) mod idot;
 pub(crate) mod interlace;
+pub(crate) mod pipeline;
 pub(crate) mod postprocess;
 pub(crate) mod row;
 
@@ -297,8 +298,19 @@ pub(crate) fn decode_png(
             idot::Outcome::Fallback => false,
         };
 
+        // Large images: inflate on a second thread while this one unfilters.
+        let pipelined =
+            !parallel_done && pipeline::worth_it(h * (raw_row_bytes + 1), limits.max_threads);
+        if pipelined {
+            let bpp = reader.bpp();
+            let zeros = crate::alloc_util::alloc_zeroed(alloc_pref, false, raw_row_bytes)?;
+            reader = pipeline::run(reader, h, cancel, |y, f| {
+                pipeline::unfilter_into(&mut all_pixels, y, raw_row_bytes, f, &zeros, bpp)
+            })?;
+        }
+
         // Row 0: prev is zeros (already zeroed by alloc_zeroed)
-        if h > 0 && !parallel_done {
+        if h > 0 && !parallel_done && !pipelined {
             let zeros = crate::alloc_util::alloc_zeroed(alloc_pref, false, raw_row_bytes)?;
             match reader.next_raw_row_direct(&mut all_pixels[..raw_row_bytes], &zeros) {
                 Some(Ok(())) => {}
@@ -311,7 +323,7 @@ pub(crate) fn decode_png(
         }
 
         // Rows 1..h: prev is the previous row in the output buffer
-        for y in (1..h).filter(|_| !parallel_done) {
+        for y in (1..h).filter(|_| !parallel_done && !pipelined) {
             let (prev_part, cur_part) = all_pixels.split_at_mut(y * raw_row_bytes);
             let prev = &prev_part[(y - 1) * raw_row_bytes..];
             let dest = &mut cur_part[..raw_row_bytes];
@@ -327,7 +339,7 @@ pub(crate) fn decode_png(
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
         }
 
-        if !parallel_done {
+        if !parallel_done && !pipelined {
             reader.finish_stream()?;
         }
         reader.finish_metadata();
@@ -388,7 +400,31 @@ pub(crate) fn decode_png(
         idot::Outcome::Done
     );
 
-    if !parallel_done {
+    let pipelined =
+        !parallel_done && pipeline::worth_it(h * (ihdr.raw_row_bytes()? + 1), limits.max_threads);
+    if pipelined {
+        let raw = ihdr.raw_row_bytes()?;
+        let bpp = reader.bpp();
+        let out = buf.bytes_mut();
+        if expander.is_copy() {
+            let zeros = crate::alloc_util::alloc_zeroed(alloc_pref, false, out_row_bytes)?;
+            reader = pipeline::run(reader, h, cancel, |y, f| {
+                pipeline::unfilter_into(out, y, out_row_bytes, f, &zeros, bpp)
+            })?;
+        } else {
+            let mut prev = alloc::vec![0u8; raw];
+            let mut cur = alloc::vec![0u8; raw];
+            reader = pipeline::run(reader, h, cancel, |y, f| {
+                cur.copy_from_slice(&f[1..]);
+                row::unfilter_row(f[0], &mut cur, &prev, bpp)?;
+                expander.expand(&cur, &mut out[y * out_row_bytes..(y + 1) * out_row_bytes]);
+                core::mem::swap(&mut cur, &mut prev);
+                Ok(())
+            })?;
+        }
+    }
+
+    if !parallel_done && !pipelined {
         let out = buf.bytes_mut();
         let end = |y: usize| {
             at!(PngError::Truncated(alloc::format!(
@@ -423,7 +459,7 @@ pub(crate) fn decode_png(
         }
     }
 
-    if !parallel_done {
+    if !parallel_done && !pipelined {
         reader.finish_stream()?;
     }
     reader.finish_metadata();

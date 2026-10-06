@@ -48,6 +48,12 @@ All notable changes to zenpng are documented here.
 - Effort 4 now uses effort 5's settings (5 strategies at FastHt-5). It ran 9
   strategies at Turbo, matched effort 3's output on 27 of 36 test images, and
   was slower than effort 7 (29.8 → 18.0 ms median).
+- **Two-thread decode for large ordinary PNGs.** When threads are allowed
+  (`max_threads` 0, the default, or above 1) and the filtered stream is at
+  least 1 MiB, a second thread inflates rows while the caller's thread
+  unfilters and expands them. Output, warnings and errors (truncation, strict
+  Adler-32) match the serial decoder (`tests/decode_pipeline.rs`). Single runs
+  on i265: 1024 px RGB8/RGBA8 1.34-1.51x faster, 4096 px RGB8 1.70-1.93x.
 - **Multi-threaded encode for screen-only efforts (1-7).** With
   `with_parallel(true)`, the image is split into strips of about 512 KiB of
   filtered data; worker threads filter each strip with every screening

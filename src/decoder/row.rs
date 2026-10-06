@@ -596,6 +596,35 @@ impl<'a> RowDecoder<'a> {
     /// The caller owns both buffers — typically `prev` is the previous row in
     /// the output buffer (via `split_at_mut`), eliminating the prev_row copy.
     /// For row 0, pass a zeroed slice.
+    /// Copy the next filtered row (filter byte + data, [`stride`](Self::stride)
+    /// bytes) into `dest` without unfiltering it, for a consumer that
+    /// unfilters on another thread.
+    pub(crate) fn next_filtered_row(
+        &mut self,
+        dest: &mut [u8],
+    ) -> Option<crate::error::Result<()>> {
+        if self.rows_yielded >= self.ihdr.height {
+            return None;
+        }
+        if let Err(e) = self.fill_stride() {
+            return Some(Err(e));
+        }
+        dest[..self.stride].copy_from_slice(&self.decompressor.peek()[..self.stride]);
+        self.decompressor.advance(self.stride);
+        self.rows_yielded += 1;
+        Some(Ok(()))
+    }
+
+    /// Filtered row length: filter byte + raw row bytes.
+    pub(crate) fn stride(&self) -> usize {
+        self.stride
+    }
+
+    /// Bytes per complete pixel, as the unfilter step uses it.
+    pub(crate) fn bpp(&self) -> usize {
+        self.bpp
+    }
+
     pub fn next_raw_row_direct(
         &mut self,
         dest: &mut [u8],

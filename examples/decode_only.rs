@@ -15,7 +15,9 @@ fn main() {
         )
     });
     let source = std::fs::read(&path).expect("read");
-    let config = zenpng::PngDecodeConfig::none();
+    // DECODE_THREADS: decoder max_threads (default 1, single-threaded).
+    let threads = std::env::var("DECODE_THREADS").map_or(1, |t| t.parse().unwrap());
+    let config = zenpng::PngDecodeConfig::none().with_max_threads(threads);
     // Warmup
     let _ = zenpng::decode(&source, &config, &Unstoppable).unwrap();
     // Profile iterations (default 3; pass more for sampling profilers)
@@ -23,8 +25,13 @@ fn main() {
         .nth(2)
         .and_then(|n| n.parse().ok())
         .unwrap_or(3);
+    let t = std::time::Instant::now();
     for _ in 0..iters {
         let d = zenpng::decode(&source, &config, &Unstoppable).unwrap();
         std::hint::black_box(&d);
     }
+    eprintln!(
+        "{:.3} ms/decode ({iters} decodes, {threads} threads)",
+        t.elapsed().as_secs_f64() * 1e3 / iters as f64
+    );
 }

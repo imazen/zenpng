@@ -14,6 +14,7 @@ PNG encoder/decoder with SIMD-accelerated unfiltering and zenflate decompression
   - `row.rs` — IdatSource, RowDecoder (streaming row-by-row decompress + unfilter)
   - `postprocess.rs` — `RowExpander` (built once per image: palette/sub-byte lookup tables, tRNS, 16-bit byte swap; expands raw rows straight into the output buffer), `OutBuf`, build_pixel_buffer/build_pixel_data
   - `interlace.rs` — Adam7 pass constants, decode_interlaced
+  - `pipeline.rs` — two-thread decode (inflate on a second thread, unfilter/expand on the caller's) for non-iDOT images with ≥1 MiB filtered data when `max_threads != 1`
 - `src/encoder/` — PNG encode pipeline
   - `mod.rs` — CompressOptions, PhaseStat/PhaseStats, write_indexed_png, write_truecolor_png
   - `filter.rs` — Filter strategies (Single, Adaptive, BruteForce, BruteForceBlock)
