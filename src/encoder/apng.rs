@@ -101,7 +101,7 @@ struct OptimizedFrame {
     subframe: Vec<u8>,
 }
 
-/// Trial-compress a subframe at effort 2 (Paeth + Turbo), return compressed size.
+/// Trial-compress a subframe at effort 2, return compressed size.
 ///
 /// Used for comparing dispose/blend candidates cheaply. The compressed data is
 /// discarded — only the size matters for the comparison.

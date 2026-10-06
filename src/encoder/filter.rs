@@ -20,30 +20,25 @@ pub(crate) const HEURISTIC_STRATEGIES: &[Strategy] = &[
     Strategy::Adaptive(AdaptiveHeuristic::BigEnt),
 ];
 
-/// Reduced strategy list for Fast (effort 5-7).
-///
-/// Drops Single(Sub/Up/Average) — they rarely win screening. Keeps None
-/// (wins on flat screenshots), Paeth (wins on some screenshots), and the
-/// 3 cheapest adaptive heuristics. BigEnt is excluded — it's 30-170x slower
-/// than MinSum due to 256KB memset + 65536-entry iteration per row, making
-/// it inappropriate for "fast" tier.
-pub(crate) const FAST_STRATEGIES: &[Strategy] = &[
-    Strategy::Single(0), // None
-    Strategy::Single(4), // Paeth
+/// Paeth and adaptive MinSum: the screening pair for efforts 2-13. On the
+/// 2026-10-06 sweeps (`benchmarks/pareto_*_2026-10-06.*`) one of the two is
+/// the best single strategy on nearly every image; MinSum alone was up to 13%
+/// larger than Paeth on bi-level scans.
+pub(crate) const PAETH_MINSUM_STRATEGIES: &[Strategy] = &[
+    Strategy::Single(4),
     Strategy::Adaptive(AdaptiveHeuristic::MinSum),
-    Strategy::Adaptive(AdaptiveHeuristic::Bigrams),
-    Strategy::Adaptive(AdaptiveHeuristic::Entropy),
 ];
 
-/// Minimal strategy list for low effort (effort 2).
-///
-/// Just 3 strategies: None (best for flat content), Paeth (best single
-/// filter overall), and Bigrams (best cheap adaptive). Enough for a
-/// quick ranking without the cost of 5+ evaluations.
-pub(crate) const MINIMAL_STRATEGIES: &[Strategy] = &[
-    Strategy::Single(0), // None
-    Strategy::Single(4), // Paeth
-    Strategy::Adaptive(AdaptiveHeuristic::Bigrams),
+/// None, Paeth and adaptive MinSum: the screening set for efforts 8-18,
+/// screened at png(4) or png(10). Unfiltered rows keep the long repeats of
+/// line art, documents and screenshots; there None is 4-21% smaller than
+/// the Paeth/MinSum winner at png(26), but png(1)'s runs-only parse ranks it
+/// 5th-9th of the nine heuristic strategies, so it needs a screen level that
+/// finds matches (2026-10-06, 91 imazen-26 renditions, 64-1024 px).
+pub(crate) const NONE_PAETH_MINSUM_STRATEGIES: &[Strategy] = &[
+    Strategy::Single(0),
+    Strategy::Single(4),
+    Strategy::Adaptive(AdaptiveHeuristic::MinSum),
 ];
 
 #[derive(Clone, Copy, Debug)]
@@ -1991,8 +1986,8 @@ mod tests {
     #[test]
     fn strategy_constants_sizes() {
         assert_eq!(HEURISTIC_STRATEGIES.len(), 9);
-        assert_eq!(FAST_STRATEGIES.len(), 5);
-        assert_eq!(MINIMAL_STRATEGIES.len(), 3);
+        assert_eq!(PAETH_MINSUM_STRATEGIES.len(), 2);
+        assert_eq!(NONE_PAETH_MINSUM_STRATEGIES.len(), 3);
     }
 
     // ---- bpp=4 (RGBA) coverage ----

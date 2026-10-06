@@ -113,22 +113,22 @@ touched.
 
 ## Compression presets
 
-Presets are placed at Pareto-optimal points on the effort curve, approximately
-log-spaced in encode time (each step roughly doubles wall time).
+Presets keep roughly the encode time they had before the 2026-10-06 ladder
+rework and produce smaller files (`benchmarks/pareto_*_2026-10-06.*`).
 
 | Preset | Effort | What it does |
 |---------|--------|-------------|
 | `None` | 0 | Uncompressed (stored DEFLATE blocks) |
-| `Fastest` | 1 | 1 strategy (Paeth), turbo DEFLATE |
-| `Turbo` | 2 | 3 strategies, turbo DEFLATE |
-| `Fast` | 7 | 5 strategies, FastHt screen-only |
-| `Balanced` | 13 | 9 strategies, screen + lazy refine |
-| `Thorough` | 17 | 9 strategies, lazy2 multi-tier + brute-force |
-| `High` | 19 | Near-optimal multi-tier + brute-force |
-| `Aggressive` | 22 | Near-optimal + extended brute-force |
-| `Intense` | 24 | Full brute-force + near-optimal |
-| `Crush` | 27 | Full brute-force + beam search + zenzop (requires `zopfli` feature) |
-| `Maniac` | 30 | Maximum standard pipeline + zenzop (requires `zopfli` feature) |
+| `Fastest` | 1 | Paeth filter, zenflate png(1) |
+| `Turbo` | 2 | Paeth or MinSum (screened), png(2) |
+| `Fast` | 7 | Paeth or MinSum, png(12) |
+| `Balanced` | 13 | None, Paeth or MinSum (screened at png(10)), near-optimal png(19) |
+| `Thorough` | 17 | Balanced's screen, png(26)/png(28) + brute-force rows |
+| `High` | 19 | Thorough + 9 strategies (best 3 refined), wider brute-force |
+| `Aggressive` | 22 | + png(30), fork and adaptive-fork brute-force |
+| `Intense` | 24 | + full brute-force sweep, block brute-force |
+| `Crush` | 27 | + recompression and beam search (zenzop with the `zopfli` feature) |
+| `Maniac` | 30 | Maximum standard pipeline (9 candidates refined) (zenzop with the `zopfli` feature) |
 | `Brag` | 31 | Full pipeline + 15 FullOptimal iterations — competitive with ECT-9 |
 | `Minutes` | 200 | Full pipeline + 184 FullOptimal iterations |
 
@@ -265,7 +265,7 @@ faster, 4096 px RGB 1.7–1.9×. Files with an `iDOT` table go further (below).
 
 **Encode.** `EncodeConfig::with_parallel(true)` splits the image into strips
 of about 512 KiB of row data, filtered and compressed on all allowed cores, at
-every effort without a brute-force or recompress phase (1–16, 18, 20, 21). The
+every effort without a brute-force or recompress phase (1–15). The
 strips join into one ordinary zlib stream, so every decoder reads the file, and
 the output does not depend on the thread count. On 4096 px images with 8
 cores: effort 1 is about 5.5× faster and effort 5 about 7× faster, with sizes

@@ -177,23 +177,56 @@ last row so the zlib footer is reached even when the image ended earlier
 ## Compression Effort Design
 
 Effort 0-30: standard pipeline. Effort 31+: full pipeline + FullOptimal.
-`Compression::Effort(u32)` for fine-grained control, or named presets:
+`Compression::Effort(u32)` for fine-grained control, or named presets. The
+ladder was rebuilt 2026-10-06 from Pareto sweeps against image-png main,
+zune-png and lodepng (`benchmarks/pareto_*_2026-10-06.*`); levels are Zl::G(n)
+= `CompressionLevel::new(n)` or Zl::P(n) = zenflate's PNG ladder `png(n)`
+(png(1..9) hash/runs, png(10..18) lazy with input-derived blocks, png(19..22)
+near-optimal, png(23+) = new(23+); zenflate png-mode 8b8cf0f).
 
-| Preset | Effort | Strategies | Pipeline | zenflate |
-|---------|--------|------------|----------|----------|
-| None | 0 | 1: None | store | Store |
-| Fastest | 1 | 1: Paeth | screen-only | Turbo |
-| Turbo | 2 | 3: MINIMAL | screen-only | Turbo |
-| Fast | 7 | 5: FAST | screen-only | FastHt |
-| Balanced | 13 | 9: HEURISTIC | screen@7 + refine@17 | Lazy |
-| Thorough | 17 | 9: HEURISTIC | screen@7 + refine@[20,22] + BF(3,1) | Lazy2 |
-| High | 19 | 9: HEURISTIC | screen@7 + refine@[22,24] + BF(3,1) | Lazy2 |
-| Aggressive | 22 | 9: HEURISTIC | screen@7 + refine@[26,28] | NearOptimal |
-| Intense | 24 | 9: HEURISTIC | screen@7 + refine + BF(5,1) + BFF[10] | NearOptimal |
-| Crush | 27 | 9: HEURISTIC | screen@7 + refine + BF + BFF + AF + beam | NearOptimal |
-| Maniac | 30 | 9: HEURISTIC | screen@7 + refine + full BF/BFF/AF/beam | NearOptimal |
-| Brag | 31 | 9: HEURISTIC | full Maniac + FullOptimal 15i | FullOptimal |
-| Minutes | 200 | 9: HEURISTIC | full Maniac + FullOptimal 184i | FullOptimal |
+| Effort | Preset | Screen | Then | Fallbacks |
+|--------|--------|--------|------|-----------|
+| 0 | None | — | stored | — |
+| 1 | Fastest | Paeth | final at png(1) | no |
+| 2-5 | Turbo=2 | Paeth+MinSum at png(1), top 1 | png(2/4/6/8) | no |
+| 6-7 | Fast=7 | Paeth+MinSum at png(1), top 1 | png(10/12) | yes (→png(9)) |
+| 8-11 | | None+Paeth+MinSum at png(4), top 1 | png(12/14/16/17) | yes |
+| 12-15 | Balanced=13 | None+Paeth+MinSum at png(10), top 1 | png(17/19/24/26) | yes |
+| 16-18 | | None+Paeth+MinSum at png(10), top 1 | png(26)[+28] + BF (3,1)[,(5,1)] | yes |
+| 19 | High=19 | 9 heuristics at png(10), top 3 | png(26,28) + BF (3,1),(5,1) | yes |
+| 20-30 | Aggressive=22, Intense=24, Crush=27, Maniac=30 | 9 heuristics at png(10), top 3..9 | png(26,28,30) + fork, adaptive fork, full BF set, block BF, recompress, beam | yes |
+
+(Thorough=17.) Strategies, top-k, screen level, refine levels and the
+brute-force/fork/block/beam sets only grow from rung to rung
+(`ladder_searches_are_nested`). Brute force compresses at `zenflate_effort` =
+png(26) from e15 up so it is identical across rungs.
+
+**Why None joins the screen at e8.** On line art, documents and screenshots
+unfiltered rows keep long repeats: None is 4-21% smaller than the
+Paeth/MinSum winner at png(26) (7007, 5207, 5307, 8007, 8107), but png(1)'s
+runs-only parse ranks it 5th-9th of the nine strategies. Screening
+None+Paeth+MinSum at png(4) (e8-e11) or png(10) (e12+) instead of
+Paeth+MinSum at png(1) is 1.3-2.2% smaller (mean per-image ratio, 91 images, 64-1024 px)
+for +3-35% time at the same refine level, and the rungs it replaced were off
+the Pareto front. Screen-level changes are not strict nesting: e7→e8 is larger
+on 4 of 91 images (max +1.95%, 5207_rgba8_256) where png(4) ranks a filter
+first that png(12) doesn't. Also refining the png(1) pair's winner ("anchors",
+commit history 2026-10-06) removed those inversions but cost +19-38% time at
+e8-e19, which put every anchored rung behind the next unanchored one.
+
+**zenflate gaps (requested 2026-10-06).** png(19..23) give identical output at
+zenflate 8b8cf0f and cost 3.3x png(17) for -4.2%; nothing between png(18) and
+png(19) exists, so e12 (the png(10) screen at png(17)) is the only rung in that
+gap. png(24..26) (= new(24..26)) are ~1% larger than png(19) on
+1207_gray8_1024 (e13→e14 +1.151%): png(23+)'s fallback chain is the general
+ladder, which never reaches png(19..22).
+
+Measured per-image monotonicity (91 images incl. gray/palette/16-bit,
+64-1024 px, `examples/roundtrip_sweep.rs`): every step e1..e19 within 0.23%
+except e7→e8 and e13→e14 above. e19..e30 (45 RGB8/RGBA8 images): see
+CHANGELOG; Phase 4 recompresses only the 3 smallest Phase 2/3 candidates, so
+e30's wider top-k can displace the one whose NearOptimal pass would have won
+(e29→e30 +0.195% on 9227_rgb8_256 before the png(10) screen).
 
 ### Effort 31+ tiers
 
@@ -214,24 +247,29 @@ FullOptimal's compression.
 
 `EffortParams::from_effort()` maps effort → all pipeline parameters:
 
-1. **Phase 1 — Screen**: Apply filter strategies, compress at `screen_effort`.
-   Low effort (0-7): screen IS final pass (no Phase 2).
+1. **Phase 1 — Screen**: Apply filter strategies, compress at `screen_effort`
+   (png(1) for e1-e7, png(4) for e8-e11, png(10) from e12). Effort 1: screen
+   IS the final pass.
 2. **Phase 2 — Refine**: Top-K candidates re-compressed at `refine_efforts` via
-   `try_compress_with_fallbacks()`, which follows zenflate's `monotonicity_fallback()`
-   chain automatically.
-3. **Phase 3 — BruteForce**: Per-row brute-force filter selection (effort 23+).
-   BruteForceFork maintains actual DEFLATE state across rows (effort 24+).
-4. **Phase 4 — Recompress**: At effort 28-30: zopfli adaptive with time budgeting.
-   At effort 31+: NearOptimal + FullOptimal (+ optional zenzop).
+   `try_compress_with_fallbacks()` (fallback chain when `fallbacks`).
+3. **Phase 3 — BruteForce**: Per-row brute-force filter selection (effort 16+),
+   fork and adaptive fork (20+), block (24+), beam (26+).
+4. **Phase 4 — Recompress**: effort 25-30 (zopfli adaptive with time budgeting
+   when the `zopfli` feature is on). Effort 31+: NearOptimal + FullOptimal
+   (+ optional zenzop).
+
+With `parallel` on, efforts without phase 3/4 (1-15) run phases 1-2 per
+~512 KiB strip on worker threads (`compress_strips`); with `iDOT` segments
+requested, segments come straight from those strips (`compress_segmented`).
 
 ### Filter strategy sets (`src/encoder/filter.rs`)
 
-- **MINIMAL** (3): None, Paeth, Adaptive(Bigrams) — effort 2
-- **FAST** (5): None, Paeth, Adaptive(MinSum, Bigrams, Entropy) — effort 3-9 (e4 = e5's config since 2026-10-06)
-- **HEURISTIC** (9): All 5 Singles + Adaptive(MinSum, Entropy, Bigrams, BigEnt) — effort 10+
-
-BigEnt excluded from FAST — 30-170x slower than MinSum (256KB memset + 65536-entry
-iteration per row). Only used in HEURISTIC tier where screen cost is dwarfed by refine.
+- **PAETH_MINSUM** (2): Paeth, Adaptive(MinSum) — efforts 2-7, screened at
+  png(1). MinSum alone was up to 13% larger than Paeth on bi-level scans.
+- **NONE_PAETH_MINSUM** (3): + None — efforts 8-18, screened at png(4) (8-11)
+  or png(10) (12-18); see "Why None joins the screen".
+- **HEURISTIC** (9): all 5 Singles + Adaptive(MinSum, Entropy, Bigrams, BigEnt)
+  — effort 19+, screened at png(10).
 
 ### Filter precomputation optimization
 
@@ -248,14 +286,14 @@ per additional adaptive strategy. Result: 2-3x screening speedup at effort 5+.
   reset during computation (no 256KB fill(0) or 65536-entry iteration)
 - `new_universal()`: pre-allocates for BigEnt (the largest heuristic), reusable across all
 
-### Monotonicity via zenflate fallback chain
+### Monotonicity
 
-Higher effort must never produce larger output. Enforced by
-`zenflate::CompressionLevel::monotonicity_fallback()` — a caller-driven API where each
-compression call follows the chain: NearOpt→Lazy2 max(e22)→Lazy max(e17)→Greedy max(e10)→
-FastHt max(e9). `try_compress_with_fallbacks()` wraps this automatically.
-Screen effort stays at FastHt (≤9) for consistent candidate ranking.
-Turbo→FastHt does NOT always improve: on 36 RGB8 images FAST@FastHt-5 was larger than FAST@Turbo on 2 (max 0.036%), and e6>e5 / e7>e6 on 2-3 (≤0.006%) (2026-10-06, `benchmarks/vs_png_encode_2026-10-06.txt`). Efforts below e10 have no fallback.
+Higher effort must never produce larger output. Two mechanisms: nested
+searches (above), and zenflate's `CompressionLevel::monotonicity_fallback()`
+chain, followed when `EffortParams.fallbacks` is set (png(10..18)→png(9),
+png(19..)→png(18), general ladder Lazy2→Lazy→Greedy→FastHt). png(1..9) only
+widen the search, so e1-e5 skip the chain. `try_compress_with_fallbacks()`
+compresses each level of a candidate once (tiers share chains).
 
 ### Filter performance (measured, effort_timing.rs)
 

@@ -7,23 +7,24 @@
 /// Controls the trade-off between encoding speed and output file size.
 /// Higher effort produces smaller files but takes longer.
 ///
-/// Named presets are placed at Pareto-optimal points on the effort curve,
-/// approximately log-spaced in encode time (each step ~2x slower).
+/// Named presets are placed along the effort curve so each costs about what
+/// it did before the 2026-10-06 ladder rework, with smaller output (see
+/// `benchmarks/pareto_*_2026-10-06.*`).
 /// Use [`Effort`](Self::Effort) for fine-grained control between presets.
 ///
 /// | Preset | Effort | Description |
 /// |---------|--------|-------------|
 /// | `None` | 0 | Uncompressed |
-/// | `Fastest` | 1 | 1 strategy (Paeth), turbo DEFLATE |
-/// | `Turbo` | 2 | 3 strategies, turbo DEFLATE |
-/// | `Fast` | 7 | 5 strategies, FastHt screen-only |
-/// | `Balanced` | 13 | 9 strategies, screen + lazy refine |
-/// | `Thorough` | 17 | 9 strategies, lazy2 multi-tier + brute-force |
-/// | `High` | 19 | Near-optimal multi-tier + brute-force |
-/// | `Aggressive` | 22 | Near-optimal + extended brute-force |
-/// | `Intense` | 24 | Full brute-force + near-optimal |
-/// | `Crush` | 27 | Full brute-force + beam search + zenzop |
-/// | `Maniac` | 30 | Maximum standard pipeline |
+/// | `Fastest` | 1 | Paeth filter, zenflate png(1) |
+/// | `Turbo` | 2 | Paeth or MinSum (screened), png(2) |
+/// | `Fast` | 7 | Paeth or MinSum, png(12) |
+/// | `Balanced` | 13 | None, Paeth or MinSum (screened at png(10)), near-optimal png(19) |
+/// | `Thorough` | 17 | None, Paeth or MinSum, png(26)/png(28) + brute-force rows |
+/// | `High` | 19 | Thorough + 9 strategies (best 3 refined), wider brute-force |
+/// | `Aggressive` | 22 | + png(30), fork and adaptive-fork brute-force |
+/// | `Intense` | 24 | + full brute-force sweep, block brute-force |
+/// | `Crush` | 27 | + recompression and beam search |
+/// | `Maniac` | 30 | Maximum standard pipeline (9 candidates refined) |
 /// | `Brag` | 31 | Full pipeline + 15 FullOptimal iterations (beats ECT-9) |
 /// | `Minutes` | 200 | Full pipeline + 184 FullOptimal iterations |
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -31,24 +32,31 @@
 pub enum Compression {
     /// No compression (uncompressed DEFLATE blocks). Maximum speed, maximum size.
     None,
-    /// Fastest compression. Single strategy (Paeth) with turbo DEFLATE.
+    /// Fastest compression. Paeth filter with zenflate's png(1) (literals and
+    /// zero runs); faster and smaller than the `png` crate's `Fast`.
     Fastest,
-    /// Turbo compression. 3 strategies with turbo DEFLATE.
+    /// Turbo compression. Paeth or MinSum, whichever compresses smaller,
+    /// with png(2).
     Turbo,
-    /// Fast compression. 5 strategies, FastHt screen-only — the sweet spot of
-    /// the fast range.
+    /// Fast compression. Paeth or MinSum with png(12).
     Fast,
-    /// Balanced compression (default). Good trade-off for most images.
+    /// Balanced compression (default). None, Paeth or MinSum, whichever
+    /// compresses smallest at png(10), with near-optimal DEFLATE (png(19)).
+    /// Unfiltered rows win on line art, documents and screenshots.
     #[default]
     Balanced,
-    /// Thorough compression. Lazy2 multi-tier refinement with brute-force.
+    /// Thorough compression. Balanced's screen with png(26) and png(28) plus
+    /// brute-force row filtering.
     Thorough,
-    /// High compression. Near-optimal DEFLATE with brute-force.
+    /// High compression. Thorough with nine filter strategies (the best
+    /// three refined) and wider brute-force.
     High,
-    /// Aggressive compression. Near-optimal with extended brute-force.
+    /// Aggressive compression. png(30) plus fork and adaptive-fork
+    /// brute-force.
     Aggressive,
-    /// Intense compression. Full brute-force filter sweep with near-optimal
-    /// DEFLATE. The strongest level before zenzop enters the picture.
+    /// Intense compression. Full brute-force filter sweep and block
+    /// brute-force with near-optimal DEFLATE. The strongest level before
+    /// recompression enters the picture.
     Intense,
     /// Ultra compression. Full brute-force sweep, beam search, and zenzop
     /// recompression. Requires the `zopfli` feature; falls back to `Intense`

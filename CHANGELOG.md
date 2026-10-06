@@ -64,7 +64,7 @@ All notable changes to zenpng are documented here.
   row 13.2 -> 9.8 us). x86 and wasm32 keep the stb form, which measured faster
   there.
 - **Multi-threaded strip encode for efforts without brute-force or recompress
-  phases (1-16, 18, 20, 21).** With
+  phases (1-15).** With
   `with_parallel(true)`, the image is split into strips of about 512 KiB of
   filtered data; worker threads filter each strip with every screening
   strategy, recompress its best candidates at the refine levels, and compress

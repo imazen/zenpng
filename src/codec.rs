@@ -825,7 +825,8 @@ struct PreFilteredState {
     /// PNG bit depth.
     bit_depth: crate::encode::BitDepth,
     /// Zenflate compression effort for finish().
-    zenflate_effort: u32,
+    /// The zenflate level effort 1 compresses at (one-shot and streaming match).
+    level: zenflate::CompressionLevel,
 }
 
 impl PngEncoder {
@@ -3361,7 +3362,7 @@ impl PreFilteredState {
             rows_pushed: 0,
             color_type,
             bit_depth,
-            zenflate_effort: 1, // Turbo
+            level: crate::encoder::compress::effort1_level(),
         })
     }
 
@@ -3422,13 +3423,12 @@ impl PreFilteredState {
         let Self {
             preamble,
             filtered_data,
-            zenflate_effort,
+            level,
             ..
         } = self;
 
         // Compress filtered data with zenflate.
         // Peak: filtered_data (~1×) + compressed_bound (~1×) = ~2× image.
-        let level = zenflate::CompressionLevel::new(zenflate_effort);
         let mut compressor = zenflate::Compressor::new(level);
         let bound = zenflate::Compressor::zlib_compress_bound(filtered_data.len());
         let mut compressed = vec![0u8; bound];
@@ -7822,7 +7822,7 @@ mod tests {
     #[test]
     fn streaming_effort1_matches_oneshot_bytes() {
         // Pre-filtered streaming at effort 1 should produce byte-identical
-        // output to one-shot encode at effort 1 (both use Paeth + Turbo).
+        // output to one-shot encode at effort 1 (both use Paeth + png(1)).
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 12u32;
@@ -7860,7 +7860,7 @@ mod tests {
 
     #[test]
     fn streaming_effort1_smaller_than_effort0() {
-        // Effort 1 (Paeth + Turbo) should compress better than effort 0 (None + Store).
+        // Effort 1 (Paeth + png(1)) should compress better than effort 0 (None + Store).
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let w = 64u32;
