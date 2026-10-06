@@ -95,6 +95,10 @@ struct EffortParams {
     /// If true, Phase 4 runs ONLY FullOptimal (skips NearOptimal and zenzop).
     /// Used for E31-45 lean tier where FullOptimal is the sole recompressor.
     full_optimal_only: bool,
+    /// Follow zenflate's `monotonicity_fallback` chain when compressing
+    /// (refine, single-strategy final pass, strips). Off for rungs inside the
+    /// PNG ladder, whose levels only widen the search on filtered rows.
+    fallbacks: bool,
 }
 
 impl EffortParams {
@@ -129,7 +133,8 @@ impl EffortParams {
 
     /// `_dev` only: replace effort `e`'s settings from the environment, for
     /// ladder sweeps with `benches/pareto.rs` without rebuilding.
-    /// `ZENPNG_LADDER_E<e>="<strategies>|<screen>[|<refine,...>[|<top_k>]]"`.
+    /// `ZENPNG_LADDER_E<e>="<strategies>|<screen>[|<refine,...>[|<top_k>[|nofb]]]"`
+    /// (`nofb`: don't follow zenflate's monotonicity fallback chain).
     /// Strategies: `none sub up avg paeth minsum entropy bigrams bigent` or
     /// the sets `minimal fast heuristic`, comma-separated. Levels: `g<n>`
     /// (`CompressionLevel::new`) or `p<n>` (`CompressionLevel::png`). With no
@@ -181,6 +186,7 @@ impl EffortParams {
             .next()
             .map(|k| k.trim().parse().expect("ZENPNG_LADDER top_k"))
             .unwrap_or(if refine.is_empty() { 1 } else { 3 });
+        let fallbacks = parts.next().map(str::trim) != Some("nofb");
         Some(Self {
             zenflate_effort: refine.last().copied().unwrap_or(screen),
             strategies: Box::leak(strategies.into_boxed_slice()),
@@ -196,6 +202,7 @@ impl EffortParams {
             use_recompress: false,
             full_optimal_effort: None,
             full_optimal_only: false,
+            fallbacks,
         })
     }
 
@@ -233,6 +240,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             1 => Self {
                 zenflate_effort: G(1),
@@ -249,6 +257,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             2 => Self {
                 zenflate_effort: G(2),
@@ -265,6 +274,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             3 => Self {
                 zenflate_effort: G(3),
@@ -281,6 +291,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             // e4 was the 9-strategy set at Turbo: byte-identical to e3 on 27 of
             // 36 images at 1.7x its time, and slower than e7. It now matches e5
@@ -304,6 +315,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             5 => Self {
                 zenflate_effort: G(5),
@@ -320,6 +332,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             6 => Self {
                 zenflate_effort: G(6),
@@ -336,6 +349,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             7 => Self {
                 zenflate_effort: G(7),
@@ -352,6 +366,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             // ── Medium effort (8-15): screen + refine ──
             //
@@ -373,6 +388,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             9 => Self {
                 zenflate_effort: G(10),
@@ -389,6 +405,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             10 => Self {
                 zenflate_effort: G(12),
@@ -405,6 +422,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             11 => Self {
                 zenflate_effort: G(14),
@@ -421,6 +439,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             12 => Self {
                 zenflate_effort: G(15),
@@ -437,6 +456,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             13 => Self {
                 zenflate_effort: G(17),
@@ -453,6 +473,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             14 => Self {
                 zenflate_effort: G(18),
@@ -469,6 +490,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             15 => Self {
                 zenflate_effort: G(20),
@@ -485,6 +507,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             // ── High effort (16-23): higher refine, multi-tier ──
             //
@@ -505,6 +528,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             17 => Self {
                 zenflate_effort: G(22),
@@ -521,6 +545,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             18 => Self {
                 zenflate_effort: G(24),
@@ -537,6 +562,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             19 => Self {
                 zenflate_effort: G(24),
@@ -553,6 +579,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             20 => Self {
                 zenflate_effort: G(26),
@@ -569,6 +596,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             21 => Self {
                 zenflate_effort: G(28),
@@ -585,6 +613,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             22 => Self {
                 zenflate_effort: G(28),
@@ -601,6 +630,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             23 => Self {
                 zenflate_effort: G(30),
@@ -617,6 +647,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             // ── Max effort (24-30): brute-force + zopfli ──
             24 => Self {
@@ -634,6 +665,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             25 => Self {
                 zenflate_effort: G(30),
@@ -650,6 +682,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             26 => Self {
                 zenflate_effort: G(30),
@@ -666,6 +699,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             27 => Self {
                 zenflate_effort: G(30),
@@ -682,6 +716,7 @@ impl EffortParams {
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             28 => Self {
                 zenflate_effort: G(30),
@@ -707,6 +742,7 @@ impl EffortParams {
                 use_recompress: true,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             29 => Self {
                 zenflate_effort: G(30),
@@ -732,6 +768,7 @@ impl EffortParams {
                 use_recompress: true,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
             _ => Self {
                 // effort 30
@@ -758,6 +795,7 @@ impl EffortParams {
                 use_recompress: true,
                 full_optimal_effort: None,
                 full_optimal_only: false,
+                fallbacks: true,
             },
         }
     }
@@ -789,6 +827,7 @@ impl EffortParams {
             use_recompress: true,
             full_optimal_effort: Some(effort),
             full_optimal_only: false,
+            fallbacks: true,
         }
     }
 
@@ -809,6 +848,7 @@ impl EffortParams {
             use_recompress: true,
             full_optimal_effort: Some(effort),
             full_optimal_only: false,
+            fallbacks: true,
         }
     }
 
@@ -848,6 +888,7 @@ impl EffortParams {
             use_recompress: true,
             full_optimal_effort: Some(effort),
             full_optimal_only: false,
+            fallbacks: true,
         }
     }
 }
@@ -975,6 +1016,7 @@ fn try_compress_with_fallbacks(
     compress_buf: &mut [u8],
     best_compressed: &mut Option<Vec<u8>>,
     done: &mut Vec<(CompressionLevel, usize)>,
+    fallbacks: bool,
     cancel: &dyn Stop,
 ) -> crate::error::Result<usize> {
     let mut best_size = usize::MAX;
@@ -998,7 +1040,7 @@ fn try_compress_with_fallbacks(
             }
         };
         best_size = best_size.min(size);
-        match level.monotonicity_fallback() {
+        match level.monotonicity_fallback().filter(|_| fallbacks) {
             Some(fb) => level = fb,
             None => break,
         }
@@ -1059,7 +1101,7 @@ fn compress_strips(
 
     // Fallback levels a single-strategy strip also tries (see compress_filtered).
     let mut fallbacks = Vec::new();
-    if strategies.len() == 1 {
+    if params.fallbacks && strategies.len() == 1 {
         let mut l = level;
         while let Some(fb) = l.monotonicity_fallback() {
             fallbacks.push(fb);
@@ -1413,6 +1455,7 @@ pub(crate) fn compress_filtered(
     // at the levels in its monotonicity fallback chain and keep the smallest,
     // so this effort is never larger than the chain's levels on these bytes.
     if params.screen_is_final
+        && params.fallbacks
         && strategies.len() == 1
         && let Some((_, filtered)) = screen_results.first()
     {
@@ -1843,7 +1886,7 @@ fn refine_parallel(
                         let mut level = tier_level.level();
                         loop {
                             if done.contains(&level) {
-                                match level.monotonicity_fallback() {
+                                match level.monotonicity_fallback().filter(|_| params.fallbacks) {
                                     Some(fb) => level = fb,
                                     None => break,
                                 }
@@ -1860,7 +1903,7 @@ fn refine_parallel(
                                     t_best = Some(t_compress_buf[..len].to_vec());
                                 }
                             }
-                            match level.monotonicity_fallback() {
+                            match level.monotonicity_fallback().filter(|_| params.fallbacks) {
                                 Some(fb) => level = fb,
                                 None => break,
                             }
@@ -1913,6 +1956,7 @@ fn refine_serial(
                 &mut state.compress_buf,
                 &mut state.best_compressed,
                 done,
+                params.fallbacks,
                 opts.cancel,
             )?;
 
@@ -2112,6 +2156,7 @@ fn run_one_brute_variant(
         &mut state.compress_buf,
         &mut state.best_compressed,
         &mut Vec::new(),
+        params.fallbacks,
         opts.cancel,
     )?;
 
