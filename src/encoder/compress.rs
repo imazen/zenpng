@@ -1552,7 +1552,8 @@ fn run_phase1_screen(
     let phase_start = stats.is_some().then(Instant::now);
     let mut screen_results: ScreenResults = Vec::with_capacity(strategies.len());
 
-    if opts.parallel {
+    // One strategy has nothing to run concurrently; a thread would only add cost.
+    if opts.parallel && strategies.len() > 1 {
         screen_parallel(
             state,
             packed_rows,
