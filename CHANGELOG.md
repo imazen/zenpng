@@ -32,6 +32,21 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- **Faster decode of non-RGBA8 formats.** Rows are expanded straight into the
+  output buffer by a per-image `RowExpander` (precomputed palette and sub-byte
+  lookup tables), 16-bit output is written without an intermediate copy
+  (ed5646d), every pixel size gets a const-generic Sub/Avg/Paeth kernel with a
+  branchless Paeth predictor (d183bd3), and 1/2/4-bit rows unpack a byte at a
+  time (f638e30). Measured against image-rs/image-png main on a Core Ultra 7
+  265K P-core: palette 2.68 → 1.58 ms, gray8 3.85 → 2.30 ms, RGB16 11.2 →
+  6.35 ms, gray1 2.02 → 0.087 ms (`benches/vs_png.rs`,
+  `benchmarks/vs_png_decode_*_2026-10-06.*`).
+- Unfilter routing re-measured against the fixed kernels: bpp=3 Sub/Paeth use
+  them on x86 and aarch64 (the x86/NEON bpp=3 kernels are removed), and
+  aarch64 bpp=4 Sub/Paeth now use NEON (2.06× / 1.31× per row). ARM decode of
+  RGBA8 and Sub-heavy RGB8 images is up to 1.21× faster (8f790fe).
+- The streaming inflate buffer is at least 256 KiB (capped at the image size),
+  which cuts small-image decode time by 3–17% (9fc1a21).
 - Large zeroed buffers (decode output) are now allocated zeroed by the
   allocator (fallible calloc via `bytemuck`) instead of reserve + fill, so page
   zeroing is no longer an up-front serial pass on the calling thread.
@@ -41,6 +56,11 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- **`PngDecodeConfig::strict()` now always verifies the Adler-32.** When the
+  last image row was produced before the zlib footer was read (trailing data
+  after the image, or a large inflate buffer), the checksum was never
+  checked. The stream is now drained after the last row in strict mode, so a
+  corrupt Adler-32 that was previously accepted is now an error (9fc1a21).
 - **HDR and wide-gamut pixels are no longer silently mislabelled or rejected.**
   `ENCODE_DESCRIPTORS` / `DECODE_DESCRIPTORS` advertised only sRGB and linear
   forms, and the two failure modes that produced were opposite and both bad. A

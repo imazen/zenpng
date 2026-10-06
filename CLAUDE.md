@@ -12,7 +12,7 @@ PNG encoder/decoder with SIMD-accelerated unfiltering and zenflate decompression
 - `src/decoder/` — PNG decode pipeline
   - `mod.rs` — decode orchestration (probe_png, decode_png, PngInfo construction) + all tests
   - `row.rs` — IdatSource, RowDecoder (streaming row-by-row decompress + unfilter)
-  - `postprocess.rs` — post_process_row, OutputFormat, build_pixel_data, color conversion
+  - `postprocess.rs` — `RowExpander` (built once per image: palette/sub-byte lookup tables, tRNS, 16-bit byte swap; expands raw rows straight into the output buffer), `OutBuf`, build_pixel_buffer/build_pixel_data
   - `interlace.rs` — Adam7 pass constants, decode_interlaced
 - `src/encoder/` — PNG encode pipeline
   - `mod.rs` — CompressOptions, PhaseStat/PhaseStats, write_indexed_png, write_truecolor_png
@@ -46,20 +46,31 @@ Filters are per-row in PNG. `incant!` dispatches once per row to the highest ava
 | Up     | ~1.0x       | ~1.0x        | LLVM auto-vectorizes scalar equivalently |
 | Average| ~0.95x      | ~1.0x        | bpp=3 SIMD was slower, reverted to scalar |
 
-(x86 figures above.) **ARM (Neoverse-N1) Sub unfilter:** the NEON Sub path keeps
-the running reconstructed pixel in a NEON register across iterations instead of
-reloading a scalar `u32` each step; bpp=4 resolves two pixels per iteration via an
-in-register prefix add. Measured (`examples/unfilter_bench.rs`, 2026-05-29;
-back-to-back A/B, same box, median of 5): Sub bpp=3 +68% (981 → 1649 MB/s),
-Sub bpp=4 +24% (1260 → 1563 MB/s). See
-`benchmarks/zenpng_arm_sub_unfilter_2026-05-29.{tsv,meta}`.
+(x86 figures above are old and predate the const-generic fixed kernels.)
+
+**ARM (Neoverse-N1, `benches/unfilter_tiers.rs`, 2026-10-06, vs the fixed
+kernels):** NEON wins Sub bpp=4 (2.06×), Avg bpp=4 (2.66×) and Paeth bpp=4
+(1.31×); the fixed kernel wins Sub bpp=3 (1.26×) and Paeth bpp=3 (1.09×); Up is
+autovectorised scalar (NEON kernel 0.66×). Production routing follows those
+numbers. `benchmarks/unfilter_tiers_arm_2026-10-06.txt`. (The 2026-05-29 notes
+measured NEON against the pre-fixed-kernel scalar path.)
+
+### Pixel sizes without SIMD kernels
+
+Every pixel size without a SIMD kernel (see tier table) uses the const-generic kernels in `src/simd/fixed.rs`
+(`sub::<N>`, `avg::<N>`, `paeth::<N>` over `[u8; N]` chunks, dispatched by
+`by_bpp!`). `paeth_branchless` is the stb formulation, checked exhaustively
+against the spec predictor over all 2^24 inputs.
 
 ### SIMD Tier Assignments
 
-- **Paeth**: `[v2]` (SSE4.2) for both bpp=3 and bpp=4
-- **Sub**: `[v1]` (SSE2) for both bpp=3 and bpp=4
-- **Up**: `[v3, v1]` (AVX2 + SSE2 fallback)
-- **Avg**: `[v1]` (SSE2) for bpp=4 only; all other bpp is scalar
+- **Paeth**: bpp=4 `[v2, neon, wasm128]`; bpp=3 `[wasm128]`, else fixed kernel
+- **Sub**: bpp=4 `[v1, neon, wasm128]`; bpp=3 `[wasm128]`, else fixed kernel
+- **Up**: `[v3, v1, wasm128]`; aarch64 uses the autovectorised scalar loop
+- **Avg**: bpp=4 `[v1, neon, wasm128]`; all other bpp use the fixed kernel
+
+The x86/NEON bpp=3 Sub and Paeth kernels were deleted 2026-10-06: the fixed
+kernel matched or beat them on both ISAs (`benchmarks/unfilter_tiers_*_2026-10-06`).
 
 ### Codegen Patterns
 
@@ -79,7 +90,12 @@ AVX-512 V4 masked stores (`_mm_mask_storeu_epi8`) were tested for bpp=3 — no i
 
 ### Profiling Results
 
-- **Callgrind**: Paeth scalar = 36.8% of instructions; SIMD Paeth = 15.0% (2.5x reduction). zenflate inflate = 0.5%.
+- **Callgrind** (old, single Paeth-heavy image): Paeth scalar = 36.8% of instructions; SIMD Paeth = 15.0% (2.5x reduction).
+- **Callgrind, 2026-10-05** (imazen-26 image 9097 after the RowExpander/fixed-kernel work): zenflate
+  `StreamDecompressor::fill` is ~70% of instructions. Inflate, not unfiltering, is now the decode
+  bottleneck. `examples/inflate_bench.rs` measures fdeflate (what image-png uses) 1.04–1.6× faster than
+  zenflate streaming on PNG IDAT data; closing that gap is a zenflate change. (An earlier note here
+  claimed "zenflate inflate = 0.5%"; that was wrong for any compressed image.)
 - **Cachegrind**: L1 data miss rate 2.1%, LL near zero. Unfilter is cache-friendly.
 - **Heaptrack**: ~7 heap allocations per decode call. No per-row allocations.
 - **Buffer alignment**: Standard `Vec<u8>`, unaligned SIMD loads. Not worth aligned allocation (4-byte loads rarely cross cache lines, Up is 0.3% of instructions).
@@ -95,6 +111,20 @@ cargo run --release --example decode_bench --features _dev [-- /path/to/image.pn
 Default test image: `frymire-srgb.png` (RGB, bpp=3). Also test with RGBA images for bpp=4 paths.
 
 The `_dev` feature enables `archmage/testable_dispatch`, allowing `Sse2Token::dangerously_disable_token_process_wide(true)` to force scalar fallback even for compile-time guaranteed SSE2.
+
+### Comparing against image-png
+
+`benches/vs_png.rs` (zenbench) decodes and encodes against image-rs/image-png
+main (pinned git rev in `[dev-dependencies] png_main`) and asserts both decoders
+produce identical 8-bit output before timing. Inputs come from
+`ZENPNG_BENCH_DIR`, named `<id>_<format>_<longedge>.png`:
+
+```bash
+ZENPNG_BENCH_DIR=~/tmp/mtpng/bench_in taskset -c 2 cargo bench --bench vs_png --features _dev -- --group=decode
+```
+
+Results: `benchmarks/vs_png_*.{txt,meta}`. ARM NEON vs scalar per filter:
+`cargo bench --bench unfilter_tiers --features _dev` (aarch64 only).
 
 ### Testing
 
@@ -131,6 +161,12 @@ When CRC is skipped, computation is entirely elided. When Adler-32 is skipped
 in the streaming path, zenflate still computes it but tolerates mismatches
 (emits `DecompressionChecksumSkipped` warning). The stored-block fast path
 skips Adler-32 computation entirely.
+
+With Adler-32 verification on, every row loop (serial, interlaced, APNG frame,
+codec streaming) calls `RowDecoder::finish_stream` / `drain_stream` after the
+last row so the zlib footer is reached even when the image ended earlier
+(trailing data, large inflate buffer). Regression test:
+`strict_decode_verifies_adler_after_last_row`.
 
 ## Compression Effort Design
 
