@@ -12,12 +12,12 @@ use safe_unaligned_simd::wasm32::v128_load32_zero;
 use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_sub(row: &mut [u8], bpp: usize) {
-    // bpp=3 has no x86/NEON kernel: the const-generic fixed kernel measured
-    // faster (benches/unfilter_tiers.rs, 2026-10-06, 1920 px: x86 0.64 vs
-    // 0.68 us for SSE2, Neoverse-N1 2.08 vs 2.63 us for NEON). bpp=4 SIMD
-    // wins (x86 1.06x, NEON 2.06x). wasm128 is unmeasured.
+    // bpp=3 has no SIMD kernel: the const-generic fixed kernel measured
+    // faster everywhere (2026-10-06, 1920 px: x86 0.64 vs 0.68 us for SSE2,
+    // Neoverse-N1 2.08 vs 2.63 us for NEON; wasm 6.2 vs 5.1 GB/s for
+    // SIMD128, examples/unfilter_bench.rs). bpp=4 SIMD wins (x86 1.06x,
+    // NEON 2.06x, SIMD128 4.3x).
     match bpp {
-        3 => incant!(unfilter_sub_bpp3_impl(row), [wasm128, scalar]),
         4 => incant!(unfilter_sub_bpp4_impl(row), [v1, neon, wasm128, scalar]),
         _ => unfilter_sub_scalar_any(row, bpp),
     }
@@ -152,41 +152,6 @@ fn unfilter_sub_bpp4_impl_wasm128(_token: Wasm128Token, row: &mut [u8]) {
         a = result;
         i += 4;
     }
-}
-
-// ── WASM SIMD128 bpp=3 ──────────────────────────────────────────────
-
-#[cfg(target_arch = "wasm32")]
-#[arcane]
-fn unfilter_sub_bpp3_impl_wasm128(_token: Wasm128Token, row: &mut [u8]) {
-    let len = row.len();
-    if len < 6 {
-        unfilter_sub_scalar_any(row, 3);
-        return;
-    }
-
-    // First 3 bytes unchanged. Load first 4 bytes (3 pixel + 1 overlap).
-    let mut a = v128_load32_zero(<&[u8; 4]>::try_from(&row[0..4]).unwrap());
-
-    let mut i = 3;
-    while i + 4 <= len {
-        let filt = v128_load32_zero(<&[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
-        let result = i8x16_add(filt, a);
-        // Store only 3 bytes (lane 3 is garbage from the 4-byte load)
-        let val = (i32x4_extract_lane::<0>(result) as u32).to_le_bytes();
-        row[i..i + 3].copy_from_slice(&val[..3]);
-        a = result;
-        i += 3;
-    }
-
-    // Scalar tail for last pixel if 4-byte load would overrun
-    for j in i..len {
-        row[j] = row[j].wrapping_add(row[j - 3]);
-    }
-}
-
-pub(crate) fn unfilter_sub_bpp3_impl_scalar(_token: ScalarToken, row: &mut [u8]) {
-    unfilter_sub_scalar_any(row, 3);
 }
 
 // Scalar fallback for incant! dispatch

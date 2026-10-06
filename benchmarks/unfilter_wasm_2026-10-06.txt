@@ -1,0 +1,10 @@
+# examples/unfilter_bench.rs on wasm32-wasip1 under wasmtime (Mac, macOS 27, Apple Silicon), MB/s, median of 3 runs
+# simd = +simd128 build before 2026-10-06 removal; simd_after = +simd128 build after; plain = no simd128 (fixed kernels only)
+bpp3 Sub      simd=  5192  simd_after=  6164  plain=  6175
+bpp3 Up       simd= 25722  simd_after= 25854  plain=  4481
+bpp3 Average  simd=  2787  simd_after=  2775  plain=  2768
+bpp3 Paeth    simd=   460  simd_after=   827  plain=  1447
+bpp4 Sub      simd=  7493  simd_after=  7487  plain=  1531
+bpp4 Up       simd= 25092  simd_after= 24505  plain=  4484
+bpp4 Average  simd=  1097  simd_after=  1308  plain=  1302
+bpp4 Paeth    simd=   611  simd_after=   833  plain=   834

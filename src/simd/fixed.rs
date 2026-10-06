@@ -2,10 +2,10 @@
 //!
 //! Each kernel takes the pixel size `N` as a const generic and walks the row
 //! as `[u8; N]` chunks, so the left / upper-left pixels live in registers and
-//! LLVM vectorises across the `N` channel lanes. These serve every ISA for
-//! pixel sizes without a hand-written SIMD kernel (1, 2, 6, 8 bytes: gray,
-//! gray+alpha, 16-bit), and on AArch64 for the filters where NEON measured
-//! slower than the autovectorised scalar code.
+//! LLVM vectorises across the `N` channel lanes. They serve every filter and
+//! pixel size without a hand-written SIMD kernel: all of 1, 2, 6, 8 bytes,
+//! bpp=3 Sub/Avg/Paeth on every ISA (they beat the old x86/NEON/SIMD128
+//! kernels), and bpp=4 Avg/Paeth on wasm32. See the tier table in CLAUDE.md.
 //!
 //! Rows whose length is not a multiple of `N` cannot occur for PNG scanlines
 //! (`len = width × N`); the dispatchers fall back to the byte-wise loops for

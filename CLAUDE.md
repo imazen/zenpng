@@ -64,13 +64,16 @@ against the spec predictor over all 2^24 inputs.
 
 ### SIMD Tier Assignments
 
-- **Paeth**: bpp=4 `[v2, neon, wasm128]`; bpp=3 `[wasm128]`, else fixed kernel
-- **Sub**: bpp=4 `[v1, neon, wasm128]`; bpp=3 `[wasm128]`, else fixed kernel
-- **Up**: `[v3, v1, wasm128]`; aarch64 uses the autovectorised scalar loop (NEON kernel removed, 0.66× of it)
-- **Avg**: bpp=4 `[v1, neon, wasm128]`; all other bpp use the fixed kernel
+- **Paeth**: bpp=4 `[v2, neon]`; everything else fixed kernel
+- **Sub**: bpp=4 `[v1, neon, wasm128]`; everything else fixed kernel
+- **Up**: `[v3, v1, wasm128]`; aarch64 uses the autovectorised scalar loop (a NEON kernel ran at 0.66× of it and was removed)
+- **Avg**: bpp=4 `[v1, neon]`; everything else fixed kernel
 
-The x86/NEON bpp=3 Sub and Paeth kernels were deleted 2026-10-06: the fixed
-kernel matched or beat them on both ISAs (`benchmarks/unfilter_tiers_*_2026-10-06`).
+Removed 2026-10-06 because the fixed kernel matched or beat them: x86/NEON/SIMD128
+bpp=3 Sub and Paeth, SIMD128 bpp=4 Paeth and Avg, NEON Up
+(`benchmarks/unfilter_tiers_{x86,arm}_2026-10-06.txt`, `benchmarks/unfilter_wasm_2026-10-06.txt`).
+Open: on wasm32 the bpp=3 Paeth fixed kernel runs 827 MB/s in a `+simd128` build
+but 1447 MB/s without it (LLVM vectorises the 3-lane pixel poorly); i32 math was worse.
 
 ### Codegen Patterns
 

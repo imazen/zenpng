@@ -6,8 +6,16 @@
 //! is x86-specific and truncates output on aarch64) — it measures the path
 //! users actually get.
 //!
+//! `ZENPNG_UNFILTER_SCALAR=1` disables every SIMD tier first (x86, aarch64),
+//! so the same binary measures the scalar (const-generic fixed-kernel) path.
+//! wasm32 SIMD128 is compile-time only: compare a `+simd128` build against a
+//! plain one instead.
+//!
 //! Usage:
 //!   cargo run --release --example unfilter_bench --features _dev [-- /path/to/rgb.png]
+//!   RUSTFLAGS="-C target-feature=+simd128" cargo build --release --target wasm32-wasip1 \
+//!     --example unfilter_bench --features _dev
+//!   wasmtime target/wasm32-wasip1/release/examples/unfilter_bench.wasm
 
 use std::io::Write;
 use std::time::Instant;
@@ -124,7 +132,7 @@ fn run_for_bpp(label: &str, raw_seed: &[u8], w: usize, bpp: usize) {
         "\n=== {label} (bpp={bpp}, {w}x{h}, {:.1} MB raw) ===",
         (stride * h) as f64 / 1e6
     );
-    println!("{:<10} {:>12}", "Filter", "SIMD MB/s");
+    println!("{:<10} {:>12}", "Filter", "MB/s");
     println!("{}", "-".repeat(24));
     let _ = std::io::stdout().flush();
 
@@ -146,7 +154,21 @@ fn run_for_bpp(label: &str, raw_seed: &[u8], w: usize, bpp: usize) {
     }
 }
 
+/// Disable the lowest SIMD tier, which disables every tier above it too.
+fn force_scalar() {
+    #[cfg(target_arch = "x86_64")]
+    archmage::X64V1Token::dangerously_disable_token_process_wide(true).unwrap();
+    #[cfg(target_arch = "aarch64")]
+    archmage::NeonToken::dangerously_disable_token_process_wide(true).unwrap();
+    #[cfg(target_arch = "wasm32")]
+    panic!("Wasm128Token is compile-time only; build without +simd128 instead");
+}
+
 fn main() {
+    if std::env::var_os("ZENPNG_UNFILTER_SCALAR").is_some() {
+        force_scalar();
+        println!("forced scalar (all SIMD tiers disabled)");
+    }
     // bpp=3 seed from a real RGB PNG (frymire), or synthetic if not provided.
     let arg = std::env::args().nth(1);
     let (rgb_seed, w3) = if let Some(path) = arg {
