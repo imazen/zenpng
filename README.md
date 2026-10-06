@@ -113,8 +113,11 @@ touched.
 
 ## Compression presets
 
-Presets keep roughly the encode time they had before the 2026-10-06 ladder
-rework and produce smaller files (`benchmarks/pareto_*_2026-10-06.*`).
+Against zenpng before the 2026-10-06 encoder work (8bd0e2b; median of 25
+images at 1024 px, Core Ultra 7 265K, `benchmarks/pareto_*_2026-10-06.md`):
+`Fast` is 1.7x faster and 6% smaller, `Balanced` 5% faster and 4.3% smaller,
+and `High` 0.5% smaller but 1.5x slower. Line art and documents gain most:
+`Balanced` is 16% and 5.5% smaller (geomean) than the `png` crate's `High`.
 
 | Preset | Effort | What it does |
 |---------|--------|-------------|
@@ -124,8 +127,8 @@ rework and produce smaller files (`benchmarks/pareto_*_2026-10-06.*`).
 | `Fast` | 7 | Paeth or MinSum, png(12) |
 | `Balanced` | 13 | None, Paeth or MinSum (screened at png(10)), near-optimal png(19) |
 | `Thorough` | 17 | Balanced's screen, png(26)/png(28) + brute-force rows |
-| `High` | 19 | Thorough + 9 strategies (best 3 refined), wider brute-force |
-| `Aggressive` | 22 | + png(30), fork and adaptive-fork brute-force |
+| `High` | 19 | Thorough + png(30), wider brute-force |
+| `Aggressive` | 22 | + 9 strategies (best 3 refined), fork and adaptive-fork brute-force |
 | `Intense` | 24 | + full brute-force sweep, block brute-force |
 | `Crush` | 27 | + recompression and beam search (zenzop with the `zopfli` feature) |
 | `Maniac` | 30 | Maximum standard pipeline (9 candidates refined) (zenzop with the `zopfli` feature) |

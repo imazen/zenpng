@@ -45,9 +45,21 @@ All notable changes to zenpng are documented here.
   them on x86 and aarch64 (the x86/NEON bpp=3 kernels are removed), and
   aarch64 bpp=4 Sub/Paeth now use NEON (2.06× / 1.31× per row). ARM decode of
   RGBA8 and Sub-heavy RGB8 images is up to 1.21× faster (8f790fe).
-- Effort 4 now uses effort 5's settings (5 strategies at FastHt-5). It ran 9
-  strategies at Turbo, matched effort 3's output on 27 of 36 test images, and
-  was slower than effort 7 (29.8 → 18.0 ms median).
+- **Effort ladder rebuilt on zenflate's PNG levels (`png(n)`).** Efforts 2-7
+  screen Paeth and MinSum at png(1) and recompress the winner at
+  png(2..12); efforts 8-19 add filter None to the screen, screened at png(4)
+  (e8-11) or png(10) (e12+), because unfiltered rows win by 4-21% on line
+  art, documents and screenshots and png(1) can't rank them; efforts 15-19 add
+  png(26/28/30) refinement and brute-force rows; e20-30 keep the heuristic
+  screen, fork, block, beam and recompression searches. Each rung's search
+  contains the one below (`ladder_searches_are_nested`); measured per-image
+  inversions on 91 images: e7→e8 4 images (max +1.95%), e13→e14 1 image
+  (+1.15%, a zenflate png(24) vs png(19) gap), all others ≤0.23%. Preset
+  numbers are unchanged. Against 8bd0e2b (median, 25 images at 1024 px):
+  `Fast` 1.7x faster and 6% smaller, `Balanced` 5% faster and 4.3% smaller,
+  `High` 0.5% smaller but 1.5x slower; `Balanced` is 16% (line art) and 5.5%
+  (documents) smaller than image-png's `High` (geomean).
+  `benchmarks/pareto_ladder_x86_2026-10-06.md`.
 - With `with_parallel(true)` and `with_decode_segments(n)`, the `iDOT` segments
   come straight from the parallel strip encoder (each segment's first row
   filtered with None or Sub) instead of a serial encode that is inflated again
@@ -71,7 +83,8 @@ All notable changes to zenpng are documented here.
   it independently (`zenflate::png::StripCompressor`), keeping the smallest. The concatenation is one ordinary zlib stream, and the
   output does not depend on the thread count. Five 4096 px images on 8 cores:
   effort 1 184-303 ms -> 30-51 ms, effort 5 1.53-2.18 s -> 193-252 ms, sizes
-  -0.37% to +0.25%. Off by default (as `parallel` is).
+  -0.37% to +0.25% (measured at c48cc26, before the ladder rework). Off by
+  default (as `parallel` is).
 - **Release builds no longer decompress every compressed candidate during
   encode.** The check was a decode-only workaround for a February 2026 zenflate
   bug, cost 17-23% of encode instructions at efforts 1-7, and dropped failing

@@ -296,9 +296,12 @@ impl EffortParams {
             //   identical output at zenflate 8b8cf0f and cost 3.3x png(17), so
             //   e12 (png(10) screen at png(17)) is the only rung between them
             //   until png(19..22) become a ramp. e13 is Balanced.
-            // - e16-e19 add brute-force row filtering (3,1),(5,1), png(28) and
-            //   the heuristic screen (top 3); brute force compresses at png(26).
-            //   e20-e30 add png(30), fork, block and beam searches and
+            // - e16-e19 add brute-force row filtering (3,1), png(28), png(30) and
+            //   brute force (5,1), in the order they paid off on 46 images at
+            //   1024 px (png(28) -0.33% for 1.46x; png(30) -0.17%; the
+            //   heuristic screen and top-2 refinement bought less per time).
+            //   Brute force compresses at png(26). e20-e30 add the heuristic
+            //   screen (top 3), fork, block and beam searches and
             //   recompression.
             // Measured against image-png main, zune-png and lodepng in
             // benchmarks/pareto_*_2026-10-06.*: e1 is faster and smaller than png's
@@ -598,8 +601,8 @@ impl EffortParams {
                 screen_effort: P(10),
                 screen_is_final: false,
                 top_k: 1,
-                refine_efforts: &[P(26), P(28)],
-                brute_configs: &[(3, 1), (5, 1)],
+                refine_efforts: &[P(26), P(28), P(30)],
+                brute_configs: &[(3, 1)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
                 adaptive_fork_configs: &[],
@@ -611,11 +614,11 @@ impl EffortParams {
             },
             19 => Self {
                 zenflate_effort: P(26),
-                strategies: HEURISTIC_STRATEGIES,
+                strategies: NONE_PAETH_MINSUM_STRATEGIES,
                 screen_effort: P(10),
                 screen_is_final: false,
-                top_k: 3,
-                refine_efforts: &[P(26), P(28)],
+                top_k: 1,
+                refine_efforts: &[P(26), P(28), P(30)],
                 brute_configs: &[(3, 1), (5, 1)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],

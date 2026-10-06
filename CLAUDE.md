@@ -192,11 +192,10 @@ near-optimal, png(23+) = new(23+); zenflate png-mode 8b8cf0f).
 | 6-7 | Fast=7 | Paeth+MinSum at png(1), top 1 | png(10/12) | yes (→png(9)) |
 | 8-11 | | None+Paeth+MinSum at png(4), top 1 | png(12/14/16/17) | yes |
 | 12-15 | Balanced=13 | None+Paeth+MinSum at png(10), top 1 | png(17/19/24/26) | yes |
-| 16-18 | | None+Paeth+MinSum at png(10), top 1 | png(26)[+28] + BF (3,1)[,(5,1)] | yes |
-| 19 | High=19 | 9 heuristics at png(10), top 3 | png(26,28) + BF (3,1),(5,1) | yes |
+| 16-19 | Thorough=17, High=19 | None+Paeth+MinSum at png(10), top 1 | png(26)[,28[,30]] + BF (3,1)[,(5,1)] | yes |
 | 20-30 | Aggressive=22, Intense=24, Crush=27, Maniac=30 | 9 heuristics at png(10), top 3..9 | png(26,28,30) + fork, adaptive fork, full BF set, block BF, recompress, beam | yes |
 
-(Thorough=17.) Strategies, top-k, screen level, refine levels and the
+Strategies, top-k, screen level, refine levels and the
 brute-force/fork/block/beam sets only grow from rung to rung
 (`ladder_searches_are_nested`). Brute force compresses at `zenflate_effort` =
 png(26) from e15 up so it is identical across rungs.
@@ -210,9 +209,10 @@ Paeth+MinSum at png(1) is 1.3-2.2% smaller (mean per-image ratio, 91 images, 64-
 for +3-35% time at the same refine level, and the rungs it replaced were off
 the Pareto front. Screen-level changes are not strict nesting: e7→e8 is larger
 on 4 of 91 images (max +1.95%, 5207_rgba8_256) where png(4) ranks a filter
-first that png(12) doesn't. Also refining the png(1) pair's winner ("anchors",
-commit history 2026-10-06) removed those inversions but cost +19-38% time at
-e8-e19, which put every anchored rung behind the next unanchored one.
+first that png(12) doesn't. Also refining the png(1) pair's winner (the
+"investigate: refine lower rungs' screen winners (anchors)" commit, reverted
+right after it) removed those inversions but cost +19-38% time at e8-e19,
+which put every anchored rung behind the next unanchored one.
 
 **zenflate gaps (requested 2026-10-06).** png(19..23) give identical output at
 zenflate 8b8cf0f and cost 3.3x png(17) for -4.2%; nothing between png(18) and
@@ -226,7 +226,16 @@ Measured per-image monotonicity (91 images incl. gray/palette/16-bit,
 except e7→e8 and e13→e14 above. e19..e30 (45 RGB8/RGBA8 images): see
 CHANGELOG; Phase 4 recompresses only the 3 smallest Phase 2/3 candidates, so
 e30's wider top-k can displace the one whose NearOptimal pass would have won
-(e29→e30 +0.195% on 9227_rgb8_256 before the png(10) screen).
+(e29→e30 +0.195% on 9227_rgb8_256 before the png(10) screen; 0 inversions
+e19..e30 after it).
+
+**Next: the upper ladder buys little.** On those 45 images e30 is 0.19%
+smaller than e19 (geomean; best image -0.81%) for 26x its time (single runs,
+4 cores in parallel); e23→e24 (block brute-force) alone is 4x for 0.01%.
+Before the png(10) screen, e29/e30's wider top-k found -5..-20% on line art;
+the screen now finds those at e8+. Candidates to measure: drop or reorder the
+block/beam/fork rungs that rarely change the output, and spend the time on
+what still gains (png(28/30) refinement, brute force).
 
 ### Effort 31+ tiers
 
@@ -266,10 +275,10 @@ requested, segments come straight from those strips (`compress_segmented`).
 
 - **PAETH_MINSUM** (2): Paeth, Adaptive(MinSum) — efforts 2-7, screened at
   png(1). MinSum alone was up to 13% larger than Paeth on bi-level scans.
-- **NONE_PAETH_MINSUM** (3): + None — efforts 8-18, screened at png(4) (8-11)
+- **NONE_PAETH_MINSUM** (3): + None — efforts 8-19, screened at png(4) (8-11)
   or png(10) (12-18); see "Why None joins the screen".
 - **HEURISTIC** (9): all 5 Singles + Adaptive(MinSum, Entropy, Bigrams, BigEnt)
-  — effort 19+, screened at png(10).
+  — effort 20+, screened at png(10).
 
 ### Filter precomputation optimization
 

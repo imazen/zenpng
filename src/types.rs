@@ -7,9 +7,9 @@
 /// Controls the trade-off between encoding speed and output file size.
 /// Higher effort produces smaller files but takes longer.
 ///
-/// Named presets are placed along the effort curve so each costs about what
-/// it did before the 2026-10-06 ladder rework, with smaller output (see
-/// `benchmarks/pareto_*_2026-10-06.*`).
+/// Against zenpng before the 2026-10-06 encoder work (median, 1024 px):
+/// `Fast` is 1.7x faster and 6% smaller, `Balanced` 5% faster and 4.3%
+/// smaller, `High` 0.5% smaller but 1.5x slower (see the crate README).
 /// Use [`Effort`](Self::Effort) for fine-grained control between presets.
 ///
 /// | Preset | Effort | Description |
@@ -19,9 +19,9 @@
 /// | `Turbo` | 2 | Paeth or MinSum (screened), png(2) |
 /// | `Fast` | 7 | Paeth or MinSum, png(12) |
 /// | `Balanced` | 13 | None, Paeth or MinSum (screened at png(10)), near-optimal png(19) |
-/// | `Thorough` | 17 | None, Paeth or MinSum, png(26)/png(28) + brute-force rows |
-/// | `High` | 19 | Thorough + 9 strategies (best 3 refined), wider brute-force |
-/// | `Aggressive` | 22 | + png(30), fork and adaptive-fork brute-force |
+/// | `Thorough` | 17 | Balanced's screen, png(26)/png(28) + brute-force rows |
+/// | `High` | 19 | Thorough + png(30), wider brute-force |
+/// | `Aggressive` | 22 | + 9 strategies (best 3 refined), fork and adaptive-fork brute-force |
 /// | `Intense` | 24 | + full brute-force sweep, block brute-force |
 /// | `Crush` | 27 | + recompression and beam search |
 /// | `Maniac` | 30 | Maximum standard pipeline (9 candidates refined) |
@@ -48,11 +48,10 @@ pub enum Compression {
     /// Thorough compression. Balanced's screen with png(26) and png(28) plus
     /// brute-force row filtering.
     Thorough,
-    /// High compression. Thorough with nine filter strategies (the best
-    /// three refined) and wider brute-force.
+    /// High compression. Thorough plus png(30) and wider brute-force.
     High,
-    /// Aggressive compression. png(30) plus fork and adaptive-fork
-    /// brute-force.
+    /// Aggressive compression. Nine filter strategies (the best three
+    /// refined) plus fork and adaptive-fork brute-force.
     Aggressive,
     /// Intense compression. Full brute-force filter sweep and block
     /// brute-force with near-optimal DEFLATE. The strongest level before
