@@ -294,6 +294,13 @@ pub(crate) fn analyze_rgb8(
                 }
             }
         }
+
+        // Nothing left to learn: the sub-byte flags only change while the
+        // image is still grayscale, so the remaining pixels cannot alter
+        // the result. Photos reach this within a few hundred pixels.
+        if !is_grayscale && palette_overflow {
+            break;
+        }
     }
 
     let min_gray_bit_depth = if can_1bit {
