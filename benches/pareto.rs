@@ -14,7 +14,10 @@
 //!   are skipped for long edges over 2560 unless `ZENPNG_PARETO_BIG=1`).
 //! - `zenpng_e<E>_mt`: the same with `with_parallel(true)`
 //!   (`ZENPNG_PARETO_MT_EFFORTS`, default `7,13,19`).
-//! - `zenpng_e7_idot8_mt`: effort 7, parallel, `with_decode_segments(8)`.
+//! - `zenpng_e7_idot8_mt`: effort 7, parallel, `with_decode_segments(8)`
+//!   (off with `ZENPNG_PARETO_NO_IDOT=1`).
+//! - With the `_dev` feature, `ZENPNG_LADDER_E<n>` redefines effort n (see
+//!   `EffortParams::dev_override`), so candidate ladders run without rebuilds.
 //! - `png_fast` / `png_balanced` / `png_high`: image-rs/image-png main.
 //! - `zune`: zune-png's encoder (default options). `lodepng`: lodepng
 //!   defaults.
@@ -34,10 +37,12 @@ use zenbench::prelude::*;
 use zenflate::Unstoppable;
 
 fn env_list(name: &str, default: &[u32]) -> Vec<u32> {
+    // Unset: the default list. Set but empty: no arms.
     std::env::var(name).map_or_else(
         |_| default.to_vec(),
         |v| {
             v.split(',')
+                .filter(|e| !e.trim().is_empty())
                 .map(|e| e.trim().parse().expect("effort"))
                 .collect()
         },
@@ -224,11 +229,13 @@ fn encode_arms(edge: u32) -> Vec<(String, EncodeFn)> {
             Box::new(move |i| zenpng_encode(i, &cfg)),
         ));
     }
-    let idot = effort_cfg(7, true).with_decode_segments(8);
-    arms.push((
-        "zenpng_e7_idot8_mt".into(),
-        Box::new(move |i| zenpng_encode(i, &idot)),
-    ));
+    if std::env::var_os("ZENPNG_PARETO_NO_IDOT").is_none() {
+        let idot = effort_cfg(7, true).with_decode_segments(8);
+        arms.push((
+            "zenpng_e7_idot8_mt".into(),
+            Box::new(move |i| zenpng_encode(i, &idot)),
+        ));
+    }
     for (n, c) in [
         ("png_fast", png_main::Compression::Fast),
         ("png_balanced", png_main::Compression::Balanced),

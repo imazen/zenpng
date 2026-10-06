@@ -4,6 +4,9 @@
 //!
 //!   cargo run --release --features _dev --example roundtrip_sweep -- DIR 0,1,7,13,19
 //!
+//! `ROUNDTRIP_SIZES=1` also prints each encode's size and time (one run, not
+//! a benchmark; use benches/pareto.rs for timings).
+//!
 //! Used 2026-10-06 to check the encoder's per-candidate decompress verify:
 //! 2098 encodes over scripts/vs_png_inputs.sh output, efforts 0-24 and 30.
 use zenflate::Unstoppable;
@@ -22,6 +25,7 @@ fn main() {
         .collect();
     files.sort();
     let mut n = 0;
+    let verbose = std::env::var_os("ROUNDTRIP_SIZES").is_some();
     for f in &files {
         let data = std::fs::read(f).unwrap();
         let d = zenpng::decode(&data, &zenpng::PngDecodeConfig::default(), &Unstoppable).unwrap();
@@ -30,6 +34,7 @@ fn main() {
             let cfg =
                 zenpng::EncodeConfig::default().with_compression(zenpng::Compression::Effort(e));
             let px = &d.pixels;
+            let t = std::time::Instant::now();
             let r = if let Some(i) = px.try_as_imgref::<rgb::Rgb<u8>>() {
                 zenpng::encode_rgb8(i, None, &cfg, &Unstoppable, &Unstoppable)
             } else if let Some(i) = px.try_as_imgref::<rgb::Rgba<u8>>() {
@@ -43,6 +48,14 @@ fn main() {
                 break;
             };
             let png = r.unwrap_or_else(|err| panic!("{}: e{e}: {err}", f.display()));
+            if verbose {
+                println!(
+                    "{}\te{e}\t{}\t{:.2} ms",
+                    f.file_name().unwrap().to_string_lossy(),
+                    png.len(),
+                    t.elapsed().as_secs_f64() * 1e3
+                );
+            }
             let back =
                 zenpng::decode(&png, &zenpng::PngDecodeConfig::strict(), &Unstoppable).unwrap();
             if rgba16(&back.pixels) != src {

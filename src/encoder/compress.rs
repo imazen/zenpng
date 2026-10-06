@@ -17,6 +17,48 @@ use super::filter::{
 };
 use super::{PhaseStat, PhaseStats};
 
+/// A zenflate level in the effort table: `G(n)` is
+/// `CompressionLevel::new(n)` (the general ladder), `P(n)` is
+/// `CompressionLevel::png(n)` (zenflate's PNG ladder: runs and short matches
+/// tuned for filtered rows).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Zl {
+    G(u32),
+    // Only `_dev` ladder overrides build it until the default table moves onto
+    // the PNG ladder.
+    #[cfg_attr(not(feature = "_dev"), allow(dead_code))]
+    P(u32),
+}
+
+impl Zl {
+    pub(crate) fn level(self) -> CompressionLevel {
+        match self {
+            Zl::G(n) => CompressionLevel::new(n),
+            Zl::P(n) => CompressionLevel::png(n),
+        }
+    }
+
+    /// Search depth for ordering levels of either ladder (png(n) and new(n)
+    /// cost about the same at equal n).
+    pub(crate) fn rank(self) -> u32 {
+        match self {
+            Zl::G(n) | Zl::P(n) => n,
+        }
+    }
+}
+
+impl core::fmt::Display for Zl {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Zl::G(n) => write!(f, "E{n}"),
+            Zl::P(n) => write!(f, "P{n}"),
+        }
+    }
+}
+
+#[cfg_attr(not(feature = "_dev"), allow(unused_imports))]
+use Zl::{G, P};
+
 /// Parameters derived from a single effort value (0-200).
 ///
 /// Each field controls one axis of the compression pipeline:
@@ -35,12 +77,12 @@ use super::{PhaseStat, PhaseStats};
 /// helpers follow automatically. Screen effort stays at FastHt (≤9) to avoid
 /// cross-strategy ranking divergence.
 struct EffortParams {
-    zenflate_effort: u32,
+    zenflate_effort: Zl,
     strategies: &'static [Strategy],
-    screen_effort: u32,
+    screen_effort: Zl,
     screen_is_final: bool,
     top_k: usize,
-    refine_efforts: &'static [u32],
+    refine_efforts: &'static [Zl],
     brute_configs: &'static [(usize, u32)],
     block_brute_configs: &'static [(usize, u32)],
     fork_brute_efforts: &'static [u32],
@@ -85,7 +127,83 @@ impl EffortParams {
         params
     }
 
+    /// `_dev` only: replace effort `e`'s settings from the environment, for
+    /// ladder sweeps with `benches/pareto.rs` without rebuilding.
+    /// `ZENPNG_LADDER_E<e>="<strategies>|<screen>[|<refine,...>[|<top_k>]]"`.
+    /// Strategies: `none sub up avg paeth minsum entropy bigrams bigent` or
+    /// the sets `minimal fast heuristic`, comma-separated. Levels: `g<n>`
+    /// (`CompressionLevel::new`) or `p<n>` (`CompressionLevel::png`). With no
+    /// refine levels the screen pass is final.
+    #[cfg(feature = "_dev")]
+    fn dev_override(effort: u32) -> Option<Self> {
+        use super::filter::AdaptiveHeuristic as H;
+        let spec = std::env::var(alloc::format!("ZENPNG_LADDER_E{effort}"))
+            .ok()
+            .filter(|s| !s.trim().is_empty())?;
+        let level = |t: &str| -> Zl {
+            let n: u32 = t[1..].parse().expect("ZENPNG_LADDER level number");
+            match &t[..1] {
+                "g" => G(n),
+                "p" => P(n),
+                _ => panic!("ZENPNG_LADDER level must be g<n> or p<n>: {t}"),
+            }
+        };
+        let mut parts = spec.split('|');
+        let mut strategies = Vec::new();
+        for t in parts.next()?.split(',') {
+            match t.trim() {
+                "minimal" => strategies.extend_from_slice(MINIMAL_STRATEGIES),
+                "fast" => strategies.extend_from_slice(FAST_STRATEGIES),
+                "heuristic" => strategies.extend_from_slice(HEURISTIC_STRATEGIES),
+                "none" => strategies.push(Strategy::Single(0)),
+                "sub" => strategies.push(Strategy::Single(1)),
+                "up" => strategies.push(Strategy::Single(2)),
+                "avg" => strategies.push(Strategy::Single(3)),
+                "paeth" => strategies.push(Strategy::Single(4)),
+                "minsum" => strategies.push(Strategy::Adaptive(H::MinSum)),
+                "entropy" => strategies.push(Strategy::Adaptive(H::Entropy)),
+                "bigrams" => strategies.push(Strategy::Adaptive(H::Bigrams)),
+                "bigent" => strategies.push(Strategy::Adaptive(H::BigEnt)),
+                other => panic!("ZENPNG_LADDER unknown strategy {other}"),
+            }
+        }
+        let screen = level(parts.next()?.trim());
+        let refine: Vec<Zl> = parts
+            .next()
+            .map(|r| {
+                r.split(',')
+                    .filter(|t| !t.trim().is_empty())
+                    .map(|t| level(t.trim()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let top_k = parts
+            .next()
+            .map(|k| k.trim().parse().expect("ZENPNG_LADDER top_k"))
+            .unwrap_or(if refine.is_empty() { 1 } else { 3 });
+        Some(Self {
+            zenflate_effort: refine.last().copied().unwrap_or(screen),
+            strategies: Box::leak(strategies.into_boxed_slice()),
+            screen_effort: screen,
+            screen_is_final: refine.is_empty(),
+            top_k,
+            refine_efforts: Box::leak(refine.into_boxed_slice()),
+            brute_configs: &[],
+            block_brute_configs: &[],
+            fork_brute_efforts: &[],
+            adaptive_fork_configs: &[],
+            beam_brute_configs: &[],
+            use_recompress: false,
+            full_optimal_effort: None,
+            full_optimal_only: false,
+        })
+    }
+
     fn from_effort(effort: u32) -> Self {
+        #[cfg(feature = "_dev")]
+        if let Some(p) = Self::dev_override(effort) {
+            return p;
+        }
         if effort > 60 {
             return Self::tier_full_maniac_with_full_optimal(effort);
         }
@@ -101,9 +219,9 @@ impl EffortParams {
             // e0=Store, e1-4=Turbo, e5-9=FastHt.
             // Turbo→FastHt always improves (zenflate guarantee), no fallback needed.
             0 => Self {
-                zenflate_effort: 0,
+                zenflate_effort: G(0),
                 strategies: &[Strategy::Single(0)],
-                screen_effort: 0,
+                screen_effort: G(0),
                 screen_is_final: true,
                 top_k: 1,
                 refine_efforts: &[],
@@ -117,9 +235,9 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             1 => Self {
-                zenflate_effort: 1,
+                zenflate_effort: G(1),
                 strategies: &[Strategy::Single(4)],
-                screen_effort: 1,
+                screen_effort: G(1),
                 screen_is_final: true,
                 top_k: 1,
                 refine_efforts: &[],
@@ -133,9 +251,9 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             2 => Self {
-                zenflate_effort: 2,
+                zenflate_effort: G(2),
                 strategies: MINIMAL_STRATEGIES,
-                screen_effort: 2,
+                screen_effort: G(2),
                 screen_is_final: true,
                 top_k: 1,
                 refine_efforts: &[],
@@ -149,9 +267,9 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             3 => Self {
-                zenflate_effort: 3,
+                zenflate_effort: G(3),
                 strategies: FAST_STRATEGIES,
-                screen_effort: 3,
+                screen_effort: G(3),
                 screen_is_final: true,
                 top_k: 1,
                 refine_efforts: &[],
@@ -172,9 +290,9 @@ impl EffortParams {
             // but larger than e3 on 7 of 36 images (up to 0.79%).
             // 36 RGB8 images, 256 and 1024 px, 2026-10-06.
             4 => Self {
-                zenflate_effort: 5,
+                zenflate_effort: G(5),
                 strategies: FAST_STRATEGIES,
-                screen_effort: 5,
+                screen_effort: G(5),
                 screen_is_final: true,
                 top_k: 1,
                 refine_efforts: &[],
@@ -188,9 +306,9 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             5 => Self {
-                zenflate_effort: 5,
+                zenflate_effort: G(5),
                 strategies: FAST_STRATEGIES,
-                screen_effort: 5,
+                screen_effort: G(5),
                 screen_is_final: true,
                 top_k: 1,
                 refine_efforts: &[],
@@ -204,9 +322,9 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             6 => Self {
-                zenflate_effort: 6,
+                zenflate_effort: G(6),
                 strategies: FAST_STRATEGIES,
-                screen_effort: 6,
+                screen_effort: G(6),
                 screen_is_final: true,
                 top_k: 1,
                 refine_efforts: &[],
@@ -220,9 +338,9 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             7 => Self {
-                zenflate_effort: 7,
+                zenflate_effort: G(7),
                 strategies: FAST_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: true,
                 top_k: 1,
                 refine_efforts: &[],
@@ -241,12 +359,12 @@ impl EffortParams {
             // fallback chain (via zenflate) automatically tries previous
             // strategy boundaries (e.g., e12 → e10 → e9).
             8 => Self {
-                zenflate_effort: 8,
+                zenflate_effort: G(8),
                 strategies: FAST_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[8],
+                refine_efforts: &[G(8)],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -257,12 +375,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             9 => Self {
-                zenflate_effort: 10,
+                zenflate_effort: G(10),
                 strategies: FAST_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[10],
+                refine_efforts: &[G(10)],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -273,12 +391,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             10 => Self {
-                zenflate_effort: 12,
+                zenflate_effort: G(12),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[12],
+                refine_efforts: &[G(12)],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -289,12 +407,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             11 => Self {
-                zenflate_effort: 14,
+                zenflate_effort: G(14),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[14],
+                refine_efforts: &[G(14)],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -305,12 +423,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             12 => Self {
-                zenflate_effort: 15,
+                zenflate_effort: G(15),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[15],
+                refine_efforts: &[G(15)],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -321,12 +439,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             13 => Self {
-                zenflate_effort: 17,
+                zenflate_effort: G(17),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[17],
+                refine_efforts: &[G(17)],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -337,12 +455,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             14 => Self {
-                zenflate_effort: 18,
+                zenflate_effort: G(18),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[18],
+                refine_efforts: &[G(18)],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -353,12 +471,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             15 => Self {
-                zenflate_effort: 20,
+                zenflate_effort: G(20),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[20],
+                refine_efforts: &[G(20)],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -373,12 +491,12 @@ impl EffortParams {
             // Screen at FastHt e7. Refine at target efforts; fallback chain
             // handles cross-strategy monotonicity automatically.
             16 => Self {
-                zenflate_effort: 22,
+                zenflate_effort: G(22),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[20, 22],
+                refine_efforts: &[G(20), G(22)],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -389,12 +507,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             17 => Self {
-                zenflate_effort: 22,
+                zenflate_effort: G(22),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[20, 22],
+                refine_efforts: &[G(20), G(22)],
                 brute_configs: &[(3, 1)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -405,12 +523,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             18 => Self {
-                zenflate_effort: 24,
+                zenflate_effort: G(24),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[22, 24],
+                refine_efforts: &[G(22), G(24)],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -421,12 +539,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             19 => Self {
-                zenflate_effort: 24,
+                zenflate_effort: G(24),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[22, 24],
+                refine_efforts: &[G(22), G(24)],
                 brute_configs: &[(3, 1)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -437,12 +555,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             20 => Self {
-                zenflate_effort: 26,
+                zenflate_effort: G(26),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[24, 26],
+                refine_efforts: &[G(24), G(26)],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -453,12 +571,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             21 => Self {
-                zenflate_effort: 28,
+                zenflate_effort: G(28),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[26, 28],
+                refine_efforts: &[G(26), G(28)],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -469,12 +587,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             22 => Self {
-                zenflate_effort: 28,
+                zenflate_effort: G(28),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[26, 28],
+                refine_efforts: &[G(26), G(28)],
                 brute_configs: &[(5, 1)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -485,12 +603,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             23 => Self {
-                zenflate_effort: 30,
+                zenflate_effort: G(30),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[28, 30],
+                refine_efforts: &[G(28), G(30)],
                 brute_configs: &[(5, 1)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],
@@ -502,12 +620,12 @@ impl EffortParams {
             },
             // ── Max effort (24-30): brute-force + zopfli ──
             24 => Self {
-                zenflate_effort: 30,
+                zenflate_effort: G(30),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[28, 30],
+                refine_efforts: &[G(28), G(30)],
                 brute_configs: &[(5, 1)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[10],
@@ -518,12 +636,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             25 => Self {
-                zenflate_effort: 30,
+                zenflate_effort: G(30),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[28, 30],
+                refine_efforts: &[G(28), G(30)],
                 brute_configs: &[(5, 1)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[10],
@@ -534,12 +652,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             26 => Self {
-                zenflate_effort: 30,
+                zenflate_effort: G(30),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[28, 30],
+                refine_efforts: &[G(28), G(30)],
                 brute_configs: &[(5, 1), (5, 4)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[10],
@@ -550,12 +668,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             27 => Self {
-                zenflate_effort: 30,
+                zenflate_effort: G(30),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[28, 30],
+                refine_efforts: &[G(28), G(30)],
                 brute_configs: &[(5, 1), (5, 4)],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[10, 15],
@@ -566,12 +684,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             28 => Self {
-                zenflate_effort: 30,
+                zenflate_effort: G(30),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[28, 30],
+                refine_efforts: &[G(28), G(30)],
                 brute_configs: &[
                     (1, 1),
                     (1, 4),
@@ -591,12 +709,12 @@ impl EffortParams {
                 full_optimal_only: false,
             },
             29 => Self {
-                zenflate_effort: 30,
+                zenflate_effort: G(30),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[28, 30],
+                refine_efforts: &[G(28), G(30)],
                 brute_configs: &[
                     (1, 1),
                     (1, 4),
@@ -617,12 +735,12 @@ impl EffortParams {
             },
             _ => Self {
                 // effort 30
-                zenflate_effort: 30,
+                zenflate_effort: G(30),
                 strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 7,
+                screen_effort: G(7),
                 screen_is_final: false,
                 top_k: 3,
-                refine_efforts: &[28, 30],
+                refine_efforts: &[G(28), G(30)],
                 brute_configs: &[
                     (1, 1),
                     (1, 4),
@@ -648,12 +766,12 @@ impl EffortParams {
     // FullOptimal iterations = effort - 16 (e.g., effort 76 = 60i).
     fn tier_full_maniac_with_full_optimal(effort: u32) -> Self {
         Self {
-            zenflate_effort: 30,
+            zenflate_effort: G(30),
             strategies: HEURISTIC_STRATEGIES,
-            screen_effort: 7,
+            screen_effort: G(7),
             screen_is_final: false,
             top_k: 3,
-            refine_efforts: &[30],
+            refine_efforts: &[G(30)],
             brute_configs: &[
                 (1, 1),
                 (1, 4),
@@ -677,12 +795,12 @@ impl EffortParams {
     // Effort 46-60: 9 strategies + refine + moderate brute-force + FullOptimal.
     fn tier_moderate_brute_with_full_optimal(effort: u32) -> Self {
         Self {
-            zenflate_effort: 30,
+            zenflate_effort: G(30),
             strategies: HEURISTIC_STRATEGIES,
-            screen_effort: 7,
+            screen_effort: G(7),
             screen_is_final: false,
             top_k: 3,
-            refine_efforts: &[28, 30],
+            refine_efforts: &[G(28), G(30)],
             brute_configs: &[(1, 1), (1, 4), (3, 1), (3, 4)],
             block_brute_configs: &[],
             fork_brute_efforts: &[10, 15],
@@ -707,12 +825,12 @@ impl EffortParams {
     // FullOptimal iterations = effort - 16 (E31->15i, E36->20i, E45->29i).
     fn tier_full_pipeline_with_full_optimal(effort: u32) -> Self {
         Self {
-            zenflate_effort: 30,
+            zenflate_effort: G(30),
             strategies: HEURISTIC_STRATEGIES,
-            screen_effort: 7,
+            screen_effort: G(7),
             screen_is_final: false,
             top_k: 3,
-            refine_efforts: &[28, 30],
+            refine_efforts: &[G(28), G(30)],
             brute_configs: &[
                 (1, 1),
                 (1, 4),
@@ -810,14 +928,14 @@ pub(crate) fn try_compress(
 /// chain (17, 10, 9), and compressing a level twice gives identical bytes.
 fn try_compress_with_fallbacks(
     filtered: &[u8],
-    effort: u32,
+    effort: Zl,
     compress_buf: &mut [u8],
     best_compressed: &mut Option<Vec<u8>>,
     done: &mut Vec<(CompressionLevel, usize)>,
     cancel: &dyn Stop,
 ) -> crate::error::Result<usize> {
     let mut best_size = usize::MAX;
-    let mut level = CompressionLevel::new(effort);
+    let mut level = effort.level();
     loop {
         let size = match done.iter().find(|(l, _)| *l == level) {
             Some(&(_, size)) => size,
@@ -951,15 +1069,17 @@ impl RowFormat {
 /// pipeline's own final compressor (FullOptimal at 31+).
 pub(crate) fn segment_level(effort: u32) -> zenflate::CompressionLevel {
     let p = EffortParams::from_effort(effort);
-    let e = p.full_optimal_effort.unwrap_or_else(|| {
-        p.refine_efforts
+    match p.full_optimal_effort {
+        Some(e) => zenflate::CompressionLevel::new(e),
+        None => p
+            .refine_efforts
             .iter()
             .copied()
             .chain([p.zenflate_effort, p.screen_effort])
-            .max()
+            .max_by_key(|z| z.rank())
             .unwrap_or(p.zenflate_effort)
-    });
-    zenflate::CompressionLevel::new(e)
+            .level(),
+    }
 }
 
 pub(crate) fn compress_filtered(
@@ -1143,7 +1263,7 @@ fn run_phase1_screen(
     height: usize,
     bpp: usize,
     strategies: &[Strategy],
-    screen_effort: u32,
+    screen_effort: Zl,
     precomputed: Option<&[u8]>,
     opts: &super::CompressOptions<'_>,
     mut stats: Option<&mut PhaseStats>,
@@ -1206,7 +1326,7 @@ fn screen_parallel(
     height: usize,
     bpp: usize,
     strategies: &[Strategy],
-    screen_effort: u32,
+    screen_effort: Zl,
     precomputed: Option<&[u8]>,
     opts: &super::CompressOptions<'_>,
     screen_results: &mut ScreenResults,
@@ -1221,7 +1341,7 @@ fn screen_parallel(
             .map(|strategy| {
                 s.spawn(move || {
                     let mut t_filtered = Vec::with_capacity(filtered_size);
-                    let mut t_compressor = Compressor::new(CompressionLevel::new(screen_effort));
+                    let mut t_compressor = Compressor::new(screen_effort.level());
                     let mut t_compress_buf = vec![0u8; compress_bound];
 
                     if let Some(pc) = precomputed {
@@ -1286,12 +1406,12 @@ fn screen_serial(
     height: usize,
     bpp: usize,
     strategies: &[Strategy],
-    screen_effort: u32,
+    screen_effort: Zl,
     precomputed: Option<&[u8]>,
     opts: &super::CompressOptions<'_>,
     screen_results: &mut ScreenResults,
 ) -> crate::error::Result<()> {
-    let mut screen_compressor = Compressor::new(CompressionLevel::new(screen_effort));
+    let mut screen_compressor = Compressor::new(screen_effort.level());
     let mut scratch = HeuristicScratch::new_universal();
 
     for (i, strategy) in strategies.iter().enumerate() {
@@ -1421,7 +1541,7 @@ fn refine_parallel(
     state: &mut CompressState,
     screen_results: &ScreenResults,
     top_n: usize,
-    refine_tiers: &[u32],
+    refine_tiers: &[Zl],
     params: &EffortParams,
     recompress_candidates: &mut RecompressCandidates,
     opts: &super::CompressOptions<'_>,
@@ -1439,7 +1559,7 @@ fn refine_parallel(
                     // Tiers share fallback levels; compress each level once.
                     let mut done: Vec<CompressionLevel> = Vec::new();
                     for &tier_level in refine_tiers {
-                        let mut level = CompressionLevel::new(tier_level);
+                        let mut level = tier_level.level();
                         loop {
                             if done.contains(&level) {
                                 match level.monotonicity_fallback() {
@@ -1494,7 +1614,7 @@ fn refine_serial(
     state: &mut CompressState,
     screen_results: &ScreenResults,
     top_n: usize,
-    refine_tiers: &[u32],
+    refine_tiers: &[Zl],
     params: &EffortParams,
     recompress_candidates: &mut RecompressCandidates,
     opts: &super::CompressOptions<'_>,
@@ -2355,7 +2475,7 @@ mod tests {
     #[test]
     fn effort_0_is_store() {
         let p = EffortParams::from_effort(0);
-        assert_eq!(p.zenflate_effort, 0);
+        assert_eq!(p.zenflate_effort, G(0));
         assert!(p.screen_is_final);
         assert_eq!(p.strategies.len(), 1);
         assert!(!p.use_recompress);
@@ -2365,7 +2485,7 @@ mod tests {
     #[test]
     fn effort_1_single_paeth() {
         let p = EffortParams::from_effort(1);
-        assert_eq!(p.zenflate_effort, 1);
+        assert_eq!(p.zenflate_effort, G(1));
         assert!(p.screen_is_final);
         assert_eq!(p.strategies.len(), 1);
     }
@@ -2459,11 +2579,11 @@ mod tests {
         for effort in 0..=30 {
             let p = EffortParams::from_effort(effort);
             assert!(
-                p.zenflate_effort >= prev,
+                p.zenflate_effort.rank() >= prev,
                 "zenflate effort should be monotonic: e{effort} = {} < {prev}",
                 p.zenflate_effort
             );
-            prev = p.zenflate_effort;
+            prev = p.zenflate_effort.rank();
         }
     }
 
