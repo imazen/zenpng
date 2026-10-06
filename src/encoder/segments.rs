@@ -77,7 +77,7 @@ pub(crate) fn plan(requested: u32, row_bytes: usize, height: usize) -> usize {
 
 /// Row counts for `n` segments: as even as possible, larger ones first
 /// (Apple splits an even height into two equal halves).
-fn split_rows(height: usize, n: usize) -> Vec<u32> {
+pub(crate) fn split_rows(height: usize, n: usize) -> Vec<u32> {
     let base = height / n;
     let extra = height % n;
     (0..n)
@@ -234,7 +234,7 @@ pub(crate) fn segment(
 
 /// Replace a filtered row (filter byte + data) with None or Sub, whichever has
 /// the smaller sum of absolute signed bytes. `raw` is the unfiltered row.
-fn refilter_none_or_sub(raw: &[u8], bpp: usize, dst: &mut [u8]) {
+pub(crate) fn refilter_none_or_sub(raw: &[u8], bpp: usize, dst: &mut [u8]) {
     let none_cost: u64 = raw.iter().map(|&b| (b as i8).unsigned_abs() as u64).sum();
     let sub_cost: u64 = raw
         .iter()

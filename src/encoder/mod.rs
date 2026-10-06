@@ -58,6 +58,29 @@ pub struct PhaseStats {
     pub raw_size: usize,
 }
 
+/// The IDAT payload for `rows`: `iDOT` segments straight from the parallel
+/// strip encoder when it can write them, otherwise one zlib stream from
+/// [`compress_filtered`], re-split into segments if `opts` asks for them.
+#[allow(clippy::too_many_arguments)]
+fn compress_idat(
+    rows: &[u8],
+    row_bytes: usize,
+    height: usize,
+    format: RowFormat,
+    effort: u32,
+    opts: CompressOptions<'_>,
+    stats: Option<&mut PhaseStats>,
+) -> crate::error::Result<segments::Idat> {
+    if let Some(idat) =
+        compress::compress_segmented(rows, row_bytes, height, format, effort, &opts)?
+    {
+        return Ok(idat);
+    }
+    let seg_req = (opts.decode_segments, opts.max_threads, opts.cancel);
+    let compressed = compress_filtered(rows, row_bytes, height, format, effort, opts, stats)?;
+    finish_idat(compressed, row_bytes, height, format.bpp, effort, seg_req)
+}
+
 /// Optionally split the pipeline's zlib stream into `iDOT` segments.
 fn finish_idat(
     compressed: Vec<u8>,
@@ -113,8 +136,7 @@ pub(crate) fn write_indexed_png(
     let row_bytes = packed_row_bytes(w, bit_depth);
 
     // Compress with multi-strategy filter selection (bpp=1 for indexed)
-    let seg_req = (opts.decode_segments, opts.max_threads, opts.cancel);
-    let compressed = compress_filtered(
+    let idat = compress_idat(
         &packed_rows,
         row_bytes,
         h,
@@ -122,14 +144,6 @@ pub(crate) fn write_indexed_png(
         effort,
         opts,
         None,
-    )?;
-    let idat = finish_idat(
-        compressed,
-        row_bytes,
-        h,
-        RowFormat::INDEXED.bpp,
-        effort,
-        seg_req,
     )?;
 
     // Assemble PNG
@@ -332,8 +346,7 @@ pub(crate) fn write_truecolor_png(
     }
 
     // Compress with multi-strategy filter selection
-    let seg_req = (opts.decode_segments, opts.max_threads, opts.cancel);
-    let compressed = compress_filtered(
+    let idat = compress_idat(
         &pixel_bytes[..expected_len],
         row_bytes,
         h,
@@ -341,14 +354,6 @@ pub(crate) fn write_truecolor_png(
         effort,
         opts,
         None,
-    )?;
-    let idat = finish_idat(
-        compressed,
-        row_bytes,
-        h,
-        RowFormat::from_png(color_type, bit_depth).bpp,
-        effort,
-        seg_req,
     )?;
 
     // Assemble PNG
@@ -488,8 +493,7 @@ pub(crate) fn write_truecolor_png_with_stats(
         ))));
     }
 
-    let seg_req = (opts.decode_segments, opts.max_threads, opts.cancel);
-    let compressed = compress_filtered(
+    let idat = compress_idat(
         &pixel_bytes[..expected_len],
         row_bytes,
         h,
@@ -497,14 +501,6 @@ pub(crate) fn write_truecolor_png_with_stats(
         effort,
         opts,
         Some(stats),
-    )?;
-    let idat = finish_idat(
-        compressed,
-        row_bytes,
-        h,
-        RowFormat::from_png(color_type, bit_depth).bpp,
-        effort,
-        seg_req,
     )?;
 
     let trns_size = trns.map_or(0, |t| 12 + t.len());

@@ -1076,6 +1076,55 @@ fn try_compress_with_fallbacks(
     Ok(best_size)
 }
 
+/// `iDOT` output straight from parallel strip encoding: when `opts` asks for
+/// segments, threads are allowed, and the effort runs through
+/// [`compress_strips`], the segments are compressed as strips (their first
+/// rows filtered with None or Sub) instead of encoding one stream and
+/// re-splitting it ([`super::segments::segment`]). `None` means the caller
+/// should take that path.
+pub(crate) fn compress_segmented(
+    packed_rows: &[u8],
+    row_bytes: usize,
+    height: usize,
+    format: RowFormat,
+    effort: u32,
+    opts: &super::CompressOptions<'_>,
+) -> crate::error::Result<Option<super::segments::Idat>> {
+    if effort == 0 || !opts.parallel {
+        return Ok(None);
+    }
+    let n = super::segments::plan(opts.decode_segments, row_bytes, height);
+    let params = EffortParams::from_effort_and_bpp(effort, format.bpp);
+    if n < 2 || !params.strips_apply() {
+        return Ok(None);
+    }
+    let owned_rows;
+    let packed_rows = if format.rgba8 && has_any_transparent_pixel(packed_rows) {
+        owned_rows = zero_transparent_rgba8(packed_rows);
+        &owned_rows
+    } else {
+        packed_rows
+    };
+    let rows = super::segments::split_rows(height, n);
+    let Some(strips) = compress_strips(
+        packed_rows,
+        row_bytes,
+        height,
+        format.bpp,
+        &params,
+        opts,
+        &rows,
+    )?
+    else {
+        return Ok(None);
+    };
+    let idat = strips.into_idat();
+    if let super::segments::Idat::Segmented { parts, .. } = &idat {
+        debug_check_roundtrip_len(&parts.concat(), height * (row_bytes + 1));
+    }
+    Ok(Some(idat))
+}
+
 /// Filtered bytes per strip in [`compress_strips`]. Fixed (not derived from
 /// the thread count) so output does not depend on how many threads ran.
 const STRIP_BYTES: usize = 512 * 1024;
@@ -1100,12 +1149,42 @@ fn compress_strips(
     bpp: usize,
     params: &EffortParams,
     opts: &super::CompressOptions<'_>,
-) -> crate::error::Result<Option<Vec<u8>>> {
+    segment_rows: &[u32],
+) -> crate::error::Result<Option<StripsOut>> {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use zenflate::png::StripCompressor;
 
     let stride = row_bytes + 1;
-    let n = ((stride * height) / STRIP_BYTES).min(height);
+    // Strip row ranges. With `iDOT` segments, each segment is split into its
+    // own strips so segment boundaries are strip boundaries.
+    let split = |start: usize, rows: usize, n: usize, out: &mut Vec<(usize, usize)>| {
+        let (base, extra) = (rows / n, rows % n);
+        let mut y = start;
+        for k in 0..n {
+            let a = y;
+            y += base + usize::from(k < extra);
+            out.push((a, y));
+        }
+    };
+    let mut bounds = Vec::new();
+    let mut seg_start = Vec::new();
+    if segment_rows.is_empty() {
+        let n = ((stride * height) / STRIP_BYTES).min(height);
+        split(0, height, n.max(1), &mut bounds);
+        seg_start.resize(bounds.len(), false);
+    } else {
+        let mut y = 0usize;
+        for &r in segment_rows {
+            let r = r as usize;
+            let k = ((stride * r) / STRIP_BYTES).clamp(1, r.max(1));
+            let first = bounds.len();
+            split(y, r, k, &mut bounds);
+            seg_start.resize(bounds.len(), false);
+            seg_start[first] = y > 0;
+            y += r;
+        }
+    }
+    let n = bounds.len();
     let threads = match opts.max_threads {
         0 => std::thread::available_parallelism().map_or(1, |t| t.get()),
         t => t,
@@ -1115,15 +1194,7 @@ fn compress_strips(
     if n < 2 || threads < 2 || cfg!(target_arch = "wasm32") {
         return Ok(None);
     }
-    let base = height / n;
-    let extra = height % n;
-    let bounds: Vec<(usize, usize)> = (0..n)
-        .scan(0usize, |y, k| {
-            let a = *y;
-            *y += base + usize::from(k < extra);
-            Some((a, *y))
-        })
-        .collect();
+    let seg_start = &seg_start;
     let level = params.screen_effort.level();
     let strategies = params.strategies;
     let cancel = opts.cancel;
@@ -1188,7 +1259,14 @@ fn compress_strips(
                 }
                 None => filter_image(rows, row_bytes, h, bpp, strategy, cancel, &mut filtered),
             }
-            let data = &filtered[lead * stride..];
+            let data = &mut filtered[lead * stride..];
+            if seg_start[k] {
+                // An `iDOT` segment starts here: its first row may only use
+                // None or Sub, which need no previous row.
+                let raw = &packed_rows[a * row_bytes..(a + 1) * row_bytes];
+                super::segments::refilter_none_or_sub(raw, bpp, &mut data[..stride]);
+            }
+            let data = &*data;
             let adler = zenflate::adler32(1, data);
             let len = c.compress(data, last, &mut out, cancel)?;
             if best.as_ref().is_none_or(|(z, _)| len < z.len()) {
@@ -1247,13 +1325,18 @@ fn compress_strips(
         parts[k] = Some(r);
     }
 
-    let mut z = StripCompressor::new(level).zlib_header().to_vec();
-    let mut adler = 1u32;
+    let mut out = StripsOut {
+        header: StripCompressor::new(level).zlib_header(),
+        strips: Vec::with_capacity(n),
+        adler: 1,
+        segment_rows: segment_rows.to_vec(),
+        bounds: bounds.clone(),
+    };
     for p in parts {
         match p {
             Some(Ok((bytes, a, len))) => {
-                z.extend_from_slice(&bytes);
-                adler = zenflate::adler32_combine(adler, a, len);
+                out.strips.push(bytes);
+                out.adler = zenflate::adler32_combine(out.adler, a, len);
             }
             Some(Err(zenflate::CompressionError::Stopped(reason))) => {
                 return Err(at!(PngError::from(reason)));
@@ -1272,9 +1355,58 @@ fn compress_strips(
             }
         }
     }
-    z.extend_from_slice(&adler.to_be_bytes());
-    debug_check_roundtrip_len(&z, height * stride);
-    Ok(Some(z))
+    Ok(Some(out))
+}
+
+/// Compressed strips from [`compress_strips`], in image order.
+struct StripsOut {
+    header: [u8; 2],
+    strips: Vec<Vec<u8>>,
+    /// Adler-32 of all filtered rows.
+    adler: u32,
+    /// `iDOT` segment row counts (empty: plain stream).
+    segment_rows: Vec<u32>,
+    /// Row range of each strip.
+    bounds: Vec<(usize, usize)>,
+}
+
+impl StripsOut {
+    /// One zlib stream: header, strips, Adler-32 trailer.
+    fn into_zlib(self) -> Vec<u8> {
+        let mut z = Vec::with_capacity(6 + self.strips.iter().map(Vec::len).sum::<usize>());
+        z.extend_from_slice(&self.header);
+        for s in &self.strips {
+            z.extend_from_slice(s);
+        }
+        z.extend_from_slice(&self.adler.to_be_bytes());
+        z
+    }
+
+    /// The same stream split into `iDOT` segments (each segment's strips
+    /// concatenated; the first part carries the header, the last the trailer).
+    fn into_idat(self) -> super::segments::Idat {
+        let mut parts: Vec<Vec<u8>> = Vec::with_capacity(self.segment_rows.len());
+        let mut seg_end = 0usize;
+        let mut segs = self.segment_rows.iter();
+        for ((a, _), s) in self.bounds.iter().zip(&self.strips) {
+            if *a >= seg_end {
+                seg_end += *segs.next().expect("strips stay within segments") as usize;
+                parts.push(Vec::new());
+            }
+            parts.last_mut().expect("pushed").extend_from_slice(s);
+        }
+        let mut first = self.header.to_vec();
+        first.extend_from_slice(&parts[0]);
+        parts[0] = first;
+        parts
+            .last_mut()
+            .expect("at least two segments")
+            .extend_from_slice(&self.adler.to_be_bytes());
+        super::segments::Idat::Segmented {
+            rows: self.segment_rows,
+            parts,
+        }
+    }
 }
 
 /// Debug builds: a strip decodes on its own to exactly `data`.
@@ -1483,8 +1615,10 @@ pub(crate) fn compress_filtered(
     // Multi-threaded screen-only efforts: compress strips concurrently.
     if opts.parallel
         && params.strips_apply()
-        && let Some(z) = compress_strips(packed_rows, row_bytes, height, bpp, &params, &opts)?
+        && let Some(z) = compress_strips(packed_rows, row_bytes, height, bpp, &params, &opts, &[])?
     {
+        let z = z.into_zlib();
+        debug_check_roundtrip_len(&z, height * (row_bytes + 1));
         return Ok(z);
     }
 

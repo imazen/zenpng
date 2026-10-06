@@ -48,6 +48,11 @@ All notable changes to zenpng are documented here.
 - Effort 4 now uses effort 5's settings (5 strategies at FastHt-5). It ran 9
   strategies at Turbo, matched effort 3's output on 27 of 36 test images, and
   was slower than effort 7 (29.8 → 18.0 ms median).
+- With `with_parallel(true)` and `with_decode_segments(n)`, the `iDOT` segments
+  come straight from the parallel strip encoder (each segment's first row
+  filtered with None or Sub) instead of a serial encode that is inflated again
+  and re-split. Output decodes identically everywhere and in parallel in
+  zenpng (`tests/idot_encode.rs`).
 - **Two-thread decode for large ordinary PNGs.** When threads are allowed
   (`max_threads` 0, the default, or above 1) and the filtered stream is at
   least 512 KiB, a second thread inflates rows while the caller's thread

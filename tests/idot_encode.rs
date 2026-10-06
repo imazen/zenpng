@@ -179,3 +179,70 @@ fn effort_zero_stays_unsegmented() {
     let png = encode_rgba8(img.as_ref(), None, &cfg, &Unstoppable, &Unstoppable).unwrap();
     assert!(idot_table(&png).is_none());
 }
+
+/// With parallel encoding on, `iDOT` segments come straight from the strip
+/// encoder (no serial encode + re-split). The file must have the same shape
+/// (table, rows, first IDAT right after `iDOT`), decode identically
+/// everywhere, and not depend on the thread count.
+#[test]
+fn parallel_strip_segments_roundtrip_everywhere() {
+    let img = image(1600, 1400);
+    let src = rgba_bytes(&img);
+    for effort in [1u32, 2, 7, 13] {
+        let mut outs = Vec::new();
+        for threads in [2usize, 8] {
+            let mut cfg = EncodeConfig::default()
+                .with_compression(Compression::Effort(effort))
+                .with_decode_segments(3)
+                .with_parallel(true);
+            cfg.max_threads = threads;
+            let png = encode_rgba8(img.as_ref(), None, &cfg, &Unstoppable, &Unstoppable).unwrap();
+            let table = idot_table(&png).expect("iDOT expected");
+            assert_eq!(table.len(), 3, "effort {effort}");
+            assert_eq!(table.iter().map(|t| t.1).sum::<u32>(), 1400);
+            assert_eq!(decode_png_crate(&png), src, "png crate, effort {effort}");
+            #[cfg(feature = "_dev")]
+            let before = zenpng::__idot_stats();
+            for t in [1, 0] {
+                let d = decode(
+                    &png,
+                    &PngDecodeConfig::strict().with_max_threads(t),
+                    &Unstoppable,
+                )
+                .unwrap();
+                assert_eq!(
+                    d.pixels.copy_to_contiguous_bytes(),
+                    src,
+                    "zenpng {t}, e{effort}"
+                );
+            }
+            // The segments must decode in parallel, not fall back to serial
+            // (which a bad boundary row would trigger silently).
+            #[cfg(feature = "_dev")]
+            if std::thread::available_parallelism().map_or(1, |n| n.get()) >= 2 {
+                assert!(
+                    zenpng::__idot_stats().0 > before.0,
+                    "parallel decode did not run: effort {effort}"
+                );
+            }
+            outs.push(png);
+        }
+        assert_eq!(outs[0], outs[1], "effort {effort}: depends on thread count");
+        let serial = encode_rgba8(
+            img.as_ref(),
+            None,
+            &EncodeConfig::default()
+                .with_compression(Compression::Effort(effort))
+                .with_decode_segments(3),
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let growth = outs[0].len() as f64 / serial.len() as f64;
+        assert!(
+            growth < 1.02,
+            "effort {effort}: {:.2}% vs serial + re-split",
+            (growth - 1.0) * 100.0
+        );
+    }
+}
