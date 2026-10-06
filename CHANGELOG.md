@@ -48,6 +48,12 @@ All notable changes to zenpng are documented here.
 - Effort 4 now uses effort 5's settings (5 strategies at FastHt-5). It ran 9
   strategies at Turbo, matched effort 3's output on 27 of 36 test images, and
   was slower than effort 7 (29.8 → 18.0 ms median).
+- **Release builds no longer decompress every compressed candidate during
+  encode.** The check was a decode-only workaround for a February 2026 zenflate
+  bug, cost 17-23% of encode instructions at efforts 1-7, and dropped failing
+  candidates silently. Debug builds (tests, `cargo fuzz`) now decode every
+  candidate and panic unless the exact input comes back. Effort 1 on a
+  1024x768 photo: 213.8M -> 146.2M instructions; effort 7: 1,395M -> 1,099M.
 - Encode efforts 16-19 are 15-25% faster: refine tiers no longer recompress
   the fallback levels they share (byte-identical output, 1dbcc3c).
 - The streaming inflate buffer is at least 256 KiB (capped at the image size),

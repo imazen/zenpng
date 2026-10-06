@@ -734,13 +734,38 @@ impl EffortParams {
     }
 }
 
+/// Builds with debug assertions (tests, `cargo fuzz`) decode every compressed
+/// candidate and require the exact filtered bytes back, panicking on any
+/// difference so a compressor bug fails loudly. Release builds skip it: zenflate's conformance suite and
+/// fuzzing cover every level, and a 2,098-encode exact sweep (2026-10-06,
+/// `examples/roundtrip_sweep.rs`) found no mismatch. The check cost 17-23% of
+/// encode instructions at efforts 1-7. It replaced a decode-only check (added
+/// for a February 2026 zenflate bug) that dropped failing candidates silently.
+#[inline]
+fn debug_check_roundtrip(compressed: &[u8], filtered: &[u8]) {
+    #[cfg(debug_assertions)]
+    {
+        let mut out = vec![0u8; filtered.len()];
+        let got = zenflate::Decompressor::new()
+            .zlib_decompress(compressed, &mut out, enough::Unstoppable)
+            .unwrap_or_else(|e| panic!("zenflate output does not decode: {e:?}"));
+        assert_eq!(
+            got.output_written,
+            filtered.len(),
+            "zenflate roundtrip length"
+        );
+        assert!(out == filtered, "zenflate roundtrip mismatch");
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = (compressed, filtered);
+}
+
 /// Try compressing `filtered` data with all `compressors`, updating `best_compressed`
 /// if a smaller result is found.
 pub(crate) fn try_compress(
     filtered: &[u8],
     compressors: &mut [Compressor],
     compress_buf: &mut [u8],
-    verify_buf: &mut [u8],
     best_compressed: &mut Option<Vec<u8>>,
     cancel: &dyn Stop,
 ) -> crate::error::Result<usize> {
@@ -762,16 +787,7 @@ pub(crate) fn try_compress(
             }
         };
 
-        // Verify decompression roundtrip
-        {
-            let mut decompressor = zenflate::Decompressor::new();
-            if decompressor
-                .zlib_decompress(&compress_buf[..compressed_len], verify_buf, cancel)
-                .is_err()
-            {
-                continue;
-            }
-        }
+        debug_check_roundtrip(&compress_buf[..compressed_len], filtered);
 
         best_for_stream = best_for_stream.min(compressed_len);
 
@@ -796,7 +812,6 @@ fn try_compress_with_fallbacks(
     filtered: &[u8],
     effort: u32,
     compress_buf: &mut [u8],
-    verify_buf: &mut [u8],
     best_compressed: &mut Option<Vec<u8>>,
     done: &mut Vec<(CompressionLevel, usize)>,
     cancel: &dyn Stop,
@@ -812,7 +827,6 @@ fn try_compress_with_fallbacks(
                     filtered,
                     core::slice::from_mut(&mut compressor),
                     compress_buf,
-                    verify_buf,
                     best_compressed,
                     cancel,
                 )?;
@@ -831,7 +845,7 @@ fn try_compress_with_fallbacks(
 
 /// Shared mutable state threaded through the four-phase compression pipeline.
 ///
-/// Owns the reusable scratch buffers (`filtered`, `compress_buf`, `verify_buf`)
+/// Owns the reusable scratch buffers (`filtered`, `compress_buf`)
 /// plus the running best result, so each phase helper takes a single `&mut self`
 /// reference instead of a long argument list. Phase helpers stay free functions
 /// taking `&mut CompressState` for testability and to keep call sites readable.
@@ -842,8 +856,6 @@ struct CompressState {
     filtered: Vec<u8>,
     /// Scratch buffer reused for zlib output in the serial paths.
     compress_buf: Vec<u8>,
-    /// Scratch buffer reused for decompression roundtrip verification.
-    verify_buf: Vec<u8>,
     /// Filtered-stream byte budget — `(row_bytes + 1) * height`.
     filtered_size: usize,
 }
@@ -855,14 +867,13 @@ impl CompressState {
             best_compressed: None,
             filtered: Vec::with_capacity(filtered_size),
             compress_buf: vec![0u8; compress_bound],
-            verify_buf: vec![0u8; filtered_size],
             filtered_size,
         }
     }
 }
 
 /// Output of Phase 1 screening — one (compressed_len, filtered_bytes) per
-/// strategy that survived the verify roundtrip, sorted ascending by size.
+/// strategy, sorted ascending by size.
 type ScreenResults = Vec<(usize, Vec<u8>)>;
 
 /// Output of Phase 2/3 — best zenflate size produced by each candidate plus
@@ -1212,7 +1223,6 @@ fn screen_parallel(
                     let mut t_filtered = Vec::with_capacity(filtered_size);
                     let mut t_compressor = Compressor::new(CompressionLevel::new(screen_effort));
                     let mut t_compress_buf = vec![0u8; compress_bound];
-                    let mut t_verify_buf = vec![0u8; filtered_size];
 
                     if let Some(pc) = precomputed {
                         let mut t_scratch = HeuristicScratch::new_universal();
@@ -1240,14 +1250,7 @@ fn screen_parallel(
                         .zlib_compress(&t_filtered, &mut t_compress_buf, cancel)
                         .ok()?;
 
-                    let mut decompressor = zenflate::Decompressor::new();
-                    decompressor
-                        .zlib_decompress(
-                            &t_compress_buf[..compressed_len],
-                            &mut t_verify_buf,
-                            cancel,
-                        )
-                        .ok()?;
+                    debug_check_roundtrip(&t_compress_buf[..compressed_len], &t_filtered);
 
                     Some((
                         compressed_len,
@@ -1337,27 +1340,15 @@ fn screen_serial(
             }
         };
 
-        let valid = {
-            let mut decompressor = zenflate::Decompressor::new();
-            decompressor
-                .zlib_decompress(
-                    &state.compress_buf[..compressed_len],
-                    &mut state.verify_buf,
-                    opts.cancel,
-                )
-                .is_ok()
-        };
-
-        if valid {
-            let dominated = state
-                .best_compressed
-                .as_ref()
-                .is_some_and(|b| compressed_len >= b.len());
-            if !dominated {
-                state.best_compressed = Some(state.compress_buf[..compressed_len].to_vec());
-            }
-            screen_results.push((compressed_len, state.filtered.clone()));
+        debug_check_roundtrip(&state.compress_buf[..compressed_len], &state.filtered);
+        let dominated = state
+            .best_compressed
+            .as_ref()
+            .is_some_and(|b| compressed_len >= b.len());
+        if !dominated {
+            state.best_compressed = Some(state.compress_buf[..compressed_len].to_vec());
         }
+        screen_results.push((compressed_len, state.filtered.clone()));
     }
     Ok(())
 }
@@ -1435,7 +1426,6 @@ fn refine_parallel(
     recompress_candidates: &mut RecompressCandidates,
     opts: &super::CompressOptions<'_>,
 ) {
-    let filtered_size = state.filtered_size;
     let compress_bound = state.compress_buf.len();
     let cancel = opts.cancel;
     let refine_results: Vec<Option<(usize, Vec<u8>)>> = std::thread::scope(|s| {
@@ -1444,7 +1434,6 @@ fn refine_parallel(
             .map(|(_, filtered_data)| {
                 s.spawn(move || {
                     let mut t_compress_buf = vec![0u8; compress_bound];
-                    let mut t_verify_buf = vec![0u8; filtered_size];
                     let mut t_best: Option<Vec<u8>> = None;
 
                     // Tiers share fallback levels; compress each level once.
@@ -1464,19 +1453,10 @@ fn refine_parallel(
                             if let Ok(len) =
                                 compressor.zlib_compress(filtered_data, &mut t_compress_buf, cancel)
                             {
-                                let mut decompressor = zenflate::Decompressor::new();
-                                if decompressor
-                                    .zlib_decompress(
-                                        &t_compress_buf[..len],
-                                        &mut t_verify_buf,
-                                        cancel,
-                                    )
-                                    .is_ok()
-                                {
-                                    let dominated = t_best.as_ref().is_some_and(|b| len >= b.len());
-                                    if !dominated {
-                                        t_best = Some(t_compress_buf[..len].to_vec());
-                                    }
+                                debug_check_roundtrip(&t_compress_buf[..len], filtered_data);
+                                let dominated = t_best.as_ref().is_some_and(|b| len >= b.len());
+                                if !dominated {
+                                    t_best = Some(t_compress_buf[..len].to_vec());
                                 }
                             }
                             match level.monotonicity_fallback() {
@@ -1530,7 +1510,6 @@ fn refine_serial(
                 filtered_data,
                 tier_level,
                 &mut state.compress_buf,
-                &mut state.verify_buf,
                 &mut state.best_compressed,
                 done,
                 opts.cancel,
@@ -1730,7 +1709,6 @@ fn run_one_brute_variant(
         &state.filtered,
         params.zenflate_effort,
         &mut state.compress_buf,
-        &mut state.verify_buf,
         &mut state.best_compressed,
         &mut Vec::new(),
         opts.cancel,
@@ -2544,14 +2522,12 @@ mod tests {
         let mut compressors = [Compressor::new(CompressionLevel::new(1))];
         let bound = Compressor::zlib_compress_bound(data.len());
         let mut compress_buf = vec![0u8; bound];
-        let mut verify_buf = vec![0u8; data.len()];
         let mut best = None;
 
         let size = try_compress(
             &data,
             &mut compressors,
             &mut compress_buf,
-            &mut verify_buf,
             &mut best,
             &Unstoppable,
         )
