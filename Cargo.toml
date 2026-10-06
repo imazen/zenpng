@@ -115,6 +115,10 @@ name = "unfilter_bench"
 required-features = ["_dev"]
 
 [[example]]
+name = "roundtrip_sweep"
+required-features = ["_dev"]
+
+[[example]]
 name = "idot_probe"
 required-features = ["_dev"]
 
