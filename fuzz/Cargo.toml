@@ -42,3 +42,9 @@ test = false
 doc = false
 bench = false
 
+
+# Same DEV-ONLY zenflate patch as the root Cargo.toml (imazen/zenflate#9,
+# segment APIs). The fuzz crate is its own workspace, so the root patch does
+# not reach it. Drop both once the zenflate release ships.
+[patch.crates-io]
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "2d4b05e03421cf13900d41adb7a255aa2a075983" }
