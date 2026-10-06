@@ -13,7 +13,54 @@
 //! - Truecolor → Indexed (when ≤256 unique colors)
 
 use alloc::vec::Vec;
-use std::collections::HashMap;
+/// Exact-palette color index: up to 256 RGBA colors, open addressing over
+/// 512 slots with a multiplicative hash on the packed pixel. Replaces a
+/// `HashMap<[u8; 4], u8>` whose SipHash cost ~16 instructions per pixel on
+/// small images and on every pixel of a palette-able image.
+struct ColorIndex {
+    keys: alloc::boxed::Box<[u32; 512]>,
+    /// Palette index + 1; 0 marks an empty slot.
+    vals: alloc::boxed::Box<[u16; 512]>,
+}
+
+impl ColorIndex {
+    fn new() -> Self {
+        Self {
+            keys: alloc::boxed::Box::new([0; 512]),
+            vals: alloc::boxed::Box::new([0; 512]),
+        }
+    }
+
+    #[inline]
+    fn slot(key: u32) -> usize {
+        (key.wrapping_mul(0x9E37_79B1) >> 23) as usize
+    }
+
+    /// The palette index of `key`, if present.
+    #[inline]
+    fn get(&self, key: u32) -> Option<u8> {
+        let mut i = Self::slot(key);
+        loop {
+            match self.vals[i] {
+                0 => return None,
+                v if self.keys[i] == key => return Some((v - 1) as u8),
+                _ => i = (i + 1) & 511,
+            }
+        }
+    }
+
+    /// Insert `key` (not present) with palette index `index`. At most 256
+    /// keys, so the table never fills.
+    #[inline]
+    fn insert(&mut self, key: u32, index: u8) {
+        let mut i = Self::slot(key);
+        while self.vals[i] != 0 {
+            i = (i + 1) & 511;
+        }
+        self.keys[i] = key;
+        self.vals[i] = index as u16 + 1;
+    }
+}
 
 use crate::encode::DowncastFlags;
 
@@ -103,11 +150,7 @@ pub(crate) fn analyze_rgba8(
     let mut is_grayscale = want_grayscale;
     let mut is_opaque = want_opaque;
     let mut is_binary_alpha = want_alpha_to_trns;
-    let mut color_map: HashMap<[u8; 4], u8> = if want_indexed {
-        HashMap::with_capacity(257)
-    } else {
-        HashMap::new()
-    };
+    let mut color_map = ColorIndex::new();
     let mut palette: Vec<[u8; 4]> = if want_indexed {
         Vec::with_capacity(256)
     } else {
@@ -174,11 +217,12 @@ pub(crate) fn analyze_rgba8(
 
         if !palette_overflow {
             let color = [r, g, b, a];
-            if let std::collections::hash_map::Entry::Vacant(e) = color_map.entry(color) {
+            let key = u32::from_le_bytes(color);
+            if color_map.get(key).is_none() {
                 if palette.len() >= 256 {
                     palette_overflow = true;
                 } else {
-                    e.insert(palette.len() as u8);
+                    color_map.insert(key, palette.len() as u8);
                     palette.push(color);
                 }
             }
@@ -207,7 +251,11 @@ pub(crate) fn analyze_rgba8(
         for i in 0..npixels {
             let off = i * 4;
             let color = [bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]];
-            indices.push(color_map[&color]);
+            indices.push(
+                color_map
+                    .get(u32::from_le_bytes(color))
+                    .expect("every pixel color was inserted"),
+            );
         }
         Some(ExactPaletteData {
             palette_rgba: palette,
@@ -243,11 +291,7 @@ pub(crate) fn analyze_rgb8(
     let want_sub_byte = flags.sub_byte_gray && want_grayscale;
 
     let mut is_grayscale = want_grayscale;
-    let mut color_map: HashMap<[u8; 4], u8> = if want_indexed {
-        HashMap::with_capacity(257)
-    } else {
-        HashMap::new()
-    };
+    let mut color_map = ColorIndex::new();
     let mut palette: Vec<[u8; 4]> = if want_indexed {
         Vec::with_capacity(256)
     } else {
@@ -285,11 +329,12 @@ pub(crate) fn analyze_rgb8(
 
         if !palette_overflow {
             let color = [r, g, b, 255];
-            if let std::collections::hash_map::Entry::Vacant(e) = color_map.entry(color) {
+            let key = u32::from_le_bytes(color);
+            if color_map.get(key).is_none() {
                 if palette.len() >= 256 {
                     palette_overflow = true;
                 } else {
-                    e.insert(palette.len() as u8);
+                    color_map.insert(key, palette.len() as u8);
                     palette.push(color);
                 }
             }
@@ -320,7 +365,11 @@ pub(crate) fn analyze_rgb8(
         for i in 0..npixels {
             let off = i * 3;
             let color = [bytes[off], bytes[off + 1], bytes[off + 2], 255];
-            indices.push(color_map[&color]);
+            indices.push(
+                color_map
+                    .get(u32::from_le_bytes(color))
+                    .expect("every pixel color was inserted"),
+            );
         }
         Some(ExactPaletteData {
             palette_rgba: palette,

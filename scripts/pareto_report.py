@@ -56,13 +56,24 @@ def load(log, result):
 
 
 def fit(xs, ys):
-    """Least squares y = a + b*x."""
-    n = len(xs)
-    if n < 2 or len(set(xs)) < 2:
+    """Fit y = a + b*x minimizing relative error (weights 1/y^2), so tiny
+    images count as much as large ones and the intercept a (fixed cost per
+    call) is meaningful."""
+    pts = [(x, y) for x, y in zip(xs, ys) if y > 0]
+    if len(pts) < 2 or len({x for x, _ in pts}) < 2:
         return float("nan"), float("nan")
-    mx, my = sum(xs) / n, sum(ys) / n
-    b = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum((x - mx) ** 2 for x in xs)
-    return my - b * mx, b
+    w = [1.0 / (y * y) for _, y in pts]
+    sw = sum(w)
+    sx = sum(wi * x for wi, (x, _) in zip(w, pts))
+    sy = sum(wi * y for wi, (_, y) in zip(w, pts))
+    sxx = sum(wi * x * x for wi, (x, _) in zip(w, pts))
+    sxy = sum(wi * x * y for wi, (x, y) in zip(w, pts))
+    det = sw * sxx - sx * sx
+    if det == 0:
+        return float("nan"), float("nan")
+    b = (sw * sxy - sx * sy) / det
+    a = (sy - b * sx) / sw
+    return a, b
 
 
 def main():
@@ -105,7 +116,7 @@ def main():
             continue
         md.append(f"## {kind}\n")
         # Fits per arm over all images: ms and bytes against pixels.
-        md.append("| arm | n | ms = a + b·MP (a ms, b ms/MP) | bytes = a + b·MP (enc) |")
+        md.append("| arm | n | ms = a + b·MP (a ms, b ms/MP; relative-error fit) | bytes = a + b·MP (enc) |")
         md.append("|---|---|---|---|")
         by_arm = collections.defaultdict(list)
         for r in krows:
@@ -118,7 +129,7 @@ def main():
             if kind == "enc":
                 ba, bb = fit(xs, [r["bytes"] for r in rs])
                 bf = f"{ba:.0f} + {bb:.0f}·MP"
-            md.append(f"| {arm} | {len(rs)} | {a:.3f} + {b:.3f}·MP | {bf} |")
+            md.append(f"| {arm} | {len(rs)} | {a:.4f} + {b:.3f}·MP | {bf} |")
         md.append("")
         # Medians per size class and content class.
         ref = "png_high" if kind == "enc" else "png"
