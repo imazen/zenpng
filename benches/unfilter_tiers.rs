@@ -6,14 +6,14 @@
 //! Run: `cargo bench --bench unfilter_tiers --features _dev`.
 
 #[cfg(target_arch = "aarch64")]
-#[allow(dead_code)]
-#[path = "../src/simd/fixed.rs"]
-mod fixed;
-#[cfg(target_arch = "aarch64")]
 // Source modules include unit-test imports unused by this harness-free bench.
 #[allow(dead_code, unused_imports)]
 #[path = "../src/simd/avg.rs"]
 mod avg;
+#[cfg(target_arch = "aarch64")]
+#[allow(dead_code, unused_imports)]
+#[path = "../src/simd/fixed.rs"]
+mod fixed;
 #[cfg(target_arch = "aarch64")]
 // Source modules include unit-test imports unused by this harness-free bench.
 #[allow(dead_code, unused_imports)]
@@ -30,16 +30,20 @@ mod sub;
 #[path = "../src/simd/up.rs"]
 mod up;
 
+/// Filters with a hand-written NEON kernel (Up for every bpp, the rest bpp=4).
+#[cfg(target_arch = "aarch64")]
+fn has_direct_neon(ft: u8, bpp: usize) -> bool {
+    ft == 2 || bpp == 4
+}
+
 #[cfg(target_arch = "aarch64")]
 fn direct_neon(ft: u8, row: &mut [u8], prev: &[u8], bpp: usize) {
     use archmage::SimdToken;
     let t = archmage::NeonToken::summon().expect("native NEON enabled");
     match (ft, bpp) {
-        (1, 3) => sub::unfilter_sub_bpp3_impl_neon(t, row),
         (1, 4) => sub::unfilter_sub_bpp4_impl_neon(t, row),
         (2, _) => up::unfilter_up_impl_neon(t, row, prev),
         (3, 4) => avg::unfilter_avg_bpp4_impl_neon(t, row, prev),
-        (4, 3) => paeth::unfilter_paeth_bpp3_impl_neon(t, row, prev),
         (4, 4) => paeth::unfilter_paeth_bpp4_impl_neon(t, row, prev),
         _ => panic!("no explicit NEON kernel for this filter/bpp"),
     }
@@ -49,14 +53,16 @@ use zenbench::prelude::*;
 
 #[cfg(target_arch = "aarch64")]
 type TierToken = archmage::NeonToken;
+// x86: disabling V1 (SSE2) also disables every higher tier, so "forced_scalar"
+// really is the scalar (const-generic fixed-kernel) path.
 #[cfg(target_arch = "x86_64")]
-type TierToken = archmage::X64V3Token;
+type TierToken = archmage::X64V1Token;
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const TIER_NAME: &str = if cfg!(target_arch = "aarch64") {
     "neon"
 } else {
-    "v3(avx2)"
+    "all x86 SIMD tiers"
 };
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
@@ -96,7 +102,7 @@ fn bench_filters(suite: &mut Suite) {
 
             for &(ft, fname) in &[(1u8, "sub"), (2, "up"), (3, "avg"), (4, "paeth")] {
                 #[cfg(target_arch = "aarch64")]
-                if !(ft == 3 && bpp == 3) {
+                if has_direct_neon(ft, bpp) {
                     set_simd(false);
                     let mut expected = base.to_vec();
                     zenpng::__bench_unfilter_row(ft, &mut expected, prev, bpp);
@@ -108,7 +114,7 @@ fn bench_filters(suite: &mut Suite) {
                 suite.compare(format!("unfilter_{fname}/{label}/{width}"), |g| {
                     g.throughput(Throughput::Bytes(len as u64));
                     #[cfg(target_arch = "aarch64")]
-                    if !(ft == 3 && bpp == 3) {
+                    if has_direct_neon(ft, bpp) {
                         g.bench("direct_neon", move |b| {
                             b.with_input(move || {
                                 set_simd(true);
@@ -139,4 +145,15 @@ fn bench_filters(suite: &mut Suite) {
     set_simd(true);
 }
 
-zenbench::main!(bench_filters);
+fn main() {
+    // Ungated like benches/vs_png.rs: the resource gate capped each group at
+    // ~4 rounds on shared boxes. Arms are interleaved within each round.
+    let group_filter = std::env::args().find_map(|a| a.strip_prefix("--group=").map(String::from));
+    let result = zenbench::run_gated(zenbench::GateConfig::disabled(), |suite| {
+        if let Some(f) = &group_filter {
+            suite.set_group_filter(f.clone());
+        }
+        bench_filters(suite);
+    });
+    zenbench::postprocess_result(&result);
+}

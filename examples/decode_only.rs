@@ -19,7 +19,10 @@ fn main() {
     // Warmup
     let _ = zenpng::decode(&source, &config, &Unstoppable).unwrap();
     // Profile iterations (default 3; pass more for sampling profilers)
-    let iters: usize = std::env::args().nth(2).and_then(|n| n.parse().ok()).unwrap_or(3);
+    let iters: usize = std::env::args()
+        .nth(2)
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(3);
     for _ in 0..iters {
         let d = zenpng::decode(&source, &config, &Unstoppable).unwrap();
         std::hint::black_box(&d);
