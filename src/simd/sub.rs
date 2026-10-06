@@ -12,19 +12,12 @@ use safe_unaligned_simd::wasm32::v128_load32_zero;
 use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_sub(row: &mut [u8], bpp: usize) {
-    // aarch64: bpp=4 measured SLOWER than the scalar path. NEON is baseline
-    // on AArch64, so LLVM autovectorises the scalar body and the hand-written
-    // kernel competes with the autovectoriser rather than with scalar code.
-    // Measured 1920-px row (benches/unfilter_tiers.rs): sub/rgba8 4.90us NEON vs 2.10us scalar (0.43x). bpp=3 KEEPS NEON: 2.30us vs 10.90us (4.74x).
-    // Unfiltering is exact integer arithmetic, so the paths are identical by
-    // construction — verified 0 mismatching bytes across all filters, bpp and
-    // widths (1920/641/17/5/1).
-    #[cfg(target_arch = "aarch64")]
-    if bpp == 4 {
-        return unfilter_sub_scalar_any(row, bpp);
-    }
+    // bpp=3 has no x86/NEON kernel: the const-generic fixed kernel measured
+    // faster (benches/unfilter_tiers.rs, 2026-10-06, 1920 px: x86 0.64 vs
+    // 0.68 us for SSE2, Neoverse-N1 2.08 vs 2.63 us for NEON). bpp=4 SIMD
+    // wins (x86 1.06x, NEON 2.06x). wasm128 is unmeasured.
     match bpp {
-        3 => incant!(unfilter_sub_bpp3_impl(row), [v1, neon, wasm128, scalar]),
+        3 => incant!(unfilter_sub_bpp3_impl(row), [wasm128, scalar]),
         4 => incant!(unfilter_sub_bpp4_impl(row), [v1, neon, wasm128, scalar]),
         _ => unfilter_sub_scalar_any(row, bpp),
     }
@@ -68,38 +61,6 @@ fn unfilter_sub_bpp4_impl_v1(_token: X64V1Token, row: &mut [u8]) {
         );
         a = result;
         i += 4;
-    }
-}
-
-// ── SIMD bpp=3 (SSE2 / V1) ──────────────────────────────────────────
-
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn unfilter_sub_bpp3_impl_v1(_token: X64V1Token, row: &mut [u8]) {
-    let len = row.len();
-    if len < 6 {
-        unfilter_sub_scalar_any(row, 3);
-        return;
-    }
-
-    // First 3 bytes unchanged. Initialize `a` with first pixel.
-    let mut a = _mm_loadu_si32(<&[u8; 4]>::try_from(&row[0..4]).unwrap());
-
-    let mut i = 3;
-    // Need i + 4 <= len to safely load 4 bytes (3 pixel + 1 overlap)
-    while i + 4 <= len {
-        let filt = _mm_loadu_si32(<&[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
-        let result = _mm_add_epi8(filt, a);
-        // Store only 3 bytes (lane 3 is garbage from the 4-byte load)
-        let val = (_mm_cvtsi128_si32(result) as u32).to_le_bytes();
-        row[i..i + 3].copy_from_slice(&val[..3]);
-        a = result;
-        i += 3;
-    }
-
-    // Scalar tail for last pixel if 4-byte load would overrun
-    for j in i..len {
-        row[j] = row[j].wrapping_add(row[j - 3]);
     }
 }
 
@@ -164,48 +125,6 @@ pub(crate) fn unfilter_sub_bpp4_impl_neon(_token: NeonToken, row: &mut [u8]) {
     while i < len {
         row[i] = row[i].wrapping_add(row[i - 4]);
         i += 1;
-    }
-}
-
-// ── NEON bpp=3 (aarch64) ─────────────────────────────────────────────
-
-#[cfg(target_arch = "aarch64")]
-#[arcane]
-pub(crate) fn unfilter_sub_bpp3_impl_neon(_token: NeonToken, row: &mut [u8]) {
-    let len = row.len();
-    if len < 6 {
-        unfilter_sub_scalar_any(row, 3);
-        return;
-    }
-
-    // Keep the running reconstructed pixel in a NEON register (low 3 lanes carry
-    // the previous 3-byte pixel) rather than reloading a scalar u32 every step.
-    // Each iteration still extracts a u32 for the 3-byte store (a 3-byte SIMD
-    // store would overrun), but the load is folded into the carry, so the
-    // recurrence chain is one `vadd_u8` per pixel instead of load+create+add+extract.
-    //
-    // `a` starts as the first reconstructed pixel (row[0..3], identity); load 4
-    // bytes (3 pixel + 1 overlap) — the overlap lane is never stored.
-    let mut a = vcreate_u8(u32::from_le_bytes(<[u8; 4]>::try_from(&row[0..4]).unwrap()) as u64);
-
-    let mut i = 3;
-    while i + 4 <= len {
-        // 4-byte load (3-pixel + 1 overlap) into low lanes of a uint8x8_t.
-        let filt = u32::from_le_bytes(<[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
-        let f = vcreate_u8(filt as u64);
-        // recon = filt + a (byte-wise wrapping). Lanes 0-2 are the real pixel.
-        let result_v = vadd_u8(f, a);
-        // Store only 3 bytes (lane 3 is garbage from the 4-byte overlap load).
-        let result = vget_lane_u32::<0>(vreinterpret_u32_u8(result_v));
-        row[i..i + 3].copy_from_slice(&result.to_le_bytes()[..3]);
-        // Carry the reconstructed pixel forward in-register (no scalar reload of `a`).
-        a = result_v;
-        i += 3;
-    }
-
-    // Scalar tail
-    for j in i..len {
-        row[j] = row[j].wrapping_add(row[j - 3]);
     }
 }
 

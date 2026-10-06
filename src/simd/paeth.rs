@@ -10,21 +10,12 @@ use safe_unaligned_simd::wasm32::v128_load32_zero;
 use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_paeth(row: &mut [u8], prev: &[u8], bpp: usize) {
-    // aarch64: measured SLOWER than the scalar path. NEON is baseline on
-    // AArch64, so LLVM autovectorises the scalar body and the hand-written
-    // kernel competes with the autovectoriser, not with scalar code.
-    // Measured on a 1920-px row (benches/unfilter_tiers.rs): paeth/rgb8 22.10us vs 17.30us (0.78x); paeth/rgba8 21.60us vs 19.40us (0.90x).
-    // Unfiltering is exact integer arithmetic so the paths are identical by
-    // construction — verified 0 mismatching bytes across all filters, bpp and
-    // widths (1920/641/17/5/1).
-    if cfg!(target_arch = "aarch64") {
-        return unfilter_paeth_scalar_any(row, prev, bpp);
-    }
+    // bpp=3 has no x86/NEON kernel: the const-generic fixed kernel measured
+    // as fast or faster (benches/unfilter_tiers.rs, 2026-10-06, 1920 px: x86
+    // 5.35 vs 5.42 us for SSE4.2, Neoverse-N1 13.2 vs 14.4 us for NEON).
+    // bpp=4 SIMD wins (x86 2.24x, NEON 1.31x). wasm128 is unmeasured.
     match bpp {
-        3 => incant!(
-            unfilter_paeth_bpp3_impl(row, prev),
-            [v2, neon, wasm128, scalar]
-        ),
+        3 => incant!(unfilter_paeth_bpp3_impl(row, prev), [wasm128, scalar]),
         4 => incant!(
             unfilter_paeth_bpp4_impl(row, prev),
             [v2, neon, wasm128, scalar]
@@ -137,49 +128,6 @@ fn paeth_simd_v2(_token: X64V2Token, a: __m128i, b: __m128i, c: __m128i) -> __m1
     _mm_blendv_epi8(result, a, _mm_and_si128(mask_ab, mask_ac))
 }
 
-// ── SIMD bpp=3 (SSE4.2 / V2) ────────────────────────────────────────
-
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn unfilter_paeth_bpp3_impl_v2(token: X64V2Token, row: &mut [u8], prev: &[u8]) {
-    let len = row.len();
-    if len < 3 {
-        return;
-    }
-
-    let zero = _mm_setzero_si128();
-    let mut a_wide = zero; // left pixel, widened to i16
-    let mut c_wide = zero; // upper-left pixel, widened to i16
-
-    let mut i = 0;
-    while i + 4 <= len {
-        let b_raw = _mm_loadu_si32(<&[u8; 4]>::try_from(&prev[i..i + 4]).unwrap());
-        let b_wide = _mm_unpacklo_epi8(b_raw, zero);
-
-        let pred_wide = paeth_simd_v2(token, a_wide, b_wide, c_wide);
-        let pred_narrow = _mm_packus_epi16(pred_wide, zero);
-
-        let filt = _mm_loadu_si32(<&[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
-        let result = _mm_add_epi8(filt, pred_narrow);
-
-        // Store only 3 bytes (lane 3 is garbage from the 4-byte load)
-        let val = (_mm_cvtsi128_si32(result) as u32).to_le_bytes();
-        row[i..i + 3].copy_from_slice(&val[..3]);
-
-        a_wide = _mm_unpacklo_epi8(result, zero);
-        c_wide = b_wide;
-        i += 3;
-    }
-
-    // Scalar tail
-    for j in i..len {
-        let left = if j >= 3 { row[j - 3] } else { 0 };
-        let above = prev[j];
-        let upper_left = if j >= 3 { prev[j - 3] } else { 0 };
-        row[j] = row[j].wrapping_add(paeth_predictor(left, above, upper_left));
-    }
-}
-
 // ── NEON bpp=4 (aarch64) ─────────────────────────────────────────────
 
 #[cfg(target_arch = "aarch64")]
@@ -255,58 +203,6 @@ fn paeth_simd_neon(_token: NeonToken, a: int16x4_t, b: int16x4_t, c: int16x4_t) 
     let result = vbsl_s16(mask_bc, b, c); // pb <= pc ? b : c
     let mask_a = vand_u16(mask_ab, mask_ac); // pa <= pb AND pa <= pc
     vbsl_s16(mask_a, a, result) // select a where both conditions hold
-}
-
-// ── NEON bpp=3 (aarch64) ─────────────────────────────────────────────
-
-#[cfg(target_arch = "aarch64")]
-#[arcane]
-pub(crate) fn unfilter_paeth_bpp3_impl_neon(token: NeonToken, row: &mut [u8], prev: &[u8]) {
-    let len = row.len();
-    if len < 3 {
-        return;
-    }
-
-    let zero = vdup_n_u16(0);
-    let mut a_wide = zero;
-    let mut c_wide = zero;
-
-    let mut i = 0;
-    while i + 4 <= len {
-        let b_bytes = u32::from_le_bytes(<[u8; 4]>::try_from(&prev[i..i + 4]).unwrap());
-        let b_raw = vcreate_u8(b_bytes as u64);
-        let b_wide = vget_low_u16(vmovl_u8(b_raw));
-
-        let pred_wide = paeth_simd_neon(
-            token,
-            vreinterpret_s16_u16(a_wide),
-            vreinterpret_s16_u16(b_wide),
-            vreinterpret_s16_u16(c_wide),
-        );
-
-        let pred_u16 = vreinterpret_u16_s16(pred_wide);
-        let pred_narrow = vmovn_u16(vcombine_u16(pred_u16, vdup_n_u16(0)));
-
-        let filt_bytes = u32::from_le_bytes(<[u8; 4]>::try_from(&row[i..i + 4]).unwrap());
-        let filt = vcreate_u8(filt_bytes as u64);
-        let result = vadd_u8(filt, pred_narrow);
-
-        // Store only 3 bytes (lane 3 is garbage from the 4-byte load)
-        let result_u32 = vget_lane_u32::<0>(vreinterpret_u32_u8(result));
-        row[i..i + 3].copy_from_slice(&result_u32.to_le_bytes()[..3]);
-
-        a_wide = vget_low_u16(vmovl_u8(result));
-        c_wide = b_wide;
-        i += 3;
-    }
-
-    // Scalar tail
-    for j in i..len {
-        let left = if j >= 3 { row[j - 3] } else { 0 };
-        let above = prev[j];
-        let upper_left = if j >= 3 { prev[j - 3] } else { 0 };
-        row[j] = row[j].wrapping_add(paeth_predictor(left, above, upper_left));
-    }
 }
 
 // ── WASM SIMD128 bpp=4 ──────────────────────────────────────────────
