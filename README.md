@@ -263,8 +263,9 @@ other unfilters the rows before it. The output is byte-identical to a
 single-threaded decode. Single runs on a Core Ultra 7 265K: 1024 px RGB 1.3–1.5×
 faster, 4096 px RGB 1.7–1.9×. Files with an `iDOT` table go further (below).
 
-**Encode.** `EncodeConfig::with_parallel(true)` splits efforts 1–7 into strips
-of about 512 KiB of row data, filtered and compressed on all allowed cores. The
+**Encode.** `EncodeConfig::with_parallel(true)` splits the image into strips
+of about 512 KiB of row data, filtered and compressed on all allowed cores, at
+every effort without a brute-force or recompress phase (1–16, 18, 20, 21). The
 strips join into one ordinary zlib stream, so every decoder reads the file, and
 the output does not depend on the thread count. On 4096 px images with 8
 cores: effort 1 is about 5.5× faster and effort 5 about 7× faster, with sizes
