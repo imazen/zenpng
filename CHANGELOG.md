@@ -45,6 +45,11 @@ All notable changes to zenpng are documented here.
   them on x86 and aarch64 (the x86/NEON bpp=3 kernels are removed), and
   aarch64 bpp=4 Sub/Paeth now use NEON (2.06× / 1.31× per row). ARM decode of
   RGBA8 and Sub-heavy RGB8 images is up to 1.21× faster (8f790fe).
+- Effort 4 now uses effort 5's settings (5 strategies at FastHt-5). It ran 9
+  strategies at Turbo, matched effort 3's output on 27 of 36 test images, and
+  was slower than effort 7 (29.8 → 18.0 ms median).
+- Encode efforts 16-19 are 15-25% faster: refine tiers no longer recompress
+  the fallback levels they share (byte-identical output, 1dbcc3c).
 - The streaming inflate buffer is at least 256 KiB (capped at the image size),
   which cuts small-image decode time by 3–17% (9fc1a21).
 - Large zeroed buffers (decode output) are now allocated zeroed by the

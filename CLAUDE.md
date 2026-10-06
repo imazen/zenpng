@@ -223,8 +223,8 @@ FullOptimal's compression.
 
 ### Filter strategy sets (`src/encoder/filter.rs`)
 
-- **MINIMAL** (3): None, Paeth, Adaptive(Bigrams) — effort 2-3
-- **FAST** (5): None, Paeth, Adaptive(MinSum, Bigrams, Entropy) — effort 4-9
+- **MINIMAL** (3): None, Paeth, Adaptive(Bigrams) — effort 2
+- **FAST** (5): None, Paeth, Adaptive(MinSum, Bigrams, Entropy) — effort 3-9 (e4 = e5's config since 2026-10-06)
 - **HEURISTIC** (9): All 5 Singles + Adaptive(MinSum, Entropy, Bigrams, BigEnt) — effort 10+
 
 BigEnt excluded from FAST — 30-170x slower than MinSum (256KB memset + 65536-entry
@@ -252,7 +252,7 @@ Higher effort must never produce larger output. Enforced by
 compression call follows the chain: NearOpt→Lazy2 max(e22)→Lazy max(e17)→Greedy max(e10)→
 FastHt max(e9). `try_compress_with_fallbacks()` wraps this automatically.
 Screen effort stays at FastHt (≤9) for consistent candidate ranking.
-Turbo→FastHt always improves (zenflate guarantee), no fallback needed below e10.
+Turbo→FastHt does NOT always improve: on 36 RGB8 images FAST@FastHt-5 was larger than FAST@Turbo on 2 (max 0.036%), and e6>e5 / e7>e6 on 2-3 (≤0.006%) (2026-10-06, `benchmarks/vs_png_encode_2026-10-06.txt`). Efforts below e10 have no fallback.
 
 ### Filter performance (measured, effort_timing.rs)
 

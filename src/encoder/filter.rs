@@ -35,7 +35,7 @@ pub(crate) const FAST_STRATEGIES: &[Strategy] = &[
     Strategy::Adaptive(AdaptiveHeuristic::Entropy),
 ];
 
-/// Minimal strategy list for low effort (effort 3-4).
+/// Minimal strategy list for low effort (effort 2).
 ///
 /// Just 3 strategies: None (best for flat content), Paeth (best single
 /// filter overall), and Bigrams (best cheap adaptive). Enough for a

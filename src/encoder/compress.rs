@@ -164,10 +164,17 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
             },
+            // e4 was the 9-strategy set at Turbo: byte-identical to e3 on 27 of
+            // 36 images at 1.7x its time, and slower than e7. It now matches e5
+            // (FAST at FastHt-5: 18.0 vs 29.8 ms). It is larger than e3 on 2 of
+            // 36 images (max 0.036%) and than old e4 on 4 (max 0.41%): FastHt
+            // does not always beat Turbo. MINIMAL at FastHt-5 was faster still
+            // but larger than e3 on 7 of 36 images (up to 0.79%).
+            // 36 RGB8 images, 256 and 1024 px, 2026-10-06.
             4 => Self {
-                zenflate_effort: 4,
-                strategies: HEURISTIC_STRATEGIES,
-                screen_effort: 4,
+                zenflate_effort: 5,
+                strategies: FAST_STRATEGIES,
+                screen_effort: 5,
                 screen_is_final: true,
                 top_k: 1,
                 refine_efforts: &[],
