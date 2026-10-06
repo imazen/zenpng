@@ -852,6 +852,49 @@ impl EffortParams {
     }
 }
 
+std::thread_local! {
+    /// Compressors kept for reuse by later encodes on this thread. Building
+    /// one costs ~6.5 µs (zenflate `examples/setup_cost.rs`), a fifth of a
+    /// 64×64 effort-1 encode, and a reused one also skips cold tables.
+    static COMPRESSORS: core::cell::RefCell<Vec<(CompressionLevel, Compressor)>> =
+        const { core::cell::RefCell::new(Vec::new()) };
+}
+
+/// Most compressors cached per thread.
+const CACHED_COMPRESSORS: usize = 4;
+
+/// Only levels with small tables are cached (FastHt and below on the general
+/// ladder, the PNG ladder through png(12)); the NearOptimal and FullOptimal
+/// state runs to megabytes and would sit idle on every encoding thread.
+fn cacheable(level: CompressionLevel) -> bool {
+    level.effort() <= 12
+}
+
+/// A compressor at `level`, from this thread's cache when one is there.
+fn take_compressor(level: CompressionLevel) -> Compressor {
+    COMPRESSORS
+        .with(|c| {
+            let mut c = c.borrow_mut();
+            c.iter()
+                .position(|(l, _)| *l == level)
+                .map(|i| c.swap_remove(i).1)
+        })
+        .unwrap_or_else(|| Compressor::new(level))
+}
+
+/// Return a compressor from [`take_compressor`] for reuse.
+fn give_compressor(level: CompressionLevel, compressor: Compressor) {
+    if cacheable(level) {
+        COMPRESSORS.with(|c| {
+            let mut c = c.borrow_mut();
+            if c.len() >= CACHED_COMPRESSORS {
+                c.remove(0);
+            }
+            c.push((level, compressor));
+        });
+    }
+}
+
 /// Builds with debug assertions (tests, `cargo fuzz`) decode every compressed
 /// candidate and require the exact filtered bytes back, panicking on any
 /// difference so a compressor bug fails loudly. Release builds skip it: zenflate's conformance suite and
@@ -940,14 +983,16 @@ fn try_compress_with_fallbacks(
         let size = match done.iter().find(|(l, _)| *l == level) {
             Some(&(_, size)) => size,
             None => {
-                let mut compressor = Compressor::new(level);
+                let mut compressor = take_compressor(level);
                 let size = try_compress(
                     filtered,
                     core::slice::from_mut(&mut compressor),
                     compress_buf,
                     best_compressed,
                     cancel,
-                )?;
+                );
+                give_compressor(level, compressor);
+                let size = size?;
                 done.push((level, size));
                 size
             }
@@ -1602,7 +1647,7 @@ fn screen_serial(
     opts: &super::CompressOptions<'_>,
     screen_results: &mut ScreenResults,
 ) -> crate::error::Result<()> {
-    let mut screen_compressor = Compressor::new(screen_effort.level());
+    let mut screen_compressor = take_compressor(screen_effort.level());
     let mut scratch = HeuristicScratch::new_universal();
 
     for (i, strategy) in strategies.iter().enumerate() {
@@ -1661,6 +1706,7 @@ fn screen_serial(
         }
         screen_results.push((compressed_len, state.filtered.clone()));
     }
+    give_compressor(screen_effort.level(), screen_compressor);
     Ok(())
 }
 
