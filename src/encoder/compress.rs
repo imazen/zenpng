@@ -1057,8 +1057,23 @@ fn compress_strips(
     let cancel = opts.cancel;
     let next = AtomicUsize::new(0);
 
+    // Fallback levels a single-strategy strip also tries (see compress_filtered).
+    let mut fallbacks = Vec::new();
+    if strategies.len() == 1 {
+        let mut l = level;
+        while let Some(fb) = l.monotonicity_fallback() {
+            fallbacks.push(fb);
+            l = fb;
+        }
+    }
+    let fallbacks = &fallbacks;
+
     type Strip = Result<(Vec<u8>, u32, usize), zenflate::CompressionError>;
-    let work = |c: &mut StripCompressor, scratch: &mut HeuristicScratch, k: usize| -> Strip {
+    let work = |c: &mut StripCompressor,
+                fbc: &mut Vec<StripCompressor>,
+                scratch: &mut HeuristicScratch,
+                k: usize|
+     -> Strip {
         let (a, b) = bounds[k];
         // Include the previous image row so row `a` filters against it, then
         // drop that row's output.
@@ -1078,10 +1093,13 @@ fn compress_strips(
                 None => filter_image(rows, row_bytes, h, bpp, strategy, cancel, &mut filtered),
             }
             let data = &filtered[lead * stride..];
-            let len = c.compress(data, k + 1 == n, &mut out, cancel)?;
-            if best.as_ref().is_none_or(|(z, _)| len < z.len()) {
-                debug_check_strip(c, &out[..len], data, k + 1 == n);
-                best = Some((out[..len].to_vec(), zenflate::adler32(1, data)));
+            let adler = zenflate::adler32(1, data);
+            for sc in core::iter::once(&mut *c).chain(fbc.iter_mut()) {
+                let len = sc.compress(data, k + 1 == n, &mut out, cancel)?;
+                if best.as_ref().is_none_or(|(z, _)| len < z.len()) {
+                    debug_check_strip(sc, &out[..len], data, k + 1 == n);
+                    best = Some((out[..len].to_vec(), adler));
+                }
             }
         }
         let (z, adler) = best.expect("strategies is never empty");
@@ -1096,6 +1114,8 @@ fn compress_strips(
                 let next = &next;
                 s.spawn(move || {
                     let mut c = StripCompressor::new(level);
+                    let mut fbc: Vec<StripCompressor> =
+                        fallbacks.iter().map(|&l| StripCompressor::new(l)).collect();
                     let mut scratch = HeuristicScratch::new_universal();
                     let mut done = Vec::new();
                     loop {
@@ -1103,7 +1123,7 @@ fn compress_strips(
                         if k >= n {
                             break done;
                         }
-                        done.push((k, work(&mut c, &mut scratch, k)));
+                        done.push((k, work(&mut c, &mut fbc, &mut scratch, k)));
                     }
                 })
             })
@@ -1388,6 +1408,29 @@ pub(crate) fn compress_filtered(
     // barely matters (typical for photographic content) and Phase 3 brute-force
     // would waste time without improving compression.
     let filter_variance_low = is_filter_variance_low(&screen_results);
+
+    // A single screened strategy is the final filter choice: also compress it
+    // at the levels in its monotonicity fallback chain and keep the smallest,
+    // so this effort is never larger than the chain's levels on these bytes.
+    if params.screen_is_final
+        && strategies.len() == 1
+        && let Some((_, filtered)) = screen_results.first()
+    {
+        let mut level = screen_effort.level();
+        while let Some(fb) = level.monotonicity_fallback() {
+            let mut c = take_compressor(fb);
+            let r = try_compress(
+                filtered,
+                core::slice::from_mut(&mut c),
+                &mut state.compress_buf,
+                &mut state.best_compressed,
+                opts.cancel,
+            );
+            give_compressor(fb, c);
+            r?;
+            level = fb;
+        }
+    }
 
     // Early return: screen-only modes don't need refinement, or deadline hit.
     if params.screen_is_final || opts.deadline.should_stop() {
