@@ -255,6 +255,22 @@ Checksums are skipped by default for speed. When CRC is skipped, computation
 is elided entirely. The decoder handles 8-bit and 16-bit, truecolor and indexed,
 interlaced and non-interlaced PNGs.
 
+## Multi-threaded encode and decode
+
+**Decode.** With threads allowed (`max_threads` 0, the default), an image with
+at least 512 KiB of row data decodes on two threads: one inflates while the
+other unfilters the rows before it. The output is byte-identical to a
+single-threaded decode. Single runs on a Core Ultra 7 265K: 1024 px RGB 1.3–1.5×
+faster, 4096 px RGB 1.7–1.9×. Files with an `iDOT` table go further (below).
+
+**Encode.** `EncodeConfig::with_parallel(true)` splits efforts 1–7 into strips
+of about 512 KiB of row data, filtered and compressed on all allowed cores. The
+strips join into one ordinary zlib stream, so every decoder reads the file, and
+the output does not depend on the thread count. On 4096 px images with 8
+cores: effort 1 is about 5.5× faster and effort 5 about 7× faster, with sizes
+within −0.4% to +0.25% of a single-threaded encode. It is off by default, like
+`parallel`; `max_threads` caps the thread count.
+
 ## Multi-threaded decode of `iDOT` PNGs
 
 PNGs written by Apple software carry an `iDOT` chunk that splits the image
