@@ -781,26 +781,38 @@ pub(crate) fn try_compress(
 /// Compress `filtered` data at the given effort, then follow zenflate's
 /// monotonicity fallback chain (trying each previous strategy boundary's
 /// max effort). Updates `best_compressed` if a smaller result is found.
+///
+/// `done` caches the sizes of levels already compressed for this same
+/// `filtered` input: refine tiers such as `[20, 22]` share their fallback
+/// chain (17, 10, 9), and compressing a level twice gives identical bytes.
 fn try_compress_with_fallbacks(
     filtered: &[u8],
     effort: u32,
     compress_buf: &mut [u8],
     verify_buf: &mut [u8],
     best_compressed: &mut Option<Vec<u8>>,
+    done: &mut Vec<(CompressionLevel, usize)>,
     cancel: &dyn Stop,
 ) -> crate::error::Result<usize> {
     let mut best_size = usize::MAX;
     let mut level = CompressionLevel::new(effort);
     loop {
-        let mut compressor = Compressor::new(level);
-        let size = try_compress(
-            filtered,
-            core::slice::from_mut(&mut compressor),
-            compress_buf,
-            verify_buf,
-            best_compressed,
-            cancel,
-        )?;
+        let size = match done.iter().find(|(l, _)| *l == level) {
+            Some(&(_, size)) => size,
+            None => {
+                let mut compressor = Compressor::new(level);
+                let size = try_compress(
+                    filtered,
+                    core::slice::from_mut(&mut compressor),
+                    compress_buf,
+                    verify_buf,
+                    best_compressed,
+                    cancel,
+                )?;
+                done.push((level, size));
+                size
+            }
+        };
         best_size = best_size.min(size);
         match level.monotonicity_fallback() {
             Some(fb) => level = fb,
@@ -1428,9 +1440,19 @@ fn refine_parallel(
                     let mut t_verify_buf = vec![0u8; filtered_size];
                     let mut t_best: Option<Vec<u8>> = None;
 
+                    // Tiers share fallback levels; compress each level once.
+                    let mut done: Vec<CompressionLevel> = Vec::new();
                     for &tier_level in refine_tiers {
                         let mut level = CompressionLevel::new(tier_level);
                         loop {
+                            if done.contains(&level) {
+                                match level.monotonicity_fallback() {
+                                    Some(fb) => level = fb,
+                                    None => break,
+                                }
+                                continue;
+                            }
+                            done.push(level);
                             let mut compressor = Compressor::new(level);
                             if let Ok(len) =
                                 compressor.zlib_compress(filtered_data, &mut t_compress_buf, cancel)
@@ -1490,18 +1512,20 @@ fn refine_serial(
     recompress_candidates: &mut RecompressCandidates,
     opts: &super::CompressOptions<'_>,
 ) -> crate::error::Result<()> {
+    let mut done: Vec<Vec<(CompressionLevel, usize)>> = vec![Vec::new(); top_n];
     for &tier_level in refine_tiers {
         if opts.deadline.should_stop() {
             break;
         }
 
-        for (_, filtered_data) in &screen_results[..top_n] {
+        for ((_, filtered_data), done) in screen_results[..top_n].iter().zip(&mut done) {
             let refine_size = try_compress_with_fallbacks(
                 filtered_data,
                 tier_level,
                 &mut state.compress_buf,
                 &mut state.verify_buf,
                 &mut state.best_compressed,
+                done,
                 opts.cancel,
             )?;
 
@@ -1701,6 +1725,7 @@ fn run_one_brute_variant(
         &mut state.compress_buf,
         &mut state.verify_buf,
         &mut state.best_compressed,
+        &mut Vec::new(),
         opts.cancel,
     )?;
 
