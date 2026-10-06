@@ -18,8 +18,11 @@ use whereat::at;
 use super::row::RowDecoder;
 use crate::error::{PngError, Result};
 
-/// Smallest filtered stream (bytes) worth a second thread.
-pub(crate) const PIPELINE_MIN_BYTES: usize = 1 << 20;
+/// Smallest filtered stream (bytes) worth a second thread. Crossover on i265
+/// E-cores (2026-10-06, `decode_only`, RGB8 at 256-768 px): a photo gains from
+/// ~324 KiB (0.83x at 384 px), a document and a screenshot break even at
+/// ~480-600 KiB (0.98-1.01x) and gain from ~750 KiB (0.79-0.88x).
+pub(crate) const PIPELINE_MIN_BYTES: usize = 512 * 1024;
 
 /// Filtered bytes per chunk handed between the threads.
 const CHUNK_BYTES: usize = 128 * 1024;

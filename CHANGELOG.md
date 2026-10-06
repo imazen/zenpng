@@ -50,7 +50,7 @@ All notable changes to zenpng are documented here.
   was slower than effort 7 (29.8 → 18.0 ms median).
 - **Two-thread decode for large ordinary PNGs.** When threads are allowed
   (`max_threads` 0, the default, or above 1) and the filtered stream is at
-  least 1 MiB, a second thread inflates rows while the caller's thread
+  least 512 KiB, a second thread inflates rows while the caller's thread
   unfilters and expands them. Output, warnings and errors (truncation, strict
   Adler-32) match the serial decoder (`tests/decode_pipeline.rs`). Single runs
   on i265: 1024 px RGB8/RGBA8 1.34-1.51x faster, 4096 px RGB8 1.70-1.93x.
