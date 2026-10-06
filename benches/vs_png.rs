@@ -123,14 +123,25 @@ fn bench_encode(suite: &mut Suite) {
                 .into_boxed_slice(),
         );
         let raw: &'static [u8] = Box::leak(bytes.into_boxed_slice());
-        let efforts = [1u32, 7, 13, 19];
+        // ZENPNG_BENCH_EFFORTS=1,7,13,19 (default) picks the zenpng efforts.
+        let efforts: &'static [u32] = Box::leak(
+            std::env::var("ZENPNG_BENCH_EFFORTS")
+                .ok()
+                .map(|v| {
+                    v.split(',')
+                        .map(|e| e.trim().parse().expect("effort"))
+                        .collect()
+                })
+                .unwrap_or_else(|| vec![1u32, 7, 13, 19])
+                .into_boxed_slice(),
+        );
         let levels = [
             ("fast", png_main::Compression::Fast),
             ("balanced", png_main::Compression::Balanced),
             ("high", png_main::Compression::High),
         ];
         if std::env::var_os("ZENPNG_BENCH_SIZES").is_some() {
-            for e in efforts {
+            for &e in efforts {
                 eprintln!(
                     "SIZE\t{name}\tzenpng_e{e}\t{}",
                     zenpng_encode(rgb, w, h, e).len()
@@ -145,7 +156,7 @@ fn bench_encode(suite: &mut Suite) {
         suite.compare(format!("encode/{name}"), move |g| {
             g.throughput(Throughput::Elements(px));
             g.throughput_unit("px");
-            for e in efforts {
+            for &e in efforts {
                 g.bench(format!("zenpng_e{e}"), move |b| {
                     b.iter(|| zenpng_encode(rgb, w, h, e))
                 });
