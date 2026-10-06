@@ -2,6 +2,31 @@
 
 # Compression Level Tuning Analysis
 
+## 2026-10-06: against image-png main (current presets)
+
+Data: `benchmarks/vs_png_encode_2026-10-06.txt` (x86, 18 RGB8 imazen-26 images
+at 1024 px across all categories). Medians:
+
+| | time | size / image-png `High` |
+|---|---|---|
+| image-png Fast / Balanced / High | 2.9 / 28 / 94 ms | 1.185 / 1.026 / 1.000 |
+| zenpng Fastest (e1) / Fast (e7) | 12.4 / 91 ms | 1.110 / 1.074 |
+| zenpng Balanced (e13) / High (e19) | 395 / 2030 ms | 1.005 / 0.953 |
+| experiment: one MinSum pass + zenflate 17 / 20 | 35 / 63 ms | 1.016 / 1.007 |
+
+- From e2 to e13 the presets are dominated by image-png on this set: e7 costs
+  what image-png `High` costs and is 7% larger.
+- The multi-strategy search pays on synthetic content only: e13 reaches
+  0.85–0.96 of image-png `High` on a plot, a map and a screenshot (7007,
+  5007, 8007), where one MinSum pass gets 1.03–1.04. On photos one MinSum pass
+  matches e13's size at 1/6–1/11 of the time.
+- Screening level is irrelevant: screening at Turbo instead of FastHt-7 gives
+  byte-identical e9/e13 output and saves under 4%.
+- e13's cost is the refine phase: 3 candidates × (Lazy-17 + the Greedy-10 and
+  FastHt-9 monotonicity fallbacks), plus a roundtrip decompress of every
+  compressed candidate (13.6% of instructions at e13, 23% at e1).
+
+
 Empirical analysis of zenpng's compression pipeline to find where time goes
 and what each phase actually delivers. Data from `phase_timing` and
 `strategy_explorer` examples run across gb82-sc screenshots (10 images),

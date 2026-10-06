@@ -1,0 +1,73 @@
+# zenpng vs image-rs/image-png ENCODE, 2026-10-06
+# benches/vs_png.rs, x86 Core Ultra 7 265K P-core (taskset -c 2), RGB8 inputs from
+# scripts/vs_png_inputs.sh at 1024 px long edge (20 imazen-26 categories; 18 had all arms).
+# image-png b2f10c6: fast = Adaptive + fdeflate ultra-fast; balanced = Adaptive + zlib 6
+# (flate2/miniz_oxide); high = Adaptive + zlib 9. zenpng: Compression::Effort(e).
+# Sizes are machine-independent; times are mean per encode.
+
+## 1. Current presets
+x86 Core Ultra 7 265K P-core, 18 RGB8 inputs at 1024 px; zenpng 49c1551 (before the 82d0728 analyze_rgb8 early exit), image-png b2f10c6
+arm                   median ms   size vs png_high (median)
+zenpng_e1                  12.4                       1.110  (n_size=18)
+zenpng_e7                  91.3                       1.074  (n_size=18)
+zenpng_e13                395.4                       1.005  (n_size=18)
+zenpng_e19               2030.0                       0.953  (n_size=18)
+png_main_fast               2.9                       1.185  (n_size=18)
+png_main_balanced          28.0                       1.026  (n_size=18)
+png_main_high              94.2                       1.000  (n_size=18)
+
+## 2. EXPERIMENT (not shipped): one adaptive strategy, one compression
+# Efforts 2-6 temporarily remapped to a single strategy with screen_is_final.
+x86 P-core, 18 RGB8 photos at 1024 px; EXPERIMENT: single adaptive strategy, one compression
+MinSum+z9 (FastHt)           15.6 ms   size/png_high median 1.082  p25 1.057  p75 1.160
+MinSum+z12 (Lazy)            26.8 ms   size/png_high median 1.037  p25 1.017  p75 1.060
+MinSum+z17 (Lazy max)        34.8 ms   size/png_high median 1.016  p25 1.008  p75 1.034
+Bigrams+z12                  39.4 ms   size/png_high median 1.029  p25 1.008  p75 1.037
+MinSum+z20 (Lazy2)           63.3 ms   size/png_high median 1.007  p25 1.000  p75 1.032
+png fast                      2.9 ms   size/png_high median 1.185  p25 1.117  p75 1.278
+png balanced                 27.6 ms   size/png_high median 1.026  p25 1.010  p75 1.068
+png high                     93.3 ms   size/png_high median 1.000  p25 1.000  p75 1.000
+
+## 3. EXPERIMENT (not shipped): screening level does not matter
+# e9/e13 pipelines with screen_effort 1 (Turbo) or 4: byte-identical output, <4% faster.
+x86 P-core, 18 RGB8 at 1024 px; EXPERIMENT: screening level
+e9 (screen FastHt7)               174.9 ms   size/png_high median 1.0244  mean 1.0367
+e9 pipeline, screen Turbo         167.4 ms   size/png_high median 1.0244  mean 1.0367
+e13 (screen FastHt7)              395.2 ms   size/png_high median 1.0046  mean 0.9928
+e13 pipeline, screen FastHt4      381.2 ms   size/png_high median 1.0046  mean 0.9928
+e13 pipeline, screen Turbo        380.8 ms   size/png_high median 1.0046  mean 0.9928
+png balanced                       27.9 ms   size/png_high median 1.0260  mean 1.0507
+png high                           93.5 ms   size/png_high median 1.0000  mean 1.0000
+zenpng_e5 vs zenpng_e9: size ratio median 1.0000 max 1.0000 min 1.0000
+zenpng_e6 vs zenpng_e13: size ratio median 1.0000 max 1.0000 min 1.0000
+zenpng_e4 vs zenpng_e13: size ratio median 1.0000 max 1.0000 min 1.0000
+
+## 4. Per image, size / png_high (current e7/e13 vs single MinSum)
+input                   e7     e13  MS+z17  MS+z20  pngBal
+1207_rgb8_1024       1.115   1.009   1.021   1.006   1.027
+1407_rgb8_1024       1.034   0.998   1.011   1.004   1.007
+1609_rgb8_1024       1.059   0.993   1.003   0.999   1.011
+2007_rgb8_1024       1.077   1.008   1.009   0.997   1.008
+2207_rgb8_1024       1.083   1.015   1.017   1.009   1.023
+2407_rgb8_1024       1.071   1.006   1.009   0.997   1.014
+3007_rgb8_1024       1.150   1.011   1.019   1.001   1.027
+3307_rgb8_1024       1.054   1.004   1.015   1.015   1.034
+5007_rgb8_1024       1.046   0.937   1.031   1.033   1.077
+5307_rgb8_1024       1.146   1.026   1.053   1.058   1.154
+6607_rgb8_1024       1.035   1.005   1.006   1.003   1.008
+6807_rgb8_1024       1.070   0.992   1.007   1.006   1.025
+7007_rgb8_1024       1.210   0.845   1.042   1.040   1.034
+8007_rgb8_1024       1.233   0.960   1.043   1.046   1.265
+8107_rgb8_1024       1.144   1.019   1.027   1.028   1.130
+9007_rgb8_1024       1.230   1.063   1.064   1.031   1.066
+9097_rgb8_1024       0.979   0.979   0.999   0.998   0.978
+9227_rgb8_1024       1.048   0.999   1.012   1.010   1.025
+
+## 5. Where e13 spends instructions (callgrind, 1207 at 1024x768, 6.54 G Ir)
+# compress_lazy_generic 33.3% (3 refine candidates at zenflate 17)
+# compress_fast_ht      21.1% (9 screening compressions + FastHt-9 monotonicity fallbacks)
+# zlib_decompress       13.6% (roundtrip verify of every compressed candidate)
+# compress_greedy        9.5% (Greedy-10 monotonicity fallback per refine candidate)
+# flush_block_inner      7.4%
+# bigram_entropy (BigEnt) 3.6%, bigrams 3.0%, log2 2.2%
+# Effort 1: verify is 23% of instructions; effort 7: 17.5%.
