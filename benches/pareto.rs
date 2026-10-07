@@ -385,9 +385,14 @@ fn stream_decode(data: &[u8]) -> Vec<u8> {
         .job()
         .streaming_decoder(data.into(), &[])
         .unwrap();
+    let h = dec.info().height as usize;
     let mut out = Vec::new();
     while let Some((_, rows)) = dec.next_batch().unwrap() {
         for y in 0..rows.rows() {
+            // Sized once, as a consumer that keeps the image would.
+            if out.capacity() == 0 {
+                out.reserve_exact(rows.row(y).len() * h);
+            }
             out.extend_from_slice(rows.row(y));
         }
     }
@@ -399,7 +404,7 @@ fn png_rows_decode(data: &[u8]) -> Vec<u8> {
     d.set_transformations(png_main::Transformations::EXPAND);
     d.ignore_checksums(true);
     let mut r = d.read_info().unwrap();
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(r.output_buffer_size().unwrap());
     while let Some(row) = r.next_row().unwrap() {
         out.extend_from_slice(row.data());
     }

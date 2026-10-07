@@ -104,7 +104,7 @@ fn push_decoder_rejects_short_image_data_like_decode() {
     }
 }
 
-/// `push_decoder` and `decode()` must produce identical pixels for every
+/// `push_decoder`, the streaming decoder and `decode()` must produce identical pixels for every
 /// color type and bit depth (the 44 tiny fixtures cover all of them,
 /// including tRNS, sub-byte gray and palette).
 #[test]
@@ -125,12 +125,26 @@ fn push_decoder_matches_decode_on_every_format() {
             .job()
             .push_decoder(data.as_slice().into(), &mut sink, &[])
             .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        assert_eq!(
-            sink.0,
-            expected.pixels.copy_to_contiguous_bytes(),
-            "{}",
-            path.display()
-        );
+        let expected = expected.pixels.copy_to_contiguous_bytes();
+        assert_eq!(sink.0, expected, "{}", path.display());
+        // The streaming decoder returns batches of rows (interlaced files
+        // are rejected there).
+        if data[28] == 0 {
+            let mut dec = PngDecoderConfig::new()
+                .job()
+                .streaming_decoder(data.as_slice().into(), &[])
+                .unwrap();
+            let mut got = Vec::new();
+            let mut next_y = 0;
+            while let Some((y, rows)) = dec.next_batch().unwrap() {
+                assert_eq!(y, next_y, "{}: batch start", path.display());
+                for r in 0..rows.rows() {
+                    got.extend_from_slice(rows.row(r));
+                }
+                next_y += rows.rows();
+            }
+            assert_eq!(got, expected, "{}: streaming", path.display());
+        }
         checked += 1;
     }
     assert!(checked >= 30, "only {checked} fixtures decoded");

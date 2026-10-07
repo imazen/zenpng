@@ -2525,6 +2525,11 @@ fn push_decoder_native_noninterlaced<'a>(
 
 // ── PngStreamingDecoder ──────────────────────────────────────────────
 
+/// Output bytes [`PngStreamingDecoder`] returns per `next_batch` (at least
+/// one row): batching amortizes the per-call cost, which made 64 px decodes
+/// 13% and 1-bit 1024 px decodes 41% slower one row at a time.
+const STREAM_BATCH_BYTES: usize = 32 * 1024;
+
 /// Where [`PngStreamingDecoder`] gets its unfiltered rows.
 enum StreamRows<'a> {
     /// Inflate and unfilter on the caller's thread.
@@ -2541,15 +2546,24 @@ enum StreamRows<'a> {
 
 /// Pull-based streaming PNG decoder implementing [`StreamingDecode`](zencodec::decode::StreamingDecode).
 ///
-/// Yields one post-processed row per `next_batch()` call, backed by
+/// Yields batches of post-processed rows (about 32 KiB, at least one row)
+/// per `next_batch()` call, backed by
 /// [`RowDecoder`](crate::decoder::row::RowDecoder). Only non-interlaced
 /// PNGs are supported; interlaced images are rejected at construction.
 pub struct PngStreamingDecoder<'a> {
     rows: StreamRows<'a>,
     info: ImageInfo,
     descriptor: PixelDescriptor,
-    /// Post-processed row buffer, reused across calls.
+    /// Post-processed rows of one batch (`batch_rows` × `row_pitch`), reused
+    /// across calls.
     row_buf: Vec<u8>,
+    /// The last unfiltered row of the previous batch (copy formats unfilter
+    /// the next batch's first row against it).
+    prev_buf: Vec<u8>,
+    /// Bytes per output row in `row_buf`.
+    row_pitch: usize,
+    /// Rows per `next_batch` (about [`STREAM_BATCH_BYTES`] of output).
+    batch_rows: usize,
     /// Raw row → output row conversion, built once.
     expander: crate::decoder::postprocess::RowExpander,
     /// Current row index (y coordinate).
@@ -2645,6 +2659,7 @@ impl<'a> PngStreamingDecoder<'a> {
         let expander = crate::decoder::postprocess::RowExpander::new(&ihdr, reader.ancillary())?;
         let out_row_bytes =
             (w as usize * descriptor.bytes_per_pixel()).max(expander.out_row_bytes());
+        let batch_rows = (STREAM_BATCH_BYTES / out_row_bytes.max(1)).clamp(1, h.max(1) as usize);
 
         let bpp = reader.bpp();
         let rows = match (serial, owned) {
@@ -2665,7 +2680,10 @@ impl<'a> PngStreamingDecoder<'a> {
             rows,
             info,
             descriptor,
-            row_buf: alloc::vec![0u8; out_row_bytes],
+            row_buf: alloc::vec![0u8; batch_rows * out_row_bytes],
+            prev_buf: alloc::vec![0u8; if expander.is_copy() { ihdr.raw_row_bytes()? } else { 0 }],
+            row_pitch: out_row_bytes,
+            batch_rows,
             expander,
             y: 0,
             width: w,
@@ -2693,27 +2711,59 @@ impl PngStreamingDecoder<'_> {
             return Ok(None);
         }
 
-        // Check cooperative cancellation per-row
+        // Check cooperative cancellation per batch
         if let Some(ref stop) = self.stop {
             let cancel: &dyn enough::Stop = stop;
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
         }
 
         let y = self.y;
-        let last = y + 1 == self.height;
+        let pitch = self.row_pitch;
+        let n = self.batch_rows.min((self.height - y) as usize);
+        let last_batch = y as usize + n == self.height as usize;
+        let truncated = |row: usize| {
+            at!(PngError::Truncated(alloc::format!(
+                "image data ends at row {row}"
+            )))
+        };
+        let copy = self.expander.is_copy();
         match &mut self.rows {
-            StreamRows::Serial(reader) => {
-                let raw = match reader.next_raw_row() {
-                    Some(Ok(row)) => row,
-                    Some(Err(e)) => return Err(e),
-                    None => {
-                        return Err(at!(PngError::Truncated(alloc::format!(
-                            "image data ends at row {y}"
-                        ))));
+            StreamRows::Serial(reader) if copy => {
+                // Output rows are the unfiltered rows: unfilter straight into
+                // the batch against the row above (one copy out of the
+                // decompressor, no expander pass).
+                let raw = self.prev_buf.len();
+                for r in 0..n {
+                    let (done, rest) = self.row_buf.split_at_mut(r * pitch);
+                    let prev = if r == 0 {
+                        &self.prev_buf[..]
+                    } else {
+                        &done[(r - 1) * pitch..(r - 1) * pitch + raw]
+                    };
+                    match reader.next_raw_row_direct(&mut rest[..raw], prev) {
+                        Some(Ok(())) => {}
+                        Some(Err(e)) => return Err(e),
+                        None => return Err(truncated(y as usize + r)),
                     }
-                };
-                self.expander.expand(raw, &mut self.row_buf);
-                if last {
+                }
+                self.prev_buf
+                    .copy_from_slice(&self.row_buf[(n - 1) * pitch..(n - 1) * pitch + raw]);
+                if last_batch {
+                    // Reach the zlib footer so strict mode verifies the Adler-32.
+                    reader.finish_stream()?;
+                }
+            }
+            StreamRows::Serial(reader) => {
+                for r in 0..n {
+                    let raw = match reader.next_raw_row() {
+                        Some(Ok(row)) => row,
+                        Some(Err(e)) => return Err(e),
+                        None => return Err(truncated(y as usize + r)),
+                    };
+                    self.expander
+                        .expand(raw, &mut self.row_buf[r * pitch..(r + 1) * pitch]);
+                }
+                if last_batch {
                     // Reach the zlib footer so strict mode verifies the Adler-32.
                     reader.finish_stream()?;
                 }
@@ -2724,29 +2774,31 @@ impl PngStreamingDecoder<'_> {
                 cur,
                 bpp,
             } => {
-                let f = piped.next_row()?;
-                cur.copy_from_slice(&f[1..]);
-                crate::decoder::row::unfilter_row(f[0], cur, prev, *bpp)?;
-                self.expander.expand(cur, &mut self.row_buf);
-                core::mem::swap(cur, prev);
-                if last {
+                for r in 0..n {
+                    let f = piped.next_row()?;
+                    cur.copy_from_slice(&f[1..]);
+                    crate::decoder::row::unfilter_row(f[0], cur, prev, *bpp)?;
+                    self.expander
+                        .expand(cur, &mut self.row_buf[r * pitch..(r + 1) * pitch]);
+                    core::mem::swap(cur, prev);
+                }
+                if last_batch {
                     // The producer drained the zlib stream (strict mode
                     // verifies the Adler-32 there).
                     piped.finish()?;
                 }
             }
         }
-        self.y += 1;
+        self.y += n as u32;
 
-        // `row_buf`/`stride`/`descriptor` are all internal state this decoder
+        // `row_buf`/`pitch`/`descriptor` are all internal state this decoder
         // set up itself (not caller-supplied), so a construction failure here
         // is a broken invariant in our own row-buffer sizing, not a caller fault.
-        let stride = self.width as usize * self.descriptor.bytes_per_pixel();
         let slice = PixelSlice::new(
-            &self.row_buf[..stride],
+            &self.row_buf[..n * pitch],
             self.width,
-            1,
-            stride,
+            n as u32,
+            pitch,
             self.descriptor,
         )
         .map_err(|e| {

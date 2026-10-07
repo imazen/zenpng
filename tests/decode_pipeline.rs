@@ -186,10 +186,21 @@ fn pipelined_push_decoder_matches_serial() {
 }
 
 fn stream(png: &[u8], strict: bool) -> Result<Vec<u8>, String> {
+    stream_with(png, strict, false)
+}
+
+/// `serial`: a sequential threading policy (no inflate thread).
+fn stream_with(png: &[u8], strict: bool, serial: bool) -> Result<Vec<u8>, String> {
     use zencodec::decode::{DecodeJob, DecodePolicy, DecoderConfig, StreamingDecode};
-    let mut dec = zenpng::PngDecoderConfig::new()
+    let mut job = zenpng::PngDecoderConfig::new()
         .job()
-        .with_policy(DecodePolicy::none().with_strict(strict))
+        .with_policy(DecodePolicy::none().with_strict(strict));
+    if serial {
+        job = job.with_limits(
+            zencodec::ResourceLimits::none().with_threading(zencodec::ThreadingPolicy::Sequential),
+        );
+    }
+    let mut dec = job
         .streaming_decoder(png.into(), &[])
         .map_err(|e| format!("{e}"))?;
     let mut out = Vec::new();
@@ -255,4 +266,33 @@ fn default_policy_skips_idat_crc_on_every_path() {
     assert!(push(&bad, false).is_ok(), "push_decoder");
     let r = stream(&bad, false);
     assert!(r.is_ok(), "streaming_decoder: {r:?}");
+}
+
+/// The serial streaming path returns multi-row batches; every batch's first
+/// row unfilters against the previous batch's last row.
+#[test]
+fn serial_streaming_decoder_matches_decode() {
+    for (name, png) in cases() {
+        let serial = decode(
+            &png,
+            &PngDecodeConfig::default().with_max_threads(1),
+            &Unstoppable,
+        )
+        .unwrap()
+        .pixels
+        .copy_to_contiguous_bytes();
+        assert!(
+            stream_with(&png, false, true).unwrap() == serial,
+            "{name}: serial stream differs"
+        );
+        assert!(
+            stream_with(&png, true, true).unwrap() == serial,
+            "{name}: strict serial stream differs"
+        );
+    }
+    let png = encode(700, 600, png::ColorType::Rgb, png::BitDepth::Eight, false);
+    assert!(
+        stream_with(&png[..png.len() * 2 / 3], false, true).is_err(),
+        "truncated"
+    );
 }

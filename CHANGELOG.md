@@ -32,6 +32,13 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- The zencodec `streaming_decoder` returns batches of about 32 KiB of rows
+  per `next_batch` (at least one row; the trait allows any batch height)
+  instead of one row, and copy formats (RGB8/RGBA8/gray8 without tRNS)
+  unfilter straight into the batch. Per-call overhead made it 1.13x slower
+  than `decode()` at 64 px and 1.41x on a 1-bit 1024 px image; now 1.03x
+  and 1.09x, including the consumer's copy (`benches/pareto.rs`
+  `--group=sdec`, i265 P-cores).
 - The two-thread decode pipeline (and `push_decoder` / `streaming_decoder`)
   skips palette and sub-byte gray images: their expansion on the consumer
   thread is the bottleneck, and pal8 at 1024 px ran 1.32x slower pipelined
