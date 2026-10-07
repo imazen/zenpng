@@ -125,17 +125,17 @@ and `High` 0.5% smaller but 1.5x slower. Line art and documents gain most:
 | `Fastest` | 1 | Paeth filter, zenflate png(1) |
 | `Turbo` | 2 | Paeth or MinSum (screened), png(2) |
 | `Fast` | 7 | Paeth or MinSum, png(12) |
-| `Balanced` | 13 | None, Paeth or MinSum (screened at png(10)), near-optimal png(19) |
+| `Balanced` | 13 | None, Paeth or MinSum (screened at png(10)), near-optimal png(24) |
 | `Thorough` | 17 | Balanced's screen, png(26)/png(28) + brute-force rows |
 | `High` | 19 | Thorough + png(30), wider brute-force |
-| `Aggressive` | 22 | + 9 strategies (best 3 refined), fork and adaptive-fork brute-force |
-| `Intense` | 24 | + full brute-force sweep, block brute-force |
-| `Crush` | 27 | + recompression and beam search (zenzop with the `zopfli` feature) |
-| `Maniac` | 30 | Maximum standard pipeline (9 candidates refined) (zenzop with the `zopfli` feature) |
+| `Aggressive` | 22 | + 9 strategies (best 3 refined), recompression, fork brute-force |
+| `Intense` | 24 | + beam search, full brute-force sweep |
+| `Crush` | 27 | + wider fork/beam, adaptive fork, 5 candidates refined (zenzop with the `zopfli` feature) |
+| `Maniac` | 30 | + block brute-force, 9 candidates refined (zenzop with the `zopfli` feature) |
 | `Brag` | 31 | Full pipeline + 15 FullOptimal iterations — competitive with ECT-9 |
 | `Minutes` | 200 | Full pipeline + 184 FullOptimal iterations |
 
-`Crush`, `Maniac`, and `Brag` fall back to `Intense` if the `zopfli` feature isn't enabled.
+Without the `zopfli` feature, `Crush` and `Maniac` skip the zenzop pass (everything else runs); `Brag` uses FullOptimal instead.
 `Minutes` runs the full Maniac pipeline plus FullOptimal recompression at
 maximum iterations — expect minutes per megapixel.
 

@@ -193,7 +193,7 @@ near-optimal ramp, png(23+) = new(23+) sharing block ends and the runs guard; ze
 | 8-10 | | None+Paeth+MinSum at png(4), top 1 | png(12/14/16) | yes |
 | 11-15 | Balanced=13 | None+Paeth+MinSum at png(10), top 1 | png(17/19/24/25/26) | yes |
 | 16-19 | Thorough=17, High=19 | None+Paeth+MinSum at png(10), top 1 | png(26)[,28[,30]] + BF (3,1)[,(5,1)] | yes |
-| 20-30 | Aggressive=22, Intense=24, Crush=27, Maniac=30 | 9 heuristics at png(10), top 3..9 | png(26,28,30) + fork, adaptive fork, full BF set, block BF, recompress, beam | yes |
+| 20-30 | Aggressive=22, Intense=24, Crush=27, Maniac=30 | 9 heuristics at png(10), top 3 (5 at e27, 9 at e30) | png(26,28,30) + BF; then recompress (e21), fork (e22), beam (e23), full BF set (e24), fork 15 + beam 15 (e25), adaptive fork (e26), zenzop (e27, `zopfli` feature), block BF (e28-29) | yes |
 
 Strategies, top-k, screen level, refine levels and the
 brute-force/fork/block/beam sets only grow from rung to rung
@@ -240,13 +240,16 @@ e30's wider top-k can displace the one whose NearOptimal pass would have won
 (e29→e30 +0.195% on 9227_rgb8_256 before the png(10) screen; 0 inversions
 e19..e30 after it).
 
-**Next: the upper ladder buys little.** On those 45 images e30 is 0.19%
-smaller than e19 (geomean; best image -0.81%) for 26x its time (single runs,
-4 cores in parallel); e23→e24 (block brute-force) alone is 4x for 0.01%.
-Before the png(10) screen, e29/e30's wider top-k found -5..-20% on line art;
-the screen now finds those at e8+. Candidates to measure: drop or reorder the
-block/beam/fork rungs that rarely change the output, and spend the time on
-what still gains (png(28/30) refinement, brute force).
+**Upper ladder (rebuilt 2026-10-07).** One component at a time on top of
+e19 (45 RGB8/RGBA8 images at 64/256 px, geomean, E-core time ratios):
+recompress -0.28% for 1.53x, heuristic top-3 screen -0.22% for 1.99x, beam
+10:3 -0.11% for 1.92x, fork 10 -0.09% for 1.34x, full BF set -0.07% for
+2.41x, block BF 5:1 -0.04% for 15.4x, adaptive fork 0.00% for 1.31x, top 9 =
+top 3 at 4.5x. Rebuilt in that order: e21 is -0.43% at 2.5x e19's time and
+e25 -0.52% at 6.7x, where the previous e24 was -0.32% at 19.7x and e30
+-0.54% at 39x. Inversions e19..e30: only e23→e24 (5 images, max +0.076%;
+Phase 4 recompresses the 3 smallest candidates, and the full BF set changes
+which those are).
 
 ### Effort 31+ tiers
 
@@ -273,8 +276,8 @@ FullOptimal's compression.
 2. **Phase 2 — Refine**: Top-K candidates re-compressed at `refine_efforts` via
    `try_compress_with_fallbacks()` (fallback chain when `fallbacks`).
 3. **Phase 3 — BruteForce**: Per-row brute-force filter selection (effort 16+),
-   fork and adaptive fork (20+), block (24+), beam (26+).
-4. **Phase 4 — Recompress**: effort 25-30 (zopfli adaptive with time budgeting
+   fork (22+), beam (23+), adaptive fork (26+), block (28+).
+4. **Phase 4 — Recompress**: NearOptimal from effort 21; zopfli adaptive with time budgeting from effort 27
    when the `zopfli` feature is on). Effort 31+: NearOptimal + FullOptimal
    (+ optional zenzop).
 

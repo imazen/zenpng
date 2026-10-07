@@ -18,13 +18,13 @@
 /// | `Fastest` | 1 | Paeth filter, zenflate png(1) |
 /// | `Turbo` | 2 | Paeth or MinSum (screened), png(2) |
 /// | `Fast` | 7 | Paeth or MinSum, png(12) |
-/// | `Balanced` | 13 | None, Paeth or MinSum (screened at png(10)), near-optimal png(19) |
+/// | `Balanced` | 13 | None, Paeth or MinSum (screened at png(10)), near-optimal png(24) |
 /// | `Thorough` | 17 | Balanced's screen, png(26)/png(28) + brute-force rows |
 /// | `High` | 19 | Thorough + png(30), wider brute-force |
-/// | `Aggressive` | 22 | + 9 strategies (best 3 refined), fork and adaptive-fork brute-force |
-/// | `Intense` | 24 | + full brute-force sweep, block brute-force |
-/// | `Crush` | 27 | + recompression and beam search |
-/// | `Maniac` | 30 | Maximum standard pipeline (9 candidates refined) |
+/// | `Aggressive` | 22 | + 9 strategies (best 3 refined), recompression, fork brute-force |
+/// | `Intense` | 24 | + beam search, full brute-force sweep |
+/// | `Crush` | 27 | + wider fork/beam, adaptive fork, 5 candidates refined, zenzop (`zopfli` feature) |
+/// | `Maniac` | 30 | + block brute-force, 9 candidates refined |
 /// | `Brag` | 31 | Full pipeline + 15 FullOptimal iterations (beats ECT-9) |
 /// | `Minutes` | 200 | Full pipeline + 184 FullOptimal iterations |
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -51,19 +51,17 @@ pub enum Compression {
     /// High compression. Thorough plus png(30) and wider brute-force.
     High,
     /// Aggressive compression. Nine filter strategies (the best three
-    /// refined) plus fork and adaptive-fork brute-force.
+    /// refined), NearOptimal recompression and fork brute-force.
     Aggressive,
-    /// Intense compression. Full brute-force filter sweep and block
-    /// brute-force with near-optimal DEFLATE. The strongest level before
-    /// recompression enters the picture.
+    /// Intense compression. Aggressive plus beam search and the full
+    /// brute-force filter sweep.
     Intense,
-    /// Ultra compression. Full brute-force sweep, beam search, and zenzop
-    /// recompression. Requires the `zopfli` feature; falls back to `Intense`
-    /// if the feature is not enabled.
+    /// Ultra compression. Intense plus wider fork and beam searches,
+    /// adaptive fork, five candidates refined, and zenzop recompression
+    /// with the `zopfli` feature (skipped without it).
     Crush,
-    /// Maximum standard-pipeline compression. Full brute-force sweep, beam
-    /// search, and zenzop with maximum effort. Requires the `zopfli` feature;
-    /// falls back to `Intense` if not enabled.
+    /// Maximum standard-pipeline compression: Crush plus block brute-force
+    /// and all nine candidates refined (zenzop with the `zopfli` feature).
     Maniac,
     /// SOTA compression. Full Maniac pipeline plus 15 FullOptimal iterations.
     /// Beats ECT-9 (60 zopfli iterations) on aggregate. Requires the `zopfli`

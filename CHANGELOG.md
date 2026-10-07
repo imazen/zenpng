@@ -32,6 +32,15 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- Efforts 20-30 rebuilt in order of measured size per time: heuristic
+  screen (e20), NearOptimal recompression (e21, was e25), fork (e22), beam
+  (e23), full brute-force set (e24), wider fork/beam (e25), adaptive fork
+  (e26), top 5 + zenzop with the `zopfli` feature (e27), block brute-force
+  (e28-e29, was e24), top 9 (e30). On 45 images e21 is 0.43% smaller than
+  e19 at 2.5x its time and e25 0.52% at 6.7x; the old e24 was 0.32% at
+  19.7x and e30 0.54% at 39x. zenzop now runs only from Crush (e27) up, as
+  documented; the docs' "falls back to `Intense` without `zopfli`" was never
+  what the code did (only the zenzop pass is skipped).
 - The zencodec `streaming_decoder` returns batches of about 32 KiB of rows
   per `next_batch` (at least one row; the trait allows any batch height)
   instead of one row, and copy formats (RGB8/RGBA8/gray8 without tRNS)

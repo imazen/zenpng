@@ -101,6 +101,9 @@ struct EffortParams {
     /// (refine, single-strategy final pass, strips). Off for rungs inside the
     /// PNG ladder, whose levels only widen the search on filtered rows.
     fallbacks: bool,
+    /// With the `zopfli` feature, Phase 4 also runs zenzop (effort 27+; the
+    /// NearOptimal recompress alone runs from effort 20).
+    zopfli: bool,
 }
 
 impl EffortParams {
@@ -150,8 +153,8 @@ impl EffortParams {
     /// ladder sweeps with `benches/pareto.rs` without rebuilding.
     /// `ZENPNG_LADDER_E<e>="<strategies>|<screen>[|<refine,...>[|<top_k>[|nofb]]]"`
     /// (`nofb`: don't follow zenflate's monotonicity fallback chain; `fb` to
-    /// follow it). An optional sixth field `bf=<rows>:<level>,...` adds
-    /// brute-force filter configs.
+    /// follow it). Further `|`-separated fields add searches: `bf=`,
+    /// `block=`, `fork=`, `afork=`, `beam=`, `recomp`, `zf=` (see the parser).
     /// Strategies: `none sub up avg paeth minsum entropy bigrams bigent` or
     /// the sets `pm fast heuristic`, comma-separated. Levels: `g<n>`
     /// (`CompressionLevel::new`) or `p<n>` (`CompressionLevel::png`). With no
@@ -211,35 +214,78 @@ impl EffortParams {
             .map(|k| k.trim().parse().expect("ZENPNG_LADDER top_k"))
             .unwrap_or(if refine.is_empty() { 1 } else { 3 });
         let fallbacks = parts.next().map(str::trim) != Some("nofb");
-        // Optional brute-force configs: `bf=<context_rows>:<eval_level>,...`.
-        let brute: Vec<(usize, u32)> = parts
-            .next()
-            .and_then(|t| t.trim().strip_prefix("bf="))
-            .map(|v| {
-                v.split(',')
-                    .map(|c| {
-                        let (r, e) = c.split_once(':').expect("bf=<rows>:<level>");
-                        (r.parse().expect("bf rows"), e.parse().expect("bf level"))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        // Optional search fields after the fallback flag, `key=value` each:
+        // `bf=<rows>:<level>,...` brute force, `block=<rows>:<level>,...`
+        // block brute force, `fork=<level>,...`, `afork=<level>:<narrow>,...`,
+        // `beam=<level>:<width>,...`, `recomp` (Phase 4), and `zf=<g|p><n>`
+        // (the level brute force compresses at; default the last refine).
+        let pairs = |v: &str, what: &str| -> Vec<(u32, u32)> {
+            v.split(',')
+                .map(|c| {
+                    let (a, b) = c
+                        .split_once(':')
+                        .unwrap_or_else(|| panic!("{what}=<a>:<b>,..."));
+                    (a.parse().expect(what), b.parse().expect(what))
+                })
+                .collect()
+        };
+        let mut brute: Vec<(usize, u32)> = Vec::new();
+        let mut block: Vec<(usize, u32)> = Vec::new();
+        let mut fork: Vec<u32> = Vec::new();
+        let mut afork: Vec<(u32, usize)> = Vec::new();
+        let mut beam: Vec<(u32, usize)> = Vec::new();
+        let mut recompress = false;
+        let mut zf = refine.last().copied().unwrap_or(screen);
+        for field in parts.map(str::trim).filter(|f| !f.is_empty()) {
+            let (key, v) = field.split_once('=').unwrap_or((field, ""));
+            match key {
+                "bf" => {
+                    brute = pairs(v, "bf")
+                        .into_iter()
+                        .map(|(a, b)| (a as usize, b))
+                        .collect()
+                }
+                "block" => {
+                    block = pairs(v, "block")
+                        .into_iter()
+                        .map(|(a, b)| (a as usize, b))
+                        .collect()
+                }
+                "fork" => fork = v.split(',').map(|t| t.parse().expect("fork")).collect(),
+                "afork" => {
+                    afork = pairs(v, "afork")
+                        .into_iter()
+                        .map(|(a, b)| (a, b as usize))
+                        .collect()
+                }
+                "beam" => {
+                    beam = pairs(v, "beam")
+                        .into_iter()
+                        .map(|(a, b)| (a, b as usize))
+                        .collect()
+                }
+                "recomp" => recompress = true,
+                "zf" => zf = level(v),
+                other => panic!("ZENPNG_LADDER unknown field {other}"),
+            }
+        }
         Some(Self {
-            zenflate_effort: refine.last().copied().unwrap_or(screen),
+            zenflate_effort: zf,
             strategies: Box::leak(strategies.into_boxed_slice()),
             screen_effort: screen,
             screen_is_final: refine.is_empty(),
             top_k,
             refine_efforts: Box::leak(refine.into_boxed_slice()),
             brute_configs: Box::leak(brute.into_boxed_slice()),
-            block_brute_configs: &[],
-            fork_brute_efforts: &[],
-            adaptive_fork_configs: &[],
-            beam_brute_configs: &[],
-            use_recompress: false,
+            block_brute_configs: Box::leak(block.into_boxed_slice()),
+            fork_brute_efforts: Box::leak(fork.into_boxed_slice()),
+            adaptive_fork_configs: Box::leak(afork.into_boxed_slice()),
+            beam_brute_configs: Box::leak(beam.into_boxed_slice()),
+            use_recompress: recompress,
             full_optimal_effort: None,
             full_optimal_only: false,
             fallbacks,
+            zopfli: recompress,
         })
     }
 
@@ -278,6 +324,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             // ── Effort ladder (2026-10-06) ──
             //
@@ -300,9 +347,14 @@ impl EffortParams {
             //   brute force (5,1), in the order they paid off on 46 images at
             //   1024 px (png(28) -0.33% for 1.46x; png(30) -0.17%; the
             //   heuristic screen and top-2 refinement bought less per time).
-            //   Brute force compresses at png(26). e20-e30 add the heuristic
-            //   screen (top 3), fork, block and beam searches and
-            //   recompression.
+            //   Brute force compresses at png(26).
+            // - e20-e30 add, in order of size per time measured one at a time on
+            //   45 images (2026-10-07): the heuristic screen (top 3), NearOptimal
+            //   recompression, fork 10, beam 10:3, the full brute-force set, fork
+            //   15 + beam 15:3, adaptive fork, top 5 (+ zenzop with the `zopfli`
+            //   feature), block brute force, top 9. Block brute force cost 15x
+            //   for -0.04% and sits at the top. The screen comes before
+            //   recompression: the other order let 4 images grow up to 0.48%.
             // Measured against image-png main, zune-png and lodepng in
             // benchmarks/pareto_*_2026-10-06.*: e1 is faster and smaller than png's
             // Fast, e10 and up are smaller than png's High.
@@ -322,6 +374,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: false,
+                zopfli: false,
             },
             2 => Self {
                 zenflate_effort: P(2),
@@ -339,6 +392,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: false,
+                zopfli: false,
             },
             3 => Self {
                 zenflate_effort: P(4),
@@ -356,6 +410,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: false,
+                zopfli: false,
             },
             4 => Self {
                 zenflate_effort: P(6),
@@ -373,6 +428,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: false,
+                zopfli: false,
             },
             5 => Self {
                 zenflate_effort: P(8),
@@ -390,6 +446,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: false,
+                zopfli: false,
             },
             6 => Self {
                 zenflate_effort: P(10),
@@ -407,6 +464,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             7 => Self {
                 zenflate_effort: P(12),
@@ -424,6 +482,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             8 => Self {
                 zenflate_effort: P(12),
@@ -441,6 +500,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             9 => Self {
                 zenflate_effort: P(14),
@@ -458,6 +518,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             10 => Self {
                 zenflate_effort: P(16),
@@ -475,6 +536,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             11 => Self {
                 zenflate_effort: P(17),
@@ -492,6 +554,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             12 => Self {
                 zenflate_effort: P(19),
@@ -509,6 +572,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             13 => Self {
                 zenflate_effort: P(24),
@@ -526,6 +590,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             14 => Self {
                 zenflate_effort: P(25),
@@ -543,6 +608,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             15 => Self {
                 zenflate_effort: P(26),
@@ -560,6 +626,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             16 => Self {
                 zenflate_effort: P(26),
@@ -577,6 +644,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             17 => Self {
                 zenflate_effort: P(26),
@@ -594,6 +662,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             18 => Self {
                 zenflate_effort: P(26),
@@ -611,6 +680,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             19 => Self {
                 zenflate_effort: P(26),
@@ -628,6 +698,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             20 => Self {
                 zenflate_effort: P(26),
@@ -636,15 +707,16 @@ impl EffortParams {
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[P(26), P(28), P(30)],
-                brute_configs: &[(3, 1), (5, 1), (5, 4)],
+                brute_configs: &[(3, 1), (5, 1)],
                 block_brute_configs: &[],
-                fork_brute_efforts: &[10],
-                adaptive_fork_configs: &[(15, 2)],
+                fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
                 use_recompress: false,
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             21 => Self {
                 zenflate_effort: P(26),
@@ -653,15 +725,16 @@ impl EffortParams {
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[P(26), P(28), P(30)],
-                brute_configs: &[(3, 1), (5, 1), (5, 4)],
+                brute_configs: &[(3, 1), (5, 1)],
                 block_brute_configs: &[],
-                fork_brute_efforts: &[10, 15],
-                adaptive_fork_configs: &[(15, 2), (22, 2)],
+                fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
-                use_recompress: false,
+                use_recompress: true,
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             22 => Self {
                 zenflate_effort: P(26),
@@ -670,15 +743,16 @@ impl EffortParams {
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[P(26), P(28), P(30)],
-                brute_configs: &[(3, 1), (3, 4), (5, 1), (5, 4)],
+                brute_configs: &[(3, 1), (5, 1)],
                 block_brute_configs: &[],
-                fork_brute_efforts: &[10, 15],
-                adaptive_fork_configs: &[(15, 2), (22, 2)],
+                fork_brute_efforts: &[10],
+                adaptive_fork_configs: &[],
                 beam_brute_configs: &[],
-                use_recompress: false,
+                use_recompress: true,
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             23 => Self {
                 zenflate_effort: P(26),
@@ -687,24 +761,16 @@ impl EffortParams {
                 screen_is_final: false,
                 top_k: 3,
                 refine_efforts: &[P(26), P(28), P(30)],
-                brute_configs: &[
-                    (1, 1),
-                    (1, 4),
-                    (3, 1),
-                    (3, 4),
-                    (5, 1),
-                    (5, 4),
-                    (8, 1),
-                    (8, 4),
-                ],
+                brute_configs: &[(3, 1), (5, 1)],
                 block_brute_configs: &[],
-                fork_brute_efforts: &[10, 15],
-                adaptive_fork_configs: &[(15, 2), (22, 2)],
-                beam_brute_configs: &[],
-                use_recompress: false,
+                fork_brute_efforts: &[10],
+                adaptive_fork_configs: &[],
+                beam_brute_configs: &[(10, 3)],
+                use_recompress: true,
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             24 => Self {
                 zenflate_effort: P(26),
@@ -723,14 +789,15 @@ impl EffortParams {
                     (8, 1),
                     (8, 4),
                 ],
-                block_brute_configs: &[(5, 1)],
-                fork_brute_efforts: &[10, 15],
-                adaptive_fork_configs: &[(15, 2), (22, 2)],
-                beam_brute_configs: &[],
-                use_recompress: false,
+                block_brute_configs: &[],
+                fork_brute_efforts: &[10],
+                adaptive_fork_configs: &[],
+                beam_brute_configs: &[(10, 3)],
+                use_recompress: true,
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             25 => Self {
                 zenflate_effort: P(26),
@@ -749,14 +816,15 @@ impl EffortParams {
                     (8, 1),
                     (8, 4),
                 ],
-                block_brute_configs: &[(5, 1)],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[10, 15],
-                adaptive_fork_configs: &[(15, 2), (22, 2)],
-                beam_brute_configs: &[],
+                adaptive_fork_configs: &[],
+                beam_brute_configs: &[(10, 3), (15, 3)],
                 use_recompress: true,
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
             },
             26 => Self {
                 zenflate_effort: P(26),
@@ -775,59 +843,7 @@ impl EffortParams {
                     (8, 1),
                     (8, 4),
                 ],
-                block_brute_configs: &[(5, 1)],
-                fork_brute_efforts: &[10, 15],
-                adaptive_fork_configs: &[(15, 2), (22, 2)],
-                beam_brute_configs: &[(10, 3)],
-                use_recompress: true,
-                full_optimal_effort: None,
-                full_optimal_only: false,
-                fallbacks: true,
-            },
-            27 => Self {
-                zenflate_effort: P(26),
-                strategies: HEURISTIC_STRATEGIES,
-                screen_effort: P(10),
-                screen_is_final: false,
-                top_k: 3,
-                refine_efforts: &[P(26), P(28), P(30)],
-                brute_configs: &[
-                    (1, 1),
-                    (1, 4),
-                    (3, 1),
-                    (3, 4),
-                    (5, 1),
-                    (5, 4),
-                    (8, 1),
-                    (8, 4),
-                ],
-                block_brute_configs: &[(5, 1), (5, 4)],
-                fork_brute_efforts: &[10, 15],
-                adaptive_fork_configs: &[(15, 2), (22, 2)],
-                beam_brute_configs: &[(10, 3)],
-                use_recompress: true,
-                full_optimal_effort: None,
-                full_optimal_only: false,
-                fallbacks: true,
-            },
-            28 => Self {
-                zenflate_effort: P(26),
-                strategies: HEURISTIC_STRATEGIES,
-                screen_effort: P(10),
-                screen_is_final: false,
-                top_k: 3,
-                refine_efforts: &[P(26), P(28), P(30)],
-                brute_configs: &[
-                    (1, 1),
-                    (1, 4),
-                    (3, 1),
-                    (3, 4),
-                    (5, 1),
-                    (5, 4),
-                    (8, 1),
-                    (8, 4),
-                ],
-                block_brute_configs: &[(5, 1), (5, 4)],
+                block_brute_configs: &[],
                 fork_brute_efforts: &[10, 15],
                 adaptive_fork_configs: &[(15, 2), (22, 2)],
                 beam_brute_configs: &[(10, 3), (15, 3)],
@@ -835,6 +851,61 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: false,
+            },
+            27 => Self {
+                zenflate_effort: P(26),
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: P(10),
+                screen_is_final: false,
+                top_k: 5,
+                refine_efforts: &[P(26), P(28), P(30)],
+                brute_configs: &[
+                    (1, 1),
+                    (1, 4),
+                    (3, 1),
+                    (3, 4),
+                    (5, 1),
+                    (5, 4),
+                    (8, 1),
+                    (8, 4),
+                ],
+                block_brute_configs: &[],
+                fork_brute_efforts: &[10, 15],
+                adaptive_fork_configs: &[(15, 2), (22, 2)],
+                beam_brute_configs: &[(10, 3), (15, 3)],
+                use_recompress: true,
+                full_optimal_effort: None,
+                full_optimal_only: false,
+                fallbacks: true,
+                zopfli: true,
+            },
+            28 => Self {
+                zenflate_effort: P(26),
+                strategies: HEURISTIC_STRATEGIES,
+                screen_effort: P(10),
+                screen_is_final: false,
+                top_k: 5,
+                refine_efforts: &[P(26), P(28), P(30)],
+                brute_configs: &[
+                    (1, 1),
+                    (1, 4),
+                    (3, 1),
+                    (3, 4),
+                    (5, 1),
+                    (5, 4),
+                    (8, 1),
+                    (8, 4),
+                ],
+                block_brute_configs: &[(5, 1)],
+                fork_brute_efforts: &[10, 15],
+                adaptive_fork_configs: &[(15, 2), (22, 2)],
+                beam_brute_configs: &[(10, 3), (15, 3)],
+                use_recompress: true,
+                full_optimal_effort: None,
+                full_optimal_only: false,
+                fallbacks: true,
+                zopfli: true,
             },
             29 => Self {
                 zenflate_effort: P(26),
@@ -861,6 +932,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: true,
             },
             _ => Self {
                 // effort 30
@@ -888,6 +960,7 @@ impl EffortParams {
                 full_optimal_effort: None,
                 full_optimal_only: false,
                 fallbacks: true,
+                zopfli: true,
             },
         }
     }
@@ -920,6 +993,7 @@ impl EffortParams {
             full_optimal_effort: Some(effort),
             full_optimal_only: false,
             fallbacks: true,
+            zopfli: true,
         }
     }
 
@@ -941,6 +1015,7 @@ impl EffortParams {
             full_optimal_effort: Some(effort),
             full_optimal_only: false,
             fallbacks: true,
+            zopfli: true,
         }
     }
 
@@ -981,6 +1056,7 @@ impl EffortParams {
             full_optimal_effort: Some(effort),
             full_optimal_only: false,
             fallbacks: true,
+            zopfli: true,
         }
     }
 }
@@ -2882,7 +2958,7 @@ fn run_phase4_recompress(
             if params.full_optimal_effort.is_some() {
                 label_parts.push("FullOpt".to_string());
             }
-            if cfg!(feature = "zopfli") {
+            if cfg!(feature = "zopfli") && params.zopfli {
                 label_parts.push("Zopfli".to_string());
             }
         }
@@ -2984,7 +3060,7 @@ fn run_phase4_normal(
 
     #[cfg(feature = "zopfli")]
     {
-        if !opts.deadline.should_stop() {
+        if params.zopfli && !opts.deadline.should_stop() {
             let zopfli_best = zopfli_adaptive(
                 recompress_candidates,
                 opts.cancel,
@@ -3570,6 +3646,7 @@ mod tests {
                 hi.use_recompress || !lo.use_recompress,
                 "e{effort}: recompress"
             );
+            assert!(hi.zopfli || !lo.zopfli, "e{effort}: zopfli");
         }
     }
 
