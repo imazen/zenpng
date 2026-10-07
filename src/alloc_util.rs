@@ -86,10 +86,13 @@ const MIN_DECODE_BUFFER: usize = 256 * 1024;
 
 /// [`stream_capacity`] for decoders: at least two rows, and at least
 /// [`MIN_DECODE_BUFFER`] unless the whole image (`rows` × `stride`) is
-/// smaller, so tiny images don't pay for a buffer they can't fill.
+/// smaller, so tiny images don't pay for a buffer they can't fill. A
+/// whole-image buffer gets 1 KiB of slack: filled exactly, zenflate grows
+/// (and zero-fills) it on the end-of-stream call, 7% of a 64x64 RGB8
+/// decode's instructions (2026-10-07 callgrind).
 pub(crate) fn decode_buffer_capacity(stride: usize, rows: u32) -> Result<usize, At<PngError>> {
     let whole = stride.saturating_mul(rows as usize);
-    Ok(stream_capacity(stride)?.max(MIN_DECODE_BUFFER.min(whole)))
+    Ok(stream_capacity(stride)?.max(MIN_DECODE_BUFFER.min(whole.saturating_add(1024))))
 }
 
 /// Resolve the 3-mode [`AllocPreference`](zencodec::AllocPreference) against

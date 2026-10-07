@@ -399,7 +399,10 @@ pub(super) fn unfilter_row(
 /// Streaming PNG row decoder. Reads IDAT chunks through `StreamDecompressor`,
 /// unfilters each scanline, and yields raw (unfiltered) row data.
 pub(crate) struct RowDecoder<'a> {
-    decompressor: zenflate::StreamDecompressor<IdatSource<'a>>,
+    /// Boxed: zenflate's decoder keeps its Huffman tables inline (~10 KiB),
+    /// and every move of `RowDecoder` would copy them (55K instructions of
+    /// memcpy per 64 px decode, 2026-10-07 callgrind).
+    decompressor: Box<zenflate::StreamDecompressor<IdatSource<'a>>>,
     ihdr: Ihdr,
     ancillary: PngAncillary,
 
@@ -517,8 +520,10 @@ impl<'a> RowDecoder<'a> {
 
         // Create IDAT source and decompressor — data is moved into IdatSource
         let source = IdatSource::new(data, first_idat_pos, config.skip_critical_chunk_crc)?;
-        let decompressor = zenflate::StreamDecompressor::zlib(source, capacity)
-            .with_skip_checksum(config.skip_decompression_checksum);
+        let decompressor = Box::new(
+            zenflate::StreamDecompressor::zlib(source, capacity)
+                .with_skip_checksum(config.skip_decompression_checksum),
+        );
 
         Ok(Self {
             decompressor,

@@ -32,6 +32,11 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- Lower fixed cost per decode: the zenflate stream decoder is boxed (its
+  inline Huffman tables were copied on every move of the row decoder), and a
+  whole-image inflate buffer gets 1 KiB of slack so zenflate doesn't grow and
+  zero-fill it at end of stream. 64x64 RGB8 (9097): 444K -> 391K
+  instructions per decode (image-png main: 406K; callgrind, i265).
 - **Faster decode of non-RGBA8 formats.** Rows are expanded straight into the
   output buffer by a per-image `RowExpander` (precomputed palette and sub-byte
   lookup tables), 16-bit output is written without an intermediate copy
