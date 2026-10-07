@@ -182,7 +182,7 @@ ladder was rebuilt 2026-10-06 from Pareto sweeps against image-png main,
 zune-png and lodepng (`benchmarks/pareto_*_2026-10-06.*`); levels are Zl::G(n)
 = `CompressionLevel::new(n)` or Zl::P(n) = zenflate's PNG ladder `png(n)`
 (png(1..9) hash/runs, png(10..18) lazy with input-derived blocks, png(19..22)
-near-optimal ramp, png(23+) = new(23+) sharing block ends and the runs guard; zenflate png-mode a26c4b9).
+near-optimal ramp, png(23+) = new(23+) sharing block ends and the runs guard; zenflate a26c4b9, merged to main as 426cbef).
 
 | Effort | Preset | Screen | Then | Fallbacks |
 |--------|--------|--------|------|-----------|
@@ -230,9 +230,11 @@ point between: refining also at png(28) costs 1.88x for -0.26%, png(28)+(30)
 
 Measured per-image monotonicity (91 images incl. gray/palette/16-bit,
 64-1024 px, `examples/roundtrip_sweep.rs`): every step e1..e17 within 0.06%
-except e3→e4 (+0.224% on 1207/6807 pal8: png(4) → png(6) on identical
-filtered bytes, dumps in the png-pareto handoff), e7→e8 (screen switch,
-above) and e13→e14 (+0.381%, png(24) → png(25)), on zenflate a26c4b9. e19..e30 (45 RGB8/RGBA8 images): see
+except e7→e8 (screen switch, above) and e13→e14 (+0.381%, png(24) →
+png(25)), on zenflate a26c4b9. The e3→e4 palette inversion (+0.224% on
+1207/6807 pal8, png(4) → png(6) on identical filtered bytes) is fixed in
+zenflate main 1817ce8: png(3..9)'s runs guard parses like png(2), so e2-e5
+now give identical bytes on those two images. e19..e30 (45 RGB8/RGBA8 images): see
 CHANGELOG; Phase 4 recompresses only the 3 smallest Phase 2/3 candidates, so
 e30's wider top-k can displace the one whose NearOptimal pass would have won
 (e29→e30 +0.195% on 9227_rgb8_256 before the png(10) screen; 0 inversions
@@ -421,7 +423,7 @@ set (real Apple, Buchanan adversarial, 26 generated). Thresholds:
 `idot::workers_for_bytes` (2 workers ≥ 2 MiB, +1 per 4 MiB). Bench:
 `examples/idot_bench.rs`, `examples/idot_encode.rs` (`--features _dev`;
 `ZENPNG_PIN`, `ZENPNG_IDOT_MIN_BYTES`, `ZENPNG_IDOT_TRACE` overrides).
-zenflate is `[patch.crates-io]`'d to the sibling checkout `../zenflate` (imazen/zenflate#10, branch png-mode: `zenflate::png::{StripCompressor, StripDecoder}`, `CompressionLevel::png`) until released, in BOTH `Cargo.toml` and `fuzz/Cargo.toml` (separate workspace). CI clones png-mode into `../zenflate` after every checkout step.
+zenflate is `[patch.crates-io]`'d to the sibling checkout `../zenflate` (imazen/zenflate#10, merged to zenflate main: `zenflate::png::{StripCompressor, StripDecoder}`, `CompressionLevel::png`) until released, in BOTH `Cargo.toml` and `fuzz/Cargo.toml` (separate workspace). CI clones zenflate main into `../zenflate` after every checkout step.
 Apple ImageIO's own iDOT path is buggy (boundary Up/Avg/Paeth rows, gapped
 tables, 1/2/4-bit gray); the encoder avoids all three. Mac tooling:
 `tests/fixtures/idot/mac/` (`ssh mac`, macOS 27; `log` is a zsh builtin there,

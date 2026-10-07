@@ -191,7 +191,7 @@ required-features = ["_dev"]
 zencodec = { git = "https://github.com/imazen/zencodec", tag = "v0.1.26" }
 # DEV-ONLY: zenflate's PNG strip API (`zenflate::png::{StripCompressor,
 # StripDecoder}`, `CompressionLevel::png`) is in imazen/zenflate#10
-# (branch png-mode), not yet released. Local builds use the sibling checkout;
-# CI checks out png-mode at ../zenflate. Replace with the released version
+# (main since imazen/zenflate#10 merged), not yet released. Local builds use the sibling checkout;
+# CI checks out zenflate main at ../zenflate. Replace with the released version
 # once it ships.
 zenflate = { path = "../zenflate" }
