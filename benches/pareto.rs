@@ -39,7 +39,10 @@
 //!   (default `0,1,2,7,13`), `e<E>_whole` (zencodec `Encoder::encode`) and
 //!   `e<E>_push16` (`push_rows` in 16-row strips after `with_canvas_size`).
 //!
-//! Run: `ZENPNG_PARETO_DIR=... cargo bench --bench pareto -- [--group=enc|dec|sdec|senc]`
+//! - `pdec/<name>`: decode threading per API and `iDOT` (see
+//!   `bench_pipeline_decode`).
+//!
+//! Run: `ZENPNG_PARETO_DIR=... cargo bench --bench pareto -- [--group=enc|dec|sdec|senc|pdec]`
 
 use std::path::PathBuf;
 
@@ -259,7 +262,9 @@ fn encode_arms(edge: u32) -> Vec<(String, EncodeFn)> {
 }
 
 fn bench_encode(suite: &mut Suite) {
-    if std::env::args().any(|a| a.starts_with("--group=dec") || a.starts_with("--group=s")) {
+    if std::env::args().any(|a| {
+        a.starts_with("--group=dec") || a.starts_with("--group=s") || a.starts_with("--group=p")
+    }) {
         return;
     }
     for (name, edge, data) in inputs() {
@@ -322,7 +327,9 @@ fn add_decode_group(suite: &mut Suite, group: String, data: &'static [u8], check
 }
 
 fn bench_decode(suite: &mut Suite) {
-    if std::env::args().any(|a| a.starts_with("--group=enc") || a.starts_with("--group=s")) {
+    if std::env::args().any(|a| {
+        a.starts_with("--group=enc") || a.starts_with("--group=s") || a.starts_with("--group=p")
+    }) {
         return;
     }
     for (name, _edge, data) in inputs() {
@@ -369,20 +376,40 @@ impl zencodec::decode::DecodeRowSink for VecSink {
     }
 }
 
-fn push_decode(data: &[u8]) -> Vec<u8> {
+/// A zencodec decode job; `sequential` sets the limits' threading policy to
+/// `Sequential` (no inflate thread), otherwise the default (`Parallel`).
+fn decode_job(sequential: bool) -> zenpng::PngDecodeJob {
     use zencodec::decode::{DecodeJob, DecoderConfig};
+    let job = zenpng::PngDecoderConfig::new().job();
+    if sequential {
+        job.with_limits(
+            zencodec::ResourceLimits::none().with_threading(zencodec::ThreadingPolicy::Sequential),
+        )
+    } else {
+        job
+    }
+}
+
+fn push_decode(data: &[u8]) -> Vec<u8> {
+    push_decode_with(data, false)
+}
+
+fn push_decode_with(data: &[u8], sequential: bool) -> Vec<u8> {
+    use zencodec::decode::DecodeJob;
     let mut sink = VecSink(Vec::new());
-    zenpng::PngDecoderConfig::new()
-        .job()
+    decode_job(sequential)
         .push_decoder(data.into(), &mut sink, &[])
         .unwrap();
     sink.0
 }
 
 fn stream_decode(data: &[u8]) -> Vec<u8> {
-    use zencodec::decode::{DecodeJob, DecoderConfig, StreamingDecode};
-    let mut dec = zenpng::PngDecoderConfig::new()
-        .job()
+    stream_decode_with(data, false)
+}
+
+fn stream_decode_with(data: &[u8], sequential: bool) -> Vec<u8> {
+    use zencodec::decode::{DecodeJob, StreamingDecode};
+    let mut dec = decode_job(sequential)
         .streaming_decoder(data.into(), &[])
         .unwrap();
     let h = dec.info().height as usize;
@@ -409,6 +436,81 @@ fn png_rows_decode(data: &[u8]) -> Vec<u8> {
         out.extend_from_slice(row.data());
     }
     out
+}
+
+/// Re-encode `data` with zenpng at effort 7 and 8 `iDOT` segments, keeping
+/// its decoded format; `None` when the encoder wrote no `iDOT` chunk (it
+/// doesn't for images under ~2 MiB of row data or for sub-byte gray).
+fn idot_reencode(data: &[u8]) -> Option<Vec<u8>> {
+    let d = zenpng_decode(data, 1);
+    let cfg = effort_cfg(7, false).with_decode_segments(8);
+    let px = &d.pixels;
+    let out = if let Some(i) = px.try_as_imgref::<rgb::Rgb<u8>>() {
+        zenpng::encode_rgb8(i, None, &cfg, &Unstoppable, &Unstoppable)
+    } else if let Some(i) = px.try_as_imgref::<rgb::Rgba<u8>>() {
+        zenpng::encode_rgba8(i, None, &cfg, &Unstoppable, &Unstoppable)
+    } else if let Some(i) = px.try_as_imgref::<rgb::Gray<u8>>() {
+        zenpng::encode_gray8(i, None, &cfg, &Unstoppable, &Unstoppable)
+    } else if let Some(i) = px.try_as_imgref::<rgb::Rgb<u16>>() {
+        zenpng::encode_rgb16(i, None, &cfg, &Unstoppable, &Unstoppable)
+    } else {
+        return None;
+    }
+    .unwrap();
+    out.windows(4).any(|w| w == b"iDOT").then_some(out)
+}
+
+/// Decode threading per API (opt-in: `--group=pdec`), group `pdec/<name>`:
+/// `decode_st` / `decode_mt` (`zenpng::decode`, `max_threads` 1 / 0),
+/// `push_st` / `push_mt` and `stream_st` / `stream_mt` (zencodec
+/// `push_decoder` / `streaming_decoder` with a sequential / the default
+/// parallel threading policy), and, when zenpng's effort-7 re-encode with
+/// 8 `iDOT` segments has an `iDOT` chunk, `idot_st` / `idot_mt` decoding it.
+fn bench_pipeline_decode(suite: &mut Suite) {
+    if !stream_groups_requested("pdec") {
+        return;
+    }
+    for (name, _edge, data) in inputs() {
+        if name.contains("interlaced") {
+            continue;
+        }
+        let whole = zenpng_decode(data, 1).pixels.copy_to_contiguous_bytes();
+        for seq in [true, false] {
+            assert!(push_decode_with(data, seq) == whole, "{name}: push differs");
+            assert!(
+                stream_decode_with(data, seq) == whole,
+                "{name}: stream differs"
+            );
+        }
+        let idot = idot_reencode(data).map(leak);
+        if let Some(i) = idot {
+            assert!(
+                zenpng_decode(i, 0).pixels.copy_to_contiguous_bytes() == whole,
+                "{name}: iDOT re-encode differs"
+            );
+        }
+        size_line(&format!("pdec/{name}"), "idot", idot.map_or(0, <[u8]>::len));
+        let out = zenpng_decode(data, 1);
+        let px = out.info.width as u64 * out.info.height as u64;
+        suite.compare(format!("pdec/{name}"), move |g| {
+            g.throughput(Throughput::Elements(px));
+            g.throughput_unit("px");
+            g.bench("decode_st", move |b| b.iter(|| zenpng_decode(data, 1)));
+            g.bench("decode_mt", move |b| b.iter(|| zenpng_decode(data, 0)));
+            g.bench("push_st", move |b| b.iter(|| push_decode_with(data, true)));
+            g.bench("push_mt", move |b| b.iter(|| push_decode_with(data, false)));
+            g.bench("stream_st", move |b| {
+                b.iter(|| stream_decode_with(data, true))
+            });
+            g.bench("stream_mt", move |b| {
+                b.iter(|| stream_decode_with(data, false))
+            });
+            if let Some(i) = idot {
+                g.bench("idot_st", move |b| b.iter(|| zenpng_decode(i, 1)));
+                g.bench("idot_mt", move |b| b.iter(|| zenpng_decode(i, 0)));
+            }
+        });
+    }
 }
 
 fn stream_groups_requested(prefix: &str) -> bool {
@@ -553,6 +655,7 @@ fn main() {
         bench_encode(suite);
         bench_decode(suite);
         bench_stream_decode(suite);
+        bench_pipeline_decode(suite);
         bench_stream_encode(suite);
     });
     zenbench::postprocess_result(&result);

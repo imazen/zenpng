@@ -13,6 +13,10 @@
 # gray1 variant. Requires ImageMagick 7 (`magick`) and curl.
 #
 # benches/pareto.rs inputs: SIZES="64 256 1024 4096" RGBA_SIZES="256 1024"
+# FORMAT_SIZES (default 1024) sets the sizes of the gray8/palette/RGB16/Adam7
+# variants and FORMAT_SOURCES (default the five above) their sources; the
+# decode-pipeline record uses SIZES="256 1024 4096" RGBA_SIZES="256 1024 4096"
+# FORMAT_SIZES="256 1024 4096" FORMAT_SOURCES="1207 1407 2207 5207 6807 8107 9007".
 set -euo pipefail
 out=${1:?usage: $0 OUT_DIR}
 src=$out/src
@@ -55,16 +59,20 @@ for f in *.png; do
   done
 done
 cd "$out"
-for s in 1207 8107 9007 5207 6807; do
+FORMAT_SIZES=${FORMAT_SIZES:-1024}
+for s in ${FORMAT_SOURCES:-1207 8107 9007 5207 6807}; do
   for L in $RGBA_SIZES; do
     [ -f "${s}_rgb8_${L}.png" ] || continue
     nice -n 19 magick "${s}_rgb8_${L}.png" -alpha set -channel A -fx '0.5+0.5*sin(i/37)*cos(j/53)' +channel -strip "PNG32:${s}_rgba8_${L}.png"
   done
-  in=${s}_rgb8_1024.png
-  nice -n 19 magick "$in" -colorspace Gray -depth 8 -define png:color-type=0 -strip "${s}_gray8_1024.png"
-  nice -n 19 magick "$in" -colors 256 -strip "PNG8:${s}_pal8_1024.png"
-  nice -n 19 magick "$in" -depth 16 -strip "PNG48:${s}_rgb16_1024.png"
-  nice -n 19 magick "$in" -interlace PNG -strip "${s}_interlaced_1024.png"
+  for L in $FORMAT_SIZES; do
+    in=${s}_rgb8_${L}.png
+    [ -f "$in" ] || continue
+    nice -n 19 magick "$in" -colorspace Gray -depth 8 -define png:color-type=0 -strip "${s}_gray8_${L}.png"
+    nice -n 19 magick "$in" -colors 256 -strip "PNG8:${s}_pal8_${L}.png"
+    nice -n 19 magick "$in" -depth 16 -strip "PNG48:${s}_rgb16_${L}.png"
+    nice -n 19 magick "$in" -interlace PNG -strip "${s}_interlaced_${L}.png"
+  done
 done
 nice -n 19 magick "$src"/6007*.png -resize "1024x1024>" -threshold 50% -type bilevel -strip 6007_gray1_1024.png
 ls "$out"/*.png | wc -l
