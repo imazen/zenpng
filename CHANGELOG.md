@@ -32,6 +32,11 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- Efforts 11-14 re-spread on zenflate's png(19..23) ramp (a26c4b9): e11
+  screens None/Paeth/MinSum at png(10) and refines at png(17), e12 at
+  png(19), e13 (Balanced) at png(24), e14 at png(25). On 91 images
+  Balanced keeps its size (0.9356 vs 0.9355 of e7) at +6% time; e12 is a
+  new point at 5.13x e7's time, 0.9454 of its size.
 - The zencodec `streaming_decoder` inflates on a second thread for images
   with at least 512 KiB of filtered data when threads are allowed
   (borrowed input is copied once so that thread can own it): 1407_rgb8_4096

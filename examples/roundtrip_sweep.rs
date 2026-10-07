@@ -5,7 +5,8 @@
 //!   cargo run --release --features _dev --example roundtrip_sweep -- DIR 0,1,7,13,19
 //!
 //! `ROUNDTRIP_SIZES=1` also prints each encode's size and time (one run, not
-//! a benchmark; use benches/pareto.rs for timings).
+//! a benchmark; use benches/pareto.rs for timings). `ROUNDTRIP_SAVE=<dir>`
+//! writes each encode to `<dir>/<input stem>_e<effort>.png`.
 //!
 //! Used 2026-10-06 to check the encoder's per-candidate decompress verify:
 //! 2098 encodes over scripts/vs_png_inputs.sh output, efforts 0-24 and 30.
@@ -52,6 +53,14 @@ fn main() {
                 break;
             };
             let png = r.unwrap_or_else(|err| panic!("{}: e{e}: {err}", f.display()));
+            if let Some(dir) = std::env::var_os("ROUNDTRIP_SAVE") {
+                let stem = f.file_stem().unwrap().to_string_lossy();
+                std::fs::write(
+                    std::path::Path::new(&dir).join(format!("{stem}_e{e}.png")),
+                    &png,
+                )
+                .unwrap();
+            }
             if verbose {
                 println!(
                     "{}\te{e}\t{}\t{:.2} ms",

@@ -287,15 +287,15 @@ impl EffortParams {
             //   winner recompressed at png(2/4/6/8/10/12). png(1..9) only widen the
             //   search on filtered rows, so e2-e5 skip the fallback chain; png(10..)
             //   are lazy parsers, so e6+ follow it (to png(9)).
-            // - e8-e11: None, Paeth and MinSum screened at png(4), the winner at
-            //   png(12/14/16/17). e12-e15: the same three screened at png(10), the
-            //   winner at png(17/19/24/26). Unfiltered rows win by 4-21% on line
-            //   art, documents and screenshots, which png(1) can't see; on 91
-            //   images this screen is 1.3-2.2% smaller (mean ratio) than the
-            //   Paeth/MinSum pair at png(1) for +3-35% time. png(19..23) give
-            //   identical output at zenflate 8b8cf0f and cost 3.3x png(17), so
-            //   e12 (png(10) screen at png(17)) is the only rung between them
-            //   until png(19..22) become a ramp. e13 is Balanced.
+            // - e8-e10: None, Paeth and MinSum screened at png(4), the winner at
+            //   png(12/14/16). e11-e15: the same three screened at png(10), the
+            //   winner at png(17/19/24/25/26). Unfiltered rows win by 4-21% on
+            //   line art, documents and screenshots, which png(1) can't see; on
+            //   91 images this screen is 1.3-2.2% smaller (mean ratio) than the
+            //   Paeth/MinSum pair at png(1) for +3-35% time. zenflate a26c4b9
+            //   ramps png(19..23) at 2.2-2.4x png(17)'s time; png(18) -> png(19)
+            //   is still a 2.2x step, so e11 -> e12 is the widest gap. e13 is
+            //   Balanced (png(24): the old Balanced size, +6% time).
             // - e16-e19 add brute-force row filtering (3,1), png(28), png(30) and
             //   brute force (5,1), in the order they paid off on 46 images at
             //   1024 px (png(28) -0.33% for 1.46x; png(30) -0.17%; the
@@ -479,23 +479,6 @@ impl EffortParams {
             11 => Self {
                 zenflate_effort: P(17),
                 strategies: NONE_PAETH_MINSUM_STRATEGIES,
-                screen_effort: P(4),
-                screen_is_final: false,
-                top_k: 1,
-                refine_efforts: &[P(17)],
-                brute_configs: &[],
-                block_brute_configs: &[],
-                fork_brute_efforts: &[],
-                adaptive_fork_configs: &[],
-                beam_brute_configs: &[],
-                use_recompress: false,
-                full_optimal_effort: None,
-                full_optimal_only: false,
-                fallbacks: true,
-            },
-            12 => Self {
-                zenflate_effort: P(17),
-                strategies: NONE_PAETH_MINSUM_STRATEGIES,
                 screen_effort: P(10),
                 screen_is_final: false,
                 top_k: 1,
@@ -510,7 +493,7 @@ impl EffortParams {
                 full_optimal_only: false,
                 fallbacks: true,
             },
-            13 => Self {
+            12 => Self {
                 zenflate_effort: P(19),
                 strategies: NONE_PAETH_MINSUM_STRATEGIES,
                 screen_effort: P(10),
@@ -527,13 +510,30 @@ impl EffortParams {
                 full_optimal_only: false,
                 fallbacks: true,
             },
-            14 => Self {
+            13 => Self {
                 zenflate_effort: P(24),
                 strategies: NONE_PAETH_MINSUM_STRATEGIES,
                 screen_effort: P(10),
                 screen_is_final: false,
                 top_k: 1,
                 refine_efforts: &[P(24)],
+                brute_configs: &[],
+                block_brute_configs: &[],
+                fork_brute_efforts: &[],
+                adaptive_fork_configs: &[],
+                beam_brute_configs: &[],
+                use_recompress: false,
+                full_optimal_effort: None,
+                full_optimal_only: false,
+                fallbacks: true,
+            },
+            14 => Self {
+                zenflate_effort: P(25),
+                strategies: NONE_PAETH_MINSUM_STRATEGIES,
+                screen_effort: P(10),
+                screen_is_final: false,
+                top_k: 1,
+                refine_efforts: &[P(25)],
                 brute_configs: &[],
                 block_brute_configs: &[],
                 fork_brute_efforts: &[],

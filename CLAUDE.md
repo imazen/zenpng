@@ -182,7 +182,7 @@ ladder was rebuilt 2026-10-06 from Pareto sweeps against image-png main,
 zune-png and lodepng (`benchmarks/pareto_*_2026-10-06.*`); levels are Zl::G(n)
 = `CompressionLevel::new(n)` or Zl::P(n) = zenflate's PNG ladder `png(n)`
 (png(1..9) hash/runs, png(10..18) lazy with input-derived blocks, png(19..22)
-near-optimal, png(23+) = new(23+); zenflate png-mode 8b8cf0f).
+near-optimal ramp, png(23+) = new(23+) sharing block ends and the runs guard; zenflate png-mode a26c4b9).
 
 | Effort | Preset | Screen | Then | Fallbacks |
 |--------|--------|--------|------|-----------|
@@ -190,8 +190,8 @@ near-optimal, png(23+) = new(23+); zenflate png-mode 8b8cf0f).
 | 1 | Fastest | Paeth | final at png(1) | no |
 | 2-5 | Turbo=2 | Paeth+MinSum at png(1), top 1 | png(2/4/6/8) | no |
 | 6-7 | Fast=7 | Paeth+MinSum at png(1), top 1 | png(10/12) | yes (→png(9)) |
-| 8-11 | | None+Paeth+MinSum at png(4), top 1 | png(12/14/16/17) | yes |
-| 12-15 | Balanced=13 | None+Paeth+MinSum at png(10), top 1 | png(17/19/24/26) | yes |
+| 8-10 | | None+Paeth+MinSum at png(4), top 1 | png(12/14/16) | yes |
+| 11-15 | Balanced=13 | None+Paeth+MinSum at png(10), top 1 | png(17/19/24/25/26) | yes |
 | 16-19 | Thorough=17, High=19 | None+Paeth+MinSum at png(10), top 1 | png(26)[,28[,30]] + BF (3,1)[,(5,1)] | yes |
 | 20-30 | Aggressive=22, Intense=24, Crush=27, Maniac=30 | 9 heuristics at png(10), top 3..9 | png(26,28,30) + fork, adaptive fork, full BF set, block BF, recompress, beam | yes |
 
@@ -204,7 +204,7 @@ png(26) from e15 up so it is identical across rungs.
 unfiltered rows keep long repeats: None is 4-21% smaller than the
 Paeth/MinSum winner at png(26) (7007, 5207, 5307, 8007, 8107), but png(1)'s
 runs-only parse ranks it 5th-9th of the nine strategies. Screening
-None+Paeth+MinSum at png(4) (e8-e11) or png(10) (e12+) instead of
+None+Paeth+MinSum at png(4) (e8-e10) or png(10) (e11+) instead of
 Paeth+MinSum at png(1) is 1.3-2.2% smaller (mean per-image ratio, 91 images, 64-1024 px)
 for +3-35% time at the same refine level, and the rungs it replaced were off
 the Pareto front. Screen-level changes are not strict nesting: e7→e8 is larger
@@ -214,16 +214,22 @@ first that png(12) doesn't. Also refining the png(1) pair's winner (the
 right after it) removed those inversions but cost +19-38% time at e8-e19,
 which put every anchored rung behind the next unanchored one.
 
-**zenflate gaps (requested 2026-10-06).** png(19..23) give identical output at
-zenflate 8b8cf0f and cost 3.3x png(17) for -4.2%; nothing between png(18) and
-png(19) exists, so e12 (the png(10) screen at png(17)) is the only rung in that
-gap. png(24..26) (= new(24..26)) are ~1% larger than png(19) on
-1207_gray8_1024 (e13→e14 +1.151%): png(23+)'s fallback chain is the general
-ladder, which never reaches png(19..22).
+**zenflate levels (a26c4b9, 2026-10-07).** On 91 images (None+Paeth+MinSum
+screened at png(10), single refine level, i265 P-core) relative to png(17):
+png(18) 1.00x time / 0.9988 size, png(19) 2.20x / 0.9712, png(20..23)
+2.27-2.37x / 0.9684-0.9639, png(24) 2.57x / 0.9611, png(25) 2.86x / 0.9587,
+png(26) 3.59x / 0.9548. Nothing lands between png(18) and png(19), so
+e11 -> e12 is a 2.35x step. Against 8b8cf0f, png(24..26) are ~0.3% larger
+and the old png(19) point (3.37x png(17), 1.06% smaller than the new
+png(19)) is gone: Balanced (e13, png(24)) keeps the old size at +6% time.
+Adjacent png(19..25) invert on a few images (max +0.38%, 9227_rgb8_64 at
+png(24) -> png(25), i.e. e13 -> e14).
 
 Measured per-image monotonicity (91 images incl. gray/palette/16-bit,
-64-1024 px, `examples/roundtrip_sweep.rs`): every step e1..e19 within 0.23%
-except e7→e8 and e13→e14 above. e19..e30 (45 RGB8/RGBA8 images): see
+64-1024 px, `examples/roundtrip_sweep.rs`): every step e1..e17 within 0.06%
+except e3→e4 (+0.224% on 1207/6807 pal8: png(4) → png(6) on identical
+filtered bytes, dumps in the png-pareto handoff), e7→e8 (screen switch,
+above) and e13→e14 (+0.381%, png(24) → png(25)), on zenflate a26c4b9. e19..e30 (45 RGB8/RGBA8 images): see
 CHANGELOG; Phase 4 recompresses only the 3 smallest Phase 2/3 candidates, so
 e30's wider top-k can displace the one whose NearOptimal pass would have won
 (e29→e30 +0.195% on 9227_rgb8_256 before the png(10) screen; 0 inversions
@@ -257,7 +263,7 @@ FullOptimal's compression.
 `EffortParams::from_effort()` maps effort → all pipeline parameters:
 
 1. **Phase 1 — Screen**: Apply filter strategies, compress at `screen_effort`
-   (png(1) for e1-e7, png(4) for e8-e11, png(10) from e12). Effort 1: screen
+   (png(1) for e1-e7, png(4) for e8-e10, png(10) from e11). Effort 1: screen
    IS the final pass.
 2. **Phase 2 — Refine**: Top-K candidates re-compressed at `refine_efforts` via
    `try_compress_with_fallbacks()` (fallback chain when `fallbacks`).
