@@ -214,7 +214,7 @@ first that png(12) doesn't. Also refining the png(1) pair's winner (the
 right after it) removed those inversions but cost +19-38% time at e8-e19,
 which put every anchored rung behind the next unanchored one.
 
-**zenflate levels (a26c4b9, 2026-10-07).** On 91 images (None+Paeth+MinSum
+**zenflate levels (a26c4b9, 2026-10-07; main 52af148 made png(19..26) ~13% faster with identical output, so e12-e19 run 7-13% faster at 1024 px, `benchmarks/pareto_x86_encode_2026-10-07.md` final section).** On 91 images (None+Paeth+MinSum
 screened at png(10), single refine level, i265 P-core) relative to png(17):
 png(18) 1.00x time / 0.9988 size, png(19) 2.20x / 0.9712, png(20..23)
 2.27-2.37x / 0.9684-0.9639, png(24) 2.57x / 0.9611, png(25) 2.86x / 0.9587,
