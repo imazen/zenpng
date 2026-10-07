@@ -483,8 +483,9 @@ pub fn decode_apng(
     config: &PngDecodeConfig,
     cancel: &dyn Stop,
 ) -> crate::error::Result<ApngDecodeOutput> {
-    // Check if this is actually an APNG
-    let probe_info = crate::decoder::probe_png(data)?;
+    // Check if this is actually an APNG (with the decode's own CRC policy,
+    // so probing doesn't reject a file `decode` accepts).
+    let probe_info = crate::decoder::probe_png_with(data, config.skip_critical_chunk_crc)?;
     if !probe_info.sequence.is_animation() {
         // Non-animated PNG: decode normally, wrap as single frame
         let output = crate::decoder::decode_png(data, config, cancel)?;

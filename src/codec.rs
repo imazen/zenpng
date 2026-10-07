@@ -2528,13 +2528,27 @@ fn push_decoder_native_noninterlaced<'a>(
 
 // ── PngStreamingDecoder ──────────────────────────────────────────────
 
+/// Where [`PngStreamingDecoder`] gets its unfiltered rows.
+enum StreamRows<'a> {
+    /// Inflate and unfilter on the caller's thread.
+    Serial(Box<crate::decoder::row::RowDecoder<'a>>),
+    /// Large image, threads allowed: a second thread inflates (the input is
+    /// owned for it, copied if it was borrowed); rows are unfiltered here.
+    Piped {
+        piped: crate::decoder::pipeline::Piped,
+        prev: Vec<u8>,
+        cur: Vec<u8>,
+        bpp: usize,
+    },
+}
+
 /// Pull-based streaming PNG decoder implementing [`StreamingDecode`](zencodec::decode::StreamingDecode).
 ///
 /// Yields one post-processed row per `next_batch()` call, backed by
 /// [`RowDecoder`](crate::decoder::row::RowDecoder). Only non-interlaced
 /// PNGs are supported; interlaced images are rejected at construction.
 pub struct PngStreamingDecoder<'a> {
-    reader: crate::decoder::row::RowDecoder<'a>,
+    rows: StreamRows<'a>,
     info: ImageInfo,
     descriptor: PixelDescriptor,
     /// Post-processed row buffer, reused across calls.
@@ -2589,12 +2603,35 @@ impl<'a> PngStreamingDecoder<'a> {
         };
         let png_config = apply_decode_policy(png_config, policy);
 
-        // Probe before moving data into RowDecoder (probe only needs &[u8])
-        let probe_info = crate::decode::probe(&data)?;
+        // Probe before moving data into RowDecoder (probe only needs &[u8]),
+        // with the decode's own CRC policy.
+        let probe_info = crate::decoder::probe_png_with(&data, png_config.skip_critical_chunk_crc)?;
         let mut info = convert_info(&probe_info);
         apply_policy_to_info(&mut info, policy);
 
-        let reader = crate::decoder::row::RowDecoder::new(data, &png_config)?;
+        // Large images with threads allowed inflate on a second thread, which
+        // needs the input owned.
+        let piped = data.len() >= 29
+            && crate::chunk::ihdr::Ihdr::parse_fields(&data[16..29])
+                .and_then(|i| Ok(i.height as usize * (i.raw_row_bytes()? + 1)))
+                .is_ok_and(|bytes| {
+                    crate::decoder::pipeline::worth_it(bytes, png_config.max_threads)
+                });
+        let (serial, owned) = if piped {
+            let owned: crate::decoder::row::RowDecoder<'static> =
+                crate::decoder::row::RowDecoder::new(Cow::Owned(data.into_owned()), &png_config)?;
+            (None, Some(owned))
+        } else {
+            (
+                Some(crate::decoder::row::RowDecoder::new(data, &png_config)?),
+                None,
+            )
+        };
+        let reader: &crate::decoder::row::RowDecoder<'_> = match (&serial, &owned) {
+            (Some(r), _) => r,
+            (_, Some(r)) => r,
+            (None, None) => unreachable!("one reader is built"),
+        };
         let ihdr = *reader.ihdr();
         let has_trns = reader.ancillary().trns.is_some();
 
@@ -2615,8 +2652,23 @@ impl<'a> PngStreamingDecoder<'a> {
         let out_row_bytes =
             (w as usize * descriptor.bytes_per_pixel()).max(expander.out_row_bytes());
 
+        let bpp = reader.bpp();
+        let rows = match (serial, owned) {
+            (Some(reader), _) => StreamRows::Serial(Box::new(reader)),
+            (_, Some(reader)) => {
+                let raw = ihdr.raw_row_bytes()?;
+                StreamRows::Piped {
+                    piped: crate::decoder::pipeline::Piped::spawn(reader, h as usize),
+                    prev: alloc::vec![0u8; raw],
+                    cur: alloc::vec![0u8; raw],
+                    bpp,
+                }
+            }
+            (None, None) => unreachable!("one reader is built"),
+        };
+
         Ok(Self {
-            reader,
+            rows,
             info,
             descriptor,
             row_buf: alloc::vec![0u8; out_row_bytes],
@@ -2653,25 +2705,44 @@ impl PngStreamingDecoder<'_> {
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
         }
 
-        let raw = match self.reader.next_raw_row() {
-            Some(Ok(row)) => row,
-            Some(Err(e)) => return Err(e),
-            None => {
-                return Err(at!(PngError::Truncated(alloc::format!(
-                    "image data ends at row {}",
-                    self.y
-                ))));
-            }
-        };
-
         let y = self.y;
-        self.y += 1;
-
-        self.expander.expand(raw, &mut self.row_buf);
-        if self.y == self.height {
-            // Reach the zlib footer so strict mode verifies the Adler-32.
-            self.reader.finish_stream()?;
+        let last = y + 1 == self.height;
+        match &mut self.rows {
+            StreamRows::Serial(reader) => {
+                let raw = match reader.next_raw_row() {
+                    Some(Ok(row)) => row,
+                    Some(Err(e)) => return Err(e),
+                    None => {
+                        return Err(at!(PngError::Truncated(alloc::format!(
+                            "image data ends at row {y}"
+                        ))));
+                    }
+                };
+                self.expander.expand(raw, &mut self.row_buf);
+                if last {
+                    // Reach the zlib footer so strict mode verifies the Adler-32.
+                    reader.finish_stream()?;
+                }
+            }
+            StreamRows::Piped {
+                piped,
+                prev,
+                cur,
+                bpp,
+            } => {
+                let f = piped.next_row()?;
+                cur.copy_from_slice(&f[1..]);
+                crate::decoder::row::unfilter_row(f[0], cur, prev, *bpp)?;
+                self.expander.expand(cur, &mut self.row_buf);
+                core::mem::swap(cur, prev);
+                if last {
+                    // The producer drained the zlib stream (strict mode
+                    // verifies the Adler-32 there).
+                    piped.finish()?;
+                }
+            }
         }
+        self.y += 1;
 
         // `row_buf`/`stride`/`descriptor` are all internal state this decoder
         // set up itself (not caller-supplied), so a construction failure here

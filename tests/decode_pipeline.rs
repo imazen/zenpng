@@ -184,3 +184,75 @@ fn pipelined_push_decoder_matches_serial() {
     assert!(push(&bad, true).is_err(), "strict accepts a bad Adler-32");
     assert!(push(&bad, false).is_ok(), "default rejects a bad Adler-32");
 }
+
+fn stream(png: &[u8], strict: bool) -> Result<Vec<u8>, String> {
+    use zencodec::decode::{DecodeJob, DecodePolicy, DecoderConfig, StreamingDecode};
+    let mut dec = zenpng::PngDecoderConfig::new()
+        .job()
+        .with_policy(DecodePolicy::none().with_strict(strict))
+        .streaming_decoder(png.into(), &[])
+        .map_err(|e| format!("{e}"))?;
+    let mut out = Vec::new();
+    while let Some((_, rows)) = dec.next_batch().map_err(|e| format!("{e}"))? {
+        for y in 0..rows.rows() {
+            out.extend_from_slice(rows.row(y));
+        }
+    }
+    Ok(out)
+}
+
+/// The pull streaming decoder pipelines the same images (its input is
+/// copied so the inflate thread can own it) and must give the serial
+/// decoder's pixels and errors.
+#[test]
+fn pipelined_streaming_decoder_matches_serial() {
+    for (name, png) in cases() {
+        let serial = decode(
+            &png,
+            &PngDecodeConfig::default().with_max_threads(1),
+            &Unstoppable,
+        )
+        .unwrap()
+        .pixels
+        .copy_to_contiguous_bytes();
+        assert!(
+            stream(&png, false).unwrap() == serial,
+            "{name}: stream differs"
+        );
+        assert!(
+            stream(&png, true).unwrap() == serial,
+            "{name}: strict stream differs"
+        );
+    }
+    let png = encode(700, 600, png::ColorType::Rgb, png::BitDepth::Eight, false);
+    assert!(
+        stream(&png[..png.len() * 2 / 3], false).is_err(),
+        "truncated"
+    );
+    let mut bad = png.clone();
+    let adler_end = bad.len() - 12 - 4;
+    bad[adler_end - 1] ^= 1;
+    assert!(stream(&bad, true).is_err(), "strict accepts a bad Adler-32");
+    let r = stream(&bad, false);
+    assert!(r.is_ok(), "default rejects a bad Adler-32: {r:?}");
+}
+
+/// A stale IDAT CRC (here from patching the Adler-32 byte inside it) is
+/// skipped by default on every decode path; `streaming_decoder` and
+/// `decode_apng` probed with CRC checks on and rejected it.
+#[test]
+fn default_policy_skips_idat_crc_on_every_path() {
+    let png = encode(100, 60, png::ColorType::Rgb, png::BitDepth::Eight, false);
+    let mut bad = png.clone();
+    let adler_end = bad.len() - 12 - 4;
+    bad[adler_end - 1] ^= 1;
+    let cfg = PngDecodeConfig::default();
+    assert!(decode(&bad, &cfg, &Unstoppable).is_ok(), "decode");
+    assert!(
+        zenpng::decode_apng(&bad, &cfg, &Unstoppable).is_ok(),
+        "decode_apng"
+    );
+    assert!(push(&bad, false).is_ok(), "push_decoder");
+    let r = stream(&bad, false);
+    assert!(r.is_ok(), "streaming_decoder: {r:?}");
+}

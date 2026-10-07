@@ -32,8 +32,11 @@ pub(crate) struct ChunkIter<'a> {
 }
 
 impl<'a> ChunkIter<'a> {
-    /// Create a new chunk iterator. `data` must be the full PNG file bytes
-    /// (signature already validated by caller).
+    /// Create a new chunk iterator that verifies every CRC. `data` must be the
+    /// full PNG file bytes (signature already validated by caller). Decode
+    /// paths use [`new_with_config`](Self::new_with_config) with their CRC
+    /// policy.
+    #[cfg(test)]
     pub fn new(data: &'a [u8]) -> Self {
         Self {
             data,

@@ -32,6 +32,12 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- The zencodec `streaming_decoder` inflates on a second thread for images
+  with at least 512 KiB of filtered data when threads are allowed
+  (borrowed input is copied once so that thread can own it): 1407_rgb8_4096
+  93 -> 48 ms, peak RSS 21 -> 39 MB (the input copy). A single-threaded
+  threading policy keeps the old path. Same pixels and errors
+  (`tests/decode_pipeline.rs`).
 - Single-threaded encode screening keeps the filtered image only for the
   top candidates it will refine (it kept one copy per strategy, made by
   cloning). Same output; 4096x3072 RGB8 peak RSS at effort 13 272 -> 207 MB,
@@ -134,6 +140,10 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- `streaming_decoder` and `decode_apng` probed the file with critical-chunk
+  CRC checks on, so they rejected files with a stale IDAT CRC that
+  `decode()` and `push_decoder` accept under the default policy; the probe
+  now follows the decode's own CRC setting.
 - `push_rows` at efforts 0 and 1 dropped the config's cICP, content light
   level and mastering display chunks that the one-shot encoder writes; every
   path now builds the header metadata in one place (`png_write_meta`).

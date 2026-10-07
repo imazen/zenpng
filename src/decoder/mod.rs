@@ -141,11 +141,21 @@ pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &PngAncillary) -> PngInfo {
 
 /// Probe PNG metadata without decoding pixels.
 pub(crate) fn probe_png(data: &[u8]) -> crate::error::Result<PngInfo> {
+    probe_png_with(data, false)
+}
+
+/// [`probe_png`] that skips critical-chunk CRC checks when the decode it
+/// precedes does (`PngDecodeConfig::skip_critical_chunk_crc`), so probing
+/// never rejects a file the decoder accepts.
+pub(crate) fn probe_png_with(
+    data: &[u8],
+    skip_critical_crc: bool,
+) -> crate::error::Result<PngInfo> {
     if data.len() < 8 || data[..8] != PNG_SIGNATURE {
         return Err(at!(PngError::NotPng("missing PNG signature".into())));
     }
 
-    let mut chunks = ChunkIter::new(data);
+    let mut chunks = ChunkIter::new_with_config(data, skip_critical_crc);
 
     let ihdr_chunk = chunks
         .next()
