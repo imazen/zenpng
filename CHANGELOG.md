@@ -32,6 +32,10 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- `push_decoder` (zencodec row sink) uses the two-thread decode pipeline
+  for images with at least 512 KiB of filtered data when threads are
+  allowed, as `decode()` does: 1207_rgb8_1024 5.19 -> 3.14 ms, 1407_rgb8_4096
+  93 -> 58 ms (4 E-cores). Same pixels and errors (`tests/decode_pipeline.rs`).
 - RGBA8 downcast analysis stops at the first pixel after which nothing can
   change its result (as the RGB8 analysis already did). Non-opaque RGBA8
   images with more than 256 colors walked every pixel: 60M of the 139M

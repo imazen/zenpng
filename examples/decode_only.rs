@@ -7,7 +7,9 @@
 ///
 /// `DECODE_WITH=png` runs image-rs/image-png main instead (the `png_main`
 /// dev-dependency, configured as in `benches/pareto.rs`), for side-by-side
-/// instruction counts.
+/// instruction counts. `DECODE_WITH=stream` / `push` run zenpng's zencodec
+/// `streaming_decoder` (rows consumed and dropped) / `push_decoder` (into a
+/// `Vec` sink).
 use enough::Unstoppable;
 
 fn main() {
@@ -22,9 +24,32 @@ fn main() {
     // DECODE_THREADS: decoder max_threads (default 1, single-threaded).
     let threads = std::env::var("DECODE_THREADS").map_or(1, |t| t.parse().unwrap());
     let config = zenpng::PngDecodeConfig::none().with_max_threads(threads);
-    let with_png = std::env::var("DECODE_WITH").is_ok_and(|w| w == "png");
+    let with = std::env::var("DECODE_WITH").unwrap_or_default();
+    let with_png = with == "png";
     let decode = |data: &[u8]| -> usize {
-        if with_png {
+        if with == "stream" {
+            use zencodec::decode::{DecodeJob, DecoderConfig, StreamingDecode};
+            let mut dec = zenpng::PngDecoderConfig::new()
+                .job()
+                .streaming_decoder(data.into(), &[])
+                .unwrap();
+            let mut n = 0;
+            while let Some((_, rows)) = dec.next_batch().unwrap() {
+                for y in 0..rows.rows() {
+                    n += std::hint::black_box(rows.row(y)).len();
+                }
+            }
+            n
+        } else if with == "push" {
+            use zencodec::decode::{DecodeJob, DecoderConfig};
+            let mut sink = VecSink(Vec::new());
+            zenpng::PngDecoderConfig::new()
+                .job()
+                .push_decoder(data.into(), &mut sink, &[])
+                .unwrap();
+            std::hint::black_box(&sink.0);
+            sink.0.len()
+        } else if with_png {
             let mut d = png_main::Decoder::new(std::io::Cursor::new(data));
             d.set_transformations(png_main::Transformations::EXPAND);
             d.ignore_checksums(true);
@@ -53,6 +78,29 @@ fn main() {
     eprintln!(
         "{:.2} us/decode ({iters} decodes, {threads} threads{})",
         t.elapsed().as_secs_f64() * 1e6 / iters as f64,
-        if with_png { ", image-png" } else { "" },
+        if with.is_empty() {
+            String::new()
+        } else {
+            format!(", {with}")
+        },
     );
+}
+
+struct VecSink(Vec<u8>);
+
+impl zencodec::decode::DecodeRowSink for VecSink {
+    fn provide_next_buffer(
+        &mut self,
+        _y: u32,
+        height: u32,
+        width: u32,
+        descriptor: zenpixels::PixelDescriptor,
+    ) -> Result<zenpixels::PixelSliceMut<'_>, zencodec::decode::SinkError> {
+        let stride = width as usize * descriptor.bytes_per_pixel();
+        self.0.resize(height as usize * stride, 0);
+        Ok(
+            zenpixels::PixelSliceMut::new(&mut self.0, width, height, stride, descriptor)
+                .expect("sized"),
+        )
+    }
 }

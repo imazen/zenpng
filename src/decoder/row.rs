@@ -385,7 +385,7 @@ impl<'a> zenflate::InputSource for FdatSource<'a> {
 ///
 /// Dispatches to SIMD-accelerated implementations (AVX2/SSE2) for Up, Paeth,
 /// Average, and Sub filters with bpp=4, falling back to scalar for other bpp.
-pub(super) fn unfilter_row(
+pub(crate) fn unfilter_row(
     filter_type: u8,
     row: &mut [u8],
     prev: &[u8],

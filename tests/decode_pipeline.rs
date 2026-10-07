@@ -126,3 +126,61 @@ fn pipelined_decode_reports_the_same_errors() {
         );
     }
 }
+
+struct CollectSink(Vec<u8>);
+
+impl zencodec::decode::DecodeRowSink for CollectSink {
+    fn provide_next_buffer(
+        &mut self,
+        _y: u32,
+        height: u32,
+        width: u32,
+        descriptor: zenpixels::PixelDescriptor,
+    ) -> Result<zenpixels::PixelSliceMut<'_>, zencodec::decode::SinkError> {
+        let stride = width as usize * descriptor.bytes_per_pixel();
+        self.0.resize(height as usize * stride, 0);
+        Ok(
+            zenpixels::PixelSliceMut::new(&mut self.0, width, height, stride, descriptor)
+                .expect("sized"),
+        )
+    }
+}
+
+fn push(png: &[u8], strict: bool) -> Result<Vec<u8>, String> {
+    use zencodec::decode::{DecodeJob, DecodePolicy, DecoderConfig};
+    let mut sink = CollectSink(Vec::new());
+    zenpng::PngDecoderConfig::new()
+        .job()
+        .with_policy(DecodePolicy::none().with_strict(strict))
+        .push_decoder(png.into(), &mut sink, &[])
+        .map_err(|e| format!("{e}"))?;
+    Ok(sink.0)
+}
+
+/// `push_decoder` pipelines the same images (default limits allow threads)
+/// and must give the serial decoder's pixels and errors.
+#[test]
+fn pipelined_push_decoder_matches_serial() {
+    for (name, png) in cases() {
+        let serial = decode(
+            &png,
+            &PngDecodeConfig::default().with_max_threads(1),
+            &Unstoppable,
+        )
+        .unwrap()
+        .pixels
+        .copy_to_contiguous_bytes();
+        assert!(push(&png, false).unwrap() == serial, "{name}: push differs");
+        assert!(
+            push(&png, true).unwrap() == serial,
+            "{name}: strict push differs"
+        );
+    }
+    let png = encode(700, 600, png::ColorType::Rgb, png::BitDepth::Eight, false);
+    assert!(push(&png[..png.len() * 2 / 3], false).is_err(), "truncated");
+    let mut bad = png.clone();
+    let adler_end = bad.len() - 12 - 4;
+    bad[adler_end - 1] ^= 1;
+    assert!(push(&bad, true).is_err(), "strict accepts a bad Adler-32");
+    assert!(push(&bad, false).is_ok(), "default rejects a bad Adler-32");
+}

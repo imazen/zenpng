@@ -2407,10 +2407,41 @@ fn push_decoder_native_noninterlaced<'a>(
     // data IS the output pixels. Decode directly into the sink buffer.
     let is_passthrough =
         !has_trns && ihdr.bit_depth == 8 && (ihdr.color_type == 6 || ihdr.color_type == 2);
+    let raw_row_bytes = ihdr.raw_row_bytes()?;
 
-    if is_passthrough {
-        let raw_row_bytes = ihdr.raw_row_bytes()?;
-
+    // Large images with threads allowed: inflate on a second thread while
+    // this one unfilters and expands into the sink, as `decode()` does.
+    let pipelined = crate::decoder::pipeline::worth_it(
+        h as usize * (raw_row_bytes + 1),
+        png_config.max_threads,
+    );
+    if pipelined {
+        let expander = crate::decoder::postprocess::RowExpander::new(&ihdr, reader.ancillary())?;
+        let out_row_bytes = expander.out_row_bytes();
+        if out_row_bytes != w as usize * descriptor.bytes_per_pixel() {
+            return Err(at!(PngError::Internal(
+                zencodec::InternalKind::Bug,
+                alloc::format!(
+                    "expander row {out_row_bytes} B != descriptor row {} B",
+                    w as usize * descriptor.bytes_per_pixel()
+                )
+            )));
+        }
+        let mut dst = sink
+            .provide_next_buffer(0, h, w, descriptor)
+            .map_err(wrap_sink)?;
+        let bpp = reader.bpp();
+        let mut prev = alloc::vec![0u8; raw_row_bytes];
+        let mut cur = alloc::vec![0u8; raw_row_bytes];
+        reader = crate::decoder::pipeline::run(reader, h as usize, cancel, |y, f| {
+            cur.copy_from_slice(&f[1..]);
+            crate::decoder::row::unfilter_row(f[0], &mut cur, &prev, bpp)?;
+            expander.expand(&cur, &mut dst.row_mut(y as u32)[..out_row_bytes]);
+            core::mem::swap(&mut cur, &mut prev);
+            Ok(())
+        })?;
+        drop(dst);
+    } else if is_passthrough {
         // Request the full sink buffer up front so we can use split_at_mut
         // for zero-copy prev-row references during unfiltering.
         let mut dst = sink
@@ -2484,7 +2515,10 @@ fn push_decoder_native_noninterlaced<'a>(
         drop(dst);
     }
 
-    reader.finish_stream()?;
+    // The pipeline drained the stream already (as `decode()`).
+    if !pipelined {
+        reader.finish_stream()?;
+    }
     reader.finish_metadata();
     sink.finish().map_err(wrap_sink)?;
 
