@@ -41,9 +41,12 @@ All notable changes to zenpng are documented here.
   every downcast and near-lossless are off, no `iDOT` segments are
   requested, and the image spans two or more strips. Output is
   byte-identical to the one-shot multi-threaded encode; memory is one strip
-  plus the compressed output instead of the whole image. No public builder
-  turns downcasts off on `PngEncoderConfig` yet, so zencodec callers can't
-  reach this mode until one lands; otherwise `push_rows` buffers as before.
+  plus the compressed output instead of the whole image. With threads
+  allowed (`parallel`), completed strips are compressed on a worker pool
+  while rows keep arriving (at most 2 per thread in flight; same output).
+  No public builder turns downcasts off on `PngEncoderConfig` yet, so
+  zencodec callers can't reach this mode until one lands; otherwise
+  `push_rows` buffers as before.
   The strip worker is shared with the multi-threaded encoder (byte-identical
   output, `tests/strip_encode.rs`, `tests/idot*.rs`).
 - Lower fixed cost per decode: the zenflate stream decoder is boxed (its

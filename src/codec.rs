@@ -1200,11 +1200,24 @@ impl PngEncoder {
         };
         let format = crate::encoder::RowFormat::from_png(color_type.to_png_byte(), ihdr_depth);
         debug_assert_eq!(format.bpp, bpp);
+        // Threads as the one-shot path resolves them (limits' threading
+        // policy over the config).
+        let threaded = self.config_with_threading();
+        let threads = if threaded.parallel {
+            match threaded.max_threads {
+                0 => std::thread::available_parallelism().map_or(1, |t| t.get()),
+                t => t,
+            }
+        } else {
+            1
+        };
         let Some(stream) = crate::encoder::compress::StripStream::new(
             config.compression.effort(),
             format,
             row_bytes,
             h as usize,
+            threads,
+            self.stop.clone(),
         ) else {
             return Ok(None);
         };
@@ -8575,6 +8588,7 @@ mod strip_stream_tests {
     }
 
     fn streamed(
+        threads: usize,
         effort: u32,
         data: &[u8],
         w: u32,
@@ -8583,11 +8597,10 @@ mod strip_stream_tests {
         chunk: u32,
     ) -> Vec<u8> {
         let stride = w as usize * desc.bytes_per_pixel();
-        let mut enc = config(effort)
-            .job()
-            .with_canvas_size(w, h)
-            .encoder()
-            .unwrap();
+        let mut cfg = config(effort);
+        cfg.config.parallel = threads > 1;
+        cfg.config.max_threads = threads;
+        let mut enc = cfg.job().with_canvas_size(w, h).encoder().unwrap();
         let mut y = 0;
         while y < h {
             let n = chunk.min(h - y);
@@ -8615,11 +8628,11 @@ mod strip_stream_tests {
         let whole = PixelSlice::new(data, w, h, stride, desc).unwrap();
         for effort in [1, 2, 5, 7, 9, 13, 15] {
             let reference = oneshot(effort, whole.clone());
-            for chunk in [1, 7, 64, h] {
-                let got = streamed(effort, data, w, h, desc, chunk);
+            for (threads, chunk) in [(1, 1), (1, 7), (1, 64), (1, h), (3, 1), (3, 64), (8, 7)] {
+                let got = streamed(threads, effort, data, w, h, desc, chunk);
                 assert!(
                     got == reference,
-                    "{name} e{effort} chunk {chunk}: streamed {} bytes != one-shot {} bytes",
+                    "{name} e{effort} {threads} threads chunk {chunk}: streamed {} bytes != one-shot {} bytes",
                     got.len(),
                     reference.len()
                 );
@@ -8703,6 +8716,40 @@ mod strip_stream_tests {
                 "e{effort}: streamed {} bytes != one-shot {} bytes",
                 streamed.data().len(),
                 one.data().len()
+            );
+        }
+    }
+
+    /// A cancelled encode stops with an error on the caller's thread and on
+    /// the worker pool, without hanging.
+    #[test]
+    fn strip_streaming_honors_cancellation() {
+        use enough::{Stop, StopReason};
+        struct AlreadyCancelled;
+        impl Stop for AlreadyCancelled {
+            fn check(&self) -> Result<(), StopReason> {
+                Err(StopReason::Cancelled)
+            }
+        }
+        let (w, h) = (1024u32, 700u32);
+        let px = pixels(w as usize, h as usize, 3, 11);
+        let stride = w as usize * 3;
+        for threads in [1, 4] {
+            let mut cfg = config(7);
+            cfg.config.parallel = threads > 1;
+            cfg.config.max_threads = threads;
+            let mut enc = cfg
+                .job()
+                .with_stop(zencodec::StopToken::new(AlreadyCancelled))
+                .with_canvas_size(w, h)
+                .encoder()
+                .unwrap();
+            let pushed = enc
+                .push_rows(PixelSlice::new(&px, w, h, stride, PixelDescriptor::RGB8_SRGB).unwrap());
+            let res = pushed.and_then(|()| enc.finish().map(|_| ()));
+            assert!(
+                res.is_err(),
+                "{threads} threads: cancelled encode succeeded"
             );
         }
     }

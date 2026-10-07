@@ -1381,17 +1381,58 @@ pub(crate) struct StripStream {
     /// Rows of that strip received so far, preceded by the row above it.
     rows: Vec<u8>,
     adler: u32,
+    /// Worker threads compressing completed strips (multi-threaded encodes).
+    pool: Option<StripPool>,
+}
+
+/// Completed strips handed to worker threads; results come back in any
+/// order and are written in strip order.
+struct StripPool {
+    jobs: Option<std::sync::mpsc::Sender<StripJob>>,
+    results: std::sync::mpsc::Receiver<(usize, StripResult)>,
+    handles: Vec<std::thread::JoinHandle<()>>,
+    /// Strips sent and not yet written.
+    in_flight: usize,
+    /// At most this many strips in flight (bounds memory).
+    max_in_flight: usize,
+    /// Finished strips waiting for an earlier one.
+    done: alloc::collections::BTreeMap<usize, (Vec<u8>, u32)>,
+    /// Next strip index to write.
+    next_out: usize,
+}
+
+struct StripJob {
+    k: usize,
+    rows: Vec<u8>,
+    lead: bool,
+    last: bool,
+}
+
+type StripResult = Result<(Vec<u8>, u32), zenflate::CompressionError>;
+
+fn strip_error(e: zenflate::CompressionError) -> whereat::At<PngError> {
+    match e {
+        zenflate::CompressionError::Stopped(reason) => at!(PngError::from(reason)),
+        e => at!(PngError::Internal(
+            zencodec::InternalKind::Dependency,
+            alloc::format!("zenflate strip compression failed: {e}")
+        )),
+    }
 }
 
 impl StripStream {
     /// `None` unless `effort` is one [`compress_strips`] runs
     /// ([`EffortParams::strips_apply`]) and the image spans at least two
     /// strips (smaller images are one whole-image search either way).
+    /// `threads` above 1 compresses strips on that many worker threads
+    /// (output is the same); `cancel` reaches the workers.
     pub(crate) fn new(
         effort: u32,
         format: RowFormat,
         row_bytes: usize,
         height: usize,
+        threads: usize,
+        cancel: Option<zencodec::StopToken>,
     ) -> Option<Self> {
         if effort == 0 {
             return None;
@@ -1406,6 +1447,9 @@ impl StripStream {
         }
         let header =
             zenflate::png::StripCompressor::new(params.screen_effort.level()).zlib_header();
+        let threads = threads.min(bounds.len());
+        let pool = (threads > 1 && !cfg!(target_arch = "wasm32"))
+            .then(|| StripPool::new(threads, effort, format, row_bytes, cancel));
         Some(Self {
             worker: StripWorker::new(&params),
             rows: Vec::with_capacity((bounds[0].1 + 1) * row_bytes),
@@ -1416,6 +1460,7 @@ impl StripStream {
             header,
             next: 0,
             adler: 1,
+            pool,
         })
     }
 
@@ -1424,8 +1469,8 @@ impl StripStream {
         self.header
     }
 
-    /// Add one row (PNG byte order). When it completes a strip, the strip's
-    /// compressed bytes are appended to `out`.
+    /// Add one row (PNG byte order). Compressed strips are appended to `out`
+    /// in order as they finish.
     pub(crate) fn push_row(
         &mut self,
         row: &[u8],
@@ -1453,35 +1498,44 @@ impl StripStream {
             return Ok(());
         }
         let last = self.next + 1 == self.bounds.len();
-        let (z, adler) = self
-            .worker
-            .compress(
-                &self.rows,
-                self.row_bytes,
-                self.bpp,
-                a > 0,
-                false,
-                last,
-                cancel,
-            )
-            .map_err(|e| match e {
-                zenflate::CompressionError::Stopped(reason) => at!(PngError::from(reason)),
-                e => at!(PngError::Internal(
-                    zencodec::InternalKind::Dependency,
-                    alloc::format!("zenflate strip compression failed: {e}")
-                )),
-            })?;
-        out.extend_from_slice(&z);
-        self.adler = zenflate::adler32_combine(self.adler, adler, (b - a) * (self.row_bytes + 1));
         // The strip's last row is the next strip's row above.
         let keep = self.rows.len() - self.row_bytes;
-        self.rows.drain(..keep);
+        if let Some(pool) = &mut self.pool {
+            let mut next_rows = Vec::with_capacity(self.rows.capacity());
+            next_rows.extend_from_slice(&self.rows[keep..]);
+            let rows = core::mem::replace(&mut self.rows, next_rows);
+            pool.send(StripJob {
+                k: self.next,
+                rows,
+                lead: a > 0,
+                last,
+            });
+            pool.collect(false, &self.bounds, self.row_bytes, &mut self.adler, out)?;
+        } else {
+            let (z, adler) = self
+                .worker
+                .compress(
+                    &self.rows,
+                    self.row_bytes,
+                    self.bpp,
+                    a > 0,
+                    false,
+                    last,
+                    cancel,
+                )
+                .map_err(strip_error)?;
+            out.extend_from_slice(&z);
+            self.adler =
+                zenflate::adler32_combine(self.adler, adler, (b - a) * (self.row_bytes + 1));
+            self.rows.drain(..keep);
+        }
         self.next += 1;
         Ok(())
     }
 
-    /// After the last row: append the Adler-32 trailer.
-    pub(crate) fn finish(self, out: &mut Vec<u8>) -> crate::error::Result<()> {
+    /// After the last row: append the remaining strips and the Adler-32
+    /// trailer.
+    pub(crate) fn finish(mut self, out: &mut Vec<u8>) -> crate::error::Result<()> {
         if self.next != self.bounds.len() {
             return Err(at!(PngError::InvalidState(alloc::format!(
                 "finish: {} of {} rows pushed",
@@ -1490,8 +1544,127 @@ impl StripStream {
                 self.bounds.last().map_or(0, |b| b.1)
             ))));
         }
+        if let Some(pool) = &mut self.pool {
+            pool.collect(true, &self.bounds, self.row_bytes, &mut self.adler, out)?;
+        }
         out.extend_from_slice(&self.adler.to_be_bytes());
         Ok(())
+    }
+}
+
+impl StripPool {
+    fn new(
+        threads: usize,
+        effort: u32,
+        format: RowFormat,
+        row_bytes: usize,
+        cancel: Option<zencodec::StopToken>,
+    ) -> Self {
+        use std::sync::{Arc, Mutex, mpsc};
+        let (jobs, job_rx) = mpsc::channel::<StripJob>();
+        let (res_tx, results) = mpsc::channel();
+        let job_rx = Arc::new(Mutex::new(job_rx));
+        let handles = (0..threads)
+            .map(|_| {
+                let job_rx = Arc::clone(&job_rx);
+                let res_tx = res_tx.clone();
+                let cancel = cancel.clone();
+                std::thread::spawn(move || {
+                    let params = EffortParams::from_effort_and_bpp(effort, format.bpp);
+                    let mut w = StripWorker::new(&params);
+                    loop {
+                        // A poisoned lock means another worker panicked; stop.
+                        let Ok(rx) = job_rx.lock() else { return };
+                        let Ok(job) = rx.recv() else { return };
+                        drop(rx);
+                        let stop: &dyn Stop = match &cancel {
+                            Some(t) => t,
+                            None => &enough::Unstoppable,
+                        };
+                        let r = w.compress(
+                            &job.rows, row_bytes, format.bpp, job.lead, false, job.last, stop,
+                        );
+                        if res_tx.send((job.k, r)).is_err() {
+                            return;
+                        }
+                    }
+                })
+            })
+            .collect();
+        Self {
+            jobs: Some(jobs),
+            results,
+            handles,
+            in_flight: 0,
+            max_in_flight: 2 * threads,
+            done: alloc::collections::BTreeMap::new(),
+            next_out: 0,
+        }
+    }
+
+    fn send(&mut self, job: StripJob) {
+        if let Some(j) = &self.jobs {
+            // Workers only stop after the sender is dropped or on a panic,
+            // which `collect` reports.
+            let _ = j.send(job);
+        }
+        self.in_flight += 1;
+    }
+
+    /// Write finished strips in order. Waits while too many strips are in
+    /// flight, or for all of them when `all`.
+    fn collect(
+        &mut self,
+        all: bool,
+        bounds: &[(usize, usize)],
+        row_bytes: usize,
+        adler: &mut u32,
+        out: &mut Vec<u8>,
+    ) -> crate::error::Result<()> {
+        if all {
+            self.jobs = None;
+        }
+        loop {
+            let wait = self.in_flight > 0 && (all || self.in_flight >= self.max_in_flight);
+            let got = if wait {
+                match self.results.recv() {
+                    Ok(r) => Some(r),
+                    Err(_) => {
+                        return Err(at!(PngError::Internal(
+                            zencodec::InternalKind::Bug,
+                            "strip worker exited".into()
+                        )));
+                    }
+                }
+            } else {
+                self.results.try_recv().ok()
+            };
+            let Some((k, r)) = got else { break };
+            self.done.insert(k, r.map_err(strip_error)?);
+            while let Some((z, a)) = self.done.remove(&self.next_out) {
+                let (y0, y1) = bounds[self.next_out];
+                out.extend_from_slice(&z);
+                *adler = zenflate::adler32_combine(*adler, a, (y1 - y0) * (row_bytes + 1));
+                self.next_out += 1;
+                self.in_flight -= 1;
+            }
+        }
+        if all {
+            for h in self.handles.drain(..) {
+                if let Err(e) = h.join() {
+                    std::panic::resume_unwind(e);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for StripPool {
+    fn drop(&mut self) {
+        // Close the queue so idle workers exit; a dropped encoder doesn't
+        // wait for strips in flight.
+        self.jobs = None;
     }
 }
 
