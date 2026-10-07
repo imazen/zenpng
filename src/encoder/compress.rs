@@ -1193,34 +1193,15 @@ pub(crate) fn compress_segmented(
 /// the thread count) so output does not depend on how many threads ran.
 const STRIP_BYTES: usize = 512 * 1024;
 
-/// Multi-threaded encode for efforts made of screening and refine only (see
-/// [`EffortParams::strips_apply`]): split the image into strips of about
-/// [`STRIP_BYTES`] filtered bytes; on worker threads, filter each strip with
-/// every screening strategy, recompress its best `top_k` candidates at the
-/// refine levels, and keep the smallest compression. Each
-/// strip is compressed without history from the strips before it
-/// ([`zenflate::png::StripCompressor`]), so the strips run concurrently and
-/// their concatenation is one ordinary zlib stream. Strip rows are filtered
-/// against the real previous image row, so any filter is allowed at a strip
-/// boundary (no `iDOT` table is written here).
-///
-/// Returns `None` when the image is too small for two strips or only one
-/// thread is allowed.
-fn compress_strips(
-    packed_rows: &[u8],
-    row_bytes: usize,
+/// Row ranges of the strips [`compress_strips`] splits an image into, and
+/// whether each one starts an `iDOT` segment (its first row is then
+/// refiltered with None or Sub). Without segments: `stride × height /`
+/// [`STRIP_BYTES`] strips of near-equal row counts (at least one).
+pub(crate) fn strip_bounds(
+    stride: usize,
     height: usize,
-    bpp: usize,
-    params: &EffortParams,
-    opts: &super::CompressOptions<'_>,
     segment_rows: &[u32],
-) -> crate::error::Result<Option<StripsOut>> {
-    use core::sync::atomic::{AtomicUsize, Ordering};
-    use zenflate::png::StripCompressor;
-
-    let stride = row_bytes + 1;
-    // Strip row ranges. With `iDOT` segments, each segment is split into its
-    // own strips so segment boundaries are strip boundaries.
+) -> (Vec<(usize, usize)>, Vec<bool>) {
     let split = |start: usize, rows: usize, n: usize, out: &mut Vec<(usize, usize)>| {
         let (base, extra) = (rows / n, rows % n);
         let mut y = start;
@@ -1248,6 +1229,299 @@ fn compress_strips(
             y += r;
         }
     }
+    (bounds, seg_start)
+}
+
+/// One thread's state for compressing strips at one effort (see
+/// [`compress_strips`]): the screening and refine compressors and the filter
+/// scratch, reused from strip to strip.
+pub(crate) struct StripWorker {
+    strategies: &'static [Strategy],
+    top_k: usize,
+    c: zenflate::png::StripCompressor,
+    rc: Vec<zenflate::png::StripCompressor>,
+    scratch: HeuristicScratch,
+}
+
+impl StripWorker {
+    fn new(params: &EffortParams) -> Self {
+        use zenflate::png::StripCompressor;
+        let level = params.screen_effort.level();
+        let strategies = params.strategies;
+        // Levels each strip's best screened candidates are recompressed at:
+        // the refine tiers (with their fallback chains when enabled), or for
+        // a single screen-final strategy, its fallback chain.
+        let chain = |l: CompressionLevel, out: &mut Vec<CompressionLevel>| {
+            let mut l = l;
+            while let Some(fb) = l.monotonicity_fallback().filter(|_| params.fallbacks) {
+                if !out.contains(&fb) {
+                    out.push(fb);
+                }
+                l = fb;
+            }
+        };
+        let mut refine_levels = Vec::new();
+        if params.screen_is_final {
+            if strategies.len() == 1 {
+                chain(level, &mut refine_levels);
+            }
+        } else {
+            for &t in params.refine_efforts {
+                if !refine_levels.contains(&t.level()) {
+                    refine_levels.push(t.level());
+                }
+                chain(t.level(), &mut refine_levels);
+            }
+        }
+        let top_k = if params.screen_is_final {
+            1
+        } else {
+            params.top_k.max(1)
+        };
+        Self {
+            strategies,
+            top_k,
+            c: StripCompressor::new(level),
+            rc: refine_levels
+                .iter()
+                .map(|&l| StripCompressor::new(l))
+                .collect(),
+            scratch: HeuristicScratch::new_universal(),
+        }
+    }
+
+    /// Compress one strip. `rows` holds its packed rows, preceded by the
+    /// image row above it when `lead` (rows filter against it; its output is
+    /// dropped). `seg_start`: the strip starts an `iDOT` segment, so its first
+    /// row may only use None or Sub. `last`: the strip ends the stream.
+    /// Returns the strip's deflate bytes and the Adler-32 of its filtered
+    /// rows.
+    #[allow(clippy::too_many_arguments)]
+    fn compress(
+        &mut self,
+        rows: &[u8],
+        row_bytes: usize,
+        bpp: usize,
+        lead: bool,
+        seg_start: bool,
+        last: bool,
+        cancel: &dyn Stop,
+    ) -> Result<(Vec<u8>, u32), zenflate::CompressionError> {
+        use zenflate::png::StripCompressor;
+        let stride = row_bytes + 1;
+        let lead = usize::from(lead);
+        let h = rows.len() / row_bytes;
+        let strategies = self.strategies;
+        let pre = (strategies.len() > 1).then(|| precompute_all_filters(rows, row_bytes, h, bpp));
+        let mut filtered = Vec::with_capacity(h * stride);
+        let mut out = vec![0u8; StripCompressor::bound((h - lead) * stride)];
+        let mut best: Option<(Vec<u8>, u32)> = None;
+        // Screened candidates kept for recompression: (size, strip bytes, adler).
+        let mut cands: Vec<(usize, Vec<u8>, u32)> = Vec::new();
+        for &strategy in strategies {
+            filtered.clear();
+            match &pre {
+                Some(p) => filter_image_from_precomputed(
+                    p,
+                    row_bytes,
+                    h,
+                    strategy,
+                    &mut self.scratch,
+                    &mut filtered,
+                ),
+                None => filter_image(rows, row_bytes, h, bpp, strategy, cancel, &mut filtered),
+            }
+            let data = &mut filtered[lead * stride..];
+            if seg_start {
+                // An `iDOT` segment starts here: its first row may only use
+                // None or Sub, which need no previous row.
+                let raw = &rows[lead * row_bytes..(lead + 1) * row_bytes];
+                super::segments::refilter_none_or_sub(raw, bpp, &mut data[..stride]);
+            }
+            let data = &*data;
+            let adler = zenflate::adler32(1, data);
+            let len = self.c.compress(data, last, &mut out, cancel)?;
+            if best.as_ref().is_none_or(|(z, _)| len < z.len()) {
+                debug_check_strip(&self.c, &out[..len], data, last);
+                best = Some((out[..len].to_vec(), adler));
+            }
+            if !self.rc.is_empty() {
+                cands.push((len, data.to_vec(), adler));
+                cands.sort_by_key(|c| c.0);
+                cands.truncate(self.top_k);
+            }
+        }
+        for (_, data, adler) in &cands {
+            for sc in self.rc.iter_mut() {
+                let len = sc.compress(data, last, &mut out, cancel)?;
+                if best.as_ref().is_none_or(|(z, _)| len < z.len()) {
+                    debug_check_strip(sc, &out[..len], data, last);
+                    best = Some((out[..len].to_vec(), *adler));
+                }
+            }
+        }
+        Ok(best.expect("strategies is never empty"))
+    }
+}
+
+/// Strip-by-strip compression for `push_rows` streaming: the same strips,
+/// per-strip search and zlib framing as [`compress_strips`] (so the output
+/// equals a multi-threaded one-shot encode of the same rows), compressed on
+/// the caller's thread as each strip's last row arrives. Holds one strip of
+/// rows (plus the row above it) instead of the image.
+pub(crate) struct StripStream {
+    worker: StripWorker,
+    bounds: Vec<(usize, usize)>,
+    row_bytes: usize,
+    bpp: usize,
+    rgba8: bool,
+    header: [u8; 2],
+    /// Index of the strip being filled.
+    next: usize,
+    /// Rows of that strip received so far, preceded by the row above it.
+    rows: Vec<u8>,
+    adler: u32,
+}
+
+impl StripStream {
+    /// `None` unless `effort` is one [`compress_strips`] runs
+    /// ([`EffortParams::strips_apply`]) and the image spans at least two
+    /// strips (smaller images are one whole-image search either way).
+    pub(crate) fn new(
+        effort: u32,
+        format: RowFormat,
+        row_bytes: usize,
+        height: usize,
+    ) -> Option<Self> {
+        if effort == 0 {
+            return None;
+        }
+        let params = EffortParams::from_effort_and_bpp(effort, format.bpp);
+        if !params.strips_apply() {
+            return None;
+        }
+        let (bounds, _) = strip_bounds(row_bytes + 1, height, &[]);
+        if bounds.len() < 2 {
+            return None;
+        }
+        let header =
+            zenflate::png::StripCompressor::new(params.screen_effort.level()).zlib_header();
+        Some(Self {
+            worker: StripWorker::new(&params),
+            rows: Vec::with_capacity((bounds[0].1 + 1) * row_bytes),
+            bounds,
+            row_bytes,
+            bpp: format.bpp,
+            rgba8: format.rgba8,
+            header,
+            next: 0,
+            adler: 1,
+        })
+    }
+
+    /// The zlib stream header (first two IDAT bytes).
+    pub(crate) fn zlib_header(&self) -> [u8; 2] {
+        self.header
+    }
+
+    /// Add one row (PNG byte order). When it completes a strip, the strip's
+    /// compressed bytes are appended to `out`.
+    pub(crate) fn push_row(
+        &mut self,
+        row: &[u8],
+        out: &mut Vec<u8>,
+        cancel: &dyn Stop,
+    ) -> crate::error::Result<()> {
+        let Some(&(a, b)) = self.bounds.get(self.next) else {
+            return Err(at!(PngError::InvalidState(
+                "push_rows: more rows than the canvas height".into()
+            )));
+        };
+        let start = self.rows.len();
+        self.rows.extend_from_slice(&row[..self.row_bytes]);
+        if self.rgba8 {
+            // As `compress_filtered`: RGB under alpha 0 is zeroed (per pixel,
+            // so per row gives the same bytes).
+            for px in self.rows[start..].as_chunks_mut::<4>().0 {
+                if px[3] == 0 {
+                    *px = [0; 4];
+                }
+            }
+        }
+        let lead = usize::from(a > 0);
+        if self.rows.len() < (b - a + lead) * self.row_bytes {
+            return Ok(());
+        }
+        let last = self.next + 1 == self.bounds.len();
+        let (z, adler) = self
+            .worker
+            .compress(
+                &self.rows,
+                self.row_bytes,
+                self.bpp,
+                a > 0,
+                false,
+                last,
+                cancel,
+            )
+            .map_err(|e| match e {
+                zenflate::CompressionError::Stopped(reason) => at!(PngError::from(reason)),
+                e => at!(PngError::Internal(
+                    zencodec::InternalKind::Dependency,
+                    alloc::format!("zenflate strip compression failed: {e}")
+                )),
+            })?;
+        out.extend_from_slice(&z);
+        self.adler = zenflate::adler32_combine(self.adler, adler, (b - a) * (self.row_bytes + 1));
+        // The strip's last row is the next strip's row above.
+        let keep = self.rows.len() - self.row_bytes;
+        self.rows.drain(..keep);
+        self.next += 1;
+        Ok(())
+    }
+
+    /// After the last row: append the Adler-32 trailer.
+    pub(crate) fn finish(self, out: &mut Vec<u8>) -> crate::error::Result<()> {
+        if self.next != self.bounds.len() {
+            return Err(at!(PngError::InvalidState(alloc::format!(
+                "finish: {} of {} rows pushed",
+                self.bounds[self.next].0 + self.rows.len() / self.row_bytes
+                    - usize::from(self.bounds[self.next].0 > 0),
+                self.bounds.last().map_or(0, |b| b.1)
+            ))));
+        }
+        out.extend_from_slice(&self.adler.to_be_bytes());
+        Ok(())
+    }
+}
+
+/// Multi-threaded encode for efforts made of screening and refine only (see
+/// [`EffortParams::strips_apply`]): split the image into strips of about
+/// [`STRIP_BYTES`] filtered bytes; on worker threads, filter each strip with
+/// every screening strategy, recompress its best `top_k` candidates at the
+/// refine levels, and keep the smallest compression. Each
+/// strip is compressed without history from the strips before it
+/// ([`zenflate::png::StripCompressor`]), so the strips run concurrently and
+/// their concatenation is one ordinary zlib stream. Strip rows are filtered
+/// against the real previous image row, so any filter is allowed at a strip
+/// boundary (no `iDOT` table is written here).
+///
+/// Returns `None` when the image is too small for two strips or only one
+/// thread is allowed.
+fn compress_strips(
+    packed_rows: &[u8],
+    row_bytes: usize,
+    height: usize,
+    bpp: usize,
+    params: &EffortParams,
+    opts: &super::CompressOptions<'_>,
+    segment_rows: &[u32],
+) -> crate::error::Result<Option<StripsOut>> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    use zenflate::png::StripCompressor;
+
+    let stride = row_bytes + 1;
+    let (bounds, seg_start) = strip_bounds(stride, height, segment_rows);
     let n = bounds.len();
     let threads = match opts.max_threads {
         0 => std::thread::available_parallelism().map_or(1, |t| t.get()),
@@ -1258,101 +1532,25 @@ fn compress_strips(
     if n < 2 || threads < 2 || cfg!(target_arch = "wasm32") {
         return Ok(None);
     }
-    let seg_start = &seg_start;
     let level = params.screen_effort.level();
-    let strategies = params.strategies;
     let cancel = opts.cancel;
     let next = AtomicUsize::new(0);
-
-    // Levels each strip's best screened candidates are recompressed at:
-    // the refine tiers (with their fallback chains when enabled), or for a
-    // single screen-final strategy, its fallback chain.
-    let chain = |l: CompressionLevel, out: &mut Vec<CompressionLevel>| {
-        let mut l = l;
-        while let Some(fb) = l.monotonicity_fallback().filter(|_| params.fallbacks) {
-            if !out.contains(&fb) {
-                out.push(fb);
-            }
-            l = fb;
-        }
-    };
-    let mut refine_levels = Vec::new();
-    if params.screen_is_final {
-        if strategies.len() == 1 {
-            chain(level, &mut refine_levels);
-        }
-    } else {
-        for &t in params.refine_efforts {
-            if !refine_levels.contains(&t.level()) {
-                refine_levels.push(t.level());
-            }
-            chain(t.level(), &mut refine_levels);
-        }
-    }
-    let refine_levels = &refine_levels;
-    let top_k = if params.screen_is_final {
-        1
-    } else {
-        params.top_k.max(1)
-    };
+    let (bounds, seg_start) = (&bounds, &seg_start);
 
     type Strip = Result<(Vec<u8>, u32, usize), zenflate::CompressionError>;
-    let work = |c: &mut StripCompressor,
-                rc: &mut Vec<StripCompressor>,
-                scratch: &mut HeuristicScratch,
-                k: usize|
-     -> Strip {
+    let work = |w: &mut StripWorker, k: usize| -> Strip {
         let (a, b) = bounds[k];
-        let last = k + 1 == n;
-        // Include the previous image row so row `a` filters against it, then
-        // drop that row's output.
         let lead = usize::from(a > 0);
         let rows = &packed_rows[(a - lead) * row_bytes..b * row_bytes];
-        let h = b - a + lead;
-        let pre = (strategies.len() > 1).then(|| precompute_all_filters(rows, row_bytes, h, bpp));
-        let mut filtered = Vec::with_capacity(h * stride);
-        let mut out = vec![0u8; StripCompressor::bound((b - a) * stride)];
-        let mut best: Option<(Vec<u8>, u32)> = None;
-        // Screened candidates kept for recompression: (size, strip bytes, adler).
-        let mut cands: Vec<(usize, Vec<u8>, u32)> = Vec::new();
-        for &strategy in strategies {
-            filtered.clear();
-            match &pre {
-                Some(p) => {
-                    filter_image_from_precomputed(p, row_bytes, h, strategy, scratch, &mut filtered)
-                }
-                None => filter_image(rows, row_bytes, h, bpp, strategy, cancel, &mut filtered),
-            }
-            let data = &mut filtered[lead * stride..];
-            if seg_start[k] {
-                // An `iDOT` segment starts here: its first row may only use
-                // None or Sub, which need no previous row.
-                let raw = &packed_rows[a * row_bytes..(a + 1) * row_bytes];
-                super::segments::refilter_none_or_sub(raw, bpp, &mut data[..stride]);
-            }
-            let data = &*data;
-            let adler = zenflate::adler32(1, data);
-            let len = c.compress(data, last, &mut out, cancel)?;
-            if best.as_ref().is_none_or(|(z, _)| len < z.len()) {
-                debug_check_strip(c, &out[..len], data, last);
-                best = Some((out[..len].to_vec(), adler));
-            }
-            if !refine_levels.is_empty() {
-                cands.push((len, data.to_vec(), adler));
-                cands.sort_by_key(|c| c.0);
-                cands.truncate(top_k);
-            }
-        }
-        for (_, data, adler) in &cands {
-            for sc in rc.iter_mut() {
-                let len = sc.compress(data, last, &mut out, cancel)?;
-                if best.as_ref().is_none_or(|(z, _)| len < z.len()) {
-                    debug_check_strip(sc, &out[..len], data, last);
-                    best = Some((out[..len].to_vec(), *adler));
-                }
-            }
-        }
-        let (z, adler) = best.expect("strategies is never empty");
+        let (z, adler) = w.compress(
+            rows,
+            row_bytes,
+            bpp,
+            a > 0,
+            seg_start[k],
+            k + 1 == n,
+            cancel,
+        )?;
         Ok((z, adler, (b - a) * stride))
     };
 
@@ -1363,19 +1561,14 @@ fn compress_strips(
                 let work = &work;
                 let next = &next;
                 s.spawn(move || {
-                    let mut c = StripCompressor::new(level);
-                    let mut rc: Vec<StripCompressor> = refine_levels
-                        .iter()
-                        .map(|&l| StripCompressor::new(l))
-                        .collect();
-                    let mut scratch = HeuristicScratch::new_universal();
+                    let mut w = StripWorker::new(params);
                     let mut done = Vec::new();
                     loop {
                         let k = next.fetch_add(1, Ordering::Relaxed);
                         if k >= n {
                             break done;
                         }
-                        done.push((k, work(&mut c, &mut rc, &mut scratch, k)));
+                        done.push((k, work(&mut w, k)));
                     }
                 })
             })

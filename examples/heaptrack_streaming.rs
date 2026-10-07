@@ -177,7 +177,10 @@ fn main() {
     if let Some(e) = effort("oneshot") {
         eprintln!("oneshot e{e}: {} bytes", oneshot(&px, e));
     } else if let Some(e) = effort("stream") {
-        eprintln!("stream e{e} ({strip}-row strips): {} bytes", stream(&px, e, strip));
+        eprintln!(
+            "stream e{e} ({strip}-row strips): {} bytes",
+            stream(&px, e, strip)
+        );
     } else {
         panic!("unknown mode {mode}");
     }

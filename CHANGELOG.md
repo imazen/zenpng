@@ -32,6 +32,16 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- `push_rows` at efforts 1-15 compresses strip by strip as rows arrive
+  (about 512 KiB of filtered rows each) when the canvas height is known,
+  every downcast and near-lossless are off, no `iDOT` segments are
+  requested, and the image spans two or more strips. Output is
+  byte-identical to the one-shot multi-threaded encode; memory is one strip
+  plus the compressed output instead of the whole image. No public builder
+  turns downcasts off on `PngEncoderConfig` yet, so zencodec callers can't
+  reach this mode until one lands; otherwise `push_rows` buffers as before.
+  The strip worker is shared with the multi-threaded encoder (byte-identical
+  output, `tests/strip_encode.rs`, `tests/idot*.rs`).
 - Lower fixed cost per decode: the zenflate stream decoder is boxed (its
   inline Huffman tables were copied on every move of the row decoder), and a
   whole-image inflate buffer gets 1 KiB of slack so zenflate doesn't grow and
@@ -109,6 +119,9 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- `push_rows` at efforts 0 and 1 dropped the config's cICP, content light
+  level and mastering display chunks that the one-shot encoder writes; every
+  path now builds the header metadata in one place (`png_write_meta`).
 - **The zencodec row-sink and streaming decoders no longer return a partial
   image as success.** When the image data ended early, `push_decoder` (for
   every format except RGB8/RGBA8) and the streaming decoder stopped quietly,

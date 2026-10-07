@@ -550,6 +550,32 @@ pub fn encode_gray16(
     )
 }
 
+/// The ancillary chunks a PNG gets from `metadata` and the config's builder
+/// values (shared by the one-shot encoder and every `push_rows` mode, so they
+/// write the same header).
+pub(crate) fn png_write_meta<'a>(
+    metadata: Option<&'a Metadata>,
+    config: &'a EncodeConfig,
+) -> PngWriteMetadata<'a> {
+    let mut write_meta = PngWriteMetadata::from_metadata(metadata);
+    write_meta.source_gamma = config.source_gamma;
+    write_meta.srgb_intent = config.srgb_intent;
+    write_meta.chromaticities = config.chromaticities;
+    // Builder values override the Metadata-derived ones, but only when set —
+    // `from_metadata` may already have populated these from `metadata`.
+    write_meta.cicp = config.cicp.or(write_meta.cicp);
+    write_meta.content_light_level = config
+        .content_light_level
+        .or(write_meta.content_light_level);
+    write_meta.mastering_display = config.mastering_display.or(write_meta.mastering_display);
+    write_meta.pixels_per_unit_x = config.pixels_per_unit_x;
+    write_meta.pixels_per_unit_y = config.pixels_per_unit_y;
+    write_meta.phys_unit = config.phys_unit;
+    write_meta.text_chunks.clone_from(&config.text_chunks);
+    write_meta.last_modified = config.last_modified;
+    write_meta
+}
+
 /// Low-level encode: raw bytes to PNG with metadata and config applied.
 ///
 /// Automatically optimizes color type and bit depth for smallest output:
@@ -571,22 +597,7 @@ pub(crate) fn encode_raw(
 ) -> crate::error::Result<Vec<u8>> {
     let effort = config.compression.effort();
 
-    let mut write_meta = PngWriteMetadata::from_metadata(metadata);
-    write_meta.source_gamma = config.source_gamma;
-    write_meta.srgb_intent = config.srgb_intent;
-    write_meta.chromaticities = config.chromaticities;
-    // Builder values override the Metadata-derived ones, but only when set —
-    // `from_metadata` may already have populated these from `metadata`.
-    write_meta.cicp = config.cicp.or(write_meta.cicp);
-    write_meta.content_light_level = config
-        .content_light_level
-        .or(write_meta.content_light_level);
-    write_meta.mastering_display = config.mastering_display.or(write_meta.mastering_display);
-    write_meta.pixels_per_unit_x = config.pixels_per_unit_x;
-    write_meta.pixels_per_unit_y = config.pixels_per_unit_y;
-    write_meta.phys_unit = config.phys_unit;
-    write_meta.text_chunks.clone_from(&config.text_chunks);
-    write_meta.last_modified = config.last_modified;
+    let mut write_meta = png_write_meta(metadata, config);
 
     let w = width as usize;
     let h = height as usize;
@@ -781,22 +792,7 @@ fn encode_raw_with_stats(
 ) -> crate::error::Result<(Vec<u8>, crate::encoder::PhaseStats)> {
     let effort = config.compression.effort();
 
-    let mut write_meta = PngWriteMetadata::from_metadata(metadata);
-    write_meta.source_gamma = config.source_gamma;
-    write_meta.srgb_intent = config.srgb_intent;
-    write_meta.chromaticities = config.chromaticities;
-    // Builder values override the Metadata-derived ones, but only when set —
-    // `from_metadata` may already have populated these from `metadata`.
-    write_meta.cicp = config.cicp.or(write_meta.cicp);
-    write_meta.content_light_level = config
-        .content_light_level
-        .or(write_meta.content_light_level);
-    write_meta.mastering_display = config.mastering_display.or(write_meta.mastering_display);
-    write_meta.pixels_per_unit_x = config.pixels_per_unit_x;
-    write_meta.pixels_per_unit_y = config.pixels_per_unit_y;
-    write_meta.phys_unit = config.phys_unit;
-    write_meta.text_chunks.clone_from(&config.text_chunks);
-    write_meta.last_modified = config.last_modified;
+    let write_meta = png_write_meta(metadata, config);
 
     let w = width as usize;
     let h = height as usize;
