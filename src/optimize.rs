@@ -227,6 +227,20 @@ pub(crate) fn analyze_rgba8(
                 }
             }
         }
+
+        // Nothing left to learn (as in `analyze_rgb8`): sub-byte flags only
+        // matter while grayscale, and `is_binary_alpha` / `transparent_color`
+        // are only read together for tRNS, which a second transparent color
+        // or a partial alpha has already ruled out. Without this, RGBA8
+        // inputs walked every pixel: 60M of a 1 MP effort-1 encode's 139M
+        // instructions (2026-10-07 callgrind).
+        if palette_overflow
+            && !is_grayscale
+            && !is_opaque
+            && (multi_transparent || !is_binary_alpha)
+        {
+            break;
+        }
     }
 
     let min_gray_bit_depth = if can_1bit {

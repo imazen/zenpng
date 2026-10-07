@@ -32,6 +32,10 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- RGBA8 downcast analysis stops at the first pixel after which nothing can
+  change its result (as the RGB8 analysis already did). Non-opaque RGBA8
+  images with more than 256 colors walked every pixel: 60M of the 139M
+  instructions of a 1024x1024 effort-1 encode.
 - `push_rows` at efforts 1-15 compresses strip by strip as rows arrive
   (about 512 KiB of filtered rows each) when the canvas height is known,
   every downcast and near-lossless are off, no `iDOT` segments are
