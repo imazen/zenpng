@@ -6,6 +6,16 @@ All notable changes to zenpng are documented here.
 
 ### Added
 
+- `PngEncoderConfig::with_parallel(bool)`: zencodec callers can enable the
+  multi-threaded encoder (until now only `EncodeConfig` could; the limits'
+  threading policy only capped threads). 1407_rgb8_4096 at effort 7 on 4
+  cores: 1.85 s -> 0.54 s one-shot, 0.53 s strip-streaming `push_rows`.
+- `PngEncoderConfig::with_downcast(DowncastFlags)`: the zencodec encoder
+  config can turn the whole-image downcasts off. With
+  `DowncastFlags::none()`, `push_rows` at efforts 1-15 streams strip by strip:
+  at 4096x4096 RGBA8 the encoder's heap peak drops from 374 MB (one-shot) /
+  441 MB (buffered `push_rows`) to 11 MB at effort 7 (heaptrack,
+  `benchmarks/stream_memory_x86_2026-10-07.txt`).
 - **Multi-threaded decode of Apple `iDOT` PNGs** (`PngDecodeConfig::max_threads`,
   default 0 = automatic; 1 = single-threaded). Strips are decoded on a work
   queue straight into the output buffer. On hybrid CPUs (Linux), workers are
@@ -88,9 +98,7 @@ All notable changes to zenpng are documented here.
   plus the compressed output instead of the whole image. With threads
   allowed (`parallel`), completed strips are compressed on a worker pool
   while rows keep arriving (at most 2 per thread in flight; same output).
-  No public builder turns downcasts off on `PngEncoderConfig` yet, so
-  zencodec callers can't reach this mode until one lands; otherwise
-  `push_rows` buffers as before.
+  Otherwise `push_rows` buffers as before.
   The strip worker is shared with the multi-threaded encoder (byte-identical
   output, `tests/strip_encode.rs`, `tests/idot*.rs`).
 - Lower fixed cost per decode: the zenflate stream decoder is boxed (its
