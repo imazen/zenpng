@@ -1,116 +1,184 @@
-/// Heaptrack harness for streaming encode memory profiling.
+/// Peak-memory harness: streaming vs whole-image encode and decode.
 ///
-/// Usage:
+/// Usage (one mode per process, so `/usr/bin/time -v` or heaptrack sees only
+/// that mode's peak):
 ///   cargo build --release --example heaptrack_streaming
-///   heaptrack target/release/examples/heaptrack_streaming <mode> [/path/to/image.png]
+///   /usr/bin/time -v target/release/examples/heaptrack_streaming <mode> image.png
+///   heaptrack target/release/examples/heaptrack_streaming <mode> image.png
 ///
-/// Modes: stream0, stream1, stream7, oneshot0, oneshot1, oneshot7, all
+/// Modes:
+/// - `load`: decode the input only (the baseline every encode mode pays to
+///   get its pixels).
+/// - `oneshot<E>`: zencodec `Encoder::encode` at effort E.
+/// - `stream<E>`: `push_rows` in strips of `STRIP` rows (default 16) at
+///   effort E, after `with_canvas_size`.
+/// - `dec_whole` / `dec_whole_mt`: `zenpng::decode`, 1 / all threads.
+/// - `dec_push`: `push_decoder` into a `Vec` sink.
+/// - `dec_stream`: `streaming_decoder`, rows consumed one at a time and
+///   dropped (a consumer that never holds the image).
+///
+/// Input: an RGB8 or RGBA8 PNG (default: a synthetic 2048x2048 RGBA8 image
+/// for encode modes).
 use enough::Unstoppable;
-use imgref::Img;
-use rgb::Rgba;
+use zencodec::decode::{DecodeJob, DecodeRowSink, DecoderConfig, SinkError, StreamingDecode};
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-use zenpng::{Compression, PngEncoderConfig};
+use zenpixels::{PixelDescriptor, PixelSlice, PixelSliceMut};
+use zenpng::{Compression, PngDecoderConfig, PngEncoderConfig};
 
-fn make_test_image(w: u32, h: u32) -> imgref::ImgVec<Rgba<u8>> {
-    let pixels: Vec<Rgba<u8>> = (0..w * h)
-        .map(|i| Rgba {
-            r: (i.wrapping_mul(7) & 0xFF) as u8,
-            g: (i.wrapping_mul(13) & 0xFF) as u8,
-            b: (i.wrapping_mul(17) & 0xFF) as u8,
-            a: 200,
-        })
-        .collect();
-    Img::new(pixels, w as usize, h as usize)
+struct Pixels {
+    data: Vec<u8>,
+    w: usize,
+    h: usize,
+    desc: PixelDescriptor,
 }
 
-fn streaming_encode(img: &imgref::ImgVec<Rgba<u8>>, effort: u32) -> usize {
-    let w = img.width() as u32;
-    let h = img.height() as u32;
-    let config = PngEncoderConfig::new().with_compression(Compression::Effort(effort));
-    let mut encoder = config.job().with_canvas_size(w, h).encoder().unwrap();
-    for y in 0..h {
-        let strip = img.sub_image(0, y as usize, w as usize, 1);
-        encoder
-            .push_rows(zenpixels::PixelSlice::from(strip).erase())
-            .unwrap();
+impl Pixels {
+    fn bpp(&self) -> usize {
+        self.desc.bytes_per_pixel()
     }
-    let output = encoder.finish().unwrap();
-    output.data().len()
+    fn rows(&self, y: usize, n: usize) -> PixelSlice<'_> {
+        let stride = self.w * self.bpp();
+        PixelSlice::new(
+            &self.data[y * stride..(y + n) * stride],
+            self.w as u32,
+            n as u32,
+            stride,
+            self.desc,
+        )
+        .unwrap()
+    }
 }
 
-fn oneshot_encode(img: &imgref::ImgRef<'_, Rgba<u8>>, effort: u32) -> usize {
-    let config = PngEncoderConfig::new().with_compression(Compression::Effort(effort));
-    let encoder = config.job().encoder().unwrap();
-    let output = encoder
-        .encode(zenpixels::PixelSlice::from(*img).erase())
+fn synthetic(w: usize, h: usize) -> Pixels {
+    let data = (0..w * h * 4)
+        .map(|i| (i.wrapping_mul(7) ^ (i >> 9)) as u8)
+        .collect();
+    Pixels {
+        data,
+        w,
+        h,
+        desc: PixelDescriptor::RGBA8_SRGB,
+    }
+}
+
+fn load(file: &[u8]) -> Pixels {
+    let d = zenpng::decode(file, &zenpng::PngDecodeConfig::default(), &Unstoppable).unwrap();
+    let (w, h) = (d.info.width as usize, d.info.height as usize);
+    let data = d.pixels.copy_to_contiguous_bytes();
+    let desc = match data.len() / (w * h) {
+        3 => PixelDescriptor::RGB8_SRGB,
+        4 => PixelDescriptor::RGBA8_SRGB,
+        n => panic!("expected an RGB8 or RGBA8 PNG, got {n} bytes/pixel"),
+    };
+    Pixels { data, w, h, desc }
+}
+
+fn oneshot(px: &Pixels, e: u32) -> usize {
+    let enc = PngEncoderConfig::new()
+        .with_compression(Compression::Effort(e))
+        .job()
+        .encoder()
         .unwrap();
-    output.data().len()
+    enc.encode(px.rows(0, px.h)).unwrap().data().len()
+}
+
+fn stream(px: &Pixels, e: u32, strip: usize) -> usize {
+    let mut enc = PngEncoderConfig::new()
+        .with_compression(Compression::Effort(e))
+        .job()
+        .with_canvas_size(px.w as u32, px.h as u32)
+        .encoder()
+        .unwrap();
+    let mut y = 0;
+    while y < px.h {
+        let n = strip.min(px.h - y);
+        enc.push_rows(px.rows(y, n)).unwrap();
+        y += n;
+    }
+    enc.finish().unwrap().data().len()
+}
+
+struct VecSink(Vec<u8>);
+
+impl DecodeRowSink for VecSink {
+    fn provide_next_buffer(
+        &mut self,
+        _y: u32,
+        height: u32,
+        width: u32,
+        descriptor: PixelDescriptor,
+    ) -> Result<PixelSliceMut<'_>, SinkError> {
+        let stride = width as usize * descriptor.bytes_per_pixel();
+        self.0.resize(height as usize * stride, 0);
+        Ok(PixelSliceMut::new(&mut self.0, width, height, stride, descriptor).expect("sized"))
+    }
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mode = args.get(1).map(|s| s.as_str()).unwrap_or("all");
+    let mode = args.get(1).map(String::as_str).unwrap_or("stream7");
+    let file = args.get(2).map(|p| std::fs::read(p).expect("read input"));
+    let strip: usize = std::env::var("STRIP").map_or(16, |s| s.parse().unwrap());
+    let effort = |prefix: &str| -> Option<u32> { mode.strip_prefix(prefix)?.parse().ok() };
 
-    let img_path = args.get(2);
-    let img = if let Some(path) = img_path {
-        let data = std::fs::read(path).expect("failed to read file");
-        let config = zenpng::PngDecodeConfig::default();
-        let info = zenpng::decode(&data, &config, &Unstoppable).expect("decode failed");
-        let w = info.info.width as usize;
-        let h = info.info.height as usize;
-        eprintln!("Loaded {}x{} from {}", w, h, path);
-        let bytes = info.pixels.copy_to_contiguous_bytes();
-        let pixels: Vec<Rgba<u8>> = bytemuck::cast_slice(&bytes).to_vec();
-        Img::new(pixels, w, h)
-    } else {
-        let w = 2048u32;
-        let h = 2048u32;
-        eprintln!("Using synthetic {}x{} RGBA8 image", w, h);
-        make_test_image(w, h)
+    if let Some(file) = &file
+        && mode.starts_with("dec_")
+    {
+        let n = match mode {
+            "dec_whole" | "dec_whole_mt" => {
+                let threads = usize::from(mode == "dec_whole");
+                let cfg = zenpng::PngDecodeConfig::default().with_max_threads(threads);
+                let d = zenpng::decode(file, &cfg, &Unstoppable).unwrap();
+                d.pixels.descriptor().bytes_per_pixel()
+                    * d.info.width as usize
+                    * d.info.height as usize
+            }
+            "dec_push" => {
+                let mut sink = VecSink(Vec::new());
+                PngDecoderConfig::new()
+                    .job()
+                    .push_decoder(file.as_slice().into(), &mut sink, &[])
+                    .unwrap();
+                sink.0.len()
+            }
+            "dec_stream" => {
+                let mut dec = PngDecoderConfig::new()
+                    .job()
+                    .streaming_decoder(file.as_slice().into(), &[])
+                    .unwrap();
+                let mut sum = 0usize;
+                while let Some((_, rows)) = dec.next_batch().unwrap() {
+                    for y in 0..rows.rows() {
+                        sum += rows.row(y).len();
+                    }
+                }
+                sum
+            }
+            _ => panic!("unknown mode {mode}"),
+        };
+        eprintln!("{mode}: {n} pixel bytes");
+        return;
+    }
+
+    let px = match &file {
+        Some(f) => load(f),
+        None => synthetic(2048, 2048),
     };
-
-    let raw_size = img.width() * img.height() * 4;
     eprintln!(
-        "Raw: {} bytes ({:.1} MiB)",
-        raw_size,
-        raw_size as f64 / 1048576.0
+        "{}x{} {:?}, raw {:.1} MiB",
+        px.w,
+        px.h,
+        px.desc,
+        px.data.len() as f64 / 1048576.0
     );
-
-    match mode {
-        "stream0" => {
-            let size = streaming_encode(&img, 0);
-            eprintln!("stream e0 (stored):      {} bytes", size);
-        }
-        "stream1" => {
-            let size = streaming_encode(&img, 1);
-            eprintln!("stream e1 (paeth+turbo): {} bytes", size);
-        }
-        "stream7" => {
-            let size = streaming_encode(&img, 7);
-            eprintln!("stream e7 (buffered):    {} bytes", size);
-        }
-        "oneshot0" => {
-            let size = oneshot_encode(&img.as_ref(), 0);
-            eprintln!("oneshot e0 (stored):     {} bytes", size);
-        }
-        "oneshot1" => {
-            let size = oneshot_encode(&img.as_ref(), 1);
-            eprintln!("oneshot e1 (paeth+turbo):{} bytes", size);
-        }
-        "oneshot7" => {
-            let size = oneshot_encode(&img.as_ref(), 7);
-            eprintln!("oneshot e7 (fast):       {} bytes", size);
-        }
-        _ => {
-            eprintln!("\n=== Streaming ===");
-            eprintln!("  e0: {} bytes", streaming_encode(&img, 0));
-            eprintln!("  e1: {} bytes", streaming_encode(&img, 1));
-            eprintln!("  e7: {} bytes", streaming_encode(&img, 7));
-            eprintln!("\n=== One-shot ===");
-            let r = img.as_ref();
-            eprintln!("  e0: {} bytes", oneshot_encode(&r, 0));
-            eprintln!("  e1: {} bytes", oneshot_encode(&r, 1));
-            eprintln!("  e7: {} bytes", oneshot_encode(&r, 7));
-        }
+    if mode == "load" {
+        return;
+    }
+    if let Some(e) = effort("oneshot") {
+        eprintln!("oneshot e{e}: {} bytes", oneshot(&px, e));
+    } else if let Some(e) = effort("stream") {
+        eprintln!("stream e{e} ({strip}-row strips): {} bytes", stream(&px, e, strip));
+    } else {
+        panic!("unknown mode {mode}");
     }
 }

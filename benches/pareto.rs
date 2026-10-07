@@ -29,7 +29,17 @@
 //! Adler-32; all expand palette and sub-byte gray to 8 bits. An untimed
 //! check makes every decoder agree on 8-bit output first.
 //!
-//! Run: `ZENPNG_PARETO_DIR=... cargo bench --bench pareto -- [--group=enc|dec]`
+//! Streaming vs whole-image (opt-in: only with `--group=sdec` / `--group=senc`):
+//! - `sdec/<name>`: `whole_st` / `whole_mt` (`zenpng::decode`, 1 / all
+//!   threads), `push` (`DecodeJob::push_decoder` into a `Vec` sink),
+//!   `stream` (`streaming_decoder`, each row copied into one `Vec`), and
+//!   `png_rows` (image-png main's `next_row` loop, same copy) as the
+//!   reference row-streaming decoder.
+//! - `senc/<name>` (RGB8/RGBA8): per effort in `ZENPNG_PARETO_STREAM_EFFORTS`
+//!   (default `0,1,2,7,13`), `e<E>_whole` (zencodec `Encoder::encode`) and
+//!   `e<E>_push16` (`push_rows` in 16-row strips after `with_canvas_size`).
+//!
+//! Run: `ZENPNG_PARETO_DIR=... cargo bench --bench pareto -- [--group=enc|dec|sdec|senc]`
 
 use std::path::PathBuf;
 
@@ -249,7 +259,7 @@ fn encode_arms(edge: u32) -> Vec<(String, EncodeFn)> {
 }
 
 fn bench_encode(suite: &mut Suite) {
-    if std::env::args().any(|a| a.starts_with("--group=dec")) {
+    if std::env::args().any(|a| a.starts_with("--group=dec") || a.starts_with("--group=s")) {
         return;
     }
     for (name, edge, data) in inputs() {
@@ -312,7 +322,7 @@ fn add_decode_group(suite: &mut Suite, group: String, data: &'static [u8], check
 }
 
 fn bench_decode(suite: &mut Suite) {
-    if std::env::args().any(|a| a.starts_with("--group=enc")) {
+    if std::env::args().any(|a| a.starts_with("--group=enc") || a.starts_with("--group=s")) {
         return;
     }
     for (name, _edge, data) in inputs() {
@@ -340,6 +350,193 @@ fn bench_decode(suite: &mut Suite) {
     }
 }
 
+struct VecSink(Vec<u8>);
+
+impl zencodec::decode::DecodeRowSink for VecSink {
+    fn provide_next_buffer(
+        &mut self,
+        _y: u32,
+        height: u32,
+        width: u32,
+        descriptor: zenpixels::PixelDescriptor,
+    ) -> Result<zenpixels::PixelSliceMut<'_>, zencodec::decode::SinkError> {
+        let stride = width as usize * descriptor.bytes_per_pixel();
+        self.0.resize(height as usize * stride, 0);
+        Ok(
+            zenpixels::PixelSliceMut::new(&mut self.0, width, height, stride, descriptor)
+                .expect("sized"),
+        )
+    }
+}
+
+fn push_decode(data: &[u8]) -> Vec<u8> {
+    use zencodec::decode::{DecodeJob, DecoderConfig};
+    let mut sink = VecSink(Vec::new());
+    zenpng::PngDecoderConfig::new()
+        .job()
+        .push_decoder(data.into(), &mut sink, &[])
+        .unwrap();
+    sink.0
+}
+
+fn stream_decode(data: &[u8]) -> Vec<u8> {
+    use zencodec::decode::{DecodeJob, DecoderConfig, StreamingDecode};
+    let mut dec = zenpng::PngDecoderConfig::new()
+        .job()
+        .streaming_decoder(data.into(), &[])
+        .unwrap();
+    let mut out = Vec::new();
+    while let Some((_, rows)) = dec.next_batch().unwrap() {
+        for y in 0..rows.rows() {
+            out.extend_from_slice(rows.row(y));
+        }
+    }
+    out
+}
+
+fn png_rows_decode(data: &[u8]) -> Vec<u8> {
+    let mut d = png_main::Decoder::new(std::io::Cursor::new(data));
+    d.set_transformations(png_main::Transformations::EXPAND);
+    d.ignore_checksums(true);
+    let mut r = d.read_info().unwrap();
+    let mut out = Vec::new();
+    while let Some(row) = r.next_row().unwrap() {
+        out.extend_from_slice(row.data());
+    }
+    out
+}
+
+fn stream_groups_requested(prefix: &str) -> bool {
+    std::env::args().any(|a| {
+        a.strip_prefix("--group=")
+            .is_some_and(|g| g.starts_with(prefix))
+    })
+}
+
+fn bench_stream_decode(suite: &mut Suite) {
+    if !stream_groups_requested("sdec") {
+        return;
+    }
+    for (name, _edge, data) in inputs() {
+        if name.contains("interlaced") {
+            continue; // streaming_decoder rejects interlaced input
+        }
+        let whole = zenpng_decode(data, 1).pixels.copy_to_contiguous_bytes();
+        assert!(push_decode(data) == whole, "{name}: push differs");
+        assert!(stream_decode(data) == whole, "{name}: stream differs");
+        let out = zenpng_decode(data, 1);
+        let px = out.info.width as u64 * out.info.height as u64;
+        let png_ok = eight_bit(&name) && png_rows_decode(data) == whole;
+        suite.compare(format!("sdec/{name}"), move |g| {
+            g.throughput(Throughput::Elements(px));
+            g.throughput_unit("px");
+            g.bench("whole_st", move |b| b.iter(|| zenpng_decode(data, 1)));
+            g.bench("whole_mt", move |b| b.iter(|| zenpng_decode(data, 0)));
+            g.bench("push", move |b| b.iter(|| push_decode(data)));
+            g.bench("stream", move |b| b.iter(|| stream_decode(data)));
+            if png_ok {
+                g.bench("png_rows", move |b| b.iter(|| png_rows_decode(data)));
+            }
+        });
+    }
+}
+
+fn zencodec_whole(img: Img, e: u32) -> Vec<u8> {
+    use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+    let enc = zenpng::PngEncoderConfig::new()
+        .with_compression(zenpng::Compression::Effort(e))
+        .job()
+        .encoder()
+        .unwrap();
+    enc.encode(img_slice(img, 0, img.h))
+        .unwrap()
+        .data()
+        .to_vec()
+}
+
+fn zencodec_push(img: Img, e: u32, strip: usize) -> Vec<u8> {
+    use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+    let mut enc = zenpng::PngEncoderConfig::new()
+        .with_compression(zenpng::Compression::Effort(e))
+        .job()
+        .with_canvas_size(img.w as u32, img.h as u32)
+        .encoder()
+        .unwrap();
+    let mut y = 0;
+    while y < img.h {
+        let n = strip.min(img.h - y);
+        enc.push_rows(img_slice(img, y, n)).unwrap();
+        y += n;
+    }
+    enc.finish().unwrap().data().to_vec()
+}
+
+fn img_slice(img: Img, y: usize, rows: usize) -> zenpixels::PixelSlice<'static> {
+    let bpp = if img.alpha { 4 } else { 3 };
+    let stride = img.w * bpp;
+    let desc = if img.alpha {
+        zenpixels::PixelDescriptor::RGBA8_SRGB
+    } else {
+        zenpixels::PixelDescriptor::RGB8_SRGB
+    };
+    zenpixels::PixelSlice::new(
+        &img.px[y * stride..(y + rows) * stride],
+        img.w as u32,
+        rows as u32,
+        stride,
+        desc,
+    )
+    .unwrap()
+}
+
+fn bench_stream_encode(suite: &mut Suite) {
+    if !stream_groups_requested("senc") {
+        return;
+    }
+    let efforts = env_list("ZENPNG_PARETO_STREAM_EFFORTS", &[0, 1, 2, 7, 13]);
+    for (name, _edge, data) in inputs() {
+        if !(name.contains("_rgb8_") || name.contains("_rgba8_")) {
+            continue;
+        }
+        let d = zenpng_decode(data, 1);
+        let alpha = name.contains("_rgba8_");
+        let bytes = d.pixels.copy_to_contiguous_bytes();
+        let (w, h) = (d.info.width as usize, d.info.height as usize);
+        if bytes.len() != w * h * if alpha { 4 } else { 3 } {
+            continue;
+        }
+        let img = Img {
+            px: leak(bytes),
+            w,
+            h,
+            alpha,
+        };
+        let group = format!("senc/{name}");
+        for &e in &efforts {
+            size_line(&group, &format!("e{e}_whole"), zencodec_whole(img, e).len());
+            size_line(
+                &group,
+                &format!("e{e}_push16"),
+                zencodec_push(img, e, 16).len(),
+            );
+        }
+        let px = (w * h) as u64;
+        let efforts = efforts.clone();
+        suite.compare(group, move |g| {
+            g.throughput(Throughput::Elements(px));
+            g.throughput_unit("px");
+            for &e in &efforts {
+                g.bench(format!("e{e}_whole"), move |b| {
+                    b.iter(|| zencodec_whole(img, e))
+                });
+                g.bench(format!("e{e}_push16"), move |b| {
+                    b.iter(|| zencodec_push(img, e, 16))
+                });
+            }
+        });
+    }
+}
+
 fn main() {
     // Ungated like benches/vs_png.rs (the resource gate stalls on shared
     // boxes); arms are interleaved within each round.
@@ -350,6 +547,8 @@ fn main() {
         }
         bench_encode(suite);
         bench_decode(suite);
+        bench_stream_decode(suite);
+        bench_stream_encode(suite);
     });
     zenbench::postprocess_result(&result);
 }

@@ -1,0 +1,34 @@
+# examples/heaptrack_streaming.rs peak RSS (/usr/bin/time -v Maximum resident set size, KiB) and wall time, one mode per process.
+# zenpng f9ab5a1+ (working copy), zenflate 66ead6f, i265 E-cores 16-19 nice 19, 2026-10-07. STRIP=16 rows for stream<E>. Encode modes include the input load (mode 'load').
+## 1407_rgb8_4096 (17333872 bytes file; 4096x3072, raw RGB8 36864 KiB)
+load maxRSS_KiB=95364 wall=0:00.07
+oneshot0 maxRSS_KiB=95292 wall=0:00.09
+stream0 maxRSS_KiB=95156 wall=0:00.09
+oneshot1 maxRSS_KiB=173316 wall=0:00.15
+stream1 maxRSS_KiB=116008 wall=0:00.13
+oneshot2 maxRSS_KiB=228100 wall=0:00.34
+stream2 maxRSS_KiB=265020 wall=0:00.35
+oneshot7 maxRSS_KiB=227504 wall=0:01.95
+stream7 maxRSS_KiB=264308 wall=0:01.86
+oneshot13 maxRSS_KiB=271984 wall=0:11.31
+stream13 maxRSS_KiB=308972 wall=0:11.27
+dec_whole maxRSS_KiB=58256 wall=0:00.10
+dec_whole_mt maxRSS_KiB=58464 wall=0:00.06
+dec_push maxRSS_KiB=57892 wall=0:00.10
+dec_stream maxRSS_KiB=21256 wall=0:00.09
+## 6807_rgb8_4096 (18471408 bytes file; 4096x3226, raw RGB8 38712 KiB)
+load maxRSS_KiB=99824 wall=0:00.09
+oneshot0 maxRSS_KiB=100228 wall=0:00.10
+stream0 maxRSS_KiB=99964 wall=0:00.10
+oneshot1 maxRSS_KiB=184332 wall=0:00.17
+stream1 maxRSS_KiB=123020 wall=0:00.15
+oneshot2 maxRSS_KiB=244852 wall=0:00.33
+stream2 maxRSS_KiB=283588 wall=0:00.35
+oneshot7 maxRSS_KiB=241004 wall=0:02.16
+stream7 maxRSS_KiB=279840 wall=0:02.27
+oneshot13 maxRSS_KiB=295000 wall=0:09.03
+stream13 maxRSS_KiB=333796 wall=0:09.38
+dec_whole maxRSS_KiB=61080 wall=0:00.13
+dec_whole_mt maxRSS_KiB=61552 wall=0:00.08
+dec_push maxRSS_KiB=61052 wall=0:00.13
+dec_stream maxRSS_KiB=22528 wall=0:00.11
