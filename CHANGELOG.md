@@ -32,6 +32,10 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- Encodes of images under 512 KiB of filtered rows run single-threaded even
+  with `parallel` / `max_threads` > 1: thread spawns made 64 px encodes
+  1.6-5.7x and 256 px RGB8 encodes 1.1-1.8x slower than single-threaded at
+  efforts 1/2/7 (now 1.00x; effort 13 at 256 px gives up a 6% gain).
 - Efforts 20-30 rebuilt in order of measured size per time: heuristic
   screen (e20), NearOptimal recompression (e21, was e25), fork (e22), beam
   (e23), full brute-force set (e24), wider fork/beam (e25), adaptive fork

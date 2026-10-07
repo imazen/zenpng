@@ -451,10 +451,9 @@ fn idot_reencode(data: &[u8]) -> Option<Vec<u8>> {
         zenpng::encode_rgba8(i, None, &cfg, &Unstoppable, &Unstoppable)
     } else if let Some(i) = px.try_as_imgref::<rgb::Gray<u8>>() {
         zenpng::encode_gray8(i, None, &cfg, &Unstoppable, &Unstoppable)
-    } else if let Some(i) = px.try_as_imgref::<rgb::Rgb<u16>>() {
-        zenpng::encode_rgb16(i, None, &cfg, &Unstoppable, &Unstoppable)
     } else {
-        return None;
+        let i = px.try_as_imgref::<rgb::Rgb<u16>>()?;
+        zenpng::encode_rgb16(i, None, &cfg, &Unstoppable, &Unstoppable)
     }
     .unwrap();
     out.windows(4).any(|w| w == b"iDOT").then_some(out)
@@ -482,11 +481,20 @@ fn bench_pipeline_decode(suite: &mut Suite) {
                 "{name}: stream differs"
             );
         }
+        // The re-encode keeps default downcasts, so e.g. a 16-bit file of
+        // 8-bit values comes back 8-bit; the iDOT decode is checked against
+        // its own serial decode.
         let idot = idot_reencode(data).map(leak);
         if let Some(i) = idot {
             assert!(
-                zenpng_decode(i, 0).pixels.copy_to_contiguous_bytes() == whole,
-                "{name}: iDOT re-encode differs"
+                zenpng_decode(i, 0).pixels.copy_to_contiguous_bytes()
+                    == zenpng_decode(i, 1).pixels.copy_to_contiguous_bytes(),
+                "{name}: parallel iDOT decode differs from serial"
+            );
+            let ihdr = &i[16..29];
+            eprintln!(
+                "IDOT\tpdec/{name}\tcolor_type {} bit_depth {}",
+                ihdr[9], ihdr[8]
             );
         }
         size_line(&format!("pdec/{name}"), "idot", idot.map_or(0, <[u8]>::len));

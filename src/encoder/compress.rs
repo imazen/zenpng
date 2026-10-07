@@ -1265,6 +1265,10 @@ pub(crate) fn compress_segmented(
     Ok(Some(idat))
 }
 
+/// Filtered bytes below which an encode runs single-threaded even when
+/// threads are allowed (see `compress_filtered`).
+const PARALLEL_MIN_BYTES: usize = 512 * 1024;
+
 /// Filtered bytes per strip in [`compress_strips`]. Fixed (not derived from
 /// the thread count) so output does not depend on how many threads ran.
 const STRIP_BYTES: usize = 512 * 1024;
@@ -2096,6 +2100,19 @@ pub(crate) fn compress_filtered(
     let bpp = format.bpp;
     let params = EffortParams::from_effort_and_bpp(effort, bpp);
     let filtered_size = (row_bytes + 1) * height;
+    // Threads cost more than they save on small images: with threads,
+    // 64 px encodes ran 1.6-5.7x and 256 px RGB8 (196 KiB) 1.1-1.8x the
+    // single-threaded time at efforts 1/2/7 (i265, benches/pareto.rs senc,
+    // 2026-10-07), while 1024 px ran 0.30-0.99x.
+    let opts = if filtered_size < PARALLEL_MIN_BYTES {
+        super::CompressOptions {
+            parallel: false,
+            max_threads: 1,
+            ..opts
+        }
+    } else {
+        opts
+    };
 
     // Effort 0: zlib-stored fast path that bypasses the whole pipeline.
     if effort == 0 {
