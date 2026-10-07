@@ -2081,6 +2081,11 @@ pub(crate) fn compress_filtered(
         screen_effort,
         precomputed.as_deref(),
         &opts,
+        if params.screen_is_final {
+            1
+        } else {
+            params.top_k
+        },
         stats.as_deref_mut(),
     )?;
 
@@ -2226,6 +2231,7 @@ fn run_phase1_screen(
     screen_effort: Zl,
     precomputed: Option<&[u8]>,
     opts: &super::CompressOptions<'_>,
+    keep: usize,
     mut stats: Option<&mut PhaseStats>,
 ) -> crate::error::Result<ScreenResults> {
     use std::time::Instant;
@@ -2258,6 +2264,7 @@ fn run_phase1_screen(
             screen_effort,
             precomputed,
             opts,
+            keep,
             &mut screen_results,
         )?;
     }
@@ -2370,10 +2377,17 @@ fn screen_serial(
     screen_effort: Zl,
     precomputed: Option<&[u8]>,
     opts: &super::CompressOptions<'_>,
+    keep: usize,
     screen_results: &mut ScreenResults,
 ) -> crate::error::Result<()> {
     let mut screen_compressor = take_compressor(screen_effort.level());
     let mut scratch = HeuristicScratch::new_universal();
+    // Filtered data is kept only for the `keep` smallest candidates so far
+    // (ties: the earlier strategy, as the stable sort ranks them): the
+    // later phases read no others, and each kept copy is image-sized.
+    let keep = keep.max(1);
+    let mut kept: Vec<usize> = Vec::with_capacity(keep);
+    let mut spare: Option<Vec<u8>> = None;
 
     for (i, strategy) in strategies.iter().enumerate() {
         if i > 0 && opts.deadline.should_stop() {
@@ -2429,7 +2443,25 @@ fn screen_serial(
         if !dominated {
             state.best_compressed = Some(state.compress_buf[..compressed_len].to_vec());
         }
-        screen_results.push((compressed_len, state.filtered.clone()));
+        let idx = screen_results.len();
+        let worst = kept
+            .iter()
+            .enumerate()
+            .max_by_key(|&(_, &k)| (screen_results[k].0, k))
+            .map(|(slot, &k)| (slot, k));
+        let data = if kept.len() < keep {
+            kept.push(idx);
+            core::mem::replace(&mut state.filtered, spare.take().unwrap_or_default())
+        } else if let Some((slot, w)) = worst
+            && compressed_len < screen_results[w].0
+        {
+            spare = Some(core::mem::take(&mut screen_results[w].1));
+            kept[slot] = idx;
+            core::mem::replace(&mut state.filtered, spare.take().unwrap_or_default())
+        } else {
+            Vec::new()
+        };
+        screen_results.push((compressed_len, data));
     }
     give_compressor(screen_effort.level(), screen_compressor);
     Ok(())

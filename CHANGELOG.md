@@ -32,6 +32,10 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- Single-threaded encode screening keeps the filtered image only for the
+  top candidates it will refine (it kept one copy per strategy, made by
+  cloning). Same output; 4096x3072 RGB8 peak RSS at effort 13 272 -> 207 MB,
+  effort 7 228 -> 206 MB.
 - `push_decoder` (zencodec row sink) uses the two-thread decode pipeline
   for images with at least 512 KiB of filtered data when threads are
   allowed, as `decode()` does: 1207_rgb8_1024 5.19 -> 3.14 ms, 1407_rgb8_4096

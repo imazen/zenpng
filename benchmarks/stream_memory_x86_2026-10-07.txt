@@ -32,3 +32,5 @@ dec_whole maxRSS_KiB=61080 wall=0:00.13
 dec_whole_mt maxRSS_KiB=61552 wall=0:00.08
 dec_push maxRSS_KiB=61052 wall=0:00.13
 dec_stream maxRSS_KiB=22528 wall=0:00.11
+
+## One-shot screening keeps filtered data for the top-k only (same file, /usr/bin/time, after f612324+): oneshot2 205432 KiB 0.33 s, oneshot7 205616 KiB 1.86 s, oneshot13 207048 KiB 11.08 s (was 228100 / 227504 / 271984 KiB above); output bytes unchanged.
