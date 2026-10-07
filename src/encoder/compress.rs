@@ -3291,22 +3291,24 @@ fn zenflate_recompress(
 ) -> crate::error::Result<Option<Vec<u8>>> {
     let mut best: Option<Vec<u8>> = None;
 
-    let results: Vec<crate::error::Result<Vec<u8>>> = if max_threads == 1 || candidates.len() <= 1 {
-        // Sequential
-        candidates
-            .iter()
-            .map(|(_size, data)| recompress_one(data, cancel))
-            .collect()
-    } else {
-        // Parallel
-        std::thread::scope(|s| {
-            let handles: Vec<_> = candidates
+    // wasm32 has no threads to spawn.
+    let results: Vec<crate::error::Result<Vec<u8>>> =
+        if max_threads == 1 || candidates.len() <= 1 || cfg!(target_arch = "wasm32") {
+            // Sequential
+            candidates
                 .iter()
-                .map(|(_size, data)| s.spawn(|| recompress_one(data, cancel)))
-                .collect();
-            handles.into_iter().map(|h| h.join().unwrap()).collect()
-        })
-    };
+                .map(|(_size, data)| recompress_one(data, cancel))
+                .collect()
+        } else {
+            // Parallel
+            std::thread::scope(|s| {
+                let handles: Vec<_> = candidates
+                    .iter()
+                    .map(|(_size, data)| s.spawn(|| recompress_one(data, cancel)))
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            })
+        };
 
     for result in results {
         let compressed = result?;
@@ -3362,7 +3364,11 @@ fn zenflate_full_optimal_recompress(
 ) -> crate::error::Result<Option<Vec<u8>>> {
     let mut best: Option<Vec<u8>> = None;
 
-    let results: Vec<crate::error::Result<Vec<u8>>> = if max_threads == 1 || candidates.len() <= 1 {
+    // wasm32 has no threads to spawn.
+    let results: Vec<crate::error::Result<Vec<u8>>> = if max_threads == 1
+        || candidates.len() <= 1
+        || cfg!(target_arch = "wasm32")
+    {
         // Sequential
         candidates
             .iter()
@@ -3471,6 +3477,7 @@ fn zopfli_adaptive(
     // all threads, cancellation hard-aborts them.
     let zopfli_results: Vec<crate::error::Result<Vec<u8>>> = if max_threads == 1
         || candidates.len() <= 1
+        || cfg!(target_arch = "wasm32")
     {
         candidates
             .iter()
