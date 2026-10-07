@@ -8645,8 +8645,6 @@ mod tests {
 mod strip_stream_tests {
     use super::PngEncoderConfig;
     use crate::Compression;
-    use crate::decode::PngDecodeConfig;
-    use enough::Unstoppable;
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
     use zenpixels::{PixelDescriptor, PixelSlice};
 
@@ -8681,6 +8679,7 @@ mod strip_stream_tests {
         c
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn oneshot(effort: u32, px: PixelSlice<'_>) -> Vec<u8> {
         config(effort)
             .job()
@@ -8692,6 +8691,7 @@ mod strip_stream_tests {
             .to_vec()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn streamed(
         threads: usize,
         effort: u32,
@@ -8721,6 +8721,7 @@ mod strip_stream_tests {
         enc.finish().unwrap().data().to_vec()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn check(
         name: &str,
         data: &[u8],
@@ -8729,6 +8730,8 @@ mod strip_stream_tests {
         desc: PixelDescriptor,
         expect_rgb8: Option<&[u8]>,
     ) {
+        use crate::decode::PngDecodeConfig;
+        use enough::Unstoppable;
         let stride = w as usize * desc.bytes_per_pixel();
         let whole = PixelSlice::new(data, w, h, stride, desc).unwrap();
         for effort in [1, 2, 5, 7, 9, 13, 15] {
@@ -8754,6 +8757,9 @@ mod strip_stream_tests {
         }
     }
 
+    // The reference is the multi-threaded one-shot encode; wasm32 has no
+    // threads, so its one-shot encode is the whole-image search instead.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn strip_streaming_matches_parallel_oneshot() {
         // 1024 wide RGB8: 3072-byte rows, 700 rows = 4 strips of ~512 KiB.
