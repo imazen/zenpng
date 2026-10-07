@@ -1,36 +1,132 @@
-# examples/heaptrack_streaming.rs peak RSS (/usr/bin/time -v Maximum resident set size, KiB) and wall time, one mode per process.
-# zenpng f9ab5a1+ (working copy), zenflate 66ead6f, i265 E-cores 16-19 nice 19, 2026-10-07. STRIP=16 rows for stream<E>. Encode modes include the input load (mode 'load').
-## 1407_rgb8_4096 (17333872 bytes file; 4096x3072, raw RGB8 36864 KiB)
-load maxRSS_KiB=95364 wall=0:00.07
-oneshot0 maxRSS_KiB=95292 wall=0:00.09
-stream0 maxRSS_KiB=95156 wall=0:00.09
-oneshot1 maxRSS_KiB=173316 wall=0:00.15
-stream1 maxRSS_KiB=116008 wall=0:00.13
-oneshot2 maxRSS_KiB=228100 wall=0:00.34
-stream2 maxRSS_KiB=265020 wall=0:00.35
-oneshot7 maxRSS_KiB=227504 wall=0:01.95
-stream7 maxRSS_KiB=264308 wall=0:01.86
-oneshot13 maxRSS_KiB=271984 wall=0:11.31
-stream13 maxRSS_KiB=308972 wall=0:11.27
-dec_whole maxRSS_KiB=58256 wall=0:00.10
-dec_whole_mt maxRSS_KiB=58464 wall=0:00.06
-dec_push maxRSS_KiB=57892 wall=0:00.10
-dec_stream maxRSS_KiB=21256 wall=0:00.09
-## 6807_rgb8_4096 (18471408 bytes file; 4096x3226, raw RGB8 38712 KiB)
-load maxRSS_KiB=99824 wall=0:00.09
-oneshot0 maxRSS_KiB=100228 wall=0:00.10
-stream0 maxRSS_KiB=99964 wall=0:00.10
-oneshot1 maxRSS_KiB=184332 wall=0:00.17
-stream1 maxRSS_KiB=123020 wall=0:00.15
-oneshot2 maxRSS_KiB=244852 wall=0:00.33
-stream2 maxRSS_KiB=283588 wall=0:00.35
-oneshot7 maxRSS_KiB=241004 wall=0:02.16
-stream7 maxRSS_KiB=279840 wall=0:02.27
-oneshot13 maxRSS_KiB=295000 wall=0:09.03
-stream13 maxRSS_KiB=333796 wall=0:09.38
-dec_whole maxRSS_KiB=61080 wall=0:00.13
-dec_whole_mt maxRSS_KiB=61552 wall=0:00.08
-dec_push maxRSS_KiB=61052 wall=0:00.13
-dec_stream maxRSS_KiB=22528 wall=0:00.11
-
-## One-shot screening keeps filtered data for the top-k only (same file, /usr/bin/time, after f612324+): oneshot2 205432 KiB 0.33 s, oneshot7 205616 KiB 1.86 s, oneshot13 207048 KiB 11.08 s (was 228100 / 227504 / 271984 KiB above); output bytes unchanged.
+# Streaming vs one-shot: peak RSS, heap peak and wall time, current code (2026-10-07, replaces the earlier file of this name).
+# Encoder/decoder: zenpng PR #25 d5b34b1 (main de659b8 + PngEncoderConfig::with_downcast/with_parallel), zenflate f041b61 (= df005e3 src).
+# Harness: scripts/stream_memory.sh ~/tmp/hs_pr <out> 1407_rgb8_4096.png 1407_rgba8_4096.png (examples/heaptrack_streaming.rs), one process per row,
+#   /usr/bin/time -v (max_rss_kib, wall_s) then heaptrack (heap_peak), i265 E-cores 16-19 (wall times are E-core times; "parallel" = 4 threads).
+# Inputs: imazen-26 1407 at 4096x3072 RGB8 (17.3 MB file, 36 MiB pixels); the RGBA8 file is that photo with an alpha ramp (left 1/16 transparent), encoded by zenpng e7.
+# load = decode the input into one buffer (sequential streaming decode, file dropped after): the floor every encode row includes.
+# Modes: oneshot/stream = zencodec encode / push_rows (16-row pushes) with default downcasts (push_rows buffers at e>=2, pre-filters at e1);
+#        soneshot/sstream = the same with DowncastFlags::none() (push_rows strip-streams at e1-15, buffers at e16+).
+# Decode: dec_whole/dec_whole_mt = zenpng::decode 1 / all threads; dec_push = push_decoder into a Vec; dec_stream = streaming_decoder, rows dropped.
+image	mode	effort	parallel	max_rss_kib	wall_s	heap_peak	bytes
+1407_rgb8_4096	load	-	0	58080	0.1	55.79M	
+1407_rgb8_4096	oneshot	1	0	119060	0.16	134.56M	20630502
+1407_rgb8_4096	stream	1	0	98860	0.15	113.66M	20630502
+1407_rgb8_4096	soneshot	1	0	119220	0.16	134.56M	20630502
+1407_rgb8_4096	sstream	1	0	76304	0.15	65.68M	19070722
+1407_rgb8_4096	oneshot	1	1	103160	0.12	75.97M	19070722
+1407_rgb8_4096	stream	1	1	98696	0.15	113.66M	20630502
+1407_rgb8_4096	soneshot	1	1	103012	0.12	75.97M	19070722
+1407_rgb8_4096	sstream	1	1	88844	0.12	74.39M	19070722
+1407_rgb8_4096	oneshot	2	0	188504	0.35	205.47M	18334828
+1407_rgb8_4096	stream	2	0	225340	0.37	243.22M	18334828
+1407_rgb8_4096	soneshot	2	0	188460	0.35	205.47M	18334828
+1407_rgb8_4096	sstream	2	0	82820	0.31	67.66M	18338912
+1407_rgb8_4096	oneshot	2	1	119724	0.16	75.83M	18338912
+1407_rgb8_4096	stream	2	1	156360	0.18	115.37M	18338912
+1407_rgb8_4096	soneshot	2	1	119728	0.17	76.81M	18338912
+1407_rgb8_4096	sstream	2	1	104840	0.16	88.82M	18338912
+1407_rgb8_4096	oneshot	7	0	188256	1.85	205.47M	17149078
+1407_rgb8_4096	stream	7	0	225544	1.88	243.22M	17149078
+1407_rgb8_4096	soneshot	7	0	188464	1.85	205.47M	17149078
+1407_rgb8_4096	sstream	7	0	80856	1.8	66.80M	17168802
+1407_rgb8_4096	oneshot	7	1	123736	0.62	86.81M	17168802
+1407_rgb8_4096	stream	7	1	159368	0.6	124.57M	17168802
+1407_rgb8_4096	soneshot	7	1	123132	0.62	86.77M	17168802
+1407_rgb8_4096	sstream	7	1	109876	0.57	99.55M	17168802
+1407_rgb8_4096	oneshot	13	0	189836	10.36	208.38M	16409353
+1407_rgb8_4096	stream	13	0	226616	10.17	246.13M	16409353
+1407_rgb8_4096	soneshot	13	0	189868	10.28	208.38M	16409353
+1407_rgb8_4096	sstream	13	0	88316	9.86	76.11M	16482645
+1407_rgb8_4096	oneshot	13	1	157496	2.61	128.73M	16482645
+1407_rgb8_4096	stream	13	1	195500	2.6	166.48M	16482645
+1407_rgb8_4096	soneshot	13	1	157524	2.6	128.84M	16482645
+1407_rgb8_4096	sstream	13	1	149904	2.6	151.09M	16482645
+1407_rgb8_4096	oneshot	15	0	189848	11.73	208.36M	16394008
+1407_rgb8_4096	stream	15	0	226740	11.77	246.11M	16394008
+1407_rgb8_4096	soneshot	15	0	189880	11.68	208.36M	16394008
+1407_rgb8_4096	sstream	15	0	88172	11.43	76.05M	16463527
+1407_rgb8_4096	oneshot	15	1	157248	3.03	128.86M	16463527
+1407_rgb8_4096	stream	15	1	194244	3.03	166.58M	16463527
+1407_rgb8_4096	soneshot	15	1	157896	3.02	128.82M	16463527
+1407_rgb8_4096	sstream	15	1	152368	3.02	151.03M	16463527
+1407_rgb8_4096	oneshot	16	0	189836	24.99	208.87M	16078881
+1407_rgb8_4096	stream	16	0	226964	24.27	246.62M	16078881
+1407_rgb8_4096	soneshot	16	0	189900	24.32	208.87M	16078881
+1407_rgb8_4096	sstream	16	0	226908	24.52	246.62M	16078881
+1407_rgb8_4096	oneshot	16	1	252184	23.26	367.90M	16078881
+1407_rgb8_4096	stream	16	1	289164	23.13	405.65M	16078881
+1407_rgb8_4096	soneshot	16	1	252484	23.98	367.90M	16078881
+1407_rgb8_4096	sstream	16	1	289300	23.23	405.65M	16078881
+1407_rgb8_4096	oneshot	19	0	189888	54.84	208.87M	16078881
+1407_rgb8_4096	stream	19	0	226612	54.76	246.62M	16078881
+1407_rgb8_4096	soneshot	19	0	189908	56.04	208.87M	16078881
+1407_rgb8_4096	sstream	19	0	226632	54.55	246.62M	16078881
+1407_rgb8_4096	oneshot	19	1	252752	53.25	367.90M	16078881
+1407_rgb8_4096	stream	19	1	289636	53.34	405.65M	16078881
+1407_rgb8_4096	soneshot	19	1	252708	53.93	367.90M	16078881
+1407_rgb8_4096	sstream	19	1	289496	53.74	405.65M	16078881
+1407_rgb8_4096	dec_whole	-	0	57932	0.1	55.75M	
+1407_rgb8_4096	dec_whole_mt	-	0	58192	0.06	56.26M	
+1407_rgb8_4096	dec_push	-	0	58684	0.06	56.27M	
+1407_rgb8_4096	dec_stream	-	0	38400	0.05	35.89M	
+1407_rgba8_4096	load	-	0	70636	0.11	68.87M	
+1407_rgba8_4096	oneshot	1	0	195168	0.22	223.77M	21748823
+1407_rgba8_4096	stream	1	0	124408	0.19	151.43M	21748823
+1407_rgba8_4096	soneshot	1	0	195148	0.21	223.77M	21748823
+1407_rgba8_4096	sstream	1	0	87252	0.18	73.52M	20325044
+1407_rgba8_4096	oneshot	1	1	148420	0.16	141.39M	20325044
+1407_rgba8_4096	stream	1	1	124420	0.19	151.43M	21748823
+1407_rgba8_4096	soneshot	1	1	148304	0.16	141.39M	20325044
+1407_rgba8_4096	sstream	1	1	101932	0.15	82.16M	20325044
+1407_rgba8_4096	oneshot	2	0	265436	0.45	312.61M	19812693
+1407_rgba8_4096	stream	2	0	314712	0.47	362.94M	19812693
+1407_rgba8_4096	soneshot	2	0	265424	0.45	312.61M	19812693
+1407_rgba8_4096	sstream	2	0	94132	0.38	77.41M	19789345
+1407_rgba8_4096	oneshot	2	1	165552	0.22	141.32M	19789345
+1407_rgba8_4096	stream	2	1	214456	0.24	191.97M	19789345
+1407_rgba8_4096	soneshot	2	1	165232	0.22	141.32M	19789345
+1407_rgba8_4096	sstream	2	1	117140	0.2	99.28M	19789345
+1407_rgba8_4096	oneshot	7	0	265424	2.53	312.61M	17813162
+1407_rgba8_4096	stream	7	0	314728	2.56	362.94M	17813162
+1407_rgba8_4096	soneshot	7	0	265344	2.59	312.61M	17813162
+1407_rgba8_4096	sstream	7	0	97532	2.42	91.20M	17766583
+1407_rgba8_4096	oneshot	7	1	168892	0.74	150.65M	17766583
+1407_rgba8_4096	stream	7	1	218096	0.76	200.98M	17766583
+1407_rgba8_4096	soneshot	7	1	168628	0.74	150.68M	17766583
+1407_rgba8_4096	sstream	7	1	131324	0.74	123.51M	17766583
+1407_rgba8_4096	oneshot	13	0	283568	13.79	318.45M	16732997
+1407_rgba8_4096	stream	13	0	332932	13.77	368.78M	16732997
+1407_rgba8_4096	soneshot	13	0	283608	13.98	318.45M	16732997
+1407_rgba8_4096	sstream	13	0	105556	13.48	98.45M	16873876
+1407_rgba8_4096	oneshot	13	1	204592	3.52	192.57M	16873876
+1407_rgba8_4096	stream	13	1	254048	3.57	242.76M	16873876
+1407_rgba8_4096	soneshot	13	1	204388	3.55	192.57M	16873876
+1407_rgba8_4096	sstream	13	1	165636	3.5	173.57M	16873876
+1407_rgba8_4096	oneshot	15	0	283472	16.09	318.45M	16702912
+1407_rgba8_4096	stream	15	0	332748	15.94	368.78M	16702912
+1407_rgba8_4096	soneshot	15	0	283672	15.89	318.45M	16702912
+1407_rgba8_4096	sstream	15	0	105292	15.66	98.34M	16813947
+1407_rgba8_4096	oneshot	15	1	203768	4.09	192.51M	16813947
+1407_rgba8_4096	stream	15	1	253312	4.1	242.82M	16813947
+1407_rgba8_4096	soneshot	15	1	203444	4.09	192.51M	16813947
+1407_rgba8_4096	sstream	15	1	165136	4.07	173.45M	16813947
+1407_rgba8_4096	oneshot	16	0	283712	31.09	318.45M	16585178
+1407_rgba8_4096	stream	16	0	332792	31.1	368.78M	16585178
+1407_rgba8_4096	soneshot	16	0	283628	31.37	318.45M	16585178
+1407_rgba8_4096	sstream	16	0	332732	31.21	368.78M	16585178
+1407_rgba8_4096	oneshot	16	1	364384	29.64	537.58M	16585178
+1407_rgba8_4096	stream	16	1	413756	29.56	587.91M	16585178
+1407_rgba8_4096	soneshot	16	1	364784	29.49	537.58M	16585178
+1407_rgba8_4096	sstream	16	1	413720	30.26	587.91M	16585178
+1407_rgba8_4096	oneshot	19	0	283648	73.06	318.45M	16585178
+1407_rgba8_4096	stream	19	0	332832	71.62	368.78M	16585178
+1407_rgba8_4096	soneshot	19	0	283648	71.47	318.45M	16585178
+1407_rgba8_4096	sstream	19	0	332712	71.84	368.78M	16585178
+1407_rgba8_4096	oneshot	19	1	365188	69.74	537.58M	16585178
+1407_rgba8_4096	stream	19	1	414180	70.16	587.91M	16585178
+1407_rgba8_4096	soneshot	19	1	365088	70.17	537.58M	16585178
+1407_rgba8_4096	sstream	19	1	414472	70.37	587.91M	16585178
+1407_rgba8_4096	dec_whole	-	0	70596	0.11	68.82M	
+1407_rgba8_4096	dec_whole_mt	-	0	70976	0.07	69.30M	
+1407_rgba8_4096	dec_push	-	0	71244	0.08	69.32M	
+1407_rgba8_4096	dec_stream	-	0	39372	0.07	36.85M	
