@@ -2411,10 +2411,7 @@ fn push_decoder_native_noninterlaced<'a>(
 
     // Large images with threads allowed: inflate on a second thread while
     // this one unfilters and expands into the sink, as `decode()` does.
-    let pipelined = crate::decoder::pipeline::worth_it(
-        h as usize * (raw_row_bytes + 1),
-        png_config.max_threads,
-    );
+    let pipelined = crate::decoder::pipeline::worth_it(&ihdr, png_config.max_threads);
     if pipelined {
         let expander = crate::decoder::postprocess::RowExpander::new(&ihdr, reader.ancillary())?;
         let out_row_bytes = expander.out_row_bytes();
@@ -2613,10 +2610,7 @@ impl<'a> PngStreamingDecoder<'a> {
         // needs the input owned.
         let piped = data.len() >= 29
             && crate::chunk::ihdr::Ihdr::parse_fields(&data[16..29])
-                .and_then(|i| Ok(i.height as usize * (i.raw_row_bytes()? + 1)))
-                .is_ok_and(|bytes| {
-                    crate::decoder::pipeline::worth_it(bytes, png_config.max_threads)
-                });
+                .is_ok_and(|i| crate::decoder::pipeline::worth_it(&i, png_config.max_threads));
         let (serial, owned) = if piped {
             let owned: crate::decoder::row::RowDecoder<'static> =
                 crate::decoder::row::RowDecoder::new(Cow::Owned(data.into_owned()), &png_config)?;

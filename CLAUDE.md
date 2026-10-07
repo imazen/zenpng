@@ -224,6 +224,9 @@ and the old png(19) point (3.37x png(17), 1.06% smaller than the new
 png(19)) is gone: Balanced (e13, png(24)) keeps the old size at +6% time.
 Adjacent png(19..25) invert on a few images (max +0.38%, 9227_rgb8_64 at
 png(24) -> png(25), i.e. e13 -> e14).
+The e15 -> e16 step (2.15x, -0.65%: brute force BF(3,1)) has no cheaper
+point between: refining also at png(28) costs 1.88x for -0.26%, png(28)+(30)
+2.85x for -0.37%, top-2 refinement 1.77x for -0.10% (91 images, 2026-10-07).
 
 Measured per-image monotonicity (91 images incl. gray/palette/16-bit,
 64-1024 px, `examples/roundtrip_sweep.rs`): every step e1..e17 within 0.06%

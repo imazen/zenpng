@@ -32,6 +32,11 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- The two-thread decode pipeline (and `push_decoder` / `streaming_decoder`)
+  skips palette and sub-byte gray images: their expansion on the consumer
+  thread is the bottleneck, and pal8 at 1024 px ran 1.32x slower pipelined
+  on i265 P-cores (now equal to single-threaded). RGB8/RGBA8/16-bit/gray8
+  keep it.
 - Efforts 11-14 re-spread on zenflate's png(19..23) ramp (a26c4b9): e11
   screens None/Paeth/MinSum at png(10) and refines at png(17), e12 at
   png(19), e13 (Balanced) at png(24), e14 at png(25). On 91 images

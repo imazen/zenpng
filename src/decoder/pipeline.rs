@@ -30,10 +30,22 @@ const CHUNK_BYTES: usize = 128 * 1024;
 /// Chunks in flight; the producer gets at most this far ahead.
 const CHUNKS: usize = 4;
 
-/// Whether a decode of `filtered_bytes` with `max_threads` should pipeline.
-pub(crate) fn worth_it(filtered_bytes: usize, max_threads: usize) -> bool {
+/// Whether decoding `ihdr`'s image with `max_threads` should pipeline.
+///
+/// Palette and sub-byte gray images don't: their rows expand to 3-8 output
+/// bytes per filtered byte on the consumer thread, so it is the bottleneck
+/// and the handoff only adds cost (pal8 at 1024 px ran 1.32x slower
+/// pipelined on i265 P-cores, `benchmarks/pareto_x86_decode_2026-10-07.md`;
+/// RGB8 0.83x, RGBA8 0.78x, RGB16 0.92x, gray8 0.99x).
+pub(crate) fn worth_it(ihdr: &crate::chunk::ihdr::Ihdr, max_threads: usize) -> bool {
+    let Ok(raw) = ihdr.raw_row_bytes() else {
+        return false;
+    };
+    let filtered_bytes = (ihdr.height as usize).saturating_mul(raw + 1);
     !cfg!(target_arch = "wasm32")
         && max_threads != 1
+        && ihdr.color_type != 3
+        && ihdr.bit_depth >= 8
         && filtered_bytes >= PIPELINE_MIN_BYTES
         && std::thread::available_parallelism().is_ok_and(|n| n.get() >= 2)
 }

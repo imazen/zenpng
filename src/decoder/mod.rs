@@ -309,8 +309,7 @@ pub(crate) fn decode_png(
         };
 
         // Large images: inflate on a second thread while this one unfilters.
-        let pipelined =
-            !parallel_done && pipeline::worth_it(h * (raw_row_bytes + 1), limits.max_threads);
+        let pipelined = !parallel_done && pipeline::worth_it(&ihdr, limits.max_threads);
         if pipelined {
             let bpp = reader.bpp();
             let zeros = crate::alloc_util::alloc_zeroed(alloc_pref, false, raw_row_bytes)?;
@@ -410,8 +409,7 @@ pub(crate) fn decode_png(
         idot::Outcome::Done
     );
 
-    let pipelined =
-        !parallel_done && pipeline::worth_it(h * (ihdr.raw_row_bytes()? + 1), limits.max_threads);
+    let pipelined = !parallel_done && pipeline::worth_it(&ihdr, limits.max_threads);
     if pipelined {
         let raw = ihdr.raw_row_bytes()?;
         let bpp = reader.bpp();
