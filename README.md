@@ -270,14 +270,20 @@ a single-threaded decode. It turns on where it was measured to be at least 1.3×
 265K 1024 px RGB decodes 1.45× faster, 4096 px RGB 1.7×. Files with an
 `iDOT` table go further (below).
 
-**Encode.** `EncodeConfig::with_parallel(true)` splits the image into strips
-of about 512 KiB of row data, filtered and compressed on all allowed cores, at
-every effort without a brute-force or recompress phase (1–15). The
-strips join into one ordinary zlib stream, so every decoder reads the file, and
-the output does not depend on the thread count. On 4096 px images with 8
-cores: effort 1 is about 5.5× faster and effort 5 about 7× faster, with sizes
-within −0.4% to +0.25% of a single-threaded encode. It is off by default, like
-`parallel`; `max_threads` caps the thread count.
+**Encode.** Efforts 1–15 split the image into strips of about 512 KiB of row
+data and compress them independently, joined into one ordinary zlib stream
+that every decoder reads. The strips are the same with or without threads,
+so **the output never depends on the thread count**. Threads are on by
+default (`EncodeConfig::parallel`, capped by `max_threads`) wherever they
+were measured to make the encode at least 1.5× faster at half the ideal
+efficiency: on 8 cores of a Core Ultra 7 265K, 4096 px RGB8 encodes 5.6×
+faster at effort 2 and 7× at effort 13; 1024 px RGB8 2.4–3× from effort 5.
+Efforts 20–23 use up to 3 threads (about 2×); efforts 16–19 and 24+, and
+images under 512 KiB of row data, run on one thread. Against one whole-image
+stream the strips cost −0.75% to +0.19% in size on average
+(`benchmarks/strip_layout_sizes_2026-10-08.md`,
+`benchmarks/encode_threads_2026-10-08.md`). `with_parallel(false)` or
+`max_threads = 1` forces a single thread.
 
 ## Multi-threaded decode of `iDOT` PNGs
 

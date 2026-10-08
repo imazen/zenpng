@@ -209,13 +209,14 @@ pub fn estimate_encode(
     })
 }
 
-/// How a zenpng encode scales across CPU cores (measured, single-photo sparse
-/// fit, `benchmarks/vcpu_resource_sweep_2026-06-20.tsv`), as the shared
-/// [`zencodec::estimate::ThreadingInformation`]. zenpng parallelises over
-/// filter STRATEGIES (`std::thread::scope`): wall time saturates at ~3× by ~4
-/// threads AND peak working-set grows with concurrent strategies — wall does
-/// NOT scale as `1/cores`. Parallel filter-strategy screening engages at
-/// effort ≥ 2; below that the encode is serial.
+/// How a zenpng encode scales across CPU cores, as the shared
+/// [`zencodec::estimate::ThreadingInformation`], from the thread rules the
+/// encoder applies (`benchmarks/encode_threads_2026-10-08.md`): efforts
+/// 1-15 split images of 2+ strips across threads (4096 px RGB8 at effort
+/// 13: 7x on 8 cores; effort 1 is capped at 4), efforts 20-23 use at most 3
+/// threads (about 2x), and efforts 16-19 and 24+ are serial. Images under
+/// 512 KiB of filtered rows always encode serially; this effort-only answer
+/// can't see that.
 ///
 /// Feed the result to
 /// [`ResourceEstimate::at_cores`](zencodec::estimate::ResourceEstimate::at_cores),
@@ -223,11 +224,12 @@ pub fn estimate_encode(
 /// for the full core-adjusted estimate.
 #[must_use]
 pub fn encode_threading_info(effort: u32) -> zencodec::estimate::ThreadingInformation {
-    if effort >= 2 {
-        // Saturates ~4 threads (one per filter strategy in the screen phase).
-        zencodec::estimate::ThreadingInformation::parallel(4)
-    } else {
-        zencodec::estimate::ThreadingInformation::SERIAL
+    use zencodec::estimate::ThreadingInformation;
+    match effort {
+        0 | 16..=19 | 24.. => ThreadingInformation::SERIAL,
+        1 => ThreadingInformation::parallel(4),
+        2..=15 => ThreadingInformation::parallel(8),
+        20..=23 => ThreadingInformation::parallel(3),
     }
 }
 

@@ -1251,6 +1251,7 @@ pub(crate) fn compress_segmented(
         row_bytes,
         height,
         format.bpp,
+        effort,
         &params,
         opts,
         &rows,
@@ -1285,6 +1286,48 @@ fn strip_bytes() -> usize {
         return v;
     }
     STRIP_BYTES
+}
+
+/// Whether the measured thread rules apply ([`strip_threads`]; efforts
+/// 16-19 and 24+ single-threaded, 20-23 at most 3 threads). `_dev`:
+/// `ZENPNG_THREAD_RULES=off` uses what `max_threads` allows instead (scaling
+/// measurements).
+fn thread_rules() -> bool {
+    #[cfg(feature = "_dev")]
+    if std::env::var("ZENPNG_THREAD_RULES").is_ok_and(|v| v == "off") {
+        return false;
+    }
+    true
+}
+
+/// Threads worth using for `strips` strips at `effort`, at most `allowed`.
+///
+/// Each thread must keep its share: with threads the encode should run at
+/// least 1.5x faster at half the ideal efficiency (speedup / threads >= 0.5).
+/// Measured on i265 P-cores and Neoverse-N1
+/// (`benchmarks/encode_threads_2026-10-08.md`, 20 images, 1024-4096 px):
+/// effort 1 (one strategy, one level) gains 1.0-1.36x at 1024 px with any
+/// count and 1.4-2.1x at 2048 px (18 strips) with 2-4 threads, so it gets a
+/// thread per 6 strips, at most 4. Efforts 2-4 on 1024 px RGB8 (4 strips)
+/// with 2 threads: 1.51x x86, 1.40x ARM; on RGBA8 (6 strips) 1.44-1.52x at 2
+/// and 1.90-1.96x at 4: a thread per 2 strips from 6 strips. Efforts 5-15: a
+/// thread per strip (1024 px RGB8 2.1-3.2x at 4 threads, 4096 px 5.7-7.3x
+/// at 8).
+///
+/// With [`thread_rules`] off, a thread per strip up to `allowed`.
+pub(crate) fn strip_threads(strips: usize, effort: u32, allowed: usize) -> usize {
+    if !thread_rules() {
+        return strips.min(allowed).max(1);
+    }
+    let (per_thread, min_strips, cap) = match effort {
+        1 => (6, 12, 4),
+        2..=4 => (2, 6, usize::MAX),
+        _ => (1, 2, usize::MAX),
+    };
+    if strips < min_strips {
+        return 1;
+    }
+    (strips / per_thread).min(cap).min(allowed).max(1)
 }
 
 /// Row ranges of the strips [`compress_strips`] splits an image into, and
@@ -1607,7 +1650,7 @@ impl StripStream {
         }
         let header =
             zenflate::png::StripCompressor::new(params.screen_effort.level()).zlib_header();
-        let threads = threads.min(bounds.len());
+        let threads = strip_threads(bounds.len(), effort, threads);
         let pool = (threads > 1 && !cfg!(target_arch = "wasm32"))
             .then(|| StripPool::new(threads, effort, format, row_bytes, cancel));
         Some(Self {
@@ -1829,6 +1872,59 @@ impl Drop for StripPool {
     }
 }
 
+/// Threads `max_threads` allows: 0 = the available cores, else that many.
+fn resolve_threads(max_threads: usize) -> usize {
+    match max_threads {
+        0 => std::thread::available_parallelism().map_or(1, |t| t.get()),
+        t => t,
+    }
+}
+
+/// Run `f` on every item on at most [`resolve_threads`]`(max_threads)`
+/// threads (and at most one per item), pulling items from a shared queue;
+/// results in item order. One thread, or wasm32: in order on this thread.
+fn par_map<T: Sync, R: Send>(
+    items: &[T],
+    max_threads: usize,
+    f: impl Fn(&T) -> R + Sync,
+) -> Vec<R> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    let threads = resolve_threads(max_threads).min(items.len());
+    if threads < 2 || cfg!(target_arch = "wasm32") {
+        return items.iter().map(&f).collect();
+    }
+    let next = AtomicUsize::new(0);
+    let done: Vec<Vec<(usize, R)>> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads)
+            .map(|_| {
+                let (f, next) = (&f, &next);
+                s.spawn(move || {
+                    let mut done = Vec::new();
+                    loop {
+                        let k = next.fetch_add(1, Ordering::Relaxed);
+                        if k >= items.len() {
+                            break done;
+                        }
+                        done.push((k, f(&items[k])));
+                    }
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .collect()
+    });
+    let mut slots: Vec<Option<R>> = (0..items.len()).map(|_| None).collect();
+    for (k, r) in done.into_iter().flatten() {
+        slots[k] = Some(r);
+    }
+    slots
+        .into_iter()
+        .map(|r| r.expect("every item ran"))
+        .collect()
+}
+
 /// Run `f` on each strip `0..n`, on `threads` workers (each with its own
 /// [`StripWorker`]) or in order on this thread; results in strip order.
 fn run_strips<T: Send>(
@@ -1912,11 +2008,13 @@ fn strip_select_global() -> bool {
 /// allowed at a strip boundary (no `iDOT` table is written here).
 ///
 /// Returns `None` when the image is too small for two strips.
+#[allow(clippy::too_many_arguments)]
 fn compress_strips(
     packed_rows: &[u8],
     row_bytes: usize,
     height: usize,
     bpp: usize,
+    effort: u32,
     params: &EffortParams,
     opts: &super::CompressOptions<'_>,
     segment_rows: &[u32],
@@ -1932,11 +2030,7 @@ fn compress_strips(
     // The strip layout doesn't depend on the thread count, so the output
     // is the same single-threaded (strips run in order on this thread).
     let threads = if opts.parallel && !cfg!(target_arch = "wasm32") {
-        match opts.max_threads {
-            0 => std::thread::available_parallelism().map_or(1, |t| t.get()),
-            t => t,
-        }
-        .min(n)
+        strip_threads(n, effort, resolve_threads(opts.max_threads))
     } else {
         1
     };
@@ -2285,10 +2379,26 @@ pub(crate) fn compress_filtered(
     // 64 px encodes ran 1.6-5.7x and 256 px RGB8 (196 KiB) 1.1-1.8x the
     // single-threaded time at efforts 1/2/7 (i265, benches/pareto.rs senc,
     // 2026-10-07), while 1024 px ran 0.30-0.99x.
-    let opts = if filtered_size < PARALLEL_MIN_BYTES {
+    // Efforts 16-19 spend their time in single-threaded brute force: 8
+    // threads (screening 3 strategies concurrently) ran 1.02-1.04x faster
+    // and peaked 160 MB higher (`benchmarks/encode_threads_x86_2026-10-08.md`).
+    // Above effort 15 (`benchmarks/encode_threads_2026-10-08.md`, 1024 px
+    // RGB8, i265): efforts 16-19 spend their time in single-threaded brute
+    // force (1.01-1.02x with 2-8 threads); efforts 20-23 run 9 screening
+    // and 3 recompression jobs side by side, and 3 threads give all of it
+    // (1.74-2.22x, the same as 4 and 8); from effort 24 the single-threaded
+    // searches dominate (1.21-1.53x with 4 threads).
+    let rules = thread_rules();
+    let single = (16..=19).contains(&effort) || effort >= 24;
+    let opts = if filtered_size < PARALLEL_MIN_BYTES || (rules && single) {
         super::CompressOptions {
             parallel: false,
             max_threads: 1,
+            ..opts
+        }
+    } else if rules && effort >= 20 && opts.max_threads != 1 {
+        super::CompressOptions {
+            max_threads: resolve_threads(opts.max_threads).min(3),
             ..opts
         }
     } else {
@@ -2326,7 +2436,16 @@ pub(crate) fn compress_filtered(
     // strips are compressed strip by strip (concurrently when threads are
     // allowed), so the output doesn't depend on the thread count.
     if params.strips_apply()
-        && let Some(z) = compress_strips(packed_rows, row_bytes, height, bpp, &params, &opts, &[])?
+        && let Some(z) = compress_strips(
+            packed_rows,
+            row_bytes,
+            height,
+            bpp,
+            effort,
+            &params,
+            &opts,
+            &[],
+        )?
     {
         let z = z.into_zlib();
         debug_check_roundtrip_len(&z, height * (row_bytes + 1));
@@ -2578,53 +2697,46 @@ fn screen_parallel(
     let compress_bound = state.compress_buf.len();
     let cancel = opts.cancel;
     #[allow(clippy::type_complexity)]
-    let par_results: Vec<Option<(usize, Vec<u8>, Vec<u8>)>> = std::thread::scope(|s| {
-        let handles: Vec<_> = strategies
-            .iter()
-            .map(|strategy| {
-                s.spawn(move || {
-                    let mut t_filtered = Vec::with_capacity(filtered_size);
-                    let mut t_compressor = Compressor::new(screen_effort.level());
-                    let mut t_compress_buf = vec![0u8; compress_bound];
+    let par_results: Vec<Option<(usize, Vec<u8>, Vec<u8>)>> =
+        par_map(strategies, opts.max_threads, |strategy| {
+            let mut t_filtered = Vec::with_capacity(filtered_size);
+            let mut t_compressor = Compressor::new(screen_effort.level());
+            let mut t_compress_buf = vec![0u8; compress_bound];
 
-                    if let Some(pc) = precomputed {
-                        let mut t_scratch = HeuristicScratch::new_universal();
-                        filter_image_from_precomputed(
-                            pc,
-                            row_bytes,
-                            height,
-                            *strategy,
-                            &mut t_scratch,
-                            &mut t_filtered,
-                        );
-                    } else {
-                        filter_image(
-                            packed_rows,
-                            row_bytes,
-                            height,
-                            bpp,
-                            *strategy,
-                            cancel,
-                            &mut t_filtered,
-                        );
-                    }
+            if let Some(pc) = precomputed {
+                let mut t_scratch = HeuristicScratch::new_universal();
+                filter_image_from_precomputed(
+                    pc,
+                    row_bytes,
+                    height,
+                    *strategy,
+                    &mut t_scratch,
+                    &mut t_filtered,
+                );
+            } else {
+                filter_image(
+                    packed_rows,
+                    row_bytes,
+                    height,
+                    bpp,
+                    *strategy,
+                    cancel,
+                    &mut t_filtered,
+                );
+            }
 
-                    let compressed_len = t_compressor
-                        .zlib_compress(&t_filtered, &mut t_compress_buf, cancel)
-                        .ok()?;
+            let compressed_len = t_compressor
+                .zlib_compress(&t_filtered, &mut t_compress_buf, cancel)
+                .ok()?;
 
-                    debug_check_roundtrip(&t_compress_buf[..compressed_len], &t_filtered);
+            debug_check_roundtrip(&t_compress_buf[..compressed_len], &t_filtered);
 
-                    Some((
-                        compressed_len,
-                        t_filtered,
-                        t_compress_buf[..compressed_len].to_vec(),
-                    ))
-                })
-            })
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    });
+            Some((
+                compressed_len,
+                t_filtered,
+                t_compress_buf[..compressed_len].to_vec(),
+            ))
+        });
 
     for (compressed_len, filtered_data, compressed_data) in par_results.into_iter().flatten() {
         let dominated = state
@@ -2817,49 +2929,47 @@ fn refine_parallel(
 ) {
     let compress_bound = state.compress_buf.len();
     let cancel = opts.cancel;
-    let refine_results: Vec<Option<(usize, Vec<u8>)>> = std::thread::scope(|s| {
-        let handles: Vec<_> = screen_results[..top_n]
-            .iter()
-            .map(|(_, filtered_data)| {
-                s.spawn(move || {
-                    let mut t_compress_buf = vec![0u8; compress_bound];
-                    let mut t_best: Option<Vec<u8>> = None;
+    let refine_results: Vec<Option<(usize, Vec<u8>)>> = par_map(
+        &screen_results[..top_n],
+        opts.max_threads,
+        |(_, filtered_data)| {
+            {
+                let mut t_compress_buf = vec![0u8; compress_bound];
+                let mut t_best: Option<Vec<u8>> = None;
 
-                    // Tiers share fallback levels; compress each level once.
-                    let mut done: Vec<CompressionLevel> = Vec::new();
-                    for &tier_level in refine_tiers {
-                        let mut level = tier_level.level();
-                        loop {
-                            if done.contains(&level) {
-                                match level.monotonicity_fallback().filter(|_| params.fallbacks) {
-                                    Some(fb) => level = fb,
-                                    None => break,
-                                }
-                                continue;
-                            }
-                            done.push(level);
-                            let mut compressor = Compressor::new(level);
-                            if let Ok(len) =
-                                compressor.zlib_compress(filtered_data, &mut t_compress_buf, cancel)
-                            {
-                                debug_check_roundtrip(&t_compress_buf[..len], filtered_data);
-                                let dominated = t_best.as_ref().is_some_and(|b| len >= b.len());
-                                if !dominated {
-                                    t_best = Some(t_compress_buf[..len].to_vec());
-                                }
-                            }
+                // Tiers share fallback levels; compress each level once.
+                let mut done: Vec<CompressionLevel> = Vec::new();
+                for &tier_level in refine_tiers {
+                    let mut level = tier_level.level();
+                    loop {
+                        if done.contains(&level) {
                             match level.monotonicity_fallback().filter(|_| params.fallbacks) {
                                 Some(fb) => level = fb,
                                 None => break,
                             }
+                            continue;
+                        }
+                        done.push(level);
+                        let mut compressor = Compressor::new(level);
+                        if let Ok(len) =
+                            compressor.zlib_compress(filtered_data, &mut t_compress_buf, cancel)
+                        {
+                            debug_check_roundtrip(&t_compress_buf[..len], filtered_data);
+                            let dominated = t_best.as_ref().is_some_and(|b| len >= b.len());
+                            if !dominated {
+                                t_best = Some(t_compress_buf[..len].to_vec());
+                            }
+                        }
+                        match level.monotonicity_fallback().filter(|_| params.fallbacks) {
+                            Some(fb) => level = fb,
+                            None => break,
                         }
                     }
-                    t_best.map(|b| (b.len(), b))
-                })
-            })
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    });
+                }
+                t_best.map(|b| (b.len(), b))
+            }
+        },
+    );
 
     for (idx, result) in refine_results.into_iter().enumerate() {
         if let Some((size, compressed_data)) = result {
@@ -3499,13 +3609,8 @@ fn zenflate_recompress(
                 .map(|(_size, data)| recompress_one(data, cancel))
                 .collect()
         } else {
-            // Parallel
-            std::thread::scope(|s| {
-                let handles: Vec<_> = candidates
-                    .iter()
-                    .map(|(_size, data)| s.spawn(|| recompress_one(data, cancel)))
-                    .collect();
-                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            par_map(candidates, max_threads, |(_size, data)| {
+                recompress_one(data, cancel)
             })
         };
 
@@ -3564,25 +3669,18 @@ fn zenflate_full_optimal_recompress(
     let mut best: Option<Vec<u8>> = None;
 
     // wasm32 has no threads to spawn.
-    let results: Vec<crate::error::Result<Vec<u8>>> = if max_threads == 1
-        || candidates.len() <= 1
-        || cfg!(target_arch = "wasm32")
-    {
-        // Sequential
-        candidates
-            .iter()
-            .map(|(_size, data)| full_optimal_recompress_one(data, effort, cancel))
-            .collect()
-    } else {
-        // Parallel
-        std::thread::scope(|s| {
-            let handles: Vec<_> = candidates
+    let results: Vec<crate::error::Result<Vec<u8>>> =
+        if max_threads == 1 || candidates.len() <= 1 || cfg!(target_arch = "wasm32") {
+            // Sequential
+            candidates
                 .iter()
-                .map(|(_size, data)| s.spawn(|| full_optimal_recompress_one(data, effort, cancel)))
-                .collect();
-            handles.into_iter().map(|h| h.join().unwrap()).collect()
-        })
-    };
+                .map(|(_size, data)| full_optimal_recompress_one(data, effort, cancel))
+                .collect()
+        } else {
+            par_map(candidates, max_threads, |(_size, data)| {
+                full_optimal_recompress_one(data, effort, cancel)
+            })
+        };
 
     for result in results {
         let compressed = result?;
@@ -3647,7 +3745,7 @@ fn zopfli_adaptive(
     let effective_parallelism = if max_threads == 1 {
         1.0
     } else {
-        num_cpus() as f64
+        resolve_threads(max_threads).min(num_cpus()) as f64
     };
     let max_iters = match remaining_ns.and_then(|f| f()) {
         Some(ns) => {
@@ -3674,23 +3772,17 @@ fn zopfli_adaptive(
     // Phase 3: Run top candidates in parallel (or sequentially if single-threaded).
     // All threads share the combined stop — deadline expiry gracefully stops
     // all threads, cancellation hard-aborts them.
-    let zopfli_results: Vec<crate::error::Result<Vec<u8>>> = if max_threads == 1
-        || candidates.len() <= 1
-        || cfg!(target_arch = "wasm32")
-    {
-        candidates
-            .iter()
-            .map(|(_size, data)| compress_with_zopfli_n(data, max_iters, &combined))
-            .collect()
-    } else {
-        std::thread::scope(|s| {
-            let handles: Vec<_> = candidates
+    let zopfli_results: Vec<crate::error::Result<Vec<u8>>> =
+        if max_threads == 1 || candidates.len() <= 1 || cfg!(target_arch = "wasm32") {
+            candidates
                 .iter()
-                .map(|(_size, data)| s.spawn(|| compress_with_zopfli_n(data, max_iters, &combined)))
-                .collect();
-            handles.into_iter().map(|h| h.join().unwrap()).collect()
-        })
-    };
+                .map(|(_size, data)| compress_with_zopfli_n(data, max_iters, &combined))
+                .collect()
+        } else {
+            par_map(candidates, max_threads, |(_size, data)| {
+                compress_with_zopfli_n(data, max_iters, &combined)
+            })
+        };
 
     for result in zopfli_results {
         update_best(result?);
@@ -3789,6 +3881,45 @@ mod tests {
 
     /// The parallel strip encoder covers exactly the rungs with no
     /// whole-stream search (README and CHANGELOG quote this range).
+    /// `max_threads` above 1 caps the threads `par_map` runs at once (the
+    /// screening, refinement and recompression phases spawned one per item).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn par_map_caps_concurrency_and_keeps_order() {
+        use core::sync::atomic::{AtomicUsize, Ordering};
+        for cap in [1usize, 2, 3] {
+            let (live, peak) = (AtomicUsize::new(0), AtomicUsize::new(0));
+            let items: Vec<usize> = (0..9).collect();
+            let out = par_map(&items, cap, |&i| {
+                let now = live.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                live.fetch_sub(1, Ordering::SeqCst);
+                i * 10
+            });
+            assert_eq!(out, (0..9).map(|i| i * 10).collect::<Vec<_>>());
+            let peak = peak.load(Ordering::SeqCst);
+            assert!(peak <= cap, "cap {cap}: {peak} ran at once");
+        }
+    }
+
+    /// The measured thread rule (see `strip_threads`).
+    #[test]
+    fn strip_thread_counts() {
+        // effort 1: a thread per 6 strips from 12, at most 4
+        assert_eq!(strip_threads(6, 1, 8), 1);
+        assert_eq!(strip_threads(18, 1, 8), 3);
+        assert_eq!(strip_threads(72, 1, 8), 4);
+        // efforts 2-4: a thread per 2 strips from 6
+        assert_eq!(strip_threads(4, 2, 8), 1);
+        assert_eq!(strip_threads(6, 4, 8), 3);
+        assert_eq!(strip_threads(72, 3, 8), 8);
+        // efforts 5-15: a thread per strip
+        assert_eq!(strip_threads(4, 5, 8), 4);
+        assert_eq!(strip_threads(72, 15, 8), 8);
+        assert_eq!(strip_threads(72, 15, 1), 1);
+    }
+
     #[test]
     fn strips_apply_to_efforts_1_through_15() {
         let covered: Vec<u32> = (1..=30)
@@ -4191,10 +4322,10 @@ mod tests {
                     x ^= x >> 17;
                     x ^= x << 5;
                     let v = if !banded {
-                        if x % 7 == 0 { x >> 24 } else { 128 }
+                        if x.is_multiple_of(7) { x >> 24 } else { 128 }
                     } else {
                         match band {
-                            0 => u32::from(x % 61 != 0) * 255,
+                            0 => u32::from(!x.is_multiple_of(61)) * 255,
                             1 => ((i + y) / 4) as u32 ^ (x & 7),
                             2 => 40 + 160 * (((i / 8 + y / 8) % 2) as u32),
                             _ => (x >> 24) & 0xf0,

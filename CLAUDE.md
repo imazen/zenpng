@@ -292,6 +292,18 @@ streaming (`push_rows`) chooses per strip. With `iDOT` segments requested,
 segments come straight from those strips (`compress_segmented`). Size cost
 vs one whole-image stream: `benchmarks/strip_layout_sizes_2026-10-08.md`.
 
+**Thread rules** (`parallel` defaults to true; bar: >= 1.5x at >= 0.5
+efficiency, `benchmarks/encode_threads_2026-10-08.md`, i265 + Neoverse-N1):
+`strip_threads` (e1: a thread per 6 strips from 12, max 4; e2-4: per 2
+strips from 6; e5-15: per strip), e16-19 and e24+ one thread, e20-23 at
+most 3, under 512 KiB one thread (all in `compress_filtered`). Every
+threaded phase runs on `par_map`/`run_strips` work queues capped by
+`max_threads` (before 2026-10-08, e16+ phases spawned a thread per
+strategy/candidate regardless). `_dev` `ZENPNG_THREAD_RULES=off` disables
+the rules for scaling sweeps; `benches/pareto.rs` needs
+`ZENPNG_PARETO_MAX_WALL` for slow arms (zenbench's 120 s per-group wall
+clock otherwise reports 0 rounds).
+
 ### Filter strategy sets (`src/encoder/filter.rs`)
 
 - **PAETH_MINSUM** (2): Paeth, Adaptive(MinSum) — efforts 2-7, screened at

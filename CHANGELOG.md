@@ -32,6 +32,18 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- **Encode threads are on by default** (`EncodeConfig::parallel` now
+  defaults to `true`; the zencodec threading policy still decides through
+  `max_threads`). Threads are used only where they were measured to make
+  the encode at least 1.5x faster at half the ideal efficiency, on i265 and
+  Neoverse-N1: efforts 1-15 split images of 2+ strips across threads (a
+  thread per strip from effort 5; per 2 strips from 6 strips at 2-4; per 6
+  strips from 12, at most 4, at effort 1), efforts 20-23 use at most 3
+  threads, efforts 16-19 and 24+ one. 4096 px RGB8 encodes 5.6x faster at
+  effort 2 and 7x at effort 13 on 8 cores; 1024 px RGB8 2.4-3x from effort
+  5. Same output as one thread; 38-74 MB more peak RSS at 4096 px with 4
+  threads (`benchmarks/encode_threads_2026-10-08.md`).
+  `encode_threading_info` follows the rule.
 - **Encode output no longer depends on the thread limit.** Efforts 1-15
   compress every image of two or more strips (about 512 KiB of filtered rows
   each) strip by strip, on one thread or several, so `parallel` /
@@ -192,6 +204,12 @@ All notable changes to zenpng are documented here.
   release before zenpng is published.
 
 ### Fixed
+
+- `max_threads` above 1 is now a cap at efforts 16+: screening started a
+  thread per strategy (9 from effort 20), refinement and Phase 4
+  recompression (NearOptimal, FullOptimal, zopfli) one per candidate,
+  whatever `max_threads` said. They now run on a work queue of at most
+  `max_threads` threads (`par_map`), with the same output.
 
 - `streaming_decoder` and `decode_apng` probed the file with critical-chunk
   CRC checks on, so they rejected files with a stale IDAT CRC that
