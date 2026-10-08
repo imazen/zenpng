@@ -312,7 +312,16 @@ fn bench_encode(suite: &mut Suite) {
             size_line(&group, arm, f(img).len());
         }
         let px = (w * h) as u64;
+        // ZENPNG_PARETO_MAX_WALL (seconds): zenbench's per-group wall clock
+        // (default 120 s) runs out before one round of slow arms (e15+ at
+        // 4096 px, e20+ at 1024 px) and reports 0 rounds.
+        let max_wall = std::env::var("ZENPNG_PARETO_MAX_WALL")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok());
         suite.compare(group, move |g| {
+            if let Some(s) = max_wall {
+                g.config().max_wall_time(std::time::Duration::from_secs(s));
+            }
             g.throughput(Throughput::Elements(px));
             g.throughput_unit("px");
             for (arm, f) in arms {

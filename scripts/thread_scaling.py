@@ -12,14 +12,17 @@ from collections import defaultdict
 
 
 def ms(v):
-    n, u = re.match(r"([\d.]+)(ms|µs|s)", v).groups()
-    return float(n) * {"ms": 1, "µs": 1e-3, "s": 1e3}[u]
+    n, u = re.match(r"([\d.]+)(ms|µs|ns|s)", v).groups()
+    return float(n) * {"ms": 1, "µs": 1e-3, "ns": 1e-6, "s": 1e3}[u]
 
 
 t = defaultdict(dict)
 for line in open(sys.argv[1]):
     m = re.match(r"group=enc/(\S+) benchmark=zenpng_e(\d+)_(st|t\d+) .*median=(\S+)", line)
-    if m:
+    # Arms zenbench gave fewer than 3 rounds (its per-group wall clock ran
+    # out; raise ZENPNG_PARETO_MAX_WALL) are left out.
+    n = re.search(r" n=(\d+) ", line)
+    if m and n and int(n[1]) >= 3:
         t[(m[1], int(m[2]))][m[3]] = ms(m[4])
 
 rows = defaultdict(lambda: defaultdict(list))
