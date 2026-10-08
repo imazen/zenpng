@@ -260,11 +260,15 @@ interlaced and non-interlaced PNGs.
 
 ## Multi-threaded encode and decode
 
-**Decode.** With threads allowed (`max_threads` 0, the default), an image with
-at least 512 KiB of row data decodes on two threads: one inflates while the
-other unfilters the rows before it. The output is byte-identical to a
-single-threaded decode. Single runs on a Core Ultra 7 265K: 1024 px RGB 1.3–1.5×
-faster, 4096 px RGB 1.7–1.9×. Files with an `iDOT` table go further (below).
+**Decode.** With threads allowed (`max_threads` 0, the default), a large
+image (not palette or sub-byte gray) decodes on two threads: one inflates
+while the other unfilters the rows before it. The output is byte-identical to
+a single-threaded decode. It turns on where it was measured to be at least 1.3× faster: on x86_64 from about
+1.7 MiB of row data for gray, 2.3 MiB for RGB, 3 MiB for RGBA and 10 MiB for
+16-bit (roughly 1–1.5 megapixels); on other targets from 6.75–28 MiB
+(`benchmarks/decode_pipeline_crossover_2026-10-08.md`). On a Core Ultra 7
+265K 1024 px RGB decodes 1.45× faster, 4096 px RGB 1.7×. Files with an
+`iDOT` table go further (below).
 
 **Encode.** `EncodeConfig::with_parallel(true)` splits the image into strips
 of about 512 KiB of row data, filtered and compressed on all allowed cores, at

@@ -32,6 +32,14 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- The two-thread decode pipeline (`decode`, `push_decoder`,
+  `streaming_decoder`) starts at a per-format size where it was measured at
+  least 1.3x faster, instead of at 512 KiB of filtered data: on x86_64 gray8
+  1.69 MiB, RGB8 2.25 MiB, RGBA8 3 MiB, RGB16 and other layouts 10.13 MiB;
+  on other targets (Neoverse-N1 data) 12 / 14.06 / 6.75 / 28.13 MiB. On
+  Neoverse-N1 the old threshold made 768-1024 px RGB8 and gray8 decodes
+  1.04-1.27x slower. Same output
+  (`benchmarks/decode_pipeline_crossover_2026-10-08.md`).
 - Encodes of images under 512 KiB of filtered rows run single-threaded even
   with `parallel` / `max_threads` > 1: thread spawns made 64 px encodes
   1.6-5.7x and 256 px RGB8 encodes 1.1-1.8x slower than single-threaded at

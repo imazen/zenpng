@@ -233,19 +233,23 @@ pub struct PngDecodeConfig {
     pub skip_decompression_checksum: bool,
     /// Skip CRC verification on critical chunks (IHDR, PLTE, IDAT).
     pub skip_critical_chunk_crc: bool,
-    /// Thread budget for decoding PNGs that carry an `iDOT` segment table
-    /// (written by Apple software, and by zenpng's encoder with
-    /// [`EncodeConfig::with_decode_segments`](crate::EncodeConfig::with_decode_segments)).
+    /// Thread budget for decoding.
     ///
-    /// - `0` (default): automatic. Parallel only when the file has a valid
-    ///   segment table and each thread gets enough rows to pay for itself
-    ///   (about 1 MiB of filtered data per thread).
+    /// - `0` (default): automatic.
     /// - `1`: always decode on the calling thread.
-    /// - `N > 1`: at most `N` threads, same size threshold.
+    /// - `N > 1`: at most `N` threads.
     ///
-    /// The output is byte-identical to a single-threaded decode; any segment
-    /// that does not prove that falls back to the serial decoder. Files
-    /// without `iDOT` are unaffected.
+    /// PNGs with an `iDOT` segment table (written by Apple software, and by
+    /// zenpng's encoder with
+    /// [`EncodeConfig::with_decode_segments`](crate::EncodeConfig::with_decode_segments))
+    /// decode their segments in parallel when each thread gets about 1 MiB
+    /// of filtered data. Other non-palette images of 8 bits or more inflate
+    /// on a second thread once they are large enough for that to be at
+    /// least 1.3x faster (on x86_64 from 1.7-10 MiB of filtered data by
+    /// format, about 1-1.5 megapixels; elsewhere from 6.75-28 MiB).
+    ///
+    /// The output is byte-identical to a single-threaded decode; any `iDOT`
+    /// segment that does not prove that falls back to the serial decoder.
     pub max_threads: usize,
     /// Caller preference for allocation fallibility, applied per call site.
     ///
@@ -358,8 +362,8 @@ impl PngDecodeConfig {
         self
     }
 
-    /// Set the thread budget for `iDOT` parallel decode (see
-    /// [`max_threads`](Self::max_threads)). `1` disables it.
+    /// Set the decode thread budget (see [`max_threads`](Self::max_threads)).
+    /// `1` decodes on the calling thread only.
     #[must_use]
     pub const fn with_max_threads(mut self, max_threads: usize) -> Self {
         self.max_threads = max_threads;

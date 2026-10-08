@@ -1,11 +1,40 @@
 //! Two-thread decode (inflate on a second thread, unfilter on the caller's)
-//! must give exactly the serial decoder's output and errors. Every image here
-//! has at least 1 MiB of filtered data, so `max_threads(0)` pipelines it.
+//! must give exactly the serial decoder's output and errors. The images here
+//! have 1-2.4 MiB of filtered data, below the per-format default thresholds,
+//! so with the `_dev` feature the tests lower the threshold to 512 KiB and
+//! check that the pipeline ran (CI runs this file with `_dev`).
 
 #![cfg(not(target_arch = "wasm32"))]
 
 use zenflate::Unstoppable;
 use zenpng::{PngDecodeConfig, decode};
+
+/// Make every image here pipeline when threads are allowed (`_dev` only).
+fn force_pipeline() {
+    #[cfg(feature = "_dev")]
+    zenpng::__set_pipeline_min_bytes(512 * 1024);
+}
+
+/// Run `f` with [`force_pipeline`] and check (with `_dev`) that it started a
+/// pipelined decode, unless the image is palette (never pipelined).
+fn piped<T>(name: &str, f: impl FnOnce() -> T) -> T {
+    force_pipeline();
+    #[cfg(feature = "_dev")]
+    {
+        let before = zenpng::__pipeline_runs();
+        let r = f();
+        assert!(
+            name.starts_with("pal") || zenpng::__pipeline_runs() > before,
+            "{name}: the pipeline did not run"
+        );
+        r
+    }
+    #[cfg(not(feature = "_dev"))]
+    {
+        let _ = name;
+        f()
+    }
+}
 
 fn noise(n: usize, seed: u32) -> Vec<u8> {
     let mut s = seed | 1;
@@ -72,7 +101,9 @@ fn pipelined_decode_matches_serial() {
     for (name, png) in cases() {
         for cfg in [PngDecodeConfig::default(), PngDecodeConfig::strict()] {
             let serial = decode(&png, &cfg.clone().with_max_threads(1), &Unstoppable).unwrap();
-            let piped = decode(&png, &cfg.with_max_threads(0), &Unstoppable).unwrap();
+            let piped = piped(name, || {
+                decode(&png, &cfg.with_max_threads(0), &Unstoppable).unwrap()
+            });
             assert!(
                 serial.pixels.copy_to_contiguous_bytes() == piped.pixels.copy_to_contiguous_bytes(),
                 "{name}: pipelined output differs"
@@ -84,6 +115,7 @@ fn pipelined_decode_matches_serial() {
 
 #[test]
 fn pipelined_decode_reports_the_same_errors() {
+    force_pipeline();
     let png = encode(700, 600, png::ColorType::Rgb, png::BitDepth::Eight, false);
     // Truncated mid-IDAT: both paths fail.
     let cut = &png[..png.len() * 2 / 3];
@@ -170,7 +202,10 @@ fn pipelined_push_decoder_matches_serial() {
         .unwrap()
         .pixels
         .copy_to_contiguous_bytes();
-        assert!(push(&png, false).unwrap() == serial, "{name}: push differs");
+        assert!(
+            piped(name, || push(&png, false)).unwrap() == serial,
+            "{name}: push differs"
+        );
         assert!(
             push(&png, true).unwrap() == serial,
             "{name}: strict push differs"
@@ -227,7 +262,7 @@ fn pipelined_streaming_decoder_matches_serial() {
         .pixels
         .copy_to_contiguous_bytes();
         assert!(
-            stream(&png, false).unwrap() == serial,
+            piped(name, || stream(&png, false)).unwrap() == serial,
             "{name}: stream differs"
         );
         assert!(
