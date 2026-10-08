@@ -1,6 +1,6 @@
 # Streaming in zenpng: what streams today
 
-State on 2026-10-07 (main `de659b8`, zenflate `f041b61`). Measurements:
+State on 2026-10-08 (main `92e2797`, zenflate `f041b61`). Measurements:
 `benchmarks/stream_memory_x86_2026-10-07.txt` (heap / RSS / wall, 4096 px)
 and the streaming time ratios in `benchmarks/streaming_timing_x86_2026-10-07.md`.
 "PR #25" is imazen/zenpng#25 (`PngEncoderConfig::with_downcast` and
@@ -53,6 +53,10 @@ strip streaming keeps up to 2 strips per thread in flight: on RGB8 its heap
 is 13-22 MB above the one-shot MT encode at e2-e15 (the input is only
 36 MiB), on RGBA8 27 MB below it at e7.
 
+Small images (under 512 KiB of filtered rows) encode single-threaded even
+when threads are allowed (92e2797): thread spawns had made 64 px encodes up
+to 5.7x slower.
+
 ## Decode
 
 | API | Streams? | Threads |
@@ -62,7 +66,18 @@ is 13-22 MB above the one-shot MT encode at e2-e15 (the input is only
 | zencodec `streaming_decoder` | yes: batches of ~32 KiB of rows per `next_batch`, input held but output never whole; interlaced images rejected | pipelined like `decode` (borrowed input is copied once for the inflate thread); sequential policy keeps the input borrowed |
 
 Palette and sub-byte gray images never pipeline: their row expansion is the
-bottleneck and the handoff made pal8 1.32x slower. Measured (4096x3072,
+bottleneck and the handoff made pal8 1.32x slower. Pipelined vs one thread
+(i265 P-cores, `benchmarks/streaming_timing_x86_2026-10-07.md`): 0.70-0.85x
+at 1024 px and 0.59-0.70x at 4096 px for gray8/RGB8/RGBA8/RGB16, equal for
+all three APIs; no change at 256 px (below 512 KiB of filtered rows).
+
+`iDOT` files (independently decodable strips with a table) decode their
+strips in parallel in `zenpng::decode` only: 0.18-0.32x of the serial time
+at 4096 px with 8 segments (palette included). zenpng writes `iDOT` only
+when asked (`EncodeConfig::with_decode_segments(n)`, n >= 2; no zencodec
+builder): at most 16 segments and as many as its decoder would use (2 from
+2 MiB of filtered rows, +1 per further 4 MiB; none below 2 MiB), never for
+1/2/4-bit gray. Measured (4096x3072,
 heap peak): RGB8 whole 55.8 MB / 0.10 s, whole MT 56.3 MB / 0.06 s, push
 56.3 MB / 0.06 s, streaming 35.9 MB / 0.05 s; RGBA8 68.8 / 69.3 / 69.3 /
 36.9 MB.

@@ -9,6 +9,10 @@
 - Medians (in the raw reports) flatten above e21 at 256 px (0.9438 of png High from e21 to e30): the upper efforts gain on a minority of images,
   which the geomeans and the per-content tables show. Threads do little above e15 (e19 MT = ST; e25 MT 0.88x of ST at 256 px): brute force,
   fork, beam and block searches run on one thread.
+- Caveat on B's `_st` arms from e21 up: the bench's "single-threaded" config set `parallel` off but left `max_threads` at its default 0, and
+  Phase 4 (NearOptimal recompress, e21+) chose threads by `max_threads` alone, so it recompressed up to 3 candidates concurrently. Since
+  92e2797 images under 512 KiB of filtered rows (all of B's inputs) encode fully single-threaded; B's e21+ ST times are therefore lower
+  than a strictly single-threaded encode by up to the Phase 4 share.
 - Raw: i265 ~/tmp/pareto_0707e_enc.{log,zb.txt}, ~/tmp/pareto_0707f_enc.{log,zb.txt}, *_out.{md,tsv}.
 
 ### A. e1-e19 (70 RGB8/RGBA8 images at 64/256/1024 px; zenpng 451c491, zenflate 3d639ec = f041b61 src)
