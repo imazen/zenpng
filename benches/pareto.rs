@@ -484,7 +484,13 @@ fn bench_pipeline_decode(suite: &mut Suite) {
         // The re-encode keeps default downcasts, so e.g. a 16-bit file of
         // 8-bit values comes back 8-bit; the iDOT decode is checked against
         // its own serial decode.
-        let idot = idot_reencode(data).map(leak);
+        // ZENPNG_PARETO_PDEC_DECODE_ONLY: only decode_st / decode_mt, no iDOT
+        // (threshold sweeps; the three APIs pipeline alike).
+        let decode_only = std::env::var_os("ZENPNG_PARETO_PDEC_DECODE_ONLY").is_some();
+        let idot = (!decode_only)
+            .then(|| idot_reencode(data))
+            .flatten()
+            .map(leak);
         if let Some(i) = idot {
             assert!(
                 zenpng_decode(i, 0).pixels.copy_to_contiguous_bytes()
@@ -505,6 +511,9 @@ fn bench_pipeline_decode(suite: &mut Suite) {
             g.throughput_unit("px");
             g.bench("decode_st", move |b| b.iter(|| zenpng_decode(data, 1)));
             g.bench("decode_mt", move |b| b.iter(|| zenpng_decode(data, 0)));
+            if decode_only {
+                return;
+            }
             g.bench("push_st", move |b| b.iter(|| push_decode_with(data, true)));
             g.bench("push_mt", move |b| b.iter(|| push_decode_with(data, false)));
             g.bench("stream_st", move |b| {

@@ -30,6 +30,19 @@ const CHUNK_BYTES: usize = 128 * 1024;
 /// Chunks in flight; the producer gets at most this far ahead.
 const CHUNKS: usize = 4;
 
+/// [`PIPELINE_MIN_BYTES`], or with the `_dev` feature the
+/// `ZENPNG_PIPELINE_MIN_BYTES` override (threshold sweeps).
+fn pipeline_min_bytes() -> usize {
+    #[cfg(feature = "_dev")]
+    if let Some(v) = std::env::var("ZENPNG_PIPELINE_MIN_BYTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        return v;
+    }
+    PIPELINE_MIN_BYTES
+}
+
 /// Whether decoding `ihdr`'s image with `max_threads` should pipeline.
 ///
 /// Palette and sub-byte gray images don't: their rows expand to 3-8 output
@@ -46,7 +59,7 @@ pub(crate) fn worth_it(ihdr: &crate::chunk::ihdr::Ihdr, max_threads: usize) -> b
         && max_threads != 1
         && ihdr.color_type != 3
         && ihdr.bit_depth >= 8
-        && filtered_bytes >= PIPELINE_MIN_BYTES
+        && filtered_bytes >= pipeline_min_bytes()
         && std::thread::available_parallelism().is_ok_and(|n| n.get() >= 2)
 }
 
