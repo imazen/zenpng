@@ -32,6 +32,19 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- **Encode output no longer depends on the thread limit.** Efforts 1-15
+  compress every image of two or more strips (about 512 KiB of filtered rows
+  each) strip by strip, on one thread or several, so `parallel` /
+  `max_threads` / the zencodec threading policy change speed, not bytes
+  (`tests/thread_determinism.rs`). Filters are chosen over the whole image
+  (each strip refines the image's best strategies plus its own screen
+  winner); choosing per strip had made line art up to 8% larger. Against the
+  old single-threaded whole-image encode, 51 images: e1 -0.75% geomean (worst
+  +4.5%), e2-e7 within +-0.06% geomean (worst +1.1%), e8-e15 +0.11-0.19%
+  geomean (worst +2.6%); images under two strips are unchanged
+  (`benchmarks/strip_layout_sizes_2026-10-08.md`). Strip streaming
+  (`push_rows`) still chooses per strip, so it is no longer byte-identical
+  to the one-shot encode (e8-e15 +0.07-0.17% geomean over it, worst +6.8%).
 - The two-thread decode pipeline (`decode`, `push_decoder`,
   `streaming_decoder`) starts at a per-format size where it was measured at
   least 1.3x faster, instead of at 512 KiB of filtered data: on x86_64 gray8
@@ -91,8 +104,10 @@ All notable changes to zenpng are documented here.
 - `push_rows` at efforts 1-15 compresses strip by strip as rows arrive
   (about 512 KiB of filtered rows each) when the canvas height is known,
   every downcast and near-lossless are off, no `iDOT` segments are
-  requested, and the image spans two or more strips. Output is
-  byte-identical to the one-shot multi-threaded encode; memory is one strip
+  requested, and the image spans two or more strips. Output was
+  byte-identical to the one-shot multi-threaded encode (since the
+  thread-independent strip layout it chooses filters per strip and the
+  one-shot encode over the whole image); memory is one strip
   plus the compressed output instead of the whole image. With threads
   allowed (`parallel`), completed strips are compressed on a worker pool
   while rows keep arriving (at most 2 per thread in flight; same output).

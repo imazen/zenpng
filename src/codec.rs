@@ -8781,7 +8781,12 @@ mod strip_stream_tests {
         let stride = w as usize * desc.bytes_per_pixel();
         let whole = PixelSlice::new(data, w, h, stride, desc).unwrap();
         for effort in [1, 2, 5, 7, 9, 13, 15] {
+            // Streaming chooses filters per strip (it can't see the strips
+            // to come); the one-shot encode does the same here, and
+            // otherwise chooses them over the whole image.
+            crate::encoder::compress::TEST_SELECT_PER_STRIP.with(|c| c.set(true));
             let reference = oneshot(effort, whole.clone());
+            crate::encoder::compress::TEST_SELECT_PER_STRIP.with(|c| c.set(false));
             for (threads, chunk) in [(1, 1), (1, 7), (1, 64), (1, h), (3, 1), (3, 64), (8, 7)] {
                 let got = streamed(threads, effort, data, w, h, desc, chunk);
                 assert!(
@@ -8803,8 +8808,9 @@ mod strip_stream_tests {
         }
     }
 
-    // The reference is the multi-threaded one-shot encode; wasm32 has no
-    // threads, so its one-shot encode is the whole-image search instead.
+    // The reference is the one-shot strip encode with per-strip filter
+    // choice (the same bytes at any thread count). wasm32 has no strip
+    // streaming worker pool, so the test doesn't run there.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn strip_streaming_matches_parallel_oneshot() {

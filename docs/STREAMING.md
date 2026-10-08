@@ -21,9 +21,12 @@ zencodec `Encoder::push_rows` + `finish` picks a mode on the first push:
 Why the conditions: downcasts (opaque RGBA → RGB, gray, palette, `tRNS`,
 16 → 8 bit) need every pixel before the color type is known; efforts 16+
 run brute-force and fork/beam searches over the whole image; `iDOT`
-segments are planned from the whole stream. Strip-streamed output is
-byte-identical to the one-shot multi-threaded encode of the same rows
-(0.02-0.3% larger than the single-threaded one-shot encode at efforts 2-15).
+segments are planned from the whole stream. The one-shot encode uses the
+same strips at every thread count but chooses filters over the whole image;
+strip streaming can't see the strips to come and chooses per strip:
+e2-e7 +0.01-0.02% geomean over the one-shot encode, e8-e15 +0.07-0.17%
+(worst +6.8%, line art at e10;
+`benchmarks/strip_layout_sizes_2026-10-08.md`).
 
 What a caller can reach:
 

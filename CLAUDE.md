@@ -14,7 +14,7 @@ PNG encoder/decoder with SIMD-accelerated unfiltering and zenflate decompression
   - `row.rs` — IdatSource, RowDecoder (streaming row-by-row decompress + unfilter)
   - `postprocess.rs` — `RowExpander` (built once per image: palette/sub-byte lookup tables, tRNS, 16-bit byte swap; expands raw rows straight into the output buffer), `OutBuf`, build_pixel_buffer/build_pixel_data
   - `interlace.rs` — Adam7 pass constants, decode_interlaced
-  - `pipeline.rs` — two-thread decode (inflate on a second thread, unfilter/expand on the caller's) for non-iDOT images with ≥512 KiB filtered data when `max_threads != 1`
+  - `pipeline.rs` — two-thread decode (inflate on a second thread, unfilter/expand on the caller's) for non-iDOT, non-palette images above a per-format, per-target size (`pipeline_min_bytes_for`, from `benchmarks/decode_pipeline_crossover_2026-10-08.md`: x86_64 1.7-10 MiB of filtered data, other targets 6.75-28 MiB) when `max_threads != 1`
 - `src/encoder/` — PNG encode pipeline
   - `mod.rs` — CompressOptions, PhaseStat/PhaseStats, write_indexed_png, write_truecolor_png
   - `filter.rs` — Filter strategies (Single, Adaptive, BruteForce, BruteForceBlock)
@@ -281,9 +281,16 @@ FullOptimal's compression.
    when the `zopfli` feature is on). Effort 31+: NearOptimal + FullOptimal
    (+ optional zenzop).
 
-With `parallel` on, efforts without phase 3/4 (1-15) run phases 1-2 per
-~512 KiB strip on worker threads (`compress_strips`); with `iDOT` segments
-requested, segments come straight from those strips (`compress_segmented`).
+Efforts without phase 3/4 (1-15) run phases 1-2 per ~512 KiB strip
+(`compress_strips`) whenever the image spans two or more strips, on worker
+threads when allowed and in order on the caller's thread otherwise: the
+bytes never depend on the thread count (`tests/thread_determinism.rs`).
+Filters are chosen over the whole image: each strip refines the image-wide
+top-k plus its own screen winner, and the screen-level output stays a
+candidate (`global_strip_selection_never_loses_to_per_strip`). Strip
+streaming (`push_rows`) chooses per strip. With `iDOT` segments requested,
+segments come straight from those strips (`compress_segmented`). Size cost
+vs one whole-image stream: `benchmarks/strip_layout_sizes_2026-10-08.md`.
 
 ### Filter strategy sets (`src/encoder/filter.rs`)
 
