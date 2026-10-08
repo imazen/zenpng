@@ -32,6 +32,39 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- **Encode threads are on by default** (`EncodeConfig::parallel` now
+  defaults to `true`; the zencodec threading policy still decides through
+  `max_threads`). Threads are used only where they were measured to make
+  the encode at least 1.5x faster at half the ideal efficiency, on i265 and
+  Neoverse-N1: efforts 1-15 split images of 2+ strips across threads (a
+  thread per strip from effort 5; per 2 strips from 6 strips at 2-4; per 6
+  strips from 12, at most 4, at effort 1), efforts 20-23 use at most 3
+  threads, efforts 16-19 and 24+ one. 4096 px RGB8 encodes 5.6x faster at
+  effort 2 and 7x at effort 13 on 8 cores; 1024 px RGB8 2.4-3x from effort
+  5. Same output as one thread; 38-74 MB more peak RSS at 4096 px with 4
+  threads (`benchmarks/encode_threads_2026-10-08.md`).
+  `encode_threading_info` follows the rule.
+- **Encode output no longer depends on the thread limit.** Efforts 1-15
+  compress every image of two or more strips (about 512 KiB of filtered rows
+  each) strip by strip, on one thread or several, so `parallel` /
+  `max_threads` / the zencodec threading policy change speed, not bytes
+  (`tests/thread_determinism.rs`). Filters are chosen over the whole image
+  (each strip refines the image's best strategies plus its own screen
+  winner); choosing per strip had made line art up to 8% larger. Against the
+  old single-threaded whole-image encode, 51 images: e1 -0.75% geomean (worst
+  +4.5%), e2-e7 within +-0.06% geomean (worst +1.1%), e8-e15 +0.11-0.19%
+  geomean (worst +2.6%); images under two strips are unchanged
+  (`benchmarks/strip_layout_sizes_2026-10-08.md`). Strip streaming
+  (`push_rows`) still chooses per strip, so it is no longer byte-identical
+  to the one-shot encode (e8-e15 +0.07-0.17% geomean over it, worst +6.8%).
+- The two-thread decode pipeline (`decode`, `push_decoder`,
+  `streaming_decoder`) starts at a per-format size where it was measured at
+  least 1.3x faster, instead of at 512 KiB of filtered data: on x86_64 gray8
+  1.69 MiB, RGB8 2.25 MiB, RGBA8 3 MiB, RGB16 and other layouts 10.13 MiB;
+  on other targets (Neoverse-N1 data) 12 / 14.06 / 6.75 / 28.13 MiB. On
+  Neoverse-N1 the old threshold made 768-1024 px RGB8 and gray8 decodes
+  1.04-1.27x slower. Same output
+  (`benchmarks/decode_pipeline_crossover_2026-10-08.md`).
 - Encodes of images under 512 KiB of filtered rows run single-threaded even
   with `parallel` / `max_threads` > 1: thread spawns made 64 px encodes
   1.6-5.7x and 256 px RGB8 encodes 1.1-1.8x slower than single-threaded at
@@ -83,8 +116,10 @@ All notable changes to zenpng are documented here.
 - `push_rows` at efforts 1-15 compresses strip by strip as rows arrive
   (about 512 KiB of filtered rows each) when the canvas height is known,
   every downcast and near-lossless are off, no `iDOT` segments are
-  requested, and the image spans two or more strips. Output is
-  byte-identical to the one-shot multi-threaded encode; memory is one strip
+  requested, and the image spans two or more strips. Output was
+  byte-identical to the one-shot multi-threaded encode (since the
+  thread-independent strip layout it chooses filters per strip and the
+  one-shot encode over the whole image); memory is one strip
   plus the compressed output instead of the whole image. With threads
   allowed (`parallel`), completed strips are compressed on a worker pool
   while rows keep arriving (at most 2 per thread in flight; same output).
@@ -169,6 +204,12 @@ All notable changes to zenpng are documented here.
   release before zenpng is published.
 
 ### Fixed
+
+- `max_threads` above 1 is now a cap at efforts 16+: screening started a
+  thread per strategy (9 from effort 20), refinement and Phase 4
+  recompression (NearOptimal, FullOptimal, zopfli) one per candidate,
+  whatever `max_threads` said. They now run on a work queue of at most
+  `max_threads` threads (`par_map`), with the same output.
 
 - `streaming_decoder` and `decode_apng` probed the file with critical-chunk
   CRC checks on, so they rejected files with a stale IDAT CRC that

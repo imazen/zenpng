@@ -63,9 +63,10 @@ jobs:
         run: cargo test --features imagequant
 
       # `_dev` adds counters that prove the iDOT parallel path actually ran
-      # on the files where it must (and never on the ones where it must not).
-      - name: Test (iDOT parallel decode, _dev counters)
-        run: cargo test --features _dev --test idot --test idot_encode --test idot_tiny
+      # on the files where it must (and never on the ones where it must not),
+      # and that the decode-pipeline tests really pipelined.
+      - name: Test (iDOT parallel decode and decode pipeline, _dev counters)
+        run: cargo test --features _dev --test idot --test idot_encode --test idot_tiny --test decode_pipeline
 
   imageio:
     # zenpng's iDOT output must decode in Apple ImageIO exactly as ImageIO's

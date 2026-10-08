@@ -213,9 +213,15 @@ fn lodepng_encode(img: Img) -> Vec<u8> {
 type EncodeFn = Box<dyn Fn(Img) -> Vec<u8> + Send + Sync>;
 
 fn effort_cfg(e: u32, parallel: bool) -> zenpng::EncodeConfig {
-    zenpng::EncodeConfig::default()
+    let mut c = zenpng::EncodeConfig::default()
         .with_compression(zenpng::Compression::Effort(e))
-        .with_parallel(parallel)
+        .with_parallel(parallel);
+    if !parallel {
+        // Strictly one thread (Phase 4 recompression otherwise follows
+        // max_threads alone).
+        c.max_threads = 1;
+    }
+    c
 }
 
 /// Encode arms: (name, encoder). Sizes printed once per arm.
@@ -232,15 +238,31 @@ fn encode_arms(edge: u32) -> Vec<(String, EncodeFn)> {
             Box::new(move |i| zenpng_encode(i, &cfg)),
         ));
     }
+    // ZENPNG_PARETO_MT_THREADS (e.g. "2,4,8"): one `zenpng_e<E>_t<N>` arm per
+    // thread count instead of the all-cores `_mt` arm.
+    let thread_counts = env_list("ZENPNG_PARETO_MT_THREADS", &[]);
     for e in env_list("ZENPNG_PARETO_MT_EFFORTS", &[7, 13, 19]) {
         if e > 13 && !big_ok {
             continue;
         }
-        let cfg = effort_cfg(e, true);
-        arms.push((
-            format!("zenpng_e{e}_mt"),
-            Box::new(move |i| zenpng_encode(i, &cfg)),
-        ));
+        if thread_counts.is_empty() {
+            let cfg = effort_cfg(e, true);
+            arms.push((
+                format!("zenpng_e{e}_mt"),
+                Box::new(move |i| zenpng_encode(i, &cfg)),
+            ));
+        }
+        for &t in &thread_counts {
+            let mut cfg = effort_cfg(e, true);
+            cfg.max_threads = t as usize;
+            arms.push((
+                format!("zenpng_e{e}_t{t}"),
+                Box::new(move |i| zenpng_encode(i, &cfg)),
+            ));
+        }
+    }
+    if std::env::var_os("ZENPNG_PARETO_NO_OTHERS").is_some() {
+        return arms;
     }
     if std::env::var_os("ZENPNG_PARETO_NO_IDOT").is_none() {
         let idot = effort_cfg(7, true).with_decode_segments(8);
@@ -290,7 +312,16 @@ fn bench_encode(suite: &mut Suite) {
             size_line(&group, arm, f(img).len());
         }
         let px = (w * h) as u64;
+        // ZENPNG_PARETO_MAX_WALL (seconds): zenbench's per-group wall clock
+        // (default 120 s) runs out before one round of slow arms (e15+ at
+        // 4096 px, e20+ at 1024 px) and reports 0 rounds.
+        let max_wall = std::env::var("ZENPNG_PARETO_MAX_WALL")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok());
         suite.compare(group, move |g| {
+            if let Some(s) = max_wall {
+                g.config().max_wall_time(std::time::Duration::from_secs(s));
+            }
             g.throughput(Throughput::Elements(px));
             g.throughput_unit("px");
             for (arm, f) in arms {

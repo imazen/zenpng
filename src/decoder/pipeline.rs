@@ -18,11 +18,35 @@ use whereat::at;
 use super::row::RowDecoder;
 use crate::error::{PngError, Result};
 
-/// Smallest filtered stream (bytes) worth a second thread. Crossover on i265
-/// E-cores (2026-10-06, `decode_only`, RGB8 at 256-768 px): a photo gains from
-/// ~324 KiB (0.83x at 384 px), a document and a screenshot break even at
-/// ~480-600 KiB (0.98-1.01x) and gain from ~750 KiB (0.79-0.88x).
-pub(crate) const PIPELINE_MIN_BYTES: usize = 512 * 1024;
+/// Smallest filtered stream (bytes) for which two threads typically give
+/// at least 1.3x the single-thread throughput (median decode time <= 0.77x),
+/// per output layout. Measured 2026-10-08 on i265 P-cores (x86_64) and
+/// Neoverse-N1 (arm-big, used for every other target), 3-20 imazen-26
+/// renditions per format and size from 512 to 4096 px
+/// (`benchmarks/decode_pipeline_crossover_2026-10-08.{md,tsv}`). Each value is the
+/// smallest measured size from which every larger size passes.
+fn pipeline_min_bytes_for(color_type: u8, bit_depth: u8) -> usize {
+    const KIB: usize = 1 << 10;
+    const MIB: usize = 1 << 20;
+    #[cfg(target_arch = "x86_64")]
+    let t = match (color_type, bit_depth) {
+        (0, 8) => 1728 * KIB,   // gray8 1536 px 0.728x; 1024 px 0.832x
+        (2, 8) => 2304 * KIB,   // RGB8 1024 px 0.690x; 768 px 0.862x
+        (6, 8) => 3 * MIB,      // RGBA8 1024 px 0.713x; 768 px 0.775x
+        (2, 16) => 10368 * KIB, // RGB16 1536 px 0.733x; 1024 px 0.791x
+        // Gray+alpha, gray16, RGBA16: not measured; the largest of the above.
+        _ => 10368 * KIB,
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let t = match (color_type, bit_depth) {
+        (0, 8) => 12 * MIB,     // gray8 4096 px 0.746x; 3072 px 0.795x
+        (2, 8) => 14400 * KIB,  // RGB8 2560 px 0.708x; 2048 px 0.779x
+        (6, 8) => 6912 * KIB,   // RGBA8 1536 px 0.727x; 1024 px 0.879x
+        (2, 16) => 28800 * KIB, // RGB16 2560 px 0.661x; 2048 px 0.772x
+        _ => 28800 * KIB,
+    };
+    t
+}
 
 /// Filtered bytes per chunk handed between the threads.
 const CHUNK_BYTES: usize = 128 * 1024;
@@ -30,9 +54,36 @@ const CHUNK_BYTES: usize = 128 * 1024;
 /// Chunks in flight; the producer gets at most this far ahead.
 const CHUNKS: usize = 4;
 
-/// [`PIPELINE_MIN_BYTES`], or with the `_dev` feature the
+/// Test override of [`pipeline_min_bytes_for`] (0 = none), so small test
+/// images exercise the pipeline. `_dev` only.
+#[cfg(feature = "_dev")]
+pub(crate) static MIN_BYTES_OVERRIDE: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(feature = "_dev")]
+std::thread_local! {
+    /// Pipelined decodes started on this thread, for tests that must prove
+    /// the path ran (per thread, so concurrent tests don't count).
+    pub(crate) static RUNS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
+#[cfg(feature = "_dev")]
+fn count_run() {
+    RUNS.with(|r| r.set(r.get() + 1));
+}
+#[cfg(not(feature = "_dev"))]
+fn count_run() {}
+
+/// [`pipeline_min_bytes_for`] (or [`MIN_BYTES_OVERRIDE`]), or with the `_dev` feature the
 /// `ZENPNG_PIPELINE_MIN_BYTES` override (threshold sweeps).
-fn pipeline_min_bytes() -> usize {
+fn pipeline_min_bytes(color_type: u8, bit_depth: u8) -> usize {
+    #[cfg(feature = "_dev")]
+    {
+        let v = MIN_BYTES_OVERRIDE.load(core::sync::atomic::Ordering::Relaxed);
+        if v != 0 {
+            return v;
+        }
+    }
     #[cfg(feature = "_dev")]
     if let Some(v) = std::env::var("ZENPNG_PIPELINE_MIN_BYTES")
         .ok()
@@ -40,7 +91,7 @@ fn pipeline_min_bytes() -> usize {
     {
         return v;
     }
-    PIPELINE_MIN_BYTES
+    pipeline_min_bytes_for(color_type, bit_depth)
 }
 
 /// Whether decoding `ihdr`'s image with `max_threads` should pipeline.
@@ -49,7 +100,9 @@ fn pipeline_min_bytes() -> usize {
 /// bytes per filtered byte on the consumer thread, so it is the bottleneck
 /// and the handoff only adds cost (pal8 at 1024 px ran 1.32x slower
 /// pipelined on i265 P-cores, `benchmarks/pareto_x86_decode_2026-10-07.md`;
-/// RGB8 0.83x, RGBA8 0.78x, RGB16 0.92x, gray8 0.99x).
+/// RGB8 0.83x, RGBA8 0.78x, RGB16 0.92x, gray8 0.99x). Other layouts
+/// pipeline from [`pipeline_min_bytes_for`] filtered bytes, where two threads
+/// typically reach 1.3x the one-thread throughput.
 pub(crate) fn worth_it(ihdr: &crate::chunk::ihdr::Ihdr, max_threads: usize) -> bool {
     let Ok(raw) = ihdr.raw_row_bytes() else {
         return false;
@@ -59,7 +112,7 @@ pub(crate) fn worth_it(ihdr: &crate::chunk::ihdr::Ihdr, max_threads: usize) -> b
         && max_threads != 1
         && ihdr.color_type != 3
         && ihdr.bit_depth >= 8
-        && filtered_bytes >= pipeline_min_bytes()
+        && filtered_bytes >= pipeline_min_bytes(ihdr.color_type, ihdr.bit_depth)
         && std::thread::available_parallelism().is_ok_and(|n| n.get() >= 2)
 }
 
@@ -73,6 +126,7 @@ pub(crate) fn run<'a>(
     cancel: &dyn Stop,
     mut consume: impl FnMut(usize, &[u8]) -> Result<()>,
 ) -> Result<RowDecoder<'a>> {
+    count_run();
     let stride = reader.stride();
     let per_chunk = (CHUNK_BYTES / stride).max(1);
     let (full_tx, full_rx) = mpsc::sync_channel::<Result<(Vec<u8>, usize)>>(CHUNKS);
@@ -211,6 +265,7 @@ pub(crate) struct Piped {
 impl Piped {
     /// Start inflating `rows` rows of `reader` on a new thread.
     pub(crate) fn spawn(mut reader: RowDecoder<'static>, rows: usize) -> Self {
+        count_run();
         let stride = reader.stride();
         let per_chunk = (CHUNK_BYTES / stride).max(1);
         let (full_tx, full_rx) = mpsc::sync_channel::<Result<(Vec<u8>, usize)>>(CHUNKS);

@@ -17,19 +17,30 @@ use crate::error::PngError;
 use crate::types::{Compression, Filter};
 
 /// PNG encode configuration.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct EncodeConfig {
     /// PNG compression level.
     pub compression: Compression,
     /// PNG row filter strategy.
     pub filter: Filter,
-    /// Use multi-threaded screening and refinement.
+    /// Use threads where they pay off. Default: true.
     ///
-    /// When true, Phase 1 (strategy screening) and Phase 2 (refinement)
-    /// run their independent evaluations in parallel using `std::thread::scope`.
-    /// Each thread allocates its own compression buffers (~3× image size),
-    /// so memory usage scales with thread count. Default: false.
+    /// The output is the same either way; only speed and memory change.
+    /// Threads are used, up to [`max_threads`](Self::max_threads), only
+    /// where they were measured to make the encode at least 1.5x faster at
+    /// half the ideal efficiency or better:
+    ///
+    /// - Efforts 1-15 on images of 2 or more strips (about 512 KiB of
+    ///   filtered rows each): a thread per strip from effort 5, per 2 strips
+    ///   from 6 strips at efforts 2-4, per 6 strips from 12 (at most 4) at
+    ///   effort 1. 4096 px RGB8 at effort 13 runs about 7x faster on 8 cores.
+    /// - Efforts 20-23: at most 3 threads (about 2x).
+    /// - Efforts 16-19 and 24+ (single-threaded searches dominate) and images
+    ///   under 512 KiB of filtered rows: one thread.
+    ///
+    /// Each thread adds working memory: at 4096x3072 RGB8 with 4 threads,
+    /// 38-74 MB more peak RSS at efforts 2-13.
     pub parallel: bool,
     /// Source gamma for gAMA chunk (scaled by 100000, e.g. 45455 = 1/2.2).
     ///
@@ -68,7 +79,8 @@ pub struct EncodeConfig {
     pub near_lossless_bits: u8,
     /// Maximum number of threads for compression.
     ///
-    /// - `0` means no limit (use as many threads as beneficial).
+    /// - `0` means no limit (the available cores; [`parallel`](Self::parallel)
+    ///   decides how many of them help).
     /// - `1` forces fully single-threaded operation: no `std::thread::scope`
     ///   calls anywhere in the compression pipeline.
     /// - `N > 1` caps parallelism to at most N threads.
@@ -114,6 +126,31 @@ pub struct EncodeConfig {
     /// bit-exact for the chosen format. Disable individual flags for
     /// debugging or to skip the scan cost on inputs known not to benefit.
     pub downcast: DowncastFlags,
+}
+
+impl Default for EncodeConfig {
+    fn default() -> Self {
+        Self {
+            compression: Compression::default(),
+            filter: Filter::default(),
+            parallel: true,
+            source_gamma: None,
+            srgb_intent: None,
+            chromaticities: None,
+            cicp: None,
+            content_light_level: None,
+            mastering_display: None,
+            near_lossless_bits: 0,
+            max_threads: 0,
+            pixels_per_unit_x: None,
+            pixels_per_unit_y: None,
+            phys_unit: None,
+            text_chunks: Vec::new(),
+            last_modified: None,
+            decode_segments: 0,
+            downcast: DowncastFlags::default(),
+        }
+    }
 }
 
 /// Lossless downcast knobs applied before filtering.
@@ -204,7 +241,9 @@ impl EncodeConfig {
         self
     }
 
-    /// Enable multi-threaded screening and refinement.
+    /// Allow threads where they pay off (the default), or `false` for a
+    /// single-threaded encode. Same output either way; see
+    /// [`parallel`](Self::parallel).
     #[must_use]
     pub fn with_parallel(mut self, parallel: bool) -> Self {
         self.parallel = parallel;
@@ -1051,7 +1090,7 @@ mod tests {
         let c = EncodeConfig::default();
         assert_eq!(c.compression, Compression::Balanced);
         assert_eq!(c.filter, Filter::Auto);
-        assert!(!c.parallel);
+        assert!(c.parallel);
         assert!(c.source_gamma.is_none());
         assert!(c.srgb_intent.is_none());
         assert!(c.chromaticities.is_none());
