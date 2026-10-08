@@ -91,12 +91,12 @@ pub fn is_opaque_rgba8(rgba: &[u8]) -> bool {
 
 #[magetypes(define(u8x64), v4x, v4, v3, neon, wasm128, scalar)]
 fn is_opaque_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
-    let alpha_mask = u8x64::from_array(token, ALPHA_MASK_RGBA8);
-    let opaque = u8x64::splat(token, 0xFF);
+    let alpha_mask = u8x64::from_array_t(token, ALPHA_MASK_RGBA8);
+    let opaque = u8x64::splat_t(token, 0xFF);
     let mut i = 0;
     while i + 64 <= rgba.len() {
         let chunk: &[u8; 64] = (&rgba[i..i + 64]).try_into().unwrap();
-        let v = u8x64::load(token, chunk);
+        let v = u8x64::load_t(token, chunk);
         // (v != 0xFF) at every byte; mask down to alpha lanes.
         let bad = v.simd_ne(opaque) & alpha_mask;
         if bad.any_true() {
@@ -126,14 +126,14 @@ pub fn is_grayscale_rgba8(rgba: &[u8]) -> bool {
 
 #[magetypes(define(u8x64), v4x, v4, v3, neon, wasm128, scalar)]
 fn is_grayscale_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
-    let mask = u8x64::from_array(token, RGB_DELTA_MASK_RGBA8);
+    let mask = u8x64::from_array_t(token, RGB_DELTA_MASK_RGBA8);
     let mut i = 0;
     // Need 65 bytes per chunk: a load at i and a load at i+1.
     while i + 65 <= rgba.len() {
         let chunk0: &[u8; 64] = (&rgba[i..i + 64]).try_into().unwrap();
         let chunk1: &[u8; 64] = (&rgba[i + 1..i + 65]).try_into().unwrap();
-        let v0 = u8x64::load(token, chunk0);
-        let v1 = u8x64::load(token, chunk1);
+        let v0 = u8x64::load_t(token, chunk0);
+        let v1 = u8x64::load_t(token, chunk1);
         // simd_ne yields 0xFF where bytes differ; mask keeps only the
         // R^G and G^B byte positions that matter.
         let masked = v0.simd_ne(v1) & mask;
@@ -164,13 +164,13 @@ pub fn alpha_is_binary_rgba8(rgba: &[u8]) -> bool {
 
 #[magetypes(define(u8x64), v4x, v4, v3, neon, wasm128, scalar)]
 fn alpha_is_binary_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
-    let alpha_mask = u8x64::from_array(token, ALPHA_MASK_RGBA8);
-    let zero = u8x64::splat(token, 0);
-    let opaque = u8x64::splat(token, 0xFF);
+    let alpha_mask = u8x64::from_array_t(token, ALPHA_MASK_RGBA8);
+    let zero = u8x64::splat_t(token, 0);
+    let opaque = u8x64::splat_t(token, 0xFF);
     let mut i = 0;
     while i + 64 <= rgba.len() {
         let chunk: &[u8; 64] = (&rgba[i..i + 64]).try_into().unwrap();
-        let v = u8x64::load(token, chunk);
+        let v = u8x64::load_t(token, chunk);
         // Bad if (alpha != 0) AND (alpha != 255). Both compares produce
         // 0xFF/0 masks; AND them together, mask to alpha lanes only.
         let bad = v.simd_ne(zero) & v.simd_ne(opaque) & alpha_mask;
@@ -207,9 +207,9 @@ pub fn is_grayscale_rgb8(rgb: &[u8]) -> bool {
 fn is_grayscale_rgb8_impl(token: Token, rgb: &[u8]) -> bool {
     // Within bytes [0..64), [64..128), [128..192) the phase k%3 starts at
     // 0, 1, 2 respectively (because 64 % 3 == 1).
-    let m0 = u8x64::from_array(token, rgb8_phase_mask(0));
-    let m1 = u8x64::from_array(token, rgb8_phase_mask(1));
-    let m2 = u8x64::from_array(token, rgb8_phase_mask(2));
+    let m0 = u8x64::from_array_t(token, rgb8_phase_mask(0));
+    let m1 = u8x64::from_array_t(token, rgb8_phase_mask(1));
+    let m2 = u8x64::from_array_t(token, rgb8_phase_mask(2));
 
     let mut i = 0;
     // Need 193 bytes per super-chunk (64+64+64 plus the final +1 shifted load).
@@ -217,8 +217,8 @@ fn is_grayscale_rgb8_impl(token: Token, rgb: &[u8]) -> bool {
         for (off, mask) in [(0usize, m0), (64, m1), (128, m2)] {
             let c0: &[u8; 64] = (&rgb[i + off..i + off + 64]).try_into().unwrap();
             let c1: &[u8; 64] = (&rgb[i + off + 1..i + off + 65]).try_into().unwrap();
-            let v0 = u8x64::load(token, c0);
-            let v1 = u8x64::load(token, c1);
+            let v0 = u8x64::load_t(token, c0);
+            let v1 = u8x64::load_t(token, c1);
             let masked = v0.simd_ne(v1) & mask;
             if masked.any_true() {
                 return false;
@@ -255,13 +255,13 @@ fn bit_replication_lossless_be16_impl(token: Token, be_bytes: &[u8]) -> bool {
     // the comparison checks pair[k]==pair[k+1] (the bit-replication test).
     // Odd positions compare pair[k+1]==pair[k+2] (across-pair, don't care)
     // and are masked out.
-    let even_mask = u8x64::from_array(token, EVEN_BYTE_MASK);
+    let even_mask = u8x64::from_array_t(token, EVEN_BYTE_MASK);
     let mut i = 0;
     while i + 65 <= be_bytes.len() {
         let c0: &[u8; 64] = (&be_bytes[i..i + 64]).try_into().unwrap();
         let c1: &[u8; 64] = (&be_bytes[i + 1..i + 65]).try_into().unwrap();
-        let v0 = u8x64::load(token, c0);
-        let v1 = u8x64::load(token, c1);
+        let v0 = u8x64::load_t(token, c0);
+        let v1 = u8x64::load_t(token, c1);
         let masked = v0.simd_ne(v1) & even_mask;
         if masked.any_true() {
             return false;
@@ -337,10 +337,10 @@ pub fn fused_predicates_rgba8(rgba: &[u8], req: FusedRequest) -> FusedResult {
 
 #[magetypes(define(u8x64), v4x, v4, v3, neon, wasm128, scalar)]
 fn fused_predicates_rgba8_impl(token: Token, rgba: &[u8], req: FusedRequest) -> FusedResult {
-    let alpha_mask = u8x64::from_array(token, ALPHA_MASK_RGBA8);
-    let rgb_delta_mask = u8x64::from_array(token, RGB_DELTA_MASK_RGBA8);
-    let zero = u8x64::splat(token, 0);
-    let opaque = u8x64::splat(token, 0xFF);
+    let alpha_mask = u8x64::from_array_t(token, ALPHA_MASK_RGBA8);
+    let rgb_delta_mask = u8x64::from_array_t(token, RGB_DELTA_MASK_RGBA8);
+    let zero = u8x64::splat_t(token, 0);
+    let opaque = u8x64::splat_t(token, 0xFF);
 
     let mut still_o = req.check_opaque;
     let mut still_g = req.check_grayscale;
@@ -359,7 +359,7 @@ fn fused_predicates_rgba8_impl(token: Token, rgba: &[u8], req: FusedRequest) -> 
             break;
         }
         let chunk0: &[u8; 64] = (&rgba[i..i + 64]).try_into().unwrap();
-        let v0 = u8x64::load(token, chunk0);
+        let v0 = u8x64::load_t(token, chunk0);
 
         if still_o {
             let bad = v0.simd_ne(opaque) & alpha_mask;
@@ -375,7 +375,7 @@ fn fused_predicates_rgba8_impl(token: Token, rgba: &[u8], req: FusedRequest) -> 
         }
         if still_g {
             let chunk1: &[u8; 64] = (&rgba[i + 1..i + 65]).try_into().unwrap();
-            let v1 = u8x64::load(token, chunk1);
+            let v1 = u8x64::load_t(token, chunk1);
             let bad = v0.simd_ne(v1) & rgb_delta_mask;
             if bad.any_true() {
                 still_g = false;
@@ -455,10 +455,10 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
         return FusedResult::default();
     }
 
-    let alpha_mask = u8x64::from_array(token, ALPHA_MASK_RGBA8);
-    let rgb_delta_mask = u8x64::from_array(token, RGB_DELTA_MASK_RGBA8);
-    let zero = u8x64::splat(token, 0);
-    let opaque = u8x64::splat(token, 0xFF);
+    let alpha_mask = u8x64::from_array_t(token, ALPHA_MASK_RGBA8);
+    let rgb_delta_mask = u8x64::from_array_t(token, RGB_DELTA_MASK_RGBA8);
+    let zero = u8x64::splat_t(token, 0);
+    let opaque = u8x64::splat_t(token, 0xFF);
 
     let len = rgba.len();
     let mut i = 0;
@@ -468,7 +468,7 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
 
     while i + bound <= len {
         let chunk0: &[u8; 64] = (&rgba[i..i + 64]).try_into().unwrap();
-        let v0 = u8x64::load(token, chunk0);
+        let v0 = u8x64::load_t(token, chunk0);
 
         // Collect all flips for THIS chunk before recursing. Otherwise a
         // single chunk that breaks two checks would only register one.
@@ -490,7 +490,7 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
         }
         if B {
             let chunk1: &[u8; 64] = (&rgba[i + 1..i + 65]).try_into().unwrap();
-            let v1 = u8x64::load(token, chunk1);
+            let v1 = u8x64::load_t(token, chunk1);
             let bad = v0.simd_ne(v1) & rgb_delta_mask;
             if bad.any_true() {
                 next_b = false;
