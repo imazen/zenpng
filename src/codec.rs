@@ -18,7 +18,7 @@ use zenpixels::{
 };
 
 use crate::decode::PngDecodeConfig;
-use crate::encode::EncodeConfig;
+use crate::encode::{DowncastFlags, EncodeConfig};
 use crate::error::PngError;
 
 /// Default encode timeout: 120 seconds.
@@ -202,6 +202,31 @@ impl PngEncoderConfig {
     #[must_use]
     pub fn with_near_lossless_bits(mut self, bits: u8) -> Self {
         self.config.near_lossless_bits = bits;
+        self
+    }
+
+    /// Replace the downcast flag set (see [`DowncastFlags`]). Default:
+    /// every lossless downcast on (opaque RGBA → RGB, gray detection,
+    /// palette when it fits, …), which needs the whole image before
+    /// compressing. With [`DowncastFlags::none()`], `push_rows` at efforts
+    /// 1-15 with a canvas size compresses strip by strip as rows arrive
+    /// instead of buffering the image (output byte-identical to a
+    /// multi-threaded one-shot encode).
+    #[must_use]
+    pub fn with_downcast(mut self, flags: DowncastFlags) -> Self {
+        self.config.downcast = flags;
+        self
+    }
+
+    /// Allow multi-threaded encoding: strips compressed concurrently at
+    /// efforts 1-15 (one-shot and `push_rows` strip streaming; output then
+    /// differs slightly from the single-threaded encode but not between
+    /// thread counts), concurrent candidate searches above. Default off. The
+    /// thread count is all cores unless the job's limits set a
+    /// single-threaded policy.
+    #[must_use]
+    pub fn with_parallel(mut self, parallel: bool) -> Self {
+        self.config.parallel = parallel;
         self
     }
 

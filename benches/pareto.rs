@@ -37,7 +37,9 @@
 //!   reference row-streaming decoder.
 //! - `senc/<name>` (RGB8/RGBA8): per effort in `ZENPNG_PARETO_STREAM_EFFORTS`
 //!   (default `0,1,2,7,13`), `e<E>_whole` (zencodec `Encoder::encode`) and
-//!   `e<E>_push16` (`push_rows` in 16-row strips after `with_canvas_size`).
+//!   `e<E>_push16` (`push_rows` in 16-row strips after `with_canvas_size`),
+//!   with default settings, with `DowncastFlags::none()` (`v`: strip
+//!   streaming at efforts 1-15) and with that plus threads (`vmt`).
 //!
 //! - `pdec/<name>`: decode threading per API and `iDOT` (see
 //!   `bench_pipeline_decode`).
@@ -565,23 +567,31 @@ fn bench_stream_decode(suite: &mut Suite) {
     }
 }
 
-fn zencodec_whole(img: Img, e: u32) -> Vec<u8> {
-    use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-    let enc = zenpng::PngEncoderConfig::new()
+/// zencodec encoder config: `verbatim` turns every downcast off (what lets
+/// `push_rows` stream strip by strip), `parallel` enables threads.
+fn zencodec_cfg(e: u32, verbatim: bool, parallel: bool) -> zenpng::PngEncoderConfig {
+    let c = zenpng::PngEncoderConfig::new()
         .with_compression(zenpng::Compression::Effort(e))
-        .job()
-        .encoder()
-        .unwrap();
+        .with_parallel(parallel);
+    if verbatim {
+        c.with_downcast(zenpng::DowncastFlags::none())
+    } else {
+        c
+    }
+}
+
+fn zencodec_whole(img: Img, e: u32, verbatim: bool, parallel: bool) -> Vec<u8> {
+    use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+    let enc = zencodec_cfg(e, verbatim, parallel).job().encoder().unwrap();
     enc.encode(img_slice(img, 0, img.h))
         .unwrap()
         .data()
         .to_vec()
 }
 
-fn zencodec_push(img: Img, e: u32, strip: usize) -> Vec<u8> {
+fn zencodec_push(img: Img, e: u32, strip: usize, verbatim: bool, parallel: bool) -> Vec<u8> {
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-    let mut enc = zenpng::PngEncoderConfig::new()
-        .with_compression(zenpng::Compression::Effort(e))
+    let mut enc = zencodec_cfg(e, verbatim, parallel)
         .job()
         .with_canvas_size(img.w as u32, img.h as u32)
         .encoder()
@@ -636,13 +646,23 @@ fn bench_stream_encode(suite: &mut Suite) {
             alpha,
         };
         let group = format!("senc/{name}");
+        // (name, verbatim, parallel): defaults, then downcasts off (strip
+        // streaming) single- and multi-threaded.
+        const MODES: [(&str, bool, bool); 3] =
+            [("", false, false), ("v", true, false), ("vmt", true, true)];
         for &e in &efforts {
-            size_line(&group, &format!("e{e}_whole"), zencodec_whole(img, e).len());
-            size_line(
-                &group,
-                &format!("e{e}_push16"),
-                zencodec_push(img, e, 16).len(),
-            );
+            for (m, v, p) in MODES {
+                size_line(
+                    &group,
+                    &format!("e{e}_{m}whole"),
+                    zencodec_whole(img, e, v, p).len(),
+                );
+                size_line(
+                    &group,
+                    &format!("e{e}_{m}push16"),
+                    zencodec_push(img, e, 16, v, p).len(),
+                );
+            }
         }
         let px = (w * h) as u64;
         let efforts = efforts.clone();
@@ -650,12 +670,14 @@ fn bench_stream_encode(suite: &mut Suite) {
             g.throughput(Throughput::Elements(px));
             g.throughput_unit("px");
             for &e in &efforts {
-                g.bench(format!("e{e}_whole"), move |b| {
-                    b.iter(|| zencodec_whole(img, e))
-                });
-                g.bench(format!("e{e}_push16"), move |b| {
-                    b.iter(|| zencodec_push(img, e, 16))
-                });
+                for (m, v, p) in MODES {
+                    g.bench(format!("e{e}_{m}whole"), move |b| {
+                        b.iter(|| zencodec_whole(img, e, v, p))
+                    });
+                    g.bench(format!("e{e}_{m}push16"), move |b| {
+                        b.iter(|| zencodec_push(img, e, 16, v, p))
+                    });
+                }
             }
         });
     }
