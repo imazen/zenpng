@@ -2081,6 +2081,14 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
             drop_icc: self.policy.as_ref().is_some_and(|p| !p.resolve_icc(true)),
             drop_exif: self.policy.as_ref().is_some_and(|p| !p.resolve_exif(true)),
             drop_xmp: self.policy.as_ref().is_some_and(|p| !p.resolve_xmp(true)),
+            no_animation: self
+                .policy
+                .as_ref()
+                .is_some_and(|p| !p.resolve_animation(true)),
+            no_progressive: self
+                .policy
+                .as_ref()
+                .is_some_and(|p| !p.resolve_progressive(true)),
         };
         crate::inventory::walk(data, cancel, opts)
             .map(Some)
@@ -6601,8 +6609,8 @@ mod tests {
 
         // Both should decode correctly
         let dec = PngDecoderConfig::new();
-        let d_lossless = dec.clone().decode(out_lossless.data()).unwrap();
-        let d_lossy = dec.decode(out_lossy.data()).unwrap();
+        let d_lossless = PngDecoderConfig::decode(&dec, out_lossless.data()).unwrap();
+        let d_lossy = PngDecoderConfig::decode(&dec, out_lossy.data()).unwrap();
         assert_eq!(d_lossless.width(), 2);
         assert_eq!(d_lossy.width(), 2);
     }

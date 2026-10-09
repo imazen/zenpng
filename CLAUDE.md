@@ -25,6 +25,7 @@ PNG encoder/decoder with SIMD-accelerated unfiltering and zenflate decompression
 - `src/encode.rs` — Public encode API facade
 - `src/error.rs` — Error types
 - `src/zencodec.rs` — zencodec trait integration
+- `src/inventory.rs` — `DecodeJob::inventory`: byte-exact chunk map (signature, every chunk through IEND, trailing data) with dispositions that replay `PngAncillary::collect`/`collect_late`. Change a disposition there in the same commit as any change to what the decode path does with a chunk; `tests/inventory.rs` pins the fixture and `just inventory-oracle` cross-checks exiftool -v3.
 
 ### Dependencies
 

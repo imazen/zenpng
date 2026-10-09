@@ -10,6 +10,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 enough = "0.4"
+# TEMPORARY: zencodec PR (structural inventories); swap for the released version before merge.
+zencodec = { git = "https://github.com/imazen/zencodec", branch = "feat/inventory" }
 
 [dependencies.zenpng]
 path = ".."
@@ -36,6 +38,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "inventory"
+path = "fuzz_targets/inventory.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "fuzz_decode_strict"
 path = "fuzz_targets/fuzz_decode_strict.rs"
 test = false
@@ -50,3 +59,5 @@ bench = false
 # once it ships. The fuzz crate is its own workspace, so the root patch does not reach it.
 [patch.crates-io]
 zenflate = { path = "../../zenflate" }
+# TEMPORARY: unify zencodec with the inventory PR branch (see above).
+zencodec = { git = "https://github.com/imazen/zencodec", branch = "feat/inventory" }

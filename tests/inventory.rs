@@ -49,6 +49,7 @@ fn indexed_idat() -> Vec<u8> {
 /// What the fixture builder expects for one top-level part.
 struct Want {
     tag: String,
+    kind: PartKind,
     range: std::ops::Range<u64>,
     disp: Disposition,
     label: Option<&'static str>,
@@ -66,6 +67,7 @@ impl Fixture {
             want: Vec::new(),
         };
         f.want.push(Want {
+            kind: PartKind::Header,
             tag: "-".into(),
             range: 0..8,
             disp: Disposition::Structure,
@@ -84,6 +86,7 @@ impl Fixture {
         let start = self.bytes.len() as u64;
         self.bytes.extend(chunk(ty, data));
         self.want.push(Want {
+            kind: PartKind::Chunk,
             tag: String::from_utf8_lossy(ty).into_owned(),
             range: start..self.bytes.len() as u64,
             disp,
@@ -102,6 +105,7 @@ impl Fixture {
         let start = self.bytes.len() as u64;
         self.bytes.extend(bytes);
         self.want.push(Want {
+            kind: PartKind::Chunk,
             tag: String::from_utf8_lossy(ty).into_owned(),
             range: start..self.bytes.len() as u64,
             disp,
@@ -133,6 +137,7 @@ fn everything() -> Fixture {
     let i = f.bytes.len() as u64;
     f.bytes.extend(ihdr(4, 2, 8, 3));
     f.want.push(Want {
+        kind: PartKind::Chunk,
         tag: "IHDR".into(),
         range: i..f.bytes.len() as u64,
         disp: D::Structure,
@@ -227,7 +232,7 @@ fn everything() -> Fixture {
         D::Skipped,
         Some("Author"),
     );
-    f.add(b"iDOT", &[0; 12], D::Structure, None);
+    f.add(b"iDOT", &[0; 12], D::Skipped, None); // fails idot::validate
     f.add(b"prVt", b"private camera serial 12345", D::Unknown, None);
     f.add_raw(b"IDAT", indexed_idat(), D::ImageData, None);
     // Post-IDAT metadata. Earlier eXIf/XMP win; gAMA is not collected after IDAT.
@@ -261,6 +266,7 @@ fn everything() -> Fixture {
     f.bytes
         .extend_from_slice(b"TRAILING PNG JUNK, e.g. a second payload");
     f.want.push(Want {
+        kind: PartKind::Gap,
         tag: "-".into(),
         range: start..f.bytes.len() as u64,
         disp: D::Trailing,
@@ -280,13 +286,22 @@ fn run(bytes: &[u8]) -> Inventory {
     inv
 }
 
-fn top(inv: &Inventory) -> Vec<(String, std::ops::Range<u64>, Disposition, Option<String>)> {
+type Row = (
+    String,
+    PartKind,
+    std::ops::Range<u64>,
+    Disposition,
+    Option<String>,
+);
+
+fn top(inv: &Inventory) -> Vec<Row> {
     inv.children(None)
         .into_iter()
         .map(|id| {
             let p = inv.get(id).unwrap();
             (
                 p.tag.to_string(),
+                p.kind,
                 p.range.clone(),
                 p.disposition,
                 p.label.as_ref().map(|l| l.to_string()),
@@ -348,6 +363,7 @@ fn everything_fixture_pins_the_part_list() {
         .map(|w| {
             (
                 w.tag.clone(),
+                w.kind,
                 w.range.clone(),
                 w.disp,
                 w.label.map(str::to_string),
@@ -604,6 +620,9 @@ struct OracleChunk {
     data_off: Option<u64>,
 }
 
+/// Chunk types exiftool -v3 does not print a line for (filled in from the corpus run).
+const EXIFTOOL_SILENT: [&str; 0] = [];
+
 /// `exiftool -v3` lists each PNG chunk as `PNG IHDR (13 bytes):` followed by a
 /// hex dump whose first row starts at the chunk's data offset; IDAT runs are
 /// merged (`PNG IDAT (2 chunks, total N bytes)`) and IEND prints
@@ -716,13 +735,16 @@ fn oracle_exiftool_chunk_offsets() {
             path.display()
         );
         compared += 1;
+        // Match each exiftool line to a distinct inventory chunk; exiftool prints IDAT
+        // runs merged and IEND without an offset, so those match by name/total.
+        let mut used = vec![false; ours.len()];
         for c in &listed {
-            let hit = ours.iter().find(|(n, start, tl)| {
-                n == &c.name
+            let hit = ours.iter().enumerate().find(|(i, (n, start, tl))| {
+                !used[*i]
+                    && n == &c.name
                     && c.data_off.is_none_or(|o| o == start + 8)
                     && c.len.is_none_or(|l| l + 12 == *tl)
                     && c.idat_total.is_none_or(|t| {
-                        // total payload = run length minus 12 bytes of framing per chunk
                         let n = inv
                             .children(None)
                             .into_iter()
@@ -737,7 +759,8 @@ fn oracle_exiftool_chunk_offsets() {
                         n == t
                     })
             });
-            if hit.is_some() {
+            if let Some((i, _)) = hit {
+                used[i] = true;
                 chunks_matched += 1;
             } else {
                 notes.push(format!(
@@ -746,6 +769,16 @@ fn oracle_exiftool_chunk_offsets() {
                     ours.iter()
                         .filter(|(n, ..)| *n == c.name)
                         .collect::<Vec<_>>()
+                ));
+            }
+        }
+        // Other direction: every inventory chunk exiftool did not list must be a type it
+        // does not print (damaged streams, chunks after IEND are not in `ours`).
+        for (i, (n, start, _)) in ours.iter().enumerate() {
+            if !used[i] && !EXIFTOOL_SILENT.contains(&n.as_str()) {
+                notes.push(format!(
+                    "{}: inventory chunk {n} at {start} was not listed by exiftool",
+                    path.file_name().unwrap().to_string_lossy()
                 ));
             }
         }
@@ -830,10 +863,13 @@ fn strict_policy_drops_bad_crc_ancillary_chunks() {
     let lenient = run(&png);
     assert_eq!(exif_part(&lenient).disposition, D::Metadata(M::Exif));
     assert!(exif_part(&lenient).detail.unwrap().contains("crc mismatch"));
-    let strict = run_with(&png, DecodePolicy::strict());
+    let strict = run_with(&png, DecodePolicy::none().with_strict(true));
     assert_eq!(exif_part(&strict).disposition, D::Dropped);
 
-    for (policy, want_exif) in [(None, true), (Some(DecodePolicy::strict()), false)] {
+    for (policy, want_exif) in [
+        (None, true),
+        (Some(DecodePolicy::none().with_strict(true)), false),
+    ] {
         let mut job = PngDecoderConfig::new().job();
         if let Some(p) = policy {
             job = job.with_policy(p);

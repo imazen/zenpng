@@ -70,3 +70,12 @@ arm-unfilters-macos group="":
 arm-scan-tiers-macos:
     mkdir -p "$HOME/tmp"
     CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 /usr/bin/time -l cargo bench --locked -p zenpng --bench scalar_vs_simd --features _dev -- --format=llm > "$HOME/tmp/png-arm-scan-tiers.log" 2>&1
+
+# Structural-inventory corpus runs: every PNG in codec-corpus pngsuite, png-conformance and
+# apng-conformance (local checkout, read-only), plus exiftool -v3 as an independent chunk dumper.
+inventory-oracle:
+    INVENTORY_ORACLE_EXIFTOOL="$(command -v exiftool)" ZENPNG_CODEC_CORPUS="${ZENPNG_CODEC_CORPUS:-$HOME/work/codec-corpus}" cargo test --test inventory -- --nocapture corpus_conformance_sets oracle_exiftool_chunk_offsets
+
+# Structural-inventory fuzz target (nightly + cargo-fuzz); seeds from the conformance sets.
+inventory-fuzz seconds="660":
+    cd fuzz && nice -n 19 cargo +nightly fuzz run inventory --target x86_64-unknown-linux-gnu -- -max_total_time={{seconds}} -dict=png.dict -max_len=65536
