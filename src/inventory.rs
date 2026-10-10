@@ -52,6 +52,9 @@ const IDAT_MAX_OUTPUT: usize = 1 << 32;
 /// Appended to a malformed iCCP: another consumer still reacts to the chunk's presence.
 const ICCP_BAD: &str =
     "; zenpipe's png_srgb_transform_icc still sees the chunk and skips its sRGB transform";
+/// Inflate output the prefix searches of one file may spend (the first pass over a run is
+/// not counted: it mirrors the decode's own inflate). Measured in `tests/inventory_cost.rs`.
+const SEARCH_WORK_BUDGET: u64 = 512 * 1024 * 1024;
 /// Search for the first-row-complete position is skipped above this much compressed data.
 const RUN_SEARCH_CAP: usize = 16 * 1024 * 1024;
 
@@ -166,6 +169,8 @@ struct IdatChunk {
 struct Probe {
     /// The zlib stream completed.
     done: bool,
+    /// Inflating stopped early because `stop_at` bytes of output were produced.
+    stopped: bool,
     /// Decompressed bytes produced.
     out: u64,
     adler: u32,
@@ -232,6 +237,8 @@ struct Walker<'a> {
     pre_fctl_dims: Option<(u32, u32)>,
     /// Raw size of frame 0 per its fcTL, while the IDAT run is placed.
     frame0_alt: Option<u64>,
+    /// Inflate output spent by prefix searches so far (see `SEARCH_WORK_BUDGET`).
+    search_work: u64,
     /// Post-IDAT frames accepted so far, and how the fdATs after the last fcTL are treated.
     late_frames: u32,
     /// The next chunk is the first after an accepted fcTL (read as frame data whatever its type).
@@ -320,6 +327,7 @@ pub(crate) fn walk(data: &[u8], stop: &dyn Stop, opts: Options) -> Result<Invent
         pre_fctl: false,
         pre_fctl_dims: None,
         frame0_alt: None,
+        search_work: 0,
         late_frames: 0,
         fd_first: false,
         fd_mode: FdMode::Skip("fdAT not directly after an fcTL"),
@@ -334,6 +342,8 @@ pub(crate) fn walk(data: &[u8], stop: &dyn Stop, opts: Options) -> Result<Invent
         .map_err(limit_err)?;
     Ok(inv)
 }
+
+const SEARCH_LIMIT_NOTE: &str = "inflate work limit for placing the stream end reached; bytes after the end of the data the decoder reads are not distinguished";
 
 fn md(kind: MetadataKind) -> Disposition {
     Disposition::Metadata(kind)
@@ -952,7 +962,12 @@ impl Walker<'_> {
 
     /// Inflate the first `limit` bytes of the run into a discard sink, as the default
     /// decode does (checksum skipped).
-    fn inflate_run(&mut self, run: &[IdatChunk], limit: usize) -> Result<Probe, PngError> {
+    fn inflate_run(
+        &mut self,
+        run: &[IdatChunk],
+        limit: usize,
+        stop_at: Option<u64>,
+    ) -> Result<Probe, PngError> {
         let src = RunSource {
             data: self.data,
             chunks: run,
@@ -964,7 +979,7 @@ impl Walker<'_> {
             .with_skip_checksum(true)
             .with_max_output_size(Some(IDAT_MAX_OUTPUT));
         let mut sum = zenflate::Adler32Hasher::new();
-        let (mut out, mut stalled, mut done) = (0u64, 0, false);
+        let (mut out, mut stalled, mut done, mut stopped) = (0u64, 0, false, false);
         loop {
             self.stop.check().map_err(PngError::from)?;
             if d.is_done() {
@@ -977,6 +992,10 @@ impl Walker<'_> {
                     sum.write(o);
                     out += n as u64;
                     d.advance(n);
+                    if stop_at.is_some_and(|s| out >= s) {
+                        stopped = true;
+                        break;
+                    }
                     stalled = if n == 0 { stalled + 1 } else { 0 };
                     if stalled > 2 && !d.is_done() {
                         break;
@@ -998,6 +1017,7 @@ impl Walker<'_> {
         }
         Ok(Probe {
             done,
+            stopped,
             out,
             adler: sum.finish(),
             pos: pos + src.off,
@@ -1020,7 +1040,8 @@ impl Walker<'_> {
         needed: Option<u64>,
     ) -> Result<(Option<usize>, Vec<String>), PngError> {
         let total: usize = run.iter().map(|c| c.data_end - c.data_start).sum();
-        let p = self.inflate_run(run, total)?;
+        let stop = needed.map(|n| n.saturating_add(1));
+        let p = self.inflate_run(run, total, stop)?;
         // Concatenated offset -> file offset of the first byte not read.
         let to_file = |l: usize| -> usize {
             let mut left = l;
@@ -1052,8 +1073,13 @@ impl Walker<'_> {
             }
             let (mut a, mut b) = (0usize, total);
             while a < b {
+                if self.search_work > SEARCH_WORK_BUDGET {
+                    return Ok((None, vec![String::from(SEARCH_LIMIT_NOTE)]));
+                }
                 let mid = a + (b - a) / 2;
-                if self.inflate_run(run, mid)?.out >= n {
+                let q = self.inflate_run(run, mid, Some(n))?;
+                self.search_work += q.out;
+                if q.out >= n {
                     b = mid;
                 } else {
                     a = mid + 1;
@@ -1063,6 +1089,10 @@ impl Walker<'_> {
                 format!(
                     "{} decompressed bytes after the last row are discarded; the compressed bytes after the rows (including the zlib footer) are never used",
                     p.out - n
+                )
+            } else if p.stopped {
+                String::from(
+                    "more decompressed data follows the last row and is discarded; the compressed bytes after the rows (including the zlib footer) are never used",
                 )
             } else {
                 String::from(
@@ -1100,7 +1130,11 @@ impl Walker<'_> {
             if l >= 4
                 && u32::from_be_bytes([byte(l - 4), byte(l - 3), byte(l - 2), byte(l - 1)])
                     == p.adler
-                && self.inflate_run(run, l)?.done
+                && {
+                    let q = self.inflate_run(run, l, None)?;
+                    self.search_work += q.out;
+                    q.done
+                }
             {
                 found = Some(l);
                 break;
@@ -1109,8 +1143,13 @@ impl Walker<'_> {
         if found.is_none() {
             let (mut a, mut b) = (lo, hi);
             while a < b {
+                if self.search_work > SEARCH_WORK_BUDGET {
+                    return Ok((None, vec![String::from(SEARCH_LIMIT_NOTE)]));
+                }
                 let mid = a + (b - a) / 2;
-                if self.inflate_run(run, mid)?.done {
+                let q = self.inflate_run(run, mid, None)?;
+                self.search_work += q.out;
+                if q.done {
                     b = mid;
                 } else {
                     a = mid + 1;

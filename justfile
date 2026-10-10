@@ -79,3 +79,9 @@ inventory-oracle:
 # Structural-inventory fuzz target (nightly + cargo-fuzz); seeds from the conformance sets.
 inventory-fuzz seconds="660":
     cd fuzz && nice -n 19 cargo +nightly fuzz run inventory --target x86_64-unknown-linux-gnu -- -max_total_time={{seconds}} -dict=png.dict -max_len=65536
+
+# Worst-case cost of the inventory's zlib-end placement; one process per case so peak RSS is per case.
+inventory-cost:
+    cargo test --release --test inventory_cost --no-run
+    for c in excess_stored broken_after_rows wrong_adler_full_image bomb_excess bomb_huge_ihdr bomb_huge_ihdr_wrong_adler wrong_adler_deflate_128m; do \
+      INVENTORY_COST_CASE=$c /usr/bin/time -v $(ls -t target/release/deps/inventory_cost-* | grep -v '\.d$' | head -1) --nocapture 2>&1 | grep -E "COST|Maximum resident|Elapsed|User time"; done
