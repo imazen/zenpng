@@ -47,8 +47,9 @@ const ZTXT_INFLATE_CAP: usize = 1024 * 1024;
 const XMP_INFLATE_CAP: usize = 4 * 1024 * 1024;
 /// Window for the discard-inflate that finds where the IDAT zlib stream ends.
 const IDAT_WINDOW: usize = 128 * 1024;
-/// Output bound for that discard-inflate (the decoder has none beyond the image size).
-const IDAT_MAX_OUTPUT: usize = 1 << 32;
+/// Output bound for that discard-inflate (the decoder has none beyond the image size):
+/// 4 GiB, or the whole address space where `usize` is 32 bits.
+const IDAT_MAX_OUTPUT: usize = (u32::MAX as usize).saturating_add(1);
 /// Appended to a malformed iCCP: another consumer still reacts to the chunk's presence.
 const ICCP_BAD: &str =
     "; zenpipe's png_srgb_transform_icc still sees the chunk and skips its sRGB transform";
