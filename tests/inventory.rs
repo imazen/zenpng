@@ -300,11 +300,11 @@ fn top(inv: &Inventory) -> Vec<Row> {
         .map(|id| {
             let p = inv.get(id).unwrap();
             (
-                p.tag.to_string(),
-                p.kind,
-                p.range.clone(),
-                p.disposition,
-                p.label.as_ref().map(|l| l.to_string()),
+                p.tag().to_string(),
+                p.kind(),
+                p.range(),
+                p.disposition(),
+                p.label().as_ref().map(|l| l.to_string()),
             )
         })
         .collect()
@@ -379,12 +379,12 @@ fn everything_fixture_pins_the_part_list() {
         assert_eq!(g, w, "\n{inv}");
     }
     // Every part is top-level and chunks carry their own bytes (no children).
-    assert!(inv.parts().iter().all(|p| p.parent.is_none()));
-    assert!(inv.parts().iter().all(|p| p.kind != PartKind::Box));
+    assert!(inv.parts().iter().all(|p| p.parent().is_none()));
+    assert!(inv.parts().iter().all(|p| p.kind() != PartKind::Box));
     assert!(
         inv.parts()
             .iter()
-            .any(|p| p.kind == PartKind::Gap && p.disposition == D::Trailing)
+            .any(|p| p.kind() == PartKind::Gap && p.disposition() == D::Trailing)
     );
 }
 
@@ -402,10 +402,11 @@ fn details_name_native_fields_and_reasons() {
     let detail_of = |tag: &str, nth: usize| -> String {
         inv.parts()
             .iter()
-            .filter(|p| p.tag == PartTag::FourCc(tag.as_bytes().try_into().unwrap()))
+            .filter(|p| *p.tag() == PartTag::FourCc(tag.as_bytes().try_into().unwrap()))
             .nth(nth)
-            .and_then(|p| p.detail.clone())
+            .and_then(|p| p.detail())
             .unwrap_or_default()
+            .to_string()
     };
     assert!(detail_of("gAMA", 0).contains("PngInfo::gamma"));
     assert!(detail_of("sBIT", 0).contains("PngInfo::significant_bits"));
@@ -433,18 +434,15 @@ fn bad_crc_is_reported_without_changing_the_disposition() {
     let p = inv
         .parts()
         .iter()
-        .find(|p| p.tag == PartTag::FourCc(*b"tEXt"))
+        .find(|p| *p.tag() == PartTag::FourCc(*b"tEXt"))
         .unwrap();
-    assert_eq!(p.disposition, D::Skipped);
-    assert!(p.detail.as_deref().unwrap().contains("crc mismatch"));
+    assert_eq!(p.disposition(), D::Skipped);
+    assert!(p.detail().unwrap().contains("crc mismatch"));
     // Intact chunks carry no crc remark.
     assert!(
         inv.parts()
             .iter()
-            .filter(|p| p
-                .detail
-                .as_deref()
-                .is_some_and(|d| d.contains("crc mismatch")))
+            .filter(|p| p.detail().is_some_and(|d| d.contains("crc mismatch")))
             .count()
             == 1
     );
@@ -456,7 +454,10 @@ fn missing_iend_ends_where_the_data_ends() {
     let iend = f.want.iter().find(|w| w.tag == "IEND").unwrap();
     let cut = &f.bytes[..iend.range.start as usize];
     let inv = run(cut);
-    assert!(inv.unconsumed().all(|(_, p)| p.disposition != D::Trailing));
+    assert!(
+        inv.unconsumed()
+            .all(|(_, p)| p.disposition() != D::Trailing)
+    );
     assert_eq!(inv.children(None).len(), f.want.len() - 2);
 }
 
@@ -474,7 +475,7 @@ fn text_beyond_the_chunk_cap_is_skipped_with_a_reason() {
     let capped: Vec<_> = inv
         .parts()
         .iter()
-        .filter(|p| p.detail.as_deref().is_some_and(|d| d.contains("text cap")))
+        .filter(|p| p.detail().is_some_and(|d| d.contains("text cap")))
         .collect();
     assert_eq!(capped.len(), 2);
 }
@@ -499,23 +500,22 @@ fn software_text_past_the_cap_still_feeds_creating_tool() {
     let p = inv
         .parts()
         .iter()
-        .find(|p| p.label.as_deref() == Some("Software"))
+        .find(|p| p.label() == Some("Software"))
         .unwrap();
-    assert_eq!(p.disposition, D::Metadata(M::Supplement));
-    assert!(p.detail.as_deref().unwrap().contains("text cap"));
+    assert_eq!(p.disposition(), D::Metadata(M::Supplement));
+    assert!(p.detail().unwrap().contains("text cap"));
 }
 
 #[test]
 fn not_a_png_and_short_inputs_still_yield_inventories() {
     assert_eq!(run(b"").parts().len(), 0);
     let inv = run(&SIG[..5]);
-    assert_eq!(inv.parts()[0].disposition, D::Malformed);
+    assert_eq!(inv.parts()[0].disposition(), D::Malformed);
     let inv = run(b"GIF89a plus some more bytes");
-    assert_eq!(inv.parts()[0].disposition, D::Malformed);
+    assert_eq!(inv.parts()[0].disposition(), D::Malformed);
     assert!(
         inv.parts()[0]
-            .detail
-            .as_deref()
+            .detail()
             .unwrap()
             .contains("missing PNG signature")
     );
@@ -532,7 +532,7 @@ fn keyword_labels_escape_control_bytes_and_stay_latin1() {
     let l = inv
         .parts()
         .iter()
-        .find_map(|p| (p.tag == PartTag::FourCc(*b"tEXt")).then(|| p.label.clone()))
+        .find_map(|p| (*p.tag() == PartTag::FourCc(*b"tEXt")).then(|| p.label()))
         .flatten()
         .unwrap();
     assert_eq!(l, "Caf\u{e9}\\x1b[2J");
@@ -698,7 +698,7 @@ fn oracle_exiftool_chunk_offsets() {
             // exiftool refuses files whose signature is damaged (PngSuite x*n0g*); the
             // inventory must flag exactly those.
             let first = &inv.parts()[0];
-            if first.kind == PartKind::Header && first.disposition == D::Malformed {
+            if first.kind() == PartKind::Header && first.disposition() == D::Malformed {
                 bad_signature += 1;
             } else {
                 notes.push(format!("{}: exiftool listed no PNG chunks", path.display()));
@@ -710,21 +710,21 @@ fn oracle_exiftool_chunk_offsets() {
         let mut sig_ok = false;
         for id in inv.children(None) {
             let p = inv.get(id).unwrap();
-            if p.kind == PartKind::Header {
+            if p.kind() == PartKind::Header {
                 sig_ok = true;
             }
-            match &p.tag {
-                PartTag::FourCc(cc) if p.kind == PartKind::Chunk => {
+            match &p.tag() {
+                PartTag::FourCc(cc) if p.kind() == PartKind::Chunk => {
                     let name = String::from_utf8_lossy(cc).into_owned();
-                    let len = p.range.end - p.range.start;
+                    let len = p.range().end - p.range().start;
                     if name == "IDAT"
                         && let Some(last) = ours.last_mut()
                         && last.0 == "IDAT"
-                        && last.1 + last.2 == p.range.start
+                        && last.1 + last.2 == p.range().start
                     {
                         last.2 += len;
                     } else {
-                        ours.push((name, p.range.start, len));
+                        ours.push((name, p.range().start, len));
                     }
                 }
                 _ => {}
@@ -751,11 +751,11 @@ fn oracle_exiftool_chunk_offsets() {
                             .into_iter()
                             .filter_map(|id| inv.get(id))
                             .filter(|p| {
-                                p.tag == PartTag::FourCc(*b"IDAT")
-                                    && p.range.start >= *start
-                                    && p.range.end <= start + tl
+                                *p.tag() == PartTag::FourCc(*b"IDAT")
+                                    && p.range().start >= *start
+                                    && p.range().end <= start + tl
                             })
-                            .map(|p| p.range.end - p.range.start - 12)
+                            .map(|p| p.range().end - p.range().start - 12)
                             .sum::<u64>();
                         n == t
                     })
@@ -857,15 +857,20 @@ fn strict_policy_drops_bad_crc_ancillary_chunks() {
     let exif_part = |inv: &Inventory| {
         inv.parts()
             .iter()
-            .find(|p| p.tag == PartTag::FourCc(*b"eXIf"))
+            .find(|p| *p.tag() == PartTag::FourCc(*b"eXIf"))
             .cloned()
             .unwrap()
     };
     let lenient = run(&png);
-    assert_eq!(exif_part(&lenient).disposition, D::Metadata(M::Exif));
-    assert!(exif_part(&lenient).detail.unwrap().contains("crc mismatch"));
+    assert_eq!(exif_part(&lenient).disposition(), D::Metadata(M::Exif));
+    assert!(
+        exif_part(&lenient)
+            .detail()
+            .unwrap()
+            .contains("crc mismatch")
+    );
     let strict = run_with(&png, DecodePolicy::none().with_strict(true));
-    assert_eq!(exif_part(&strict).disposition, D::Dropped);
+    assert_eq!(exif_part(&strict).disposition(), D::Dropped);
 
     for (policy, want_exif) in [
         (None, true),
@@ -899,10 +904,10 @@ fn bad_critical_crc_is_flagged_and_decode_agrees() {
     let p = inv
         .parts()
         .iter()
-        .find(|p| p.tag == PartTag::FourCc(*b"IDAT"))
+        .find(|p| *p.tag() == PartTag::FourCc(*b"IDAT"))
         .unwrap();
-    assert_eq!(p.disposition, D::ImageData);
-    assert!(p.detail.as_deref().unwrap().contains("rejects the file"));
+    assert_eq!(p.disposition(), D::ImageData);
+    assert!(p.detail().unwrap().contains("rejects the file"));
     assert!(
         PngDecoderConfig::new()
             .job()
@@ -929,8 +934,8 @@ fn policy_suppressing_metadata_marks_it_dropped() {
         let dropped = inv
             .parts()
             .iter()
-            .filter(|p| p.tag == PartTag::FourCc(tag) && p.label.as_deref() == label)
-            .filter(|p| p.disposition == D::Dropped)
+            .filter(|p| *p.tag() == PartTag::FourCc(tag) && p.label() == label)
+            .filter(|p| p.disposition() == D::Dropped)
             .count();
         assert!(dropped >= 1, "{tag:?} not dropped\n{inv}");
     }

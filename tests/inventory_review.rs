@@ -91,7 +91,7 @@ fn decode_with(
 fn parts_of(inv: &Inventory, ty: &[u8; 4]) -> Vec<zencodec::inventory::Part> {
     inv.parts()
         .iter()
-        .filter(|p| p.tag == PartTag::FourCc(*ty))
+        .filter(|p| *p.tag() == PartTag::FourCc(*ty))
         .cloned()
         .collect()
 }
@@ -114,17 +114,17 @@ fn assert_unconsumed(inv: &Inventory, file: &[u8], needle: &[u8]) {
     let range = at..at + needle.len() as u64;
     let mut has_child = vec![false; inv.parts().len()];
     for p in inv.parts() {
-        if let Some(par) = p.parent {
+        if let Some(par) = p.parent() {
             has_child[par.index()] = true;
         }
     }
     for (i, p) in inv.parts().iter().enumerate() {
-        if !has_child[i] && p.range.start < range.end && p.range.end > range.start {
+        if !has_child[i] && p.range().start < range.end && p.range().end > range.start {
             assert!(
-                !p.disposition.is_consumed(),
+                !p.disposition().is_consumed(),
                 "hidden bytes in a consumed part {:?} {:?}\n{inv}",
-                p.range,
-                p.disposition
+                p.range(),
+                p.disposition()
             );
         }
     }
@@ -149,13 +149,14 @@ fn strict_post_idat_bad_crc_exif_is_consumed() {
     let p = &parts_of(&inv, b"eXIf")[0];
     eprintln!(
         "inventory (strict crc): {:?} / {:?}",
-        p.disposition, p.detail
+        p.disposition(),
+        p.detail()
     );
     let out = decode_with(&png, Some(strict_crc_only())).expect("strict decode ok");
     let got = out.info().metadata().exif;
     eprintln!("strict-crc decode exif: {:?}", got.as_deref());
     assert_eq!(
-        p.disposition,
+        p.disposition(),
         D::Metadata(M::Exif),
         "post-IDAT chunks are read unchecked"
     );
@@ -183,21 +184,21 @@ fn strict_crc_alone_separates_good_and_bad_pre_idat_exif() {
     let out = decode_with(&good, Some(strict_crc_only())).unwrap();
     assert!(out.info().metadata().exif.is_some());
     assert_eq!(
-        parts_of(&inv_with(&good, Some(strict_crc_only())), b"eXIf")[0].disposition,
+        parts_of(&inv_with(&good, Some(strict_crc_only())), b"eXIf")[0].disposition(),
         D::Metadata(M::Exif)
     );
     let bad = mk(bad_crc(chunk(b"eXIf", exif)));
     let out = decode_with(&bad, Some(strict_crc_only())).unwrap();
     assert!(out.info().metadata().exif.is_none());
     assert_eq!(
-        parts_of(&inv_with(&bad, Some(strict_crc_only())), b"eXIf")[0].disposition,
+        parts_of(&inv_with(&bad, Some(strict_crc_only())), b"eXIf")[0].disposition(),
         D::Dropped
     );
     // strict() also bans EXIF outright, so a good chunk is Dropped for that reason.
     let out = decode_with(&good, Some(DecodePolicy::strict())).unwrap();
     assert!(out.info().metadata().exif.is_none());
     assert_eq!(
-        parts_of(&inv_with(&good, Some(DecodePolicy::strict())), b"eXIf")[0].disposition,
+        parts_of(&inv_with(&good, Some(DecodePolicy::strict())), b"eXIf")[0].disposition(),
         D::Dropped
     );
 }
@@ -222,9 +223,9 @@ fn strict_bad_crc_chunk_before_ihdr_leaves_ihdr_intact() {
         lenient.is_ok()
     );
     assert!(strict.is_ok());
-    assert_eq!(parts_of(&inv, b"IHDR")[0].disposition, D::Structure);
-    assert_eq!(parts_of(&inv, b"PLTE")[0].disposition, D::ImageData);
-    assert_eq!(parts_of(&inv, b"tEXt")[0].disposition, D::Dropped);
+    assert_eq!(parts_of(&inv, b"IHDR")[0].disposition(), D::Structure);
+    assert_eq!(parts_of(&inv, b"PLTE")[0].disposition(), D::ImageData);
+    assert_eq!(parts_of(&inv, b"tEXt")[0].disposition(), D::Dropped);
 }
 
 // ── 2. EXIF suppressed by policy still feeds ImageInfo::orientation ─────────
@@ -255,7 +256,7 @@ fn exif_suppressed_by_policy_keeps_orientation_disposition() {
     let baseline = decode_with(&none_png, None).unwrap();
     eprintln!(
         "inventory: {:?}; decode(policy) exif={:?} orientation={:?}; no-eXIf orientation={:?}; default-policy orientation={:?}",
-        p.disposition,
+        p.disposition(),
         out.info().metadata().exif.is_some(),
         out.info().orientation,
         baseline.info().orientation,
@@ -267,7 +268,7 @@ fn exif_suppressed_by_policy_keeps_orientation_disposition() {
         format!("{:?}", baseline.info().orientation),
         "orientation from the suppressed eXIf reaches ImageInfo"
     );
-    assert_eq!(p.disposition, D::Metadata(M::Orientation));
+    assert_eq!(p.disposition(), D::Metadata(M::Orientation));
     // Without an Orientation tag the blob is simply dropped.
     let mut plain_exif = SIG.to_vec();
     plain_exif.extend(ihdr(2, 1, 8, 2));
@@ -275,7 +276,7 @@ fn exif_suppressed_by_policy_keeps_orientation_disposition() {
     plain_exif.extend(rgb_idat());
     plain_exif.extend(chunk(b"IEND", &[]));
     let inv = inv_with(&plain_exif, Some(policy()));
-    assert_eq!(parts_of(&inv, b"eXIf")[0].disposition, D::Dropped);
+    assert_eq!(parts_of(&inv, b"eXIf")[0].disposition(), D::Dropped);
 }
 
 // ── 3. Bytes hidden inside consumed parts ───────────────────────────────────
@@ -301,12 +302,12 @@ fn trns_tail_is_unreferenced() {
     let b = pixels(&decode_with(&without, None).unwrap());
     eprintln!(
         "tRNS part {:?} len {} disposition {:?}; pixels equal: {}",
-        p.range,
+        p.range(),
         p.len(),
-        p.disposition,
+        p.disposition(),
         a == b
     );
-    assert_eq!(p.disposition, D::ImageData);
+    assert_eq!(p.disposition(), D::ImageData);
     assert_eq!(a, b, "the secret tail of tRNS never affects pixels");
     assert_unconsumed(&inv, &with, SECRET);
 }
@@ -334,10 +335,10 @@ fn oversized_indexed_trns_bytes_are_unreferenced() {
     let b = pixels(&decode_with(&opaque, None).unwrap());
     eprintln!(
         "tRNS {:?}: pixels equal to all-opaque tRNS: {}",
-        p.disposition,
+        p.disposition(),
         a == b
     );
-    assert_eq!(p.disposition, D::ImageData);
+    assert_eq!(p.disposition(), D::ImageData);
     assert_eq!(a, b);
     assert_unconsumed(&inv, &with, SECRET);
 }
@@ -364,10 +365,10 @@ fn plte_entries_past_256_are_unreferenced() {
     let inv = inv_with(&with, None);
     let p = &parts_of(&inv, b"PLTE")[0];
     let r = decode_with(&with, None);
-    eprintln!("PLTE {:?} decode ok={}", p.disposition, r.is_ok());
+    eprintln!("PLTE {:?} decode ok={}", p.disposition(), r.is_ok());
     let a = pixels(&r.unwrap());
     let b = pixels(&decode_with(&base, None).unwrap());
-    assert_eq!(p.disposition, D::ImageData);
+    assert_eq!(p.disposition(), D::ImageData);
     assert_eq!(a, b);
     assert_unconsumed(&inv, &with, &pal[768..]);
 }
@@ -380,9 +381,14 @@ fn iend_payload_is_unreferenced() {
     png.extend(chunk(b"IEND", SECRET));
     let inv = inv_with(&png, None);
     let p = &parts_of(&inv, b"IEND")[0];
-    eprintln!("IEND len {} {:?} {:?}", p.len(), p.disposition, p.detail);
+    eprintln!(
+        "IEND len {} {:?} {:?}",
+        p.len(),
+        p.disposition(),
+        p.detail()
+    );
     assert!(decode_with(&png, None).is_ok());
-    assert_eq!(p.disposition, D::Structure);
+    assert_eq!(p.disposition(), D::Structure);
     assert_eq!(p.len(), 12 + SECRET.len() as u64);
     assert_unconsumed(&inv, &png, SECRET);
 }
@@ -412,15 +418,12 @@ fn idat_after_zlib_end_is_skipped_and_junk_inside_the_last_idat_is_unreferenced(
         with.extend(chunk(b"IEND", &[]));
         let inv = inv_with(&with, None);
         let idats = parts_of(&inv, b"IDAT");
-        assert_eq!(idats[0].disposition, D::ImageData);
+        assert_eq!(idats[0].disposition(), D::ImageData);
         assert_eq!(
-            idats[1].disposition,
+            idats[1].disposition(),
             D::Skipped,
             "{name}\n{inv}\n{:?}",
-            inv.parts()
-                .iter()
-                .map(|p| p.detail.clone())
-                .collect::<Vec<_>>()
+            inv.parts().iter().map(|p| p.detail()).collect::<Vec<_>>()
         );
         assert_unconsumed(&inv, &with, SECRET);
         // Junk glued to the end of the same IDAT, after the zlib footer.
@@ -488,9 +491,9 @@ fn animation_policy_skips_frame_chunks() {
     let one = decode_with(&png, Some(policy)).unwrap();
     eprintln!(
         "fdAT {:?}, fcTL {:?}/{:?}; animation decoder ok={}; decode() sequence {:?}",
-        fdat.disposition,
-        fctl[0].disposition,
-        fctl[1].disposition,
+        fdat.disposition(),
+        fctl[0].disposition(),
+        fctl[1].disposition(),
         anim.is_ok(),
         one.info().sequence
     );
@@ -502,12 +505,12 @@ fn animation_policy_skips_frame_chunks() {
             .is_ok()
     );
     assert!(anim.is_err());
-    assert_eq!(fdat.disposition, D::Skipped);
-    assert_eq!(fctl[0].disposition, D::Skipped);
-    assert_eq!(fctl[1].disposition, D::Skipped);
+    assert_eq!(fdat.disposition(), D::Skipped);
+    assert_eq!(fctl[0].disposition(), D::Skipped);
+    assert_eq!(fctl[1].disposition(), D::Skipped);
     // acTL still reaches ImageInfo through decode().
     let acl = parts_of(&inv, b"acTL");
-    assert_eq!(acl[0].disposition, D::Metadata(M::Animation));
+    assert_eq!(acl[0].disposition(), D::Metadata(M::Animation));
 }
 
 #[test]
@@ -527,11 +530,11 @@ fn iccp_bytes_after_the_zlib_stream_are_unreferenced() {
     let icc = out.info().metadata().icc_profile;
     eprintln!(
         "iCCP {:?}; decoded icc = {:?}",
-        p.disposition,
+        p.disposition(),
         icc.as_deref()
             .map(|b| String::from_utf8_lossy(b).into_owned())
     );
-    assert_eq!(p.disposition, D::Metadata(M::Icc));
+    assert_eq!(p.disposition(), D::Metadata(M::Icc));
     assert_eq!(icc.as_deref(), Some(&profile[..]));
     assert_unconsumed(&inv, &png, SECRET);
 }
@@ -545,9 +548,9 @@ fn invalid_idot_is_skipped() {
     png.extend(chunk(b"IEND", &[]));
     let inv = inv_with(&png, None);
     let p = &parts_of(&inv, b"iDOT")[0];
-    eprintln!("iDOT {:?} {:?}", p.disposition, p.detail);
+    eprintln!("iDOT {:?} {:?}", p.disposition(), p.detail());
     assert!(decode_with(&png, None).is_ok());
-    assert_eq!(p.disposition, D::Skipped);
+    assert_eq!(p.disposition(), D::Skipped);
     assert_unconsumed(&inv, &png, SECRET);
 }
 
@@ -591,18 +594,18 @@ fn many_large_profiles_do_not_change_icc_or_xmp_dispositions() {
     );
     eprintln!(
         "inventory: iCCP#255 {:?} {:?}; broken iCCP {:?} {:?}; XMP {:?} {:?}",
-        iccp[255].disposition,
-        iccp[255].detail,
-        iccp[256].disposition,
-        iccp[256].detail,
-        xmp.disposition,
-        xmp.detail
+        iccp[255].disposition(),
+        iccp[255].detail(),
+        iccp[256].disposition(),
+        iccp[256].detail(),
+        xmp.disposition(),
+        xmp.detail()
     );
     assert_eq!(icc[0], (255 % 251) as u8, "decoder keeps the 256th profile");
     assert!(m.xmp.is_some(), "decoder reports the XMP");
-    assert_eq!(iccp[255].disposition, D::Metadata(M::Icc));
-    assert_eq!(iccp[256].disposition, D::Malformed);
-    assert_eq!(xmp.disposition, D::Metadata(M::Xmp));
+    assert_eq!(iccp[255].disposition(), D::Metadata(M::Icc));
+    assert_eq!(iccp[256].disposition(), D::Malformed);
+    assert_eq!(xmp.disposition(), D::Metadata(M::Xmp));
 }
 
 // ── 5. Truncation / no IEND: decode rejects what the detail says is tolerated ─
@@ -618,16 +621,15 @@ fn partial_tail_chunk_is_reported_as_rejected_by_decode() {
     let r = decode_with(&png, None);
     eprintln!(
         "last part {:?} {:?}; IDAT {:?}; decode: {:?}",
-        last.disposition,
-        last.detail,
-        parts_of(&inv, b"IDAT")[0].disposition,
+        last.disposition(),
+        last.detail(),
+        parts_of(&inv, b"IDAT")[0].disposition(),
         r.as_ref().err()
     );
     assert!(r.is_err());
-    assert_eq!(parts_of(&inv, b"IDAT")[0].disposition, D::ImageData);
+    assert_eq!(parts_of(&inv, b"IDAT")[0].disposition(), D::ImageData);
     assert!(
-        last.detail
-            .as_deref()
+        last.detail()
             .unwrap()
             .contains("DecodeJob::decode rejects the file")
     );
@@ -642,7 +644,7 @@ fn ok_length_past_eof_and_overflow() {
         png.extend_from_slice(b"tEXtabc");
         let inv = inv_with(&png, None);
         let last = inv.parts().last().unwrap();
-        assert_eq!(last.disposition, D::Malformed, "{inv}");
+        assert_eq!(last.disposition(), D::Malformed, "{inv}");
     }
 }
 
@@ -659,11 +661,11 @@ fn ok_after_iend_is_one_trailing_gap_even_if_it_looks_like_chunks() {
     let tail: Vec<_> = inv
         .parts()
         .iter()
-        .filter(|p| p.range.start >= iend_end)
+        .filter(|p| p.range().start >= iend_end)
         .collect();
     assert_eq!(tail.len(), 1);
-    assert_eq!(tail[0].disposition, D::Trailing);
-    assert_eq!(tail[0].range.end, png.len() as u64);
+    assert_eq!(tail[0].disposition(), D::Trailing);
+    assert_eq!(tail[0].range().end, png.len() as u64);
 }
 
 #[test]
@@ -681,17 +683,17 @@ fn ok_duplicate_and_private_units() {
     let inv = inv_with(&png, None);
     eprintln!("{inv}");
     let c = parts_of(&inv, b"cICP");
-    assert_eq!(c[0].disposition, D::Skipped);
-    assert_eq!(c[1].disposition, D::Metadata(M::Cicp));
-    assert_eq!(c[2].disposition, D::Skipped);
+    assert_eq!(c[0].disposition(), D::Skipped);
+    assert_eq!(c[1].disposition(), D::Metadata(M::Cicp));
+    assert_eq!(c[2].disposition(), D::Skipped);
     let out = decode_with(&png, None).unwrap();
     assert_eq!(
         out.info().metadata().cicp,
         Some(zencodec::Cicp::new(9, 16, 0, true))
     );
-    assert_eq!(parts_of(&inv, b"prIv")[0].disposition, D::Unknown);
-    assert_eq!(parts_of(&inv, b"PRIV")[0].disposition, D::Unknown);
-    assert_eq!(parts_of(&inv, b"IHDR")[1].disposition, D::Skipped);
+    assert_eq!(parts_of(&inv, b"prIv")[0].disposition(), D::Unknown);
+    assert_eq!(parts_of(&inv, b"PRIV")[0].disposition(), D::Unknown);
+    assert_eq!(parts_of(&inv, b"IHDR")[1].disposition(), D::Skipped);
 }
 
 fn frames(png: &[u8]) -> Vec<Vec<u8>> {
@@ -724,9 +726,9 @@ fn pre_idat_fdat_is_skipped() {
     with.extend_from_slice(&base[idat_at..]);
     let inv = inv_with(&with, None);
     let pre = &parts_of(&inv, b"fdAT")[0];
-    eprintln!("pre-IDAT fdAT {:?} at {:?}", pre.disposition, pre.range);
+    eprintln!("pre-IDAT fdAT {:?} at {:?}", pre.disposition(), pre.range());
     assert_eq!(frames(&with), frames(&base));
-    assert_eq!(pre.disposition, D::Skipped);
+    assert_eq!(pre.disposition(), D::Skipped);
     assert_unconsumed(&inv, &with, SECRET);
 }
 
@@ -747,7 +749,10 @@ fn xmp_bytes_after_the_zlib_stream_are_unreferenced() {
     png.extend(rgb_idat());
     png.extend(chunk(b"IEND", &[]));
     let inv = inv_with(&png, None);
-    assert_eq!(parts_of(&inv, b"iTXt")[0].disposition, D::Metadata(M::Xmp));
+    assert_eq!(
+        parts_of(&inv, b"iTXt")[0].disposition(),
+        D::Metadata(M::Xmp)
+    );
     let out = decode_with(&png, None).unwrap();
     assert_eq!(
         out.info().metadata().xmp.as_deref(),
@@ -771,7 +776,7 @@ fn rgb_trns_tail_and_split_idat_stream_are_placed_exactly() {
     let inv = inv_with(&png, None);
     assert!(decode_with(&png, None).is_ok());
     let idats = parts_of(&inv, b"IDAT");
-    assert!(idats.iter().all(|p| p.disposition == D::ImageData));
+    assert!(idats.iter().all(|p| p.disposition() == D::ImageData));
     // Both SECRET copies must be unconsumed: check each occurrence.
     let mut from = 0;
     let mut hits = 0;
@@ -782,12 +787,12 @@ fn rgb_trns_tail_and_split_idat_stream_are_placed_exactly() {
             .map(|k| {
                 inv.parts()
                     .iter()
-                    .any(|p| p.parent.is_some_and(|q| q.index() == k))
+                    .any(|p| p.parent().is_some_and(|q| q.index() == k))
             })
             .collect();
         for (k, p) in inv.parts().iter().enumerate() {
-            if !has_child[k] && p.range.start < r.end && p.range.end > r.start {
-                assert!(!p.disposition.is_consumed(), "{inv}");
+            if !has_child[k] && p.range().start < r.end && p.range().end > r.start {
+                assert!(!p.disposition().is_consumed(), "{inv}");
             }
         }
         hits += 1;

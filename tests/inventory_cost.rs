@@ -201,9 +201,12 @@ fn inventory_cost() {
     let unknown: Vec<_> = inv
         .parts()
         .iter()
-        .filter(|p| p.disposition == zencodec::inventory::Disposition::Unknown)
+        .filter(|p| p.disposition() == zencodec::inventory::Disposition::Unknown)
         .collect();
-    let unknown_bytes: u64 = unknown.iter().map(|p| p.range.end - p.range.start).sum();
+    let unknown_bytes: u64 = unknown
+        .iter()
+        .map(|p| p.range().end - p.range().start)
+        .sum();
     eprintln!(
         "COST case={case} input={} B parts={} unknown={} ({unknown_bytes} B) wall={wall:?}",
         bytes.len(),

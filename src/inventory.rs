@@ -592,7 +592,7 @@ impl Walker<'_> {
     /// Change a pushed part's disposition (and its split children, which stop being
     /// consumed with it) and append a remark to its detail.
     fn demote(&mut self, id: PartId, disp: Disposition, note: &str) {
-        let old = self.inv.get(id).and_then(|p| p.detail.clone());
+        let old = self.inv.get(id).and_then(|p| p.detail()).map(String::from);
         self.inv.set_disposition(id, disp);
         let detail = match old {
             Some(o) if !note.is_empty() => format!("{o}; {note}"),
@@ -605,7 +605,7 @@ impl Walker<'_> {
         if let Some(kids) = self.kids.get(&id.index()).cloned() {
             for k in kids {
                 if !matches!(
-                    self.inv.get(k).map(|p| p.disposition),
+                    self.inv.get(k).map(|p| p.disposition()),
                     Some(Disposition::Unreferenced | Disposition::Unknown)
                 ) {
                     self.inv.set_disposition(k, disp);
@@ -1117,7 +1117,7 @@ impl Walker<'_> {
             let d = self
                 .inv
                 .get(first)
-                .map_or(Disposition::ImageData, |p| p.disposition);
+                .map_or(Disposition::ImageData, |p| p.disposition());
             self.demote(first, d, &why.join("; "));
         }
         self.settle_idot()
@@ -2046,7 +2046,7 @@ impl Walker<'_> {
             .inv
             .parts()
             .iter()
-            .position(|p| p.parent.is_none() && p.tag == PartTag::FourCc(*b"IHDR"))
+            .position(|p| p.parent().is_none() && *p.tag() == PartTag::FourCc(*b"IHDR"))
             .unwrap_or(0);
         let id = self
             .inv
@@ -2058,7 +2058,7 @@ impl Walker<'_> {
                 id,
                 self.inv
                     .get(id)
-                    .map_or(Disposition::Structure, |p| p.disposition),
+                    .map_or(Disposition::Structure, |p| p.disposition()),
                 &notes.join("; "),
             );
         }
@@ -2156,7 +2156,7 @@ impl Walker<'_> {
         if let (true, Some(id)) = (self.opts.drop_exif, self.winners[Slot::Exif as usize]) {
             // apply_policy_to_info clears the EXIF blob, but convert_info has already set the
             // Orientation from it and nothing clears that.
-            let range = self.inv.get(id).map(|p| p.range.clone());
+            let range = self.inv.get(id).map(|p| p.range());
             let orientation = range.and_then(|r| {
                 let body = self.data.get(r.start as usize + 8..r.end as usize - 4)?;
                 zencodec::helpers::parse_exif_orientation(body)
@@ -2265,7 +2265,7 @@ mod budget_tests {
         let (mut out, mut notes) = (Vec::new(), Vec::new());
         for id in inv.children(None) {
             let p = inv.get(id).unwrap();
-            if p.tag != PartTag::FourCc(*b"IDAT") {
+            if *p.tag() != PartTag::FourCc(*b"IDAT") {
                 continue;
             }
             let kids: Vec<&Part> = inv
@@ -2274,18 +2274,18 @@ mod budget_tests {
                 .map(|k| inv.get(k).unwrap())
                 .collect();
             for k in &kids {
-                if k.disposition == Disposition::Unknown {
-                    notes.push(k.detail.clone().unwrap_or_default());
+                if k.disposition() == Disposition::Unknown {
+                    notes.push(k.detail().unwrap_or_default().to_string());
                 }
             }
-            for i in p.range.start + 8..p.range.end - 4 {
+            for i in p.range().start + 8..p.range().end - 4 {
                 let disp = if kids.is_empty() {
-                    p.disposition
+                    p.disposition()
                 } else {
                     kids.iter()
-                        .find(|k| k.range.contains(&i))
+                        .find(|k| k.range().contains(&i))
                         .unwrap()
-                        .disposition
+                        .disposition()
                 };
                 out.push(match disp {
                     Disposition::ImageData => 0,

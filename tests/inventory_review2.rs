@@ -82,7 +82,7 @@ fn decode_with(
 fn parts_of(inv: &Inventory, ty: &[u8; 4]) -> Vec<zencodec::inventory::Part> {
     inv.parts()
         .iter()
-        .filter(|p| p.tag == PartTag::FourCc(*ty))
+        .filter(|p| *p.tag() == PartTag::FourCc(*ty))
         .cloned()
         .collect()
 }
@@ -105,17 +105,17 @@ fn _assert_unconsumed(inv: &Inventory, file: &[u8], needle: &[u8]) {
     let range = at..at + needle.len() as u64;
     let mut has_child = vec![false; inv.parts().len()];
     for p in inv.parts() {
-        if let Some(par) = p.parent {
+        if let Some(par) = p.parent() {
             has_child[par.index()] = true;
         }
     }
     for (i, p) in inv.parts().iter().enumerate() {
-        if !has_child[i] && p.range.start < range.end && p.range.end > range.start {
+        if !has_child[i] && p.range().start < range.end && p.range().end > range.start {
             assert!(
-                !p.disposition.is_consumed(),
+                !p.disposition().is_consumed(),
                 "hidden bytes in a consumed part {:?} {:?}\n{inv}",
-                p.range,
-                p.disposition
+                p.range(),
+                p.disposition()
             );
         }
     }
@@ -171,15 +171,15 @@ fn consumed_over(inv: &Inventory, file: &[u8], needle: &[u8]) -> bool {
     let r = at..at + needle.len() as u64;
     let mut has_child = vec![false; inv.parts().len()];
     for p in inv.parts() {
-        if let Some(par) = p.parent {
+        if let Some(par) = p.parent() {
             has_child[par.index()] = true;
         }
     }
     inv.parts().iter().enumerate().any(|(i, p)| {
         !has_child[i]
-            && p.range.start < r.end
-            && p.range.end > r.start
-            && p.disposition.is_consumed()
+            && p.range().start < r.end
+            && p.range().end > r.start
+            && p.disposition().is_consumed()
     })
 }
 
@@ -190,11 +190,14 @@ fn leaf_over(inv: &Inventory, file: &[u8], needle: &[u8]) -> String {
         .unwrap() as u64;
     inv.parts()
         .iter()
-        .filter(|p| p.range.start <= at && p.range.end > at)
+        .filter(|p| p.range().start <= at && p.range().end > at)
         .map(|p| {
             format!(
                 "{:?} {:?} {:?} {:?}",
-                p.kind, p.range, p.disposition, p.detail
+                p.kind(),
+                p.range(),
+                p.disposition(),
+                p.detail()
             )
         })
         .collect::<Vec<_>>()
@@ -418,7 +421,7 @@ fn r2_post_idat_bad_crc_detail_does_not_claim_strict_skips_it() {
     png.extend(bad_crc(chunk(b"eXIf", b"II*\0\x08\0\0\0\0\0")));
     png.extend(chunk(b"IEND", &[]));
     let inv = inv_with(&png, Some(DecodePolicy::none().with_strict(true)));
-    let d = parts_of(&inv, b"eXIf")[0].detail.clone().unwrap();
+    let d = parts_of(&inv, b"eXIf")[0].detail().unwrap().to_string();
     assert!(d.contains("decode() reads it unchecked"), "{d}");
     assert!(
         d.contains("probe() and the animation decoder skip it"),
@@ -467,7 +470,7 @@ fn r2_excess_compressed_data_is_not_consumed() {
     assert!(
         inv.parts()
             .iter()
-            .any(|p| p.parent.is_some() && p.disposition == D::Unreferenced),
+            .any(|p| p.parent().is_some() && p.disposition() == D::Unreferenced),
         "{inv}"
     );
     let _ = idat;

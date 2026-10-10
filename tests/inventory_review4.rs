@@ -92,7 +92,7 @@ fn decode_with(
 fn parts_of(inv: &Inventory, ty: &[u8; 4]) -> Vec<zencodec::inventory::Part> {
     inv.parts()
         .iter()
-        .filter(|p| p.tag == PartTag::FourCc(*ty))
+        .filter(|p| *p.tag() == PartTag::FourCc(*ty))
         .cloned()
         .collect()
 }
@@ -115,17 +115,17 @@ fn assert_unconsumed(inv: &Inventory, file: &[u8], needle: &[u8]) {
     let range = at..at + needle.len() as u64;
     let mut has_child = vec![false; inv.parts().len()];
     for p in inv.parts() {
-        if let Some(par) = p.parent {
+        if let Some(par) = p.parent() {
             has_child[par.index()] = true;
         }
     }
     for (i, p) in inv.parts().iter().enumerate() {
-        if !has_child[i] && p.range.start < range.end && p.range.end > range.start {
+        if !has_child[i] && p.range().start < range.end && p.range().end > range.start {
             assert!(
-                !p.disposition.is_consumed(),
+                !p.disposition().is_consumed(),
                 "hidden bytes in a consumed part {:?} {:?}\n{inv}",
-                p.range,
-                p.disposition
+                p.range(),
+                p.disposition()
             );
         }
     }
@@ -181,15 +181,15 @@ fn consumed_over(inv: &Inventory, file: &[u8], needle: &[u8]) -> bool {
     let r = at..at + needle.len() as u64;
     let mut has_child = vec![false; inv.parts().len()];
     for p in inv.parts() {
-        if let Some(par) = p.parent {
+        if let Some(par) = p.parent() {
             has_child[par.index()] = true;
         }
     }
     inv.parts().iter().enumerate().any(|(i, p)| {
         !has_child[i]
-            && p.range.start < r.end
-            && p.range.end > r.start
-            && p.disposition.is_consumed()
+            && p.range().start < r.end
+            && p.range().end > r.start
+            && p.disposition().is_consumed()
     })
 }
 
@@ -200,11 +200,14 @@ fn leaf_over(inv: &Inventory, file: &[u8], needle: &[u8]) -> String {
         .unwrap() as u64;
     inv.parts()
         .iter()
-        .filter(|p| p.range.start <= at && p.range.end > at)
+        .filter(|p| p.range().start <= at && p.range().end > at)
         .map(|p| {
             format!(
                 "{:?} {:?} {:?} {:?}",
-                p.kind, p.range, p.disposition, p.detail
+                p.kind(),
+                p.range(),
+                p.disposition(),
+                p.detail()
             )
         })
         .collect::<Vec<_>>()
@@ -281,26 +284,26 @@ fn sweep(name: &str, file: &[u8], out: &mut Vec<String>) {
     let base = observe(file);
     let mut has_child = vec![false; inv.parts().len()];
     for p in inv.parts() {
-        if let Some(par) = p.parent {
+        if let Some(par) = p.parent() {
             has_child[par.index()] = true;
         }
     }
     for (i, p) in inv.parts().iter().enumerate() {
         if has_child[i]
-            || !p.disposition.is_consumed()
-            || p.kind == zencodec::inventory::PartKind::Header
+            || !p.disposition().is_consumed()
+            || p.kind() == zencodec::inventory::PartKind::Header
         {
             continue;
         }
-        if p.label.as_deref() == Some("crc") {
+        if p.label() == Some("crc") {
             continue;
         }
         // The chunk that holds this leaf.
-        let top = match p.parent {
-            Some(par) => inv.get(par).unwrap().range.clone(),
-            None => p.range.clone(),
+        let top = match p.parent() {
+            Some(par) => inv.get(par).unwrap().range(),
+            None => p.range(),
         };
-        let data = (top.start + 8).max(p.range.start)..(top.end - 4).min(p.range.end);
+        let data = (top.start + 8).max(p.range().start)..(top.end - 4).min(p.range().end);
         if data.start >= data.end {
             continue;
         }
@@ -311,7 +314,10 @@ fn sweep(name: &str, file: &[u8], out: &mut Vec<String>) {
         if observe(&m) == base {
             out.push(format!(
                 "{name}: {} {:?} {:?} byte {at} unchanged; detail {:?}",
-                p.tag, p.range, p.disposition, p.detail
+                p.tag(),
+                p.range(),
+                p.disposition(),
+                p.detail()
             ));
         }
     }
@@ -354,18 +360,15 @@ fn r4_short_untyped_chunk_keeps_the_frame_fdat_read() {
     eprintln!(
         "frames equal={} ; tEXt {:?} {:?} ; fdAT {:?} {:?}",
         fb == fw,
-        tx.disposition,
-        tx.detail,
-        fd.disposition,
-        fd.detail
+        tx.disposition(),
+        tx.detail(),
+        fd.disposition(),
+        fd.detail()
     );
     assert_eq!(fb, fw, "decoder reads the fdAT after the short chunk");
-    assert_eq!(fd.disposition, D::ImageData, "{inv}");
+    assert_eq!(fd.disposition(), D::ImageData, "{inv}");
     assert!(
-        tx.detail
-            .as_deref()
-            .unwrap()
-            .contains("contributes no frame data"),
+        tx.detail().unwrap().contains("contributes no frame data"),
         "{inv}"
     );
 }
@@ -382,11 +385,11 @@ fn r4_idat_typed_frame_chunk() {
     eprintln!(
         "frames equal={} ; late IDAT {:?} {:?}",
         fb == fw,
-        late_idat.disposition,
-        late_idat.detail
+        late_idat.disposition(),
+        late_idat.detail()
     );
     assert_eq!(fb, fw, "decoder reads the IDAT-typed chunk as frame data");
-    assert_eq!(late_idat.disposition, D::ImageData, "{inv}");
+    assert_eq!(late_idat.disposition(), D::ImageData, "{inv}");
 }
 
 /// Pitfalls "Tails the caller still receives": uncompressed XMP with bytes after the xpacket
@@ -414,7 +417,7 @@ fn r4_xmp_trailer_tail_is_a_delivered_child() {
     let has_boundary = inv
         .parts()
         .iter()
-        .any(|p| p.range.start == boundary || p.range.end == boundary);
+        .any(|p| p.range().start == boundary || p.range().end == boundary);
     eprintln!(
         "boundary at {boundary}: part boundary present = {has_boundary}; leaf: {}",
         leaf_over(&inv, &v, SECRET)
@@ -423,10 +426,10 @@ fn r4_xmp_trailer_tail_is_a_delivered_child() {
     let tail = inv
         .parts()
         .iter()
-        .find(|p| p.parent.is_some() && p.range.start == boundary)
+        .find(|p| p.parent().is_some() && p.range().start == boundary)
         .unwrap();
-    assert_eq!(tail.disposition, D::Metadata(M::Xmp));
-    assert!(tail.detail.as_deref().unwrap().contains("reach the caller"));
+    assert_eq!(tail.disposition(), D::Metadata(M::Xmp));
+    assert!(tail.detail().unwrap().contains("reach the caller"));
 }
 
 /// Same for an ICC profile whose header declares a smaller size than the inflated data.
@@ -456,22 +459,20 @@ fn r4_icc_tail_past_declared_size_is_a_delivered_child() {
     let has_boundary = inv
         .parts()
         .iter()
-        .any(|q| q.range.start == at || q.range.end == at);
+        .any(|q| q.range().start == at || q.range().end == at);
     eprintln!(
         "iCCP {:?} {:?}; boundary present = {has_boundary}",
-        p.disposition, p.detail
+        p.disposition(),
+        p.detail()
     );
     assert!(has_boundary, "{inv}");
     let tail = inv
         .parts()
         .iter()
-        .find(|q| q.parent.is_some() && q.range.start == at)
+        .find(|q| q.parent().is_some() && q.range().start == at)
         .unwrap();
-    assert_eq!(tail.disposition, D::Metadata(M::Icc));
-    assert!(
-        tail.detail.as_deref().unwrap().contains("declares 128"),
-        "{inv}"
-    );
+    assert_eq!(tail.disposition(), D::Metadata(M::Icc));
+    assert!(tail.detail().unwrap().contains("declares 128"), "{inv}");
 }
 
 /// Pitfalls "Settings and limits change the answer": the default 120 MP limit rejects the
@@ -484,18 +485,14 @@ fn r4_default_pixel_limit_rejection_is_reported() {
     v.extend(chunk(b"IEND", &[]));
     let r = decode_with(&v, None);
     let inv = inv_with(&v, None);
-    let notes: Vec<_> = inv
-        .parts()
-        .iter()
-        .filter_map(|p| p.detail.clone())
-        .collect();
+    let notes: Vec<_> = inv.parts().iter().filter_map(|p| p.detail()).collect();
     eprintln!(
         "decode: {:?}\nconsumed: {:?}\nnotes: {notes:?}",
         r.as_ref().err(),
         inv.parts()
             .iter()
-            .filter(|p| p.disposition.is_consumed())
-            .map(|p| (p.tag.to_string(), p.disposition))
+            .filter(|p| p.disposition().is_consumed())
+            .map(|p| (p.tag().to_string(), p.disposition()))
             .collect::<Vec<_>>()
     );
     assert!(r.is_err());
@@ -532,10 +529,9 @@ fn r4_max_input_bytes_rejection_is_reported() {
     let inv = inv.unwrap().unwrap();
     inv.validate().unwrap();
     assert!(
-        inv.parts().iter().any(|p| p
-            .detail
-            .as_deref()
-            .is_some_and(|d| d.contains("input size"))),
+        inv.parts()
+            .iter()
+            .any(|p| p.detail().is_some_and(|d| d.contains("input size"))),
         "{inv}"
     );
 }
@@ -558,13 +554,12 @@ fn r4_bad_crc_exif_names_the_other_readers() {
         "decode exif={} probe exif={} detail={:?}",
         d.info().metadata().exif.is_some(),
         probe.metadata().exif.is_some(),
-        p.detail
+        p.detail()
     );
     assert!(d.info().metadata().exif.is_some());
     assert!(probe.metadata().exif.is_none());
     assert!(
-        p.detail
-            .as_deref()
+        p.detail()
             .unwrap_or("")
             .contains("probe() and the animation decoder skip it")
     );
@@ -591,7 +586,7 @@ fn r4_failing_animation_frames_are_reported() {
     let top = |inv: &Inventory, tag: &str| -> Vec<zencodec::inventory::Part> {
         inv.parts()
             .iter()
-            .filter(|p| p.parent.is_none() && p.tag.to_string() == tag)
+            .filter(|p| p.parent().is_none() && p.tag().to_string() == tag)
             .cloned()
             .collect()
     };
@@ -601,19 +596,12 @@ fn r4_failing_animation_frames_are_reported() {
     assert!(err.contains("exceeds canvas width"), "{err}");
     let inv = inv_with(&b, None);
     let fctl = top(&inv, "fcTL");
-    assert_eq!(fctl[1].disposition, D::Malformed, "{inv}");
-    assert!(
-        fctl[1]
-            .detail
-            .as_deref()
-            .unwrap()
-            .contains("exceeds canvas width")
-    );
-    assert_eq!(top(&inv, "fdAT")[0].disposition, D::Skipped, "{inv}");
+    assert_eq!(fctl[1].disposition(), D::Malformed, "{inv}");
+    assert!(fctl[1].detail().unwrap().contains("exceeds canvas width"));
+    assert_eq!(top(&inv, "fdAT")[0].disposition(), D::Skipped, "{inv}");
     assert!(
         top(&inv, "acTL")[0]
-            .detail
-            .as_deref()
+            .detail()
             .unwrap()
             .contains("animation_frame_decoder fails")
     );
@@ -627,8 +615,7 @@ fn r4_failing_animation_frames_are_reported() {
     let inv = inv_with(&b, None);
     assert!(
         top(&inv, "acTL")[0]
-            .detail
-            .as_deref()
+            .detail()
             .unwrap()
             .contains("acTL declares 3 frames, the file holds 1"),
         "{inv}"
@@ -639,13 +626,8 @@ fn r4_failing_animation_frames_are_reported() {
     assert!(err.contains("decompression error"), "{err}");
     let inv = inv_with(&b, None);
     let fd = &top(&inv, "fdAT")[0];
-    assert_eq!(fd.disposition, D::Skipped, "{inv}");
-    assert!(
-        fd.detail
-            .as_deref()
-            .unwrap()
-            .contains("fails on this frame")
-    );
+    assert_eq!(fd.disposition(), D::Skipped, "{inv}");
+    assert!(fd.detail().unwrap().contains("fails on this frame"));
 }
 
 /// R4-5 without the corpus: frame 1's fcTL lies outside the canvas, and a later frame is never
@@ -681,8 +663,10 @@ fn r4_frame_after_a_failing_frame_is_not_claimed() {
     let tags: Vec<_> = inv
         .parts()
         .iter()
-        .filter(|p| p.parent.is_none() && ["fcTL", "fdAT"].contains(&p.tag.to_string().as_str()))
-        .map(|p| (p.tag.to_string(), p.disposition))
+        .filter(|p| {
+            p.parent().is_none() && ["fcTL", "fdAT"].contains(&p.tag().to_string().as_str())
+        })
+        .map(|p| (p.tag().to_string(), p.disposition()))
         .collect();
     assert_eq!(
         tags,
@@ -705,40 +689,34 @@ fn r4_sequence_numbers_and_footer_carry_details() {
     let base_obs = observe(&base);
     let inv = inv_with(&base, None);
     let mut rows = Vec::new();
-    for p in inv.parts().iter().filter(|p| p.parent.is_none()) {
-        let tag = p.tag.to_string();
+    for p in inv.parts().iter().filter(|p| p.parent().is_none()) {
+        let tag = p.tag().to_string();
         let off = match tag.as_str() {
-            "fdAT" | "fcTL" => Some(p.range.start as usize + 8 + 3), // last byte of the sequence number
-            "IDAT" => Some(p.range.end as usize - 4 - 1),            // last Adler-32 byte
+            "fdAT" | "fcTL" => Some(p.range().start as usize + 8 + 3), // last byte of the sequence number
+            "IDAT" => Some(p.range().end as usize - 4 - 1),            // last Adler-32 byte
             _ => None,
         };
         if let Some(at) = off {
             let mut m = base.clone();
             m[at] ^= 0x01;
-            fix_crc(&mut m, p.range.start as usize);
+            fix_crc(&mut m, p.range().start as usize);
             let leaf = inv
                 .parts()
                 .iter()
-                .rfind(|q| q.range.start <= at as u64 && (at as u64) < q.range.end)
+                .rfind(|q| q.range().start <= at as u64 && (at as u64) < q.range().end)
                 .unwrap();
-            rows.push((tag, at, observe(&m) == base_obs, leaf.disposition));
+            rows.push((tag, at, observe(&m) == base_obs, leaf.disposition()));
         }
     }
     eprintln!("{rows:?}");
     // Every unused-but-consumed byte here carries a detail saying why.
-    for p in inv.parts().iter().filter(|p| p.parent.is_none()) {
-        match p.tag.to_string().as_str() {
+    for p in inv.parts().iter().filter(|p| p.parent().is_none()) {
+        match p.tag().to_string().as_str() {
             "fcTL" | "fdAT" => assert!(
-                p.detail
-                    .as_deref()
-                    .unwrap_or("")
-                    .contains("sequence number"),
+                p.detail().unwrap_or("").contains("sequence number"),
                 "{inv}"
             ),
-            "IDAT" => assert!(
-                p.detail.as_deref().unwrap_or("").contains("Adler-32"),
-                "{inv}"
-            ),
+            "IDAT" => assert!(p.detail().unwrap_or("").contains("Adler-32"), "{inv}"),
             _ => {}
         }
     }
@@ -766,7 +744,7 @@ fn r4_stream_break_after_rows_is_named_in_the_detail() {
     let v = png_rgb(&[chunk(b"IDAT", &s)]);
     assert!(decode_with(&v, None).is_ok());
     let inv = inv_with(&v, None);
-    let d = parts_of(&inv, b"IDAT")[0].detail.clone().unwrap();
+    let d = parts_of(&inv, b"IDAT")[0].detail().unwrap().to_string();
     assert!(d.contains("breaks after the last row"), "{d}");
     // A clean stream with the same excess says how many bytes are discarded instead.
     let v = png_rgb(&[chunk(
@@ -774,9 +752,9 @@ fn r4_stream_break_after_rows_is_named_in_the_detail() {
         &zlib_stored(&[&raw[..], &[7u8; 100][..]].concat()),
     )]);
     let d = parts_of(&inv_with(&v, None), b"IDAT")[0]
-        .detail
-        .clone()
-        .unwrap();
+        .detail()
+        .unwrap()
+        .to_string();
     assert!(
         d.contains("100 decompressed bytes after the last row are discarded"),
         "{d}"

@@ -92,7 +92,7 @@ fn decode_with(
 fn parts_of(inv: &Inventory, ty: &[u8; 4]) -> Vec<zencodec::inventory::Part> {
     inv.parts()
         .iter()
-        .filter(|p| p.tag == PartTag::FourCc(*ty))
+        .filter(|p| *p.tag() == PartTag::FourCc(*ty))
         .cloned()
         .collect()
 }
@@ -115,17 +115,17 @@ fn assert_unconsumed(inv: &Inventory, file: &[u8], needle: &[u8]) {
     let range = at..at + needle.len() as u64;
     let mut has_child = vec![false; inv.parts().len()];
     for p in inv.parts() {
-        if let Some(par) = p.parent {
+        if let Some(par) = p.parent() {
             has_child[par.index()] = true;
         }
     }
     for (i, p) in inv.parts().iter().enumerate() {
-        if !has_child[i] && p.range.start < range.end && p.range.end > range.start {
+        if !has_child[i] && p.range().start < range.end && p.range().end > range.start {
             assert!(
-                !p.disposition.is_consumed(),
+                !p.disposition().is_consumed(),
                 "hidden bytes in a consumed part {:?} {:?}\n{inv}",
-                p.range,
-                p.disposition
+                p.range(),
+                p.disposition()
             );
         }
     }
@@ -181,15 +181,15 @@ fn consumed_over(inv: &Inventory, file: &[u8], needle: &[u8]) -> bool {
     let r = at..at + needle.len() as u64;
     let mut has_child = vec![false; inv.parts().len()];
     for p in inv.parts() {
-        if let Some(par) = p.parent {
+        if let Some(par) = p.parent() {
             has_child[par.index()] = true;
         }
     }
     inv.parts().iter().enumerate().any(|(i, p)| {
         !has_child[i]
-            && p.range.start < r.end
-            && p.range.end > r.start
-            && p.disposition.is_consumed()
+            && p.range().start < r.end
+            && p.range().end > r.start
+            && p.disposition().is_consumed()
     })
 }
 
@@ -200,11 +200,14 @@ fn leaf_over(inv: &Inventory, file: &[u8], needle: &[u8]) -> String {
         .unwrap() as u64;
     inv.parts()
         .iter()
-        .filter(|p| p.range.start <= at && p.range.end > at)
+        .filter(|p| p.range().start <= at && p.range().end > at)
         .map(|p| {
             format!(
                 "{:?} {:?} {:?} {:?}",
-                p.kind, p.range, p.disposition, p.detail
+                p.kind(),
+                p.range(),
+                p.disposition(),
+                p.detail()
             )
         })
         .collect::<Vec<_>>()
@@ -371,7 +374,7 @@ fn r3_stream_breaks_after_the_last_row() {
         "default ok={} strict ok={} detail={:?}\nleaf over secret: {}",
         a.is_ok(),
         s.is_ok(),
-        idat.detail,
+        idat.detail(),
         leaf_over(&inv, &with, SECRET)
     );
     assert_eq!(pixels(&a.unwrap()), pixels(&b));
@@ -384,8 +387,8 @@ fn r3_stream_breaks_after_the_last_row() {
     let kids: Vec<_> = inv
         .parts()
         .iter()
-        .filter(|p| p.parent.is_some())
-        .map(|p| (p.range.clone(), p.disposition))
+        .filter(|p| p.parent().is_some())
+        .map(|p| (p.range(), p.disposition()))
         .collect();
     eprintln!("children: {kids:?}");
 }
@@ -424,14 +427,13 @@ fn r3_chunk_after_fctl_is_read_as_frame_data() {
     eprintln!(
         "frames equal={} ; zzZz part {:?} {:?}",
         fr == ff,
-        p.disposition,
-        p.detail
+        p.disposition(),
+        p.detail()
     );
     assert_eq!(fr, ff, "the decoder reads the zzZz chunk as frame data");
-    assert_eq!(p.disposition, D::ImageData, "{inv}");
+    assert_eq!(p.disposition(), D::ImageData, "{inv}");
     assert!(
-        p.detail
-            .as_deref()
+        p.detail()
             .unwrap()
             .contains("does not check the chunk type")
     );
@@ -453,10 +455,10 @@ fn r3_actl_one_with_frame0_idat() {
         .parts()
         .iter()
         .filter(|p| {
-            p.parent.is_none()
-                && (p.tag == PartTag::FourCc(*b"fcTL") || p.tag == PartTag::FourCc(*b"fdAT"))
+            p.parent().is_none()
+                && (*p.tag() == PartTag::FourCc(*b"fcTL") || *p.tag() == PartTag::FourCc(*b"fdAT"))
         })
-        .map(|p| (p.tag.to_string(), p.disposition))
+        .map(|p| (p.tag().to_string(), p.disposition()))
         .collect();
     eprintln!("frames {n}; {late:?}");
     assert_eq!(n, 1);
@@ -520,7 +522,7 @@ fn r3_untyped_frame_chunk_gets_zlib_end_placement() {
     v.extend(chunk(b"zzZz", &fd));
     v.extend(chunk(b"IEND", &[]));
     let inv = inv_with(&v, None);
-    assert_eq!(parts_of(&inv, b"zzZz")[0].disposition, D::ImageData);
+    assert_eq!(parts_of(&inv, b"zzZz")[0].disposition(), D::ImageData);
     assert!(!consumed_over(&inv, &v, SECRET), "{inv}");
 }
 
