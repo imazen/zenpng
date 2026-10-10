@@ -177,6 +177,12 @@ pub(crate) struct Options {
     pub no_animation: bool,
     /// `allow_progressive(false)`: `check_progressive_policy` rejects interlaced files.
     pub no_progressive: bool,
+    /// Limits the still decode applies (`DecodeJob::decode`: the job's limits, else the
+    /// config's): `check_input_size`, `check_dimensions`, then `PngDecodeConfig::validate`.
+    pub limits: zencodec::ResourceLimits,
+    /// Limits the animation decoder applies: `PngAnimationFrameDecoder::new` builds its
+    /// `PngDecodeConfig` from the config's limits only, and validates the RGBA canvas.
+    pub anim_limits: zencodec::ResourceLimits,
 }
 
 struct IdatChunk {
@@ -245,6 +251,8 @@ struct Walker<'a> {
     text_compressed: u64,
     scratch: Vec<u8>,
     idat_notes: BTreeMap<usize, String>,
+    /// A non-empty tRNS reached `PngAncillary::collect` (it widens the output pixel).
+    trns_seen: bool,
     /// The contiguous IDAT run being collected; flushed when it ends.
     idat_run: Vec<IdatChunk>,
     first_idat_pos: Option<usize>,
@@ -341,6 +349,7 @@ pub(crate) fn walk(data: &[u8], stop: &dyn Stop, opts: Options) -> Result<Invent
         text_compressed: 0,
         scratch: Vec::new(),
         idat_notes: BTreeMap::new(),
+        trns_seen: false,
         idat_run: Vec::new(),
         first_idat_pos: None,
         idot: Vec::new(),
@@ -359,6 +368,7 @@ pub(crate) fn walk(data: &[u8], stop: &dyn Stop, opts: Options) -> Result<Invent
     };
     w.run()?;
     w.finish()?;
+    w.limit_rejections()?;
     let mut inv = w.inv;
     inv.fill_gaps(None, Disposition::Trailing)
         .map_err(limit_err)?;
@@ -366,6 +376,16 @@ pub(crate) fn walk(data: &[u8], stop: &dyn Stop, opts: Options) -> Result<Invent
 }
 
 const SEARCH_LIMIT_NOTE: &str = "inflate work limit for placing the stream end reached; bytes after the end of the data the decoder reads are not distinguished";
+
+/// `PngDecodeConfig::validate` with the decoder's limits: pixel count, then estimated memory.
+fn pixel_limits(lim: &zencodec::ResourceLimits, w: u32, h: u32, bpp: u32) -> Result<(), String> {
+    let cfg = crate::decode::PngDecodeConfig {
+        max_pixels: lim.max_pixels,
+        max_memory_bytes: lim.max_memory_bytes,
+        ..crate::decode::PngDecodeConfig::default()
+    };
+    cfg.validate(w, h, bpp).map_err(|e| e.error().to_string())
+}
 
 /// Offset just past the `<?xpacket end=...?>` processing instruction, if any.
 fn xpacket_end(text: &[u8]) -> Option<usize> {
@@ -1290,6 +1310,7 @@ impl Walker<'_> {
                     e.disp = Disposition::Dropped;
                     e.note("empty tRNS ignored");
                 } else {
+                    self.trns_seen = true;
                     if matches!(self.color_type, Some(0 | 2 | 3)) {
                         e.disp = Disposition::ImageData;
                         e.note("transparency");
@@ -1783,6 +1804,66 @@ impl Walker<'_> {
             }
             f => e.note(format!("XMP iTXt compression flag {f}; ignored")),
         }
+    }
+
+    /// Run the decoders' own limit checks with the job's effective limits; a rejection is
+    /// noted on the IHDR (else the signature) part, since every consumed part then reaches
+    /// nobody through that path.
+    fn limit_rejections(&mut self) -> Result<(), PngError> {
+        let mut notes = Vec::new();
+        let lim = self.opts.limits;
+        if let Err(e) = lim.check_input_size(self.data.len() as u64) {
+            notes.push(format!("DecodeJob::decode rejects the file: {e}"));
+        }
+        if let Some(ihdr) = self.ihdr {
+            let still = lim
+                .check_dimensions(ihdr.width, ihdr.height)
+                .map_err(|e| e.to_string())
+                .and_then(|()| {
+                    let mut anc = crate::chunk::ancillary::PngAncillary::default();
+                    if self.trns_seen {
+                        anc.trns = Some(Vec::new());
+                    }
+                    let bpp =
+                        crate::decoder::postprocess::output_bytes_per_pixel(&ihdr, &anc) as u32;
+                    pixel_limits(&lim, ihdr.width, ihdr.height, bpp)
+                });
+            if let Err(e) = still {
+                notes.push(format!("DecodeJob::decode rejects the file: {e}"));
+            }
+            if self.slot_taken(Slot::Actl) && !self.opts.no_animation {
+                let canvas_bpp = if ihdr.bit_depth == 16 { 8 } else { 4 };
+                if let Err(e) =
+                    pixel_limits(&self.opts.anim_limits, ihdr.width, ihdr.height, canvas_bpp)
+                {
+                    notes.push(format!("animation_frame_decoder rejects the file: {e}"));
+                }
+            }
+        }
+        if notes.is_empty() {
+            return Ok(());
+        }
+        let target = self
+            .inv
+            .parts()
+            .iter()
+            .position(|p| p.parent.is_none() && p.tag == PartTag::FourCc(*b"IHDR"))
+            .unwrap_or(0);
+        let id = self
+            .inv
+            .children(None)
+            .into_iter()
+            .find(|id| id.index() == target);
+        if let Some(id) = id {
+            self.demote(
+                id,
+                self.inv
+                    .get(id)
+                    .map_or(Disposition::Structure, |p| p.disposition),
+                &notes.join("; "),
+            );
+        }
+        Ok(())
     }
 
     /// Settle what only the whole walk decides: animation chunks, then policy effects.

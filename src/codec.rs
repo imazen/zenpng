@@ -2089,6 +2089,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
                 .policy
                 .as_ref()
                 .is_some_and(|p| !p.resolve_progressive(true)),
+            limits: *self.limits.as_ref().unwrap_or(&self.config.limits),
+            anim_limits: self.config.limits,
         };
         crate::inventory::walk(data, cancel, opts)
             .map(Some)

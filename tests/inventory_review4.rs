@@ -473,3 +473,69 @@ fn r4_icc_tail_past_declared_size_is_a_delivered_child() {
         "{inv}"
     );
 }
+
+/// Pitfalls "Settings and limits change the answer": the default 120 MP limit rejects the
+/// file; the inventory still reports consumed parts without saying so.
+#[test]
+fn r4_default_pixel_limit_rejection_is_reported() {
+    let mut v = SIG.to_vec();
+    v.extend(ihdr(12_000, 12_000, 8, 0)); // 144 MP > 120 MP default
+    v.extend(chunk(b"IDAT", &zlib(&[0u8; 12_001])));
+    v.extend(chunk(b"IEND", &[]));
+    let r = decode_with(&v, None);
+    let inv = inv_with(&v, None);
+    let notes: Vec<_> = inv
+        .parts()
+        .iter()
+        .filter_map(|p| p.detail.clone())
+        .collect();
+    eprintln!(
+        "decode: {:?}\nconsumed: {:?}\nnotes: {notes:?}",
+        r.as_ref().err(),
+        inv.parts()
+            .iter()
+            .filter(|p| p.disposition.is_consumed())
+            .map(|p| (p.tag.to_string(), p.disposition))
+            .collect::<Vec<_>>()
+    );
+    assert!(r.is_err());
+    assert!(
+        notes
+            .iter()
+            .any(|n| n.contains("DecodeJob::decode rejects the file") && n.contains("limit")),
+        "{notes:?}"
+    );
+}
+
+/// Pitfalls "Bounded work": honour max_input_bytes.
+#[test]
+fn r4_max_input_bytes_rejection_is_reported() {
+    let v = png_rgb(&[rgb_idat()]);
+    let limits = zencodec::ResourceLimits::none().with_max_input_bytes(16);
+    let job = PngDecoderConfig::new().job().with_limits(limits);
+    let inv = job.inventory(&v);
+    let dec = PngDecoderConfig::new()
+        .job()
+        .with_limits(limits)
+        .decoder(v.as_slice().into(), &[])
+        .unwrap()
+        .decode();
+    eprintln!(
+        "inventory ok={} ({:?}); decode err={:?}",
+        inv.is_ok(),
+        inv.as_ref()
+            .ok()
+            .map(|i| i.as_ref().map(|i| i.parts().len())),
+        dec.as_ref().err().map(|e| e.to_string())
+    );
+    assert!(dec.is_err());
+    let inv = inv.unwrap().unwrap();
+    inv.validate().unwrap();
+    assert!(
+        inv.parts().iter().any(|p| p
+            .detail
+            .as_deref()
+            .is_some_and(|d| d.contains("input size"))),
+        "{inv}"
+    );
+}
