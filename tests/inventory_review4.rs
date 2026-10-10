@@ -696,3 +696,135 @@ fn r4_frame_after_a_failing_frame_is_not_claimed() {
         "{inv}"
     );
 }
+
+/// fdAT / fcTL sequence numbers and the IDAT zlib footer: consumed, but overwriting them
+/// changes nothing a caller receives (default policy).
+#[test]
+fn r4_sequence_numbers_and_footer_carry_details() {
+    let base = apng();
+    let base_obs = observe(&base);
+    let inv = inv_with(&base, None);
+    let mut rows = Vec::new();
+    for p in inv.parts().iter().filter(|p| p.parent.is_none()) {
+        let tag = p.tag.to_string();
+        let off = match tag.as_str() {
+            "fdAT" | "fcTL" => Some(p.range.start as usize + 8 + 3), // last byte of the sequence number
+            "IDAT" => Some(p.range.end as usize - 4 - 1),            // last Adler-32 byte
+            _ => None,
+        };
+        if let Some(at) = off {
+            let mut m = base.clone();
+            m[at] ^= 0x01;
+            fix_crc(&mut m, p.range.start as usize);
+            let leaf = inv
+                .parts()
+                .iter()
+                .rfind(|q| q.range.start <= at as u64 && (at as u64) < q.range.end)
+                .unwrap();
+            rows.push((tag, at, observe(&m) == base_obs, leaf.disposition));
+        }
+    }
+    eprintln!("{rows:?}");
+    // Every unused-but-consumed byte here carries a detail saying why.
+    for p in inv.parts().iter().filter(|p| p.parent.is_none()) {
+        match p.tag.to_string().as_str() {
+            "fcTL" | "fdAT" => assert!(
+                p.detail
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("sequence number"),
+                "{inv}"
+            ),
+            "IDAT" => assert!(
+                p.detail.as_deref().unwrap_or("").contains("Adler-32"),
+                "{inv}"
+            ),
+            _ => {}
+        }
+    }
+}
+
+/// R4-6: the first pass inflates past the rows (within the search budget), so a stream that
+/// breaks after the rows is told apart from one that ends cleanly with excess data.
+#[test]
+fn r4_stream_break_after_rows_is_named_in_the_detail() {
+    let raw = [0u8, 1, 2, 3, 4, 5, 6];
+    let mut s = vec![0x78, 0x01];
+    // Enough excess that the break lies in a later inflate window than the last row, as in
+    // the reviewer's round-3 probe; otherwise the decoder reports the break itself.
+    let zeros = vec![0u8; 65535];
+    let mut blocks: Vec<&[u8]> = vec![&raw[..]];
+    blocks.extend(std::iter::repeat_n(&zeros[..], 16));
+    for b in blocks {
+        s.push(0x00); // BFINAL=0, stored
+        s.extend_from_slice(&(b.len() as u16).to_le_bytes());
+        s.extend_from_slice(&(!(b.len() as u16)).to_le_bytes());
+        s.extend_from_slice(b);
+    }
+    s.push(0xFF); // invalid block type
+    s.extend_from_slice(b"tail after the break");
+    let v = png_rgb(&[chunk(b"IDAT", &s)]);
+    assert!(decode_with(&v, None).is_ok());
+    let inv = inv_with(&v, None);
+    let d = parts_of(&inv, b"IDAT")[0].detail.clone().unwrap();
+    assert!(d.contains("breaks after the last row"), "{d}");
+    // A clean stream with the same excess says how many bytes are discarded instead.
+    let v = png_rgb(&[chunk(
+        b"IDAT",
+        &zlib_stored(&[&raw[..], &[7u8; 100][..]].concat()),
+    )]);
+    let d = parts_of(&inv_with(&v, None), b"IDAT")[0]
+        .detail
+        .clone()
+        .unwrap();
+    assert!(
+        d.contains("100 decompressed bytes after the last row are discarded"),
+        "{d}"
+    );
+}
+
+/// Mutation survey (opt-in): see the module docs.
+#[test]
+fn r4_overwrite_consumed_leaves_sweep() {
+    if std::env::var_os("INVENTORY_MUTATION_SWEEP").is_none() {
+        eprintln!(
+            "INVENTORY_MUTATION_SWEEP unset: mutation sweep not requested (just inventory-sweep)"
+        );
+        return;
+    }
+    let mut out = Vec::new();
+    let root = std::path::PathBuf::from(
+        std::env::var("ZENPNG_CODEC_CORPUS").expect("set ZENPNG_CODEC_CORPUS"),
+    );
+    let mut files = Vec::new();
+    for set in ["pngsuite", "png-conformance", "apng-conformance"] {
+        let mut stack = vec![root.join(set)];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).unwrap() {
+                let p = e.unwrap().path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|x| x == "png") {
+                    files.push(p);
+                }
+            }
+        }
+    }
+    files.sort();
+    let mut n = 0;
+    for f in &files {
+        let bytes = std::fs::read(f).unwrap();
+        if decode_with(&bytes, None).is_err() && frames_or_err(&bytes).is_err() {
+            continue;
+        }
+        n += 1;
+        sweep(&f.file_name().unwrap().to_string_lossy(), &bytes, &mut out);
+    }
+    eprintln!(
+        "swept {n} decodable files; {} consumed leaves unchanged by a flipped byte:",
+        out.len()
+    );
+    for l in &out {
+        eprintln!("  {l}");
+    }
+}

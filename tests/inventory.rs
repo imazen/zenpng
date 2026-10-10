@@ -418,7 +418,8 @@ fn details_name_native_fields_and_reasons() {
     assert!(detail_of("eXIf", 2).contains("earlier eXIf wins"));
     assert!(detail_of("iTXt", 1).contains("lang=en"));
     assert!(detail_of("fdAT", 0).contains("sequence numbers are not checked"));
-    assert!(detail_of("IDAT", 0).is_empty());
+    // The IDAT run carries one remark: the zlib footer the default decode does not verify.
+    assert!(detail_of("IDAT", 0).contains("Adler-32"));
 }
 
 #[test]

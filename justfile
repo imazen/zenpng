@@ -85,3 +85,8 @@ inventory-cost:
     cargo test --release --test inventory_cost --no-run
     for c in excess_stored broken_after_rows wrong_adler_full_image bomb_excess bomb_huge_ihdr bomb_huge_ihdr_wrong_adler wrong_adler_deflate_128m; do \
       INVENTORY_COST_CASE=$c /usr/bin/time -v $(ls -t target/release/deps/inventory_cost-* | grep -v '\.d$' | head -1) --nocapture 2>&1 | grep -E "COST|Maximum resident|Elapsed|User time"; done
+
+# Both-direction check: flip a byte in every consumed leaf of the conformance corpus and list
+# the leaves where nothing a caller receives changes (opt-in; slow).
+inventory-sweep:
+    INVENTORY_MUTATION_SWEEP=1 ZENPNG_CODEC_CORPUS="${ZENPNG_CODEC_CORPUS:-$HOME/work/codec-corpus}" cargo test --release --test inventory_review4 r4_overwrite_consumed_leaves_sweep -- --nocapture

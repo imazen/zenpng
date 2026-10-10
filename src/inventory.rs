@@ -197,8 +197,8 @@ struct IdatChunk {
 struct Probe {
     /// The zlib stream completed.
     done: bool,
-    /// Inflating stopped early because `stop_at` bytes of output were produced.
-    stopped: bool,
+    /// The stream errored or ran out of input before completing.
+    broke: bool,
     /// Decompressed bytes produced.
     out: u64,
     adler: u32,
@@ -1108,6 +1108,7 @@ impl Walker<'_> {
         run: &[IdatChunk],
         limit: usize,
         stop_at: Option<u64>,
+        extra: u64,
     ) -> Result<Probe, PngError> {
         let src = RunSource {
             data: self.data,
@@ -1120,7 +1121,7 @@ impl Walker<'_> {
             .with_skip_checksum(true)
             .with_max_output_size(Some(IDAT_MAX_OUTPUT));
         let mut sum = zenflate::Adler32Hasher::new();
-        let (mut out, mut stalled, mut done, mut stopped) = (0u64, 0, false, false);
+        let (mut out, mut stalled, mut done, mut broke) = (0u64, 0, false, false);
         loop {
             self.stop.check().map_err(PngError::from)?;
             if d.is_done() {
@@ -1133,12 +1134,13 @@ impl Walker<'_> {
                     sum.write(o);
                     out += n as u64;
                     d.advance(n);
-                    if stop_at.is_some_and(|s| out >= s) {
-                        stopped = true;
+                    // Past the rows plus the `extra` allowance: stop (neither done nor broke).
+                    if stop_at.is_some_and(|s| out >= s.saturating_add(extra)) {
                         break;
                     }
                     stalled = if n == 0 { stalled + 1 } else { 0 };
                     if stalled > 2 && !d.is_done() {
+                        broke = true;
                         break;
                     }
                 }
@@ -1147,6 +1149,7 @@ impl Walker<'_> {
                     let pending = d.peek();
                     sum.write(pending);
                     out += pending.len() as u64;
+                    broke = true;
                     break;
                 }
             }
@@ -1158,7 +1161,7 @@ impl Walker<'_> {
         }
         Ok(Probe {
             done,
-            stopped,
+            broke,
             out,
             adler: sum.finish(),
             pos: pos + src.off,
@@ -1181,8 +1184,14 @@ impl Walker<'_> {
         needed: Option<u64>,
     ) -> Result<(Option<usize>, Vec<String>, u64), PngError> {
         let total: usize = run.iter().map(|c| c.data_end - c.data_start).sum();
+        // Inflate past the rows only as far as the search budget allows, to learn whether the
+        // stream ends cleanly or breaks after them.
         let stop = needed.map(|n| n.saturating_add(1));
-        let p = self.inflate_run(run, total, stop)?;
+        let extra = SEARCH_WORK_BUDGET.saturating_sub(self.search_work);
+        let p = self.inflate_run(run, total, stop, extra)?;
+        if let Some(n) = needed {
+            self.search_work += p.out.saturating_sub(n);
+        }
         // Concatenated offset -> file offset of the first byte not read.
         let to_file = |l: usize| -> usize {
             let mut left = l;
@@ -1219,7 +1228,7 @@ impl Walker<'_> {
                     return Ok((None, vec![String::from(SEARCH_LIMIT_NOTE)], p.out));
                 }
                 let mid = a + (b - a) / 2;
-                let q = self.inflate_run(run, mid, Some(n))?;
+                let q = self.inflate_run(run, mid, Some(n), 0)?;
                 self.search_work += q.out;
                 if q.out >= n {
                     b = mid;
@@ -1232,13 +1241,14 @@ impl Walker<'_> {
                     "{} decompressed bytes after the last row are discarded; the compressed bytes after the rows (including the zlib footer) are never used",
                     p.out - n
                 )
-            } else if p.stopped {
-                String::from(
-                    "more decompressed data follows the last row and is discarded; the compressed bytes after the rows (including the zlib footer) are never used",
+            } else if p.broke {
+                format!(
+                    "the zlib stream breaks after the last row ({} decompressed bytes past the rows before the break); bytes after the rows are never used",
+                    p.out - n
                 )
             } else {
                 String::from(
-                    "the zlib stream breaks after the last row; bytes after the rows are never used",
+                    "more decompressed data follows the last row and is discarded; the stream past it was not inflated further (inflate work limit), so whether it ends cleanly is not known",
                 )
             };
             return Ok((Some(to_file(b)), vec![why], p.out));
@@ -1274,7 +1284,7 @@ impl Walker<'_> {
                 && u32::from_be_bytes([byte(l - 4), byte(l - 3), byte(l - 2), byte(l - 1)])
                     == p.adler
                 && {
-                    let q = self.inflate_run(run, l, None)?;
+                    let q = self.inflate_run(run, l, None, 0)?;
                     self.search_work += q.out;
                     q.done
                 }
@@ -1290,7 +1300,7 @@ impl Walker<'_> {
                     return Ok((None, vec![String::from(SEARCH_LIMIT_NOTE)], p.out));
                 }
                 let mid = a + (b - a) / 2;
-                let q = self.inflate_run(run, mid, None)?;
+                let q = self.inflate_run(run, mid, None, 0)?;
                 self.search_work += q.out;
                 if q.done {
                     b = mid;
@@ -1300,7 +1310,13 @@ impl Walker<'_> {
             }
             found = Some(b);
         }
-        Ok((Some(to_file(found.unwrap_or(hi))), Vec::new(), p.out))
+        Ok((
+            Some(to_file(found.unwrap_or(hi))),
+            vec![String::from(
+                "the stream ends here with its Adler-32 footer (last 4 bytes): not verified by the default decode; a strict policy verifies it",
+            )],
+            p.out,
+        ))
     }
 
     /// `iDOT` is read only when `idot::validate` accepts it (non-interlaced, one table).
@@ -1980,7 +1996,11 @@ impl Walker<'_> {
                         "superseded by a later pre-IDAT fcTL (the last one describes frame 0)",
                     );
                 } else {
-                    self.demote(id, md(MetadataKind::Animation), "");
+                    self.demote(
+                        id,
+                        md(MetadataKind::Animation),
+                        "sequence number not checked",
+                    );
                 }
             } else if pre {
                 self.demote(
