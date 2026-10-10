@@ -685,14 +685,24 @@ impl Walker<'_> {
                     Phase::Late => {
                         // `FdatSource::new` never checks the type of the chunk after an fcTL:
                         // whatever it is, its data is the frame's zlib stream.
-                        let as_frame = self.fd_first
+                        let first_frame_chunk = self.fd_first
                             && matches!(self.fd_mode, FdMode::Read { .. })
-                            && body.len() >= 4
                             && !matches!(&ty, b"fdAT" | b"fcTL" | b"IEND");
-                        if &ty != b"fdAT" && !as_frame {
+                        let as_frame = first_frame_chunk && body.len() >= 4;
+                        if &ty != b"fdAT" && !first_frame_chunk {
                             self.end_fd_run()?;
                         }
-                        if as_frame {
+                        if first_frame_chunk && !as_frame {
+                            // Shorter than a sequence number: `FdatSource::new` takes it as the
+                            // frame's first chunk, gets no deflate data from it, and goes on
+                            // into the fdATs that follow, so the frame stays readable.
+                            self.fd_first = false;
+                            done = self.classify_late(&ty, body, body_start, &mut entry);
+                            entry.note(
+                                "taken as the frame's first fdAT by the animation decoder (FdatSource::new does not check the chunk type); shorter than a sequence number, it contributes no frame data",
+                            );
+                            self.commit(entry)?;
+                        } else if as_frame {
                             self.fd_first = false;
                             let c = IdatChunk {
                                 ty,
