@@ -389,3 +389,143 @@ fn r3_stream_breaks_after_the_last_row() {
         .collect();
     eprintln!("children: {kids:?}");
 }
+
+/// fcTL followed by a non-fdAT chunk: FdatSource::new does not check the type, so the
+/// animation decoder reads that chunk's data as frame data.
+#[test]
+fn r3_chunk_after_fctl_is_read_as_frame_data() {
+    let fctl = |seq: u32| {
+        let mut d = seq.to_be_bytes().to_vec();
+        d.extend_from_slice(&2u32.to_be_bytes());
+        d.extend_from_slice(&1u32.to_be_bytes());
+        d.extend_from_slice(&[0; 8]);
+        d.extend_from_slice(&[0, 1, 0, 10, 0, 0]);
+        d
+    };
+    let mk = |ty: &[u8; 4]| {
+        let mut v = SIG.to_vec();
+        v.extend(ihdr(2, 1, 8, 2));
+        v.extend(chunk(b"acTL", &[0, 0, 0, 2, 0, 0, 0, 0]));
+        v.extend(chunk(b"fcTL", &fctl(0)));
+        v.extend(rgb_idat());
+        v.extend(chunk(b"fcTL", &fctl(1)));
+        let mut fd = 2u32.to_be_bytes().to_vec();
+        fd.extend(zlib_stored(&[0, 200, 100, 50, 25, 12, 6]));
+        v.extend(chunk(ty, &fd));
+        v.extend(chunk(b"IEND", &[]));
+        v
+    };
+    let real = mk(b"fdAT");
+    let fake = mk(b"zzZz");
+    let fr = frames(&real);
+    let ff = frames(&fake);
+    let inv = inv_with(&fake, None);
+    let p = &parts_of(&inv, b"zzZz")[0];
+    eprintln!(
+        "frames equal={} ; zzZz part {:?} {:?}",
+        fr == ff,
+        p.disposition,
+        p.detail
+    );
+    assert_eq!(fr, ff, "the decoder reads the zzZz chunk as frame data");
+    assert_eq!(p.disposition, D::ImageData, "{inv}");
+    assert!(
+        p.detail
+            .as_deref()
+            .unwrap()
+            .contains("does not check the chunk type")
+    );
+}
+
+/// Frame accounting: acTL=1 with a pre-IDAT fcTL (IDAT is frame 0); a later fcTL+fdAT is
+/// beyond the count.
+
+/// Frame accounting: acTL=1 with a pre-IDAT fcTL (IDAT is frame 0); a later fcTL+fdAT is
+/// beyond the count.
+#[test]
+fn r3_actl_one_with_frame0_idat() {
+    let base = apng();
+    // Patch acTL num_frames from 2 to 1 and fix its CRC.
+    let at = base.windows(4).position(|w| w == b"acTL").unwrap() - 4;
+    let mut v = base[..at].to_vec();
+    v.extend(chunk(b"acTL", &[0, 0, 0, 1, 0, 0, 0, 0]));
+    v.extend_from_slice(&base[at + 20..]);
+    let inv = inv_with(&v, None);
+    let n = frames(&v).len();
+    let late: Vec<_> = inv
+        .parts()
+        .iter()
+        .filter(|p| {
+            p.parent.is_none()
+                && (p.tag == PartTag::FourCc(*b"fcTL") || p.tag == PartTag::FourCc(*b"fdAT"))
+        })
+        .map(|p| (p.tag.to_string(), p.disposition))
+        .collect();
+    eprintln!("frames {n}; {late:?}");
+    assert_eq!(n, 1);
+    assert_eq!(late[1].1, D::Skipped);
+    assert_eq!(late[2].1, D::Skipped);
+}
+
+/// A post-IDAT frame smaller than the canvas with excess in its fdAT stream: the cut uses
+/// the fcTL size.
+
+/// A post-IDAT frame smaller than the canvas with excess in its fdAT stream: the cut uses
+/// the fcTL size.
+#[test]
+fn r3_small_frame_excess_is_cut() {
+    let fctl = |seq: u32, w: u32| {
+        let mut d = seq.to_be_bytes().to_vec();
+        d.extend_from_slice(&w.to_be_bytes());
+        d.extend_from_slice(&1u32.to_be_bytes());
+        d.extend_from_slice(&[0; 8]);
+        d.extend_from_slice(&[0, 1, 0, 10, 0, 0]);
+        d
+    };
+    let mut v = SIG.to_vec();
+    v.extend(ihdr(4, 1, 8, 2));
+    v.extend(chunk(b"acTL", &[0, 0, 0, 2, 0, 0, 0, 0]));
+    v.extend(chunk(b"fcTL", &fctl(0, 4)));
+    v.extend(chunk(
+        b"IDAT",
+        &zlib_stored(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
+    ));
+    v.extend(chunk(b"fcTL", &fctl(1, 1)));
+    let mut fd = 2u32.to_be_bytes().to_vec();
+    fd.extend(zlib_stored(&[&[0u8, 9, 9, 9][..], SECRET].concat()));
+    v.extend(chunk(b"fdAT", &fd));
+    v.extend(chunk(b"IEND", &[]));
+    let inv = inv_with(&v, None);
+    let f = frames(&v);
+    eprintln!("frames {}; leaf: {}", f.len(), leaf_over(&inv, &v, SECRET));
+    assert_eq!(f.len(), 2);
+    assert!(!consumed_over(&inv, &v, SECRET));
+}
+
+/// The chunk after an fcTL is frame data whatever its type, so junk after its zlib stream gets
+/// the same end placement as an fdAT.
+#[test]
+fn r3_untyped_frame_chunk_gets_zlib_end_placement() {
+    let fctl = {
+        let mut d = 1u32.to_be_bytes().to_vec();
+        d.extend_from_slice(&2u32.to_be_bytes());
+        d.extend_from_slice(&1u32.to_be_bytes());
+        d.extend_from_slice(&[0; 8]);
+        d.extend_from_slice(&[0, 1, 0, 10, 0, 0]);
+        d
+    };
+    let mut v = SIG.to_vec();
+    v.extend(ihdr(2, 1, 8, 2));
+    v.extend(chunk(b"acTL", &[0, 0, 0, 2, 0, 0, 0, 0]));
+    v.extend(rgb_idat());
+    v.extend(chunk(b"fcTL", &fctl));
+    let mut fd = 2u32.to_be_bytes().to_vec();
+    fd.extend(zlib_stored(
+        &[&[0u8, 200, 100, 50, 25, 12, 6][..], SECRET].concat(),
+    ));
+    v.extend(chunk(b"zzZz", &fd));
+    v.extend(chunk(b"IEND", &[]));
+    let inv = inv_with(&v, None);
+    assert_eq!(parts_of(&inv, b"zzZz")[0].disposition, D::ImageData);
+    assert!(!consumed_over(&inv, &v, SECRET), "{inv}");
+}

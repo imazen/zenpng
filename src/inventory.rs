@@ -155,6 +155,7 @@ pub(crate) struct Options {
 }
 
 struct IdatChunk {
+    ty: [u8; 4],
     start: usize,
     data_start: usize,
     data_end: usize,
@@ -229,6 +230,8 @@ struct Walker<'a> {
     pre_fctl: bool,
     /// Post-IDAT frames accepted so far, and how the fdATs after the last fcTL are treated.
     late_frames: u32,
+    /// The next chunk is the first after an accepted fcTL (read as frame data whatever its type).
+    fd_first: bool,
     fd_mode: FdMode,
     fd_run: Vec<IdatChunk>,
     fd_notes: BTreeMap<usize, String>,
@@ -312,6 +315,7 @@ pub(crate) fn walk(data: &[u8], stop: &dyn Stop, opts: Options) -> Result<Invent
         actl_frames: None,
         pre_fctl: false,
         late_frames: 0,
+        fd_first: false,
         fd_mode: FdMode::Skip("fdAT not directly after an fcTL"),
         fd_run: Vec::new(),
         fd_notes: BTreeMap::new(),
@@ -640,6 +644,7 @@ impl Walker<'_> {
                         phase = Phase::Idat;
                         self.first_idat_pos = Some(pos);
                         self.idat_run.push(IdatChunk {
+                            ty,
                             start: pos,
                             data_start: body_start,
                             data_end: crc_end - 4,
@@ -653,6 +658,7 @@ impl Walker<'_> {
                     }
                     Phase::Idat => {
                         self.idat_run.push(IdatChunk {
+                            ty,
                             start: pos,
                             data_start: body_start,
                             data_end: crc_end - 4,
@@ -661,11 +667,37 @@ impl Walker<'_> {
                         self.note_crc(pos, &entry);
                     }
                     Phase::Late => {
-                        if &ty != b"fdAT" {
+                        // `FdatSource::new` never checks the type of the chunk after an fcTL:
+                        // whatever it is, its data is the frame's zlib stream.
+                        let as_frame = self.fd_first
+                            && matches!(self.fd_mode, FdMode::Read { .. })
+                            && body.len() >= 4
+                            && !matches!(&ty, b"fdAT" | b"fcTL" | b"IEND");
+                        if &ty != b"fdAT" && !as_frame {
                             self.end_fd_run()?;
                         }
-                        done = self.classify_late(&ty, body, body_start, &mut entry);
-                        self.commit_late(&ty, body, body_start, entry)?;
+                        if as_frame {
+                            self.fd_first = false;
+                            let c = IdatChunk {
+                                ty,
+                                start: pos,
+                                data_start: body_start + 4,
+                                data_end: crc_end - 4,
+                                end: crc_end,
+                            };
+                            let mut note = entry.detail.join("; ");
+                            if !note.is_empty() {
+                                note.push_str("; ");
+                            }
+                            note.push_str(
+                                "read as the frame's zlib data although it is not an fdAT: FdatSource::new does not check the chunk type",
+                            );
+                            self.fd_notes.insert(c.start, note);
+                            self.fd_run.push(c);
+                        } else {
+                            done = self.classify_late(&ty, body, body_start, &mut entry);
+                            self.commit_late(&ty, body, body_start, entry)?;
+                        }
                     }
                 }
             }
@@ -750,6 +782,7 @@ impl Walker<'_> {
         body_start: usize,
         mut entry: Entry,
     ) -> Result<(), PngError> {
+        self.fd_first = false;
         match ty {
             b"fcTL" => {
                 self.fd_mode = FdMode::Skip("fdAT after an fcTL that is not read");
@@ -776,6 +809,7 @@ impl Walker<'_> {
                         w: be32(&body[4..]),
                         h: be32(&body[8..]),
                     };
+                    self.fd_first = true;
                 }
                 self.commit(entry)?;
             }
@@ -788,6 +822,7 @@ impl Walker<'_> {
             b"fdAT" => match self.fd_mode {
                 FdMode::Read { .. } => {
                     let c = IdatChunk {
+                        ty: *ty,
                         start: entry.start as usize,
                         data_start: body_start + 4,
                         data_end: entry.end as usize - 4,
@@ -859,7 +894,12 @@ impl Walker<'_> {
             })
             .unwrap_or(0);
         for (i, c) in run.iter().enumerate() {
-            let mut e = Entry::new(c.start, c.end, PartTag::FourCc(tag), Disposition::ImageData);
+            let mut e = Entry::new(
+                c.start,
+                c.end,
+                PartTag::FourCc(c.ty),
+                Disposition::ImageData,
+            );
             if let Some(n) = notes.get(&c.start) {
                 e.note(n.clone());
             }
