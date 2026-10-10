@@ -232,8 +232,9 @@ struct Walker<'a> {
     fd_mode: FdMode,
     fd_run: Vec<IdatChunk>,
     fd_notes: BTreeMap<usize, String>,
-    /// An indexed tRNS seen before PLTE: committed once the palette size is known.
-    pending_trns: Option<(Entry, usize, usize)>,
+    /// Indexed tRNS chunks, committed when the IDAT run starts, against the final palette:
+    /// (entry, data start, data length, palette entries in force when the tRNS arrived).
+    pending_trns: Vec<(Entry, usize, usize, Option<usize>)>,
 }
 
 #[derive(Clone, Copy)]
@@ -314,7 +315,7 @@ pub(crate) fn walk(data: &[u8], stop: &dyn Stop, opts: Options) -> Result<Invent
         fd_mode: FdMode::Skip("fdAT not directly after an fcTL"),
         fd_run: Vec::new(),
         fd_notes: BTreeMap::new(),
-        pending_trns: None,
+        pending_trns: Vec::new(),
     };
     w.run()?;
     w.finish()?;
@@ -698,15 +699,10 @@ impl Walker<'_> {
         entry: Entry,
     ) -> Result<(), PngError> {
         let (start, end) = (entry.start as usize, entry.end as usize);
-        if ty == b"tRNS" {
-            self.flush_trns()?;
-            if entry.disp == Disposition::ImageData
-                && self.color_type == Some(3)
-                && self.palette_len.is_none()
-            {
-                self.pending_trns = Some((entry, body_start, data_len));
-                return Ok(());
-            }
+        if ty == b"tRNS" && entry.disp == Disposition::ImageData && self.color_type == Some(3) {
+            self.pending_trns
+                .push((entry, body_start, data_len, self.palette_len));
+            return Ok(());
         }
         let id = self.commit(entry)?;
         match ty {
@@ -716,23 +712,29 @@ impl Walker<'_> {
             }
             b"fdAT" => self.anim.push((id, false, true, data_len as u64)),
             b"iDOT" => self.idot.push((id, start, body_start..end - 4)),
-            b"PLTE" => self.flush_trns()?,
             _ => {}
         }
         Ok(())
     }
 
-    /// Commit a held indexed tRNS now that the palette (if any) is known: the expander reads
-    /// at most one alpha value per palette entry.
+    /// Commit the held indexed tRNS chunks against the final palette. `collect` keeps a tRNS
+    /// whole unless it is longer than the palette present when it arrives (then only its
+    /// presence is kept); the expander reads at most one alpha value per final palette entry,
+    /// and an index has `bit_depth` bits.
     fn flush_trns(&mut self) -> Result<(), PngError> {
-        if let Some((mut e, body_start, len)) = self.pending_trns.take() {
-            let used = self.palette_len.map_or(len, |n| n.min(len));
-            e.used_prefix(
-                body_start,
-                used,
-                len,
-                "tRNS entries beyond the palette size: never read",
-            );
+        let reach = 1usize << self.ihdr.map_or(8, |i| i.bit_depth.min(8));
+        for (mut e, body_start, len, arrival) in core::mem::take(&mut self.pending_trns) {
+            let (used, why) = match arrival {
+                Some(n) if len > n => (
+                    0,
+                    "tRNS longer than the palette present when it arrives: only its presence is kept, the bytes are discarded",
+                ),
+                _ => (
+                    len.min(self.palette_len.unwrap_or(len)).min(reach),
+                    "tRNS entries beyond the final palette size or 2^bit_depth: never read",
+                ),
+            };
+            e.used_prefix(body_start, used, len, why);
             self.commit(e)?;
         }
         Ok(())
@@ -1143,16 +1145,22 @@ impl Walker<'_> {
                         e.note("transparency");
                         // RowExpander reads 2 (gray) / 6 (RGB) bytes; an indexed tRNS longer than
                         // the palette is reduced to its presence (`PngAncillary::collect`).
-                        let (used, why) = match (self.color_type, self.palette_len) {
-                            (Some(0), _) => (2, "tRNS bytes past the gray sample: never read"),
-                            (Some(2), _) => (6, "tRNS bytes past the RGB sample: never read"),
-                            (_, Some(n)) if body.len() > n => (
-                                0,
-                                "tRNS longer than the palette: only its presence is kept, the bytes are discarded",
+                        // Indexed: settled in `flush_trns` against the final palette.
+                        match self.color_type {
+                            Some(0) => e.used_prefix(
+                                body_start,
+                                2,
+                                body.len(),
+                                "tRNS bytes past the gray sample: never read",
                             ),
-                            _ => (body.len(), ""),
-                        };
-                        e.used_prefix(body_start, used, body.len(), why);
+                            Some(2) => e.used_prefix(
+                                body_start,
+                                6,
+                                body.len(),
+                                "tRNS bytes past the RGB sample: never read",
+                            ),
+                            _ => {}
+                        }
                     } else {
                         e.disp = Disposition::Dropped;
                         e.note("tRNS with an alpha colour type: not used");
