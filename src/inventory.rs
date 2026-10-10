@@ -52,8 +52,8 @@ const IDAT_MAX_OUTPUT: usize = 1 << 32;
 /// Appended to a malformed iCCP: another consumer still reacts to the chunk's presence.
 const ICCP_BAD: &str =
     "; zenpipe's png_srgb_transform_icc still sees the chunk and skips its sRGB transform";
-/// Palette bytes the decoder can use (256 entries).
-const MAX_PLTE_BYTES: usize = 768;
+/// Search for the first-row-complete position is skipped above this much compressed data.
+const RUN_SEARCH_CAP: usize = 16 * 1024 * 1024;
 
 /// One chunk's classification, built per chunk and pushed by [`Walker::commit`].
 struct Entry {
@@ -63,10 +63,9 @@ struct Entry {
     disp: Disposition,
     label: Option<String>,
     detail: Vec<String>,
-    /// Absolute offset where the decoder stops reading the chunk's data; bytes from
-    /// here to the CRC are split off as `Unreferenced` while the chunk is consumed.
-    tail: Option<u64>,
-    tail_note: &'static str,
+    /// Byte ranges (absolute) inside the chunk's data that the decoder never reads; split
+    /// off as `Unreferenced` children while the chunk is consumed.
+    holes: Vec<(u64, u64, &'static str)>,
     /// Singleton slot this chunk takes (replacing, and demoting, the previous holder).
     win: Option<Slot>,
 }
@@ -80,8 +79,7 @@ impl Entry {
             disp,
             label: None,
             detail: Vec::new(),
-            tail: None,
-            tail_note: "",
+            holes: Vec::new(),
             win: None,
         }
     }
@@ -89,8 +87,18 @@ impl Entry {
     /// The decoder reads only `used` data bytes of this chunk (data starts at `data_start`).
     fn used_prefix(&mut self, data_start: usize, used: usize, data_len: usize, note: &'static str) {
         if used < data_len {
-            self.tail = Some((data_start + used) as u64);
-            self.tail_note = note;
+            self.holes.push((
+                (data_start + used) as u64,
+                (data_start + data_len) as u64,
+                note,
+            ));
+        }
+    }
+
+    /// The decoder never reads absolute bytes `start..end` of this chunk.
+    fn hole(&mut self, start: usize, end: usize, note: &'static str) {
+        if start < end {
+            self.holes.push((start as u64, end as u64, note));
         }
     }
 }
@@ -153,6 +161,47 @@ struct IdatChunk {
     end: usize,
 }
 
+/// Result of inflating a prefix of a run into a discard sink.
+struct Probe {
+    /// The zlib stream completed.
+    done: bool,
+    /// Decompressed bytes produced.
+    out: u64,
+    adler: u32,
+    /// How far the source was read (an upper bound of the stream's end).
+    pos: usize,
+}
+
+/// Filtered byte count the rows of a `w` x `h` image need (filter bytes included).
+fn raw_size(ihdr: &Ihdr, w: u32, h: u32, interlaced: bool) -> Option<u64> {
+    let bits = u64::from(ihdr.bit_depth) * ihdr.channels() as u64;
+    let pass = |w: u64, h: u64| -> Option<u64> {
+        if w == 0 || h == 0 {
+            return Some(0);
+        }
+        h.checked_mul((w.checked_mul(bits)?.checked_add(7)? / 8).checked_add(1)?)
+    };
+    if !interlaced {
+        return pass(u64::from(w), u64::from(h));
+    }
+    let mut total = 0u64;
+    for (x0, y0, dx, dy) in [
+        (0u64, 0u64, 8u64, 8u64),
+        (4, 0, 8, 8),
+        (0, 4, 4, 8),
+        (2, 0, 4, 4),
+        (0, 2, 2, 4),
+        (1, 0, 2, 2),
+        (0, 1, 1, 2),
+    ] {
+        let (w, h) = (u64::from(w), u64::from(h));
+        let pw = if w > x0 { (w - x0).div_ceil(dx) } else { 0 };
+        let ph = if h > y0 { (h - y0).div_ceil(dy) } else { 0 };
+        total = total.checked_add(pass(pw, ph)?)?;
+    }
+    Some(total)
+}
+
 struct Walker<'a> {
     data: &'a [u8],
     stop: &'a dyn Stop,
@@ -173,8 +222,26 @@ struct Walker<'a> {
     first_idat_pos: Option<usize>,
     /// `iDOT` parts waiting for the IDAT run's position: (id, chunk start, data range).
     idot: Vec<(PartId, usize, core::ops::Range<usize>)>,
-    /// fcTL / fdAT parts settled at the end: (id, is_fctl, before_first_idat, data_len).
+    /// Pre-IDAT fcTL / fdAT parts settled at the end: (id, is_fctl, true, data_len).
     anim: Vec<(PartId, bool, bool, u64)>,
+    /// acTL `num_frames` of the winning acTL, and whether a pre-IDAT fcTL made the IDAT run frame 0.
+    actl_frames: Option<u32>,
+    pre_fctl: bool,
+    /// Post-IDAT frames accepted so far, and how the fdATs after the last fcTL are treated.
+    late_frames: u32,
+    fd_mode: FdMode,
+    fd_run: Vec<IdatChunk>,
+    fd_notes: BTreeMap<usize, String>,
+    /// An indexed tRNS seen before PLTE: committed once the palette size is known.
+    pending_trns: Option<(Entry, usize, usize)>,
+}
+
+#[derive(Clone, Copy)]
+enum FdMode {
+    /// Not directly after an accepted fcTL: never read.
+    Skip(&'static str),
+    /// Frame data for an accepted fcTL of this size.
+    Read { w: u32, h: u32 },
 }
 
 fn limit_err(_: InventoryError) -> PngError {
@@ -241,6 +308,13 @@ pub(crate) fn walk(data: &[u8], stop: &dyn Stop, opts: Options) -> Result<Invent
         first_idat_pos: None,
         idot: Vec::new(),
         anim: Vec::new(),
+        actl_frames: None,
+        pre_fctl: false,
+        late_frames: 0,
+        fd_mode: FdMode::Skip("fdAT not directly after an fcTL"),
+        fd_run: Vec::new(),
+        fd_notes: BTreeMap::new(),
+        pending_trns: None,
     };
     w.run()?;
     w.finish()?;
@@ -389,31 +463,54 @@ impl Walker<'_> {
     }
 
     /// Push a classified chunk, splitting off the bytes the decoder never reads when
-    /// the chunk is consumed (`Entry::tail`).
-    fn commit(&mut self, e: Entry) -> Result<PartId, PngError> {
-        let split = e.disp.is_consumed().then_some(e.tail).flatten();
+    /// the chunk is consumed (`Entry::holes`).
+    fn commit(&mut self, mut e: Entry) -> Result<PartId, PngError> {
+        let split = e.disp.is_consumed() && !e.holes.is_empty();
         let mut part = Part::new(PartKind::Chunk, e.tag.clone(), e.start..e.end, e.disp);
-        if let Some(l) = e.label {
+        if let Some(l) = e.label.take() {
             part = part.with_label(Cow::Owned(l));
         }
         if !e.detail.is_empty() {
             part = part.with_detail(e.detail.join("; "));
         }
-        if split.is_some() {
+        if split {
             part = part.with_body(e.start..e.end);
         }
         let id = self.inv.push(None, part).map_err(limit_err)?;
-        if let Some(tail) = split {
+        if split {
+            e.holes.sort();
             let data_end = e.end - 4;
-            let head = Part::new(PartKind::Field, PartTag::None, e.start..tail, e.disp)
-                .with_detail("bytes the decoder reads");
-            let hole = Part::new(
-                PartKind::Gap,
-                PartTag::None,
-                tail..data_end,
-                Disposition::Unreferenced,
-            )
-            .with_detail(e.tail_note);
+            let mut kids = Vec::new();
+            let mut cursor = e.start;
+            let mut push = |w: &mut Self, p: Part| -> Result<(), PngError> {
+                kids.push(w.inv.push(Some(id), p).map_err(limit_err)?);
+                Ok(())
+            };
+            for &(hs, he, note) in &e.holes {
+                let (hs, he) = (hs.max(cursor), he.min(data_end));
+                if hs >= he {
+                    continue;
+                }
+                if cursor < hs {
+                    let head = Part::new(PartKind::Field, PartTag::None, cursor..hs, e.disp)
+                        .with_detail("bytes the decoder reads");
+                    push(self, head)?;
+                }
+                let hole = Part::new(
+                    PartKind::Gap,
+                    PartTag::None,
+                    hs..he,
+                    Disposition::Unreferenced,
+                )
+                .with_detail(note);
+                push(self, hole)?;
+                cursor = he;
+            }
+            if cursor < data_end {
+                let head = Part::new(PartKind::Field, PartTag::None, cursor..data_end, e.disp)
+                    .with_detail("bytes the decoder reads");
+                push(self, head)?;
+            }
             let crc = Part::new(
                 PartKind::Field,
                 PartTag::None,
@@ -421,10 +518,7 @@ impl Walker<'_> {
                 Disposition::Structure,
             )
             .with_label("crc");
-            let mut kids = Vec::new();
-            for k in [head, hole, crc] {
-                kids.push(self.inv.push(Some(id), k).map_err(limit_err)?);
-            }
+            push(self, crc)?;
             self.kids.insert(id.index(), kids);
         }
         if let Some(slot) = e.win {
@@ -504,8 +598,11 @@ impl Walker<'_> {
             let crc_bad = crc32(crc32(0, &ty), body) != stored;
             // Ancillary = bit 5 of the first type byte (ChunkIter).
             let ancillary = ty[0] & 0x20 != 0;
+            let after_idat = phase == Phase::Late || (phase == Phase::Idat && &ty != b"IDAT");
             if crc_bad {
-                entry.note(if ancillary {
+                entry.note(if ancillary && after_idat {
+                    "crc mismatch (no decode path checks it: finish_metadata reads chunks after the IDAT run unchecked)"
+                } else if ancillary {
                     "crc mismatch (the default decode does not check it; a strict policy skips the chunk)"
                 } else {
                     "crc mismatch in a critical chunk: DecodeJob::decode rejects the file \
@@ -538,6 +635,7 @@ impl Walker<'_> {
             } else {
                 match phase {
                     Phase::Pre if &ty == b"IDAT" => {
+                        self.flush_trns()?;
                         phase = Phase::Idat;
                         self.first_idat_pos = Some(pos);
                         self.idat_run.push(IdatChunk {
@@ -562,8 +660,11 @@ impl Walker<'_> {
                         self.note_crc(pos, &entry);
                     }
                     Phase::Late => {
+                        if &ty != b"fdAT" {
+                            self.end_fd_run()?;
+                        }
                         done = self.classify_late(&ty, body, body_start, &mut entry);
-                        self.commit_late(&ty, entry)?;
+                        self.commit_late(&ty, body, body_start, entry)?;
                     }
                 }
             }
@@ -572,7 +673,9 @@ impl Walker<'_> {
                 break;
             }
         }
+        self.flush_trns()?;
         self.end_idat_run()?;
+        self.end_fd_run()?;
         Ok(())
     }
 
@@ -586,6 +689,7 @@ impl Walker<'_> {
     }
 
     /// fcTL / fdAT / iDOT need facts only known at the end of the walk; register them.
+    /// An indexed tRNS before PLTE waits for the palette size.
     fn commit_pre(
         &mut self,
         ty: &[u8; 4],
@@ -594,77 +698,198 @@ impl Walker<'_> {
         entry: Entry,
     ) -> Result<(), PngError> {
         let (start, end) = (entry.start as usize, entry.end as usize);
+        if ty == b"tRNS" {
+            self.flush_trns()?;
+            if entry.disp == Disposition::ImageData
+                && self.color_type == Some(3)
+                && self.palette_len.is_none()
+            {
+                self.pending_trns = Some((entry, body_start, data_len));
+                return Ok(());
+            }
+        }
         let id = self.commit(entry)?;
         match ty {
-            b"fcTL" => self.anim.push((id, true, true, data_len as u64)),
+            b"fcTL" => {
+                self.pre_fctl = true;
+                self.anim.push((id, true, true, data_len as u64));
+            }
             b"fdAT" => self.anim.push((id, false, true, data_len as u64)),
             b"iDOT" => self.idot.push((id, start, body_start..end - 4)),
+            b"PLTE" => self.flush_trns()?,
             _ => {}
         }
         Ok(())
     }
 
-    fn commit_late(&mut self, ty: &[u8; 4], entry: Entry) -> Result<(), PngError> {
-        let data_len = (entry.end - entry.start).saturating_sub(12);
-        let id = self.commit(entry)?;
+    /// Commit a held indexed tRNS now that the palette (if any) is known: the expander reads
+    /// at most one alpha value per palette entry.
+    fn flush_trns(&mut self) -> Result<(), PngError> {
+        if let Some((mut e, body_start, len)) = self.pending_trns.take() {
+            let used = self.palette_len.map_or(len, |n| n.min(len));
+            e.used_prefix(
+                body_start,
+                used,
+                len,
+                "tRNS entries beyond the palette size: never read",
+            );
+            self.commit(e)?;
+        }
+        Ok(())
+    }
+
+    /// Post-IDAT chunks. fcTL decides at once how its frame's fdATs are read; fdAT chunks of
+    /// a read frame are held until the group ends so the end of the frame's zlib stream can
+    /// be placed (as for the IDAT run).
+    fn commit_late(
+        &mut self,
+        ty: &[u8; 4],
+        body: &[u8],
+        body_start: usize,
+        mut entry: Entry,
+    ) -> Result<(), PngError> {
         match ty {
-            b"fcTL" => self.anim.push((id, true, false, data_len)),
-            b"fdAT" => self.anim.push((id, false, false, data_len)),
-            _ => {}
+            b"fcTL" => {
+                self.fd_mode = FdMode::Skip("fdAT after an fcTL that is not read");
+                let allowed = self
+                    .actl_frames
+                    .map(|n| n.saturating_sub(u32::from(self.pre_fctl)));
+                if !self.slot_taken(Slot::Actl) {
+                    entry.note("fcTL without a valid acTL: not read");
+                } else if self.opts.no_animation {
+                    entry.note(
+                        "decode policy forbids animation (animation_frame_decoder is rejected)",
+                    );
+                } else if body.len() != 26 {
+                    entry.disp = Disposition::Malformed;
+                    entry.note(format!("fcTL is {} bytes, expected 26", body.len()));
+                } else if allowed.is_some_and(|n| self.late_frames >= n) {
+                    entry.note(
+                        "frame beyond acTL num_frames: ApngDecoder::next_frame stops before it",
+                    );
+                } else {
+                    entry.disp = md(MetadataKind::Animation);
+                    self.late_frames += 1;
+                    self.fd_mode = FdMode::Read {
+                        w: be32(&body[4..]),
+                        h: be32(&body[8..]),
+                    };
+                }
+                self.commit(entry)?;
+            }
+            b"fdAT" if body.len() < 4 => {
+                self.end_fd_run()?;
+                entry.disp = Disposition::Malformed;
+                entry.note("fdAT shorter than its sequence number");
+                self.commit(entry)?;
+            }
+            b"fdAT" => match self.fd_mode {
+                FdMode::Read { .. } => {
+                    let c = IdatChunk {
+                        start: entry.start as usize,
+                        data_start: body_start + 4,
+                        data_end: entry.end as usize - 4,
+                        end: entry.end as usize,
+                    };
+                    if !entry.detail.is_empty() {
+                        self.fd_notes.insert(c.start, entry.detail.join("; "));
+                    }
+                    self.fd_run.push(c);
+                }
+                FdMode::Skip(why) => {
+                    entry.note(why);
+                    self.commit(entry)?;
+                }
+            },
+            _ => {
+                self.fd_mode = FdMode::Skip("fdAT not directly after an fcTL");
+                self.commit(entry)?;
+            }
         }
         Ok(())
     }
 
-    /// Place the end of the IDAT zlib stream by inflating the run into a discard sink
-    /// (what `drain_stream` does after the last row), then push the run's chunks:
-    /// the one holding the stream end keeps the bytes after it as `Unreferenced`, and
-    /// chunks entirely after it are never read.
+    /// Push the held fdAT group of the current frame.
+    fn end_fd_run(&mut self) -> Result<(), PngError> {
+        if self.fd_run.is_empty() {
+            return Ok(());
+        }
+        let run = core::mem::take(&mut self.fd_run);
+        let notes = core::mem::take(&mut self.fd_notes);
+        let needed = match (self.fd_mode, self.ihdr) {
+            (FdMode::Read { w, h }, Some(i)) => raw_size(&i, w, h, false),
+            _ => None,
+        };
+        self.push_run(run, notes, *b"fdAT", needed)
+    }
+
+    /// End of the contiguous IDAT run: place the end of its zlib stream and push the chunks.
     fn end_idat_run(&mut self) -> Result<(), PngError> {
         if self.idat_run.is_empty() {
             return Ok(());
         }
         let run = core::mem::take(&mut self.idat_run);
-        let (end_abs, note) = self.zlib_end(&run)?;
         let notes = core::mem::take(&mut self.idat_notes);
-        for c in &run {
-            let mut e = Entry::new(
-                c.start,
-                c.end,
-                PartTag::FourCc(*b"IDAT"),
-                Disposition::ImageData,
-            );
+        let needed = self
+            .ihdr
+            .and_then(|i| raw_size(&i, i.width, i.height, i.interlace == 1));
+        self.push_run(run, notes, *b"IDAT", needed)?;
+        self.settle_idot()
+    }
+
+    /// Push the chunks of a zlib-carrying run. The end of the consumed data is found by
+    /// inflating the run into a discard sink (what `drain_stream` does after the last row):
+    /// the chunk holding it keeps the bytes after it as `Unreferenced`, and chunks entirely
+    /// after it are never read. `needed` is the filtered size the image's rows require.
+    fn push_run(
+        &mut self,
+        run: Vec<IdatChunk>,
+        notes: BTreeMap<usize, String>,
+        tag: [u8; 4],
+        needed: Option<u64>,
+    ) -> Result<(), PngError> {
+        let (end_abs, extra) = self.place_run(&run, needed)?;
+        // Remarks about the whole run go on the chunk holding the cut (else the first chunk).
+        let carrier = end_abs
+            .and_then(|end| {
+                run.iter()
+                    .position(|c| c.data_start <= end && end <= c.data_end)
+            })
+            .unwrap_or(0);
+        for (i, c) in run.iter().enumerate() {
+            let mut e = Entry::new(c.start, c.end, PartTag::FourCc(tag), Disposition::ImageData);
             if let Some(n) = notes.get(&c.start) {
                 e.note(n.clone());
+            }
+            if tag == *b"fdAT" {
+                e.note("animation frame data; sequence numbers are not checked");
+            }
+            if i == carrier {
+                for n in &extra {
+                    e.note(n.clone());
+                }
             }
             if let Some(end) = end_abs {
                 if c.data_start >= end && c.data_end > c.data_start {
                     e.disp = Disposition::Skipped;
-                    e.note("IDAT after the end of the zlib stream: never read (drain_stream stops at the stream end)");
+                    e.note("after the end of the data the decoder reads from the zlib stream: never read");
                 } else if c.data_end > end && end >= c.data_start {
                     e.used_prefix(
                         c.data_start,
                         end - c.data_start,
                         c.data_end - c.data_start,
-                        "bytes after the end of the zlib stream: never read",
+                        "bytes after the data the decoder reads from the zlib stream: never read",
                     );
                 }
-            } else if let Some(n) = &note {
-                e.note(n.clone());
             }
             self.commit(e)?;
         }
-        self.settle_idot(&run)?;
         Ok(())
     }
 
-    /// Inflate the first `limit` bytes of the run into a discard sink. `Some((position,
-    /// adler32 of the output))` when the stream completes, `position` being how far the
-    /// source was read (an upper bound for the stream's end: the inflater stages input).
-    fn inflate_run(
-        &mut self,
-        run: &[IdatChunk],
-        limit: usize,
-    ) -> Result<Option<(usize, u32)>, PngError> {
+    /// Inflate the first `limit` bytes of the run into a discard sink, as the default
+    /// decode does (checksum skipped).
+    fn inflate_run(&mut self, run: &[IdatChunk], limit: usize) -> Result<Probe, PngError> {
         let src = RunSource {
             data: self.data,
             chunks: run,
@@ -673,25 +898,34 @@ impl Walker<'_> {
             left: limit,
         };
         let mut d = zenflate::StreamDecompressor::zlib(src, IDAT_WINDOW)
+            .with_skip_checksum(true)
             .with_max_output_size(Some(IDAT_MAX_OUTPUT));
         let mut sum = zenflate::Adler32Hasher::new();
-        let mut stalled = 0;
+        let (mut out, mut stalled, mut done) = (0u64, 0, false);
         loop {
             self.stop.check().map_err(PngError::from)?;
             if d.is_done() {
+                done = true;
                 break;
             }
             match d.fill() {
-                Ok(out) => {
-                    let n = out.len();
-                    sum.write(out);
+                Ok(o) => {
+                    let n = o.len();
+                    sum.write(o);
+                    out += n as u64;
                     d.advance(n);
                     stalled = if n == 0 { stalled + 1 } else { 0 };
                     if stalled > 2 && !d.is_done() {
-                        return Ok(None);
+                        break;
                     }
                 }
-                Err(_) => return Ok(None),
+                Err(_) => {
+                    // Output decoded before the error is still pending in the window.
+                    let pending = d.peek();
+                    sum.write(pending);
+                    out += pending.len() as u64;
+                    break;
+                }
             }
         }
         let src = d.source_ref();
@@ -699,27 +933,83 @@ impl Walker<'_> {
         for c in run.iter().take(src.ci) {
             pos += c.data_end - c.data_start;
         }
-        Ok(Some((pos + src.off, sum.finish())))
+        Ok(Probe {
+            done,
+            out,
+            adler: sum.finish(),
+            pos: pos + src.off,
+        })
     }
 
-    /// File offset just past the zlib stream's last byte, or `None` (with a remark)
-    /// when the stream does not complete.
+    /// File offset where the data the decoder reads from the run's zlib stream ends, plus
+    /// remarks. `None` when it can't be placed.
     ///
-    /// The streaming inflater stages up to 32 KiB of input beyond what it uses, so a
-    /// first pass only bounds the end. The end is then the shortest prefix of the run
-    /// that still inflates: candidates are the positions in the last staging window
-    /// whose preceding four bytes equal the Adler-32 of the output (one test, usually),
-    /// with a binary search over the window when the file's checksum is wrong.
-    fn zlib_end(&mut self, run: &[IdatChunk]) -> Result<(Option<usize>, Option<String>), PngError> {
+    /// - If the stream inflates to more than `needed` bytes (the rows), or breaks after the
+    ///   rows, the end is the shortest input prefix that yields `needed` bytes.
+    /// - Otherwise it is the end of the stream: the shortest prefix that still completes
+    ///   (the inflater stages up to 32 KiB of input, so the source position only bounds it;
+    ///   candidates are the positions whose preceding four bytes equal the Adler-32 of the
+    ///   output, with a binary search over the staging window when the file's checksum is
+    ///   wrong, which the default decode accepts).
+    fn place_run(
+        &mut self,
+        run: &[IdatChunk],
+        needed: Option<u64>,
+    ) -> Result<(Option<usize>, Vec<String>), PngError> {
         let total: usize = run.iter().map(|c| c.data_end - c.data_start).sum();
-        let Some((hi, adler)) = self.inflate_run(run, total)? else {
+        let p = self.inflate_run(run, total)?;
+        // Concatenated offset -> file offset of the first byte not read.
+        let to_file = |l: usize| -> usize {
+            let mut left = l;
+            for c in run {
+                let len = c.data_end - c.data_start;
+                if left <= len {
+                    return c.data_start + left;
+                }
+                left -= len;
+            }
+            run.last().map_or(0, |c| c.data_end)
+        };
+        if let Some(n) = needed
+            && ((p.done && p.out > n) || (!p.done && p.out >= n))
+        {
+            if total > RUN_SEARCH_CAP {
+                return Ok((
+                    None,
+                    vec![String::from(
+                        "stream holds more than the image rows (or breaks after them); too large to place the cut, bytes after the rows are not distinguished",
+                    )],
+                ));
+            }
+            let (mut a, mut b) = (0usize, total);
+            while a < b {
+                let mid = a + (b - a) / 2;
+                if self.inflate_run(run, mid)?.out >= n {
+                    b = mid;
+                } else {
+                    a = mid + 1;
+                }
+            }
+            let why = if p.done {
+                format!(
+                    "{} decompressed bytes after the last row are discarded; the compressed bytes after the rows (including the zlib footer) are never used",
+                    p.out - n
+                )
+            } else {
+                String::from(
+                    "the zlib stream breaks after the last row; bytes after the rows are never used",
+                )
+            };
+            return Ok((Some(to_file(b)), vec![why]));
+        }
+        if !p.done {
             return Ok((
                 None,
-                Some(String::from(
+                vec![String::from(
                     "zlib stream does not complete; bytes after its end are not distinguished",
-                )),
+                )],
             ));
-        };
+        }
         // Cumulative start (in the concatenated run data) of each chunk, for byte lookups.
         let mut cum = Vec::with_capacity(run.len());
         let mut acc = 0usize;
@@ -734,23 +1024,24 @@ impl Walker<'_> {
                 .copied()
                 .unwrap_or(0)
         };
+        let hi = p.pos;
         let lo = hi.saturating_sub(OVERREAD_WINDOW).max(2);
         let mut found = None;
         for l in lo..=hi {
             if l >= 4
-                && u32::from_be_bytes([byte(l - 4), byte(l - 3), byte(l - 2), byte(l - 1)]) == adler
-                && self.inflate_run(run, l)?.is_some()
+                && u32::from_be_bytes([byte(l - 4), byte(l - 3), byte(l - 2), byte(l - 1)])
+                    == p.adler
+                && self.inflate_run(run, l)?.done
             {
                 found = Some(l);
                 break;
             }
         }
         if found.is_none() {
-            // Checksum mismatch in the file: binary search the shortest prefix that completes.
             let (mut a, mut b) = (lo, hi);
             while a < b {
                 let mid = a + (b - a) / 2;
-                if self.inflate_run(run, mid)?.is_some() {
+                if self.inflate_run(run, mid)?.done {
                     b = mid;
                 } else {
                     a = mid + 1;
@@ -758,21 +1049,11 @@ impl Walker<'_> {
             }
             found = Some(b);
         }
-        let l = found.unwrap_or(hi);
-        // Concatenated offset -> file offset of the first byte not read.
-        let mut left = l;
-        for c in run {
-            let len = c.data_end - c.data_start;
-            if left <= len {
-                return Ok((Some(c.data_start + left), None));
-            }
-            left -= len;
-        }
-        Ok((Some(run.last().map_or(0, |c| c.data_end)), None))
+        Ok((Some(to_file(found.unwrap_or(hi))), Vec::new()))
     }
 
     /// `iDOT` is read only when `idot::validate` accepts it (non-interlaced, one table).
-    fn settle_idot(&mut self, _run: &[IdatChunk]) -> Result<(), PngError> {
+    fn settle_idot(&mut self) -> Result<(), PngError> {
         let ids = core::mem::take(&mut self.idot);
         if ids.is_empty() {
             return Ok(());
@@ -837,11 +1118,13 @@ impl Walker<'_> {
                     if self.color_type == Some(3) {
                         e.disp = Disposition::ImageData;
                         e.note("palette");
+                        // An index has bit_depth bits, so entries past 2^bit_depth are unreachable.
+                        let reach = 1usize << self.ihdr.map_or(8, |i| i.bit_depth.min(8));
                         e.used_prefix(
                             body_start,
-                            MAX_PLTE_BYTES,
+                            3 * (body.len() / 3).min(reach),
                             body.len(),
-                            "palette entries past 256: unreachable by any index, never used",
+                            "palette entries beyond 2^bit_depth: unreachable by any index, never used",
                         );
                     } else {
                         e.disp = Disposition::Dropped;
@@ -923,6 +1206,7 @@ impl Walker<'_> {
                     } else {
                         e.disp = md(MetadataKind::Animation);
                         e.win = Some(Slot::Actl);
+                        self.actl_frames = Some(frames);
                     }
                 }
             }
@@ -1021,6 +1305,12 @@ impl Walker<'_> {
         };
         if nul <= MAX_KEYWORD {
             e.label = Some(latin1(&body[..nul]));
+        } else {
+            e.hole(
+                body_start,
+                body_start + nul,
+                "profile name longer than 79 bytes: parse_iccp discards the name",
+            );
         }
         if nul + 2 > body.len() {
             e.disp = Disposition::Malformed;
@@ -1170,7 +1460,7 @@ impl Walker<'_> {
         if kw == Some(XMP) {
             self.itxt_xmp(body, body_start, e, late);
         } else if matches!(kw, Some(b"Software") | Some(b"Creator")) {
-            self.itxt_tool(body, e);
+            self.itxt_tool(body, body_start, e);
         } else if kw.is_none() {
             e.disp = Disposition::Skipped;
             e.note("iTXt without a terminated keyword; the decoder reads only XMP and Software/Creator");
@@ -1179,7 +1469,7 @@ impl Walker<'_> {
         }
     }
 
-    fn itxt_tool(&mut self, body: &[u8], e: &mut Entry) {
+    fn itxt_tool(&mut self, body: &[u8], body_start: usize, e: &mut Entry) {
         // try_extract_creating_tool_itxt: first match wins, text must be UTF-8.
         e.note("native-only unless it is the first creating tool");
         if self.slot_taken(Slot::CreatingTool) {
@@ -1203,6 +1493,14 @@ impl Walker<'_> {
         });
         match text {
             Some(t) if core::str::from_utf8(t).is_ok() => {
+                let text_off = body.len() - t.len();
+                if text_off > nul + 5 {
+                    e.hole(
+                        body_start + nul + 3,
+                        body_start + text_off,
+                        "iTXt language tag and translated keyword: not read",
+                    );
+                }
                 e.disp = md(MetadataKind::Supplement);
                 e.note("PngProbe::creating_tool via DecodeOutput::source_encoding_details");
                 e.win = Some(Slot::CreatingTool);
@@ -1243,6 +1541,16 @@ impl Walker<'_> {
             return;
         };
         let text = &rest[t + 1..];
+        // Language tag and translated keyword (between the method byte and the text) are
+        // skipped by `try_parse_xmp`; they can be any length.
+        let text_off = body.len() - text.len();
+        if text_off > KW + 5 {
+            e.holes.push((
+                (body_start + KW + 3) as u64,
+                (body_start + text_off) as u64,
+                "iTXt language tag and translated keyword: not read",
+            ));
+        }
         match flag {
             0 if !text.is_empty() => {
                 e.disp = md(MetadataKind::Xmp);
