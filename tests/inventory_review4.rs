@@ -569,3 +569,130 @@ fn r4_bad_crc_exif_names_the_other_readers() {
             .contains("probe() and the animation decoder skip it")
     );
 }
+
+/// Directory of one codec-corpus set: `$ZENPNG_CODEC_CORPUS/<set>` (a local checkout,
+/// read-only) or the codec-corpus crate's cache of imazen/codec-corpus.
+fn corpus_dir(set: &str) -> std::path::PathBuf {
+    if let Some(d) = std::env::var_os("ZENPNG_CODEC_CORPUS") {
+        return std::path::PathBuf::from(d).join(set);
+    }
+    codec_corpus::Corpus::new()
+        .expect("codec-corpus cache unavailable")
+        .github_repo("imazen/codec-corpus", set, "main")
+        .unwrap_or_else(|e| panic!("fetching imazen/codec-corpus {set} (main) failed: {e}"))
+}
+
+/// R4-5: the three apng-conformance files whose animation path fails. The still decode
+/// succeeds; the inventory must say where the animation decoder fails and stop claiming the
+/// frames after that point.
+#[test]
+fn r4_failing_animation_frames_are_reported() {
+    let dir = corpus_dir("apng-conformance").join("invalid");
+    let top = |inv: &Inventory, tag: &str| -> Vec<zencodec::inventory::Part> {
+        inv.parts()
+            .iter()
+            .filter(|p| p.parent.is_none() && p.tag.to_string() == tag)
+            .cloned()
+            .collect()
+    };
+    // frame_out_of_bounds: frame 1's fcTL exceeds the canvas.
+    let b = std::fs::read(dir.join("frame_out_of_bounds.png")).unwrap();
+    let err = frames_or_err(&b).unwrap_err();
+    assert!(err.contains("exceeds canvas width"), "{err}");
+    let inv = inv_with(&b, None);
+    let fctl = top(&inv, "fcTL");
+    assert_eq!(fctl[1].disposition, D::Malformed, "{inv}");
+    assert!(
+        fctl[1]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("exceeds canvas width")
+    );
+    assert_eq!(top(&inv, "fdAT")[0].disposition, D::Skipped, "{inv}");
+    assert!(
+        top(&inv, "acTL")[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("animation_frame_decoder fails")
+    );
+    // no_fdat: acTL promises a frame the file doesn't hold.
+    let b = std::fs::read(dir.join("no_fdat.png")).unwrap();
+    let err = frames_or_err(&b).unwrap_err();
+    assert!(
+        err.contains("reached IEND before finding expected fcTL"),
+        "{err}"
+    );
+    let inv = inv_with(&b, None);
+    assert!(
+        top(&inv, "acTL")[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("acTL declares 3 frames, the file holds 1"),
+        "{inv}"
+    );
+    // truncated_fdat: frame 1's zlib data ends before its rows.
+    let b = std::fs::read(dir.join("truncated_fdat.png")).unwrap();
+    let err = frames_or_err(&b).unwrap_err();
+    assert!(err.contains("decompression error"), "{err}");
+    let inv = inv_with(&b, None);
+    let fd = &top(&inv, "fdAT")[0];
+    assert_eq!(fd.disposition, D::Skipped, "{inv}");
+    assert!(
+        fd.detail
+            .as_deref()
+            .unwrap()
+            .contains("fails on this frame")
+    );
+}
+
+/// R4-5 without the corpus: frame 1's fcTL lies outside the canvas, and a later frame is never
+/// reached.
+#[test]
+fn r4_frame_after_a_failing_frame_is_not_claimed() {
+    let fctl = |seq: u32, x: u32| {
+        let mut d = seq.to_be_bytes().to_vec();
+        d.extend_from_slice(&2u32.to_be_bytes());
+        d.extend_from_slice(&1u32.to_be_bytes());
+        d.extend_from_slice(&x.to_be_bytes());
+        d.extend_from_slice(&0u32.to_be_bytes());
+        d.extend_from_slice(&[0, 1, 0, 10, 0, 0]);
+        d
+    };
+    let fdat = |seq: u32| {
+        let mut d = seq.to_be_bytes().to_vec();
+        d.extend(zlib_stored(&[0, 9, 9, 9, 8, 8, 8]));
+        chunk(b"fdAT", &d)
+    };
+    let mut v = SIG.to_vec();
+    v.extend(ihdr(2, 1, 8, 2));
+    v.extend(chunk(b"acTL", &[0, 0, 0, 3, 0, 0, 0, 0]));
+    v.extend(chunk(b"fcTL", &fctl(0, 0)));
+    v.extend(rgb_idat());
+    v.extend(chunk(b"fcTL", &fctl(1, 5))); // x_offset 5 + width 2 > canvas 2
+    v.extend(fdat(2));
+    v.extend(chunk(b"fcTL", &fctl(3, 0)));
+    v.extend(fdat(4));
+    v.extend(chunk(b"IEND", &[]));
+    assert!(frames_or_err(&v).is_err());
+    let inv = inv_with(&v, None);
+    let tags: Vec<_> = inv
+        .parts()
+        .iter()
+        .filter(|p| p.parent.is_none() && ["fcTL", "fdAT"].contains(&p.tag.to_string().as_str()))
+        .map(|p| (p.tag.to_string(), p.disposition))
+        .collect();
+    assert_eq!(
+        tags,
+        vec![
+            ("fcTL".into(), D::Metadata(M::Animation)),
+            ("fcTL".into(), D::Malformed),
+            ("fdAT".into(), D::Skipped),
+            ("fcTL".into(), D::Skipped),
+            ("fdAT".into(), D::Skipped),
+        ],
+        "{inv}"
+    );
+}

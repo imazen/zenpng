@@ -253,6 +253,11 @@ struct Walker<'a> {
     idat_notes: BTreeMap<usize, String>,
     /// A non-empty tRNS reached `PngAncillary::collect` (it widens the output pixel).
     trns_seen: bool,
+    /// Set once the animation decoder is known to fail: why. Frames after that point never
+    /// reach the caller.
+    anim_dead: Option<String>,
+    /// Pre-IDAT fcTL parts `FrameControl::parse` rejects, with the error.
+    pre_fctl_bad: Vec<(PartId, String)>,
     /// The contiguous IDAT run being collected; flushed when it ends.
     idat_run: Vec<IdatChunk>,
     first_idat_pos: Option<usize>,
@@ -350,6 +355,8 @@ pub(crate) fn walk(data: &[u8], stop: &dyn Stop, opts: Options) -> Result<Invent
         scratch: Vec::new(),
         idat_notes: BTreeMap::new(),
         trns_seen: false,
+        anim_dead: None,
+        pre_fctl_bad: Vec::new(),
         idat_run: Vec::new(),
         first_idat_pos: None,
         idot: Vec::new(),
@@ -824,6 +831,18 @@ impl Walker<'_> {
                     let b = &self.data[body_start..body_start + 26];
                     self.pre_fctl_dims = Some((be32(&b[4..]), be32(&b[8..])));
                 }
+                // `ApngDecoder::new` parses every pre-IDAT fcTL and fails on any invalid one.
+                if let Some(i) = self.ihdr
+                    && let Err(e) = crate::chunk::ancillary::FrameControl::parse(
+                        &self.data[body_start..body_start + data_len],
+                        i.width,
+                        i.height,
+                    )
+                {
+                    let why = format!("animation_frame_decoder rejects the file: {}", e.error());
+                    self.anim_dead.get_or_insert_with(|| why.clone());
+                    self.pre_fctl_bad.push((id, why));
+                }
                 self.anim.push((id, true, true, data_len as u64));
             }
             b"fdAT" => self.anim.push((id, false, true, data_len as u64)),
@@ -873,8 +892,18 @@ impl Walker<'_> {
                 let allowed = self
                     .actl_frames
                     .map(|n| n.saturating_sub(u32::from(self.pre_fctl)));
+                // Sequence numbers are never compared with anything (issue #30).
+                entry.note("sequence number not checked");
+                let parsed = self.ihdr.map(|i| {
+                    crate::chunk::ancillary::FrameControl::parse(body, i.width, i.height)
+                        .map_err(|e| e.error().to_string())
+                });
                 if !self.slot_taken(Slot::Actl) {
                     entry.note("fcTL without a valid acTL: not read");
+                } else if let Some(why) = self.anim_dead.clone() {
+                    entry.note(format!("never reached: {why}"));
+                    self.fd_mode =
+                        FdMode::Skip("fdAT of a frame the animation decoder never reaches");
                 } else if self.opts.no_animation {
                     entry.note(
                         "decode policy forbids animation (animation_frame_decoder is rejected)",
@@ -886,6 +915,12 @@ impl Walker<'_> {
                     entry.note(
                         "frame beyond acTL num_frames: ApngDecoder::next_frame stops before it",
                     );
+                } else if let Some(Err(e)) = parsed {
+                    let why = format!("animation_frame_decoder fails at this frame: {e}");
+                    entry.disp = Disposition::Malformed;
+                    entry.note(why.clone());
+                    self.anim_dead = Some(why);
+                    self.fd_mode = FdMode::Skip("fdAT of a frame the animation decoder fails on");
                 } else {
                     entry.disp = md(MetadataKind::Animation);
                     self.late_frames += 1;
@@ -941,7 +976,21 @@ impl Walker<'_> {
             (FdMode::Read { w, h }, Some(i)) => raw_size(&i, w, h, false),
             _ => None,
         };
-        self.push_run(run, notes, *b"fdAT", needed)
+        let (ids, out) = self.push_run(run, notes, *b"fdAT", needed)?;
+        // `decode_fdat_frame` fails when the stream yields fewer bytes than the frame's rows
+        // (it ends, or breaks, first): this frame and every later one never reach the caller.
+        if let Some(n) = needed
+            && out < n
+        {
+            let why = format!(
+                "animation_frame_decoder fails on this frame: its zlib data yields {out} of the {n} bytes the rows need"
+            );
+            for id in ids {
+                self.demote(id, Disposition::Skipped, &why);
+            }
+            self.anim_dead.get_or_insert(why);
+        }
+        Ok(())
     }
 
     /// End of the contiguous IDAT run: place the end of its zlib stream and push the chunks.
@@ -964,8 +1013,35 @@ impl Walker<'_> {
             _ => None,
         };
         self.frame0_alt = alt;
-        self.push_run(run, notes, *b"IDAT", needed)?;
+        let (ids, out) = self.push_run(run, notes, *b"IDAT", needed)?;
         self.frame0_alt = None;
+        let mut why = Vec::new();
+        if let Some(n) = needed
+            && out < n
+        {
+            why.push(format!(
+                "DecodeJob::decode fails: the image data yields {out} of the {n} bytes the rows need"
+            ));
+        }
+        // `alt` is set only for an animation whose frame 0 is the IDAT run.
+        if let Some(a) = alt
+            && out < a
+        {
+            let w = format!(
+                "animation_frame_decoder fails on frame 0: the image data yields {out} of the {a} bytes its fcTL rows need"
+            );
+            why.push(w.clone());
+            self.anim_dead.get_or_insert(w);
+        }
+        if !why.is_empty()
+            && let Some(&first) = ids.first()
+        {
+            let d = self
+                .inv
+                .get(first)
+                .map_or(Disposition::ImageData, |p| p.disposition);
+            self.demote(first, d, &why.join("; "));
+        }
         self.settle_idot()
     }
 
@@ -979,8 +1055,9 @@ impl Walker<'_> {
         notes: BTreeMap<usize, String>,
         tag: [u8; 4],
         needed: Option<u64>,
-    ) -> Result<(), PngError> {
-        let (end_abs, extra) = self.place_run(&run, needed)?;
+    ) -> Result<(Vec<PartId>, u64), PngError> {
+        let (end_abs, extra, out) = self.place_run(&run, needed)?;
+        let mut ids = Vec::with_capacity(run.len());
         // Remarks about the whole run go on the chunk holding the cut (else the first chunk).
         let carrier = end_abs
             .and_then(|end| {
@@ -1019,9 +1096,9 @@ impl Walker<'_> {
                     );
                 }
             }
-            self.commit(e)?;
+            ids.push(self.commit(e)?);
         }
-        Ok(())
+        Ok((ids, out))
     }
 
     /// Inflate the first `limit` bytes of the run into a discard sink, as the default
@@ -1102,7 +1179,7 @@ impl Walker<'_> {
         &mut self,
         run: &[IdatChunk],
         needed: Option<u64>,
-    ) -> Result<(Option<usize>, Vec<String>), PngError> {
+    ) -> Result<(Option<usize>, Vec<String>, u64), PngError> {
         let total: usize = run.iter().map(|c| c.data_end - c.data_start).sum();
         let stop = needed.map(|n| n.saturating_add(1));
         let p = self.inflate_run(run, total, stop)?;
@@ -1133,12 +1210,13 @@ impl Walker<'_> {
                     vec![String::from(
                         "stream holds more than the image rows (or breaks after them); too large to place the cut, bytes after the rows are not distinguished",
                     )],
+                    p.out,
                 ));
             }
             let (mut a, mut b) = (0usize, total);
             while a < b {
                 if self.search_work > SEARCH_WORK_BUDGET {
-                    return Ok((None, vec![String::from(SEARCH_LIMIT_NOTE)]));
+                    return Ok((None, vec![String::from(SEARCH_LIMIT_NOTE)], p.out));
                 }
                 let mid = a + (b - a) / 2;
                 let q = self.inflate_run(run, mid, Some(n))?;
@@ -1163,7 +1241,7 @@ impl Walker<'_> {
                     "the zlib stream breaks after the last row; bytes after the rows are never used",
                 )
             };
-            return Ok((Some(to_file(b)), vec![why]));
+            return Ok((Some(to_file(b)), vec![why], p.out));
         }
         if !p.done {
             return Ok((
@@ -1171,6 +1249,7 @@ impl Walker<'_> {
                 vec![String::from(
                     "zlib stream does not complete; bytes after its end are not distinguished",
                 )],
+                p.out,
             ));
         }
         // Cumulative start (in the concatenated run data) of each chunk, for byte lookups.
@@ -1208,7 +1287,7 @@ impl Walker<'_> {
             let (mut a, mut b) = (lo, hi);
             while a < b {
                 if self.search_work > SEARCH_WORK_BUDGET {
-                    return Ok((None, vec![String::from(SEARCH_LIMIT_NOTE)]));
+                    return Ok((None, vec![String::from(SEARCH_LIMIT_NOTE)], p.out));
                 }
                 let mid = a + (b - a) / 2;
                 let q = self.inflate_run(run, mid, None)?;
@@ -1221,7 +1300,7 @@ impl Walker<'_> {
             }
             found = Some(b);
         }
-        Ok((Some(to_file(found.unwrap_or(hi))), Vec::new()))
+        Ok((Some(to_file(found.unwrap_or(hi))), Vec::new(), p.out))
     }
 
     /// `iDOT` is read only when `idot::validate` accepts it (non-interlaced, one table).
@@ -1915,6 +1994,27 @@ impl Walker<'_> {
                     Disposition::ImageData,
                     "animation frame data; sequence numbers are not checked",
                 );
+            }
+        }
+        if animated && !self.opts.no_animation {
+            for (id, why) in core::mem::take(&mut self.pre_fctl_bad) {
+                self.demote(id, Disposition::Malformed, &why);
+            }
+            if let Some(actl) = self.winners[Slot::Actl as usize] {
+                let declared = self.actl_frames.unwrap_or(0);
+                let held = u32::from(self.pre_fctl_dims.is_some()) + self.late_frames;
+                let note = match &self.anim_dead {
+                    Some(why) => Some(format!(
+                        "{why}; num_frames still reaches ImageInfo, num_plays only reaches the caller through that decoder"
+                    )),
+                    None if held < declared => Some(format!(
+                        "acTL declares {declared} frames, the file holds {held}: animation_frame_decoder fails after frame {held}"
+                    )),
+                    None => None,
+                };
+                if let Some(n) = note {
+                    self.demote(actl, md(MetadataKind::Animation), &n);
+                }
             }
         }
         for (slot, drop, what) in [
