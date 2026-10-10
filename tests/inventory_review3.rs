@@ -439,9 +439,6 @@ fn r3_chunk_after_fctl_is_read_as_frame_data() {
 
 /// Frame accounting: acTL=1 with a pre-IDAT fcTL (IDAT is frame 0); a later fcTL+fdAT is
 /// beyond the count.
-
-/// Frame accounting: acTL=1 with a pre-IDAT fcTL (IDAT is frame 0); a later fcTL+fdAT is
-/// beyond the count.
 #[test]
 fn r3_actl_one_with_frame0_idat() {
     let base = apng();
@@ -466,9 +463,6 @@ fn r3_actl_one_with_frame0_idat() {
     assert_eq!(late[1].1, D::Skipped);
     assert_eq!(late[2].1, D::Skipped);
 }
-
-/// A post-IDAT frame smaller than the canvas with excess in its fdAT stream: the cut uses
-/// the fcTL size.
 
 /// A post-IDAT frame smaller than the canvas with excess in its fdAT stream: the cut uses
 /// the fcTL size.
@@ -528,4 +522,49 @@ fn r3_untyped_frame_chunk_gets_zlib_end_placement() {
     let inv = inv_with(&v, None);
     assert_eq!(parts_of(&inv, b"zzZz")[0].disposition, D::ImageData);
     assert!(!consumed_over(&inv, &v, SECRET), "{inv}");
+}
+
+/// Frame 0 (pre-IDAT fcTL) smaller than IHDR; the IDAT stream holds only the fcTL's rows
+/// plus junk, less than IHDR needs: decode() fails, the animation decoder reads frame 0
+/// from the fcTL-sized rows only.
+#[test]
+fn r3_frame0_smaller_fctl_junk_after_its_rows() {
+    let fctl = |seq: u32, w: u32, h: u32| {
+        let mut d = seq.to_be_bytes().to_vec();
+        d.extend_from_slice(&w.to_be_bytes());
+        d.extend_from_slice(&h.to_be_bytes());
+        d.extend_from_slice(&[0; 8]);
+        d.extend_from_slice(&[0, 1, 0, 10, 0, 0]);
+        d
+    };
+    let mk = |idat: &[u8]| {
+        let mut v = SIG.to_vec();
+        v.extend(ihdr(4, 2, 8, 2)); // raw size 2 * (1 + 12) = 26
+        v.extend(chunk(b"acTL", &[0, 0, 0, 1, 0, 0, 0, 0]));
+        v.extend(chunk(b"fcTL", &fctl(0, 2, 1))); // raw size 7
+        v.extend(chunk(b"IDAT", &zlib_stored(idat)));
+        v.extend(chunk(b"IEND", &[]));
+        v
+    };
+    let rows = [0u8, 1, 2, 3, 4, 5, 6];
+    let junk = b"PII:0123456"; // 7 + 11 = 18 < 26
+    let with = mk(&[&rows[..], junk].concat());
+    let base = mk(&rows);
+    let still = decode_with(&with, None);
+    let inv = inv_with(&with, None);
+    let fw = frames(&with);
+    let fb = frames(&base);
+    eprintln!(
+        "decode() ok={}; frames equal={} ({} frames); leaf: {}",
+        still.is_ok(),
+        fw == fb,
+        fw.len(),
+        leaf_over(&inv, &with, junk)
+    );
+    assert!(still.is_err());
+    assert_eq!(fw, fb);
+    assert!(
+        !consumed_over(&inv, &with, junk),
+        "hidden bytes in a consumed part\n{inv}"
+    );
 }

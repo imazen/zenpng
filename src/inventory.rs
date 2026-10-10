@@ -228,6 +228,10 @@ struct Walker<'a> {
     /// acTL `num_frames` of the winning acTL, and whether a pre-IDAT fcTL made the IDAT run frame 0.
     actl_frames: Option<u32>,
     pre_fctl: bool,
+    /// Width and height of the last 26-byte pre-IDAT fcTL (frame 0 of an animation).
+    pre_fctl_dims: Option<(u32, u32)>,
+    /// Raw size of frame 0 per its fcTL, while the IDAT run is placed.
+    frame0_alt: Option<u64>,
     /// Post-IDAT frames accepted so far, and how the fdATs after the last fcTL are treated.
     late_frames: u32,
     /// The next chunk is the first after an accepted fcTL (read as frame data whatever its type).
@@ -314,6 +318,8 @@ pub(crate) fn walk(data: &[u8], stop: &dyn Stop, opts: Options) -> Result<Invent
         anim: Vec::new(),
         actl_frames: None,
         pre_fctl: false,
+        pre_fctl_dims: None,
+        frame0_alt: None,
         late_frames: 0,
         fd_first: false,
         fd_mode: FdMode::Skip("fdAT not directly after an fcTL"),
@@ -740,6 +746,10 @@ impl Walker<'_> {
         match ty {
             b"fcTL" => {
                 self.pre_fctl = true;
+                if data_len == 26 {
+                    let b = &self.data[body_start..body_start + 26];
+                    self.pre_fctl_dims = Some((be32(&b[4..]), be32(&b[8..])));
+                }
                 self.anim.push((id, true, true, data_len as u64));
             }
             b"fdAT" => self.anim.push((id, false, true, data_len as u64)),
@@ -870,7 +880,18 @@ impl Walker<'_> {
         let needed = self
             .ihdr
             .and_then(|i| raw_size(&i, i.width, i.height, i.interlace == 1));
+        // A valid pre-IDAT fcTL makes the IDAT run frame 0 for the animation decoder, which reads
+        // only the fcTL-sized rows. When the stream yields fewer bytes than the IHDR rows,
+        // `decode()` rejects the file and that path is what reads it.
+        let alt = match (self.pre_fctl_dims, self.ihdr) {
+            (Some((w, h)), Some(i)) if self.slot_taken(Slot::Actl) && !self.opts.no_animation => {
+                raw_size(&i, w, h, false)
+            }
+            _ => None,
+        };
+        self.frame0_alt = alt;
         self.push_run(run, notes, *b"IDAT", needed)?;
+        self.frame0_alt = None;
         self.settle_idot()
     }
 
@@ -1011,6 +1032,12 @@ impl Walker<'_> {
                 left -= len;
             }
             run.last().map_or(0, |c| c.data_end)
+        };
+        // The rows to cut at: the IHDR rows, or frame 0's smaller fcTL rows when the stream
+        // does not even yield the IHDR rows.
+        let needed = match (needed, self.frame0_alt) {
+            (Some(n), Some(a)) if p.out < n && a < n => Some(a),
+            (n, _) => n,
         };
         if let Some(n) = needed
             && ((p.done && p.out > n) || (!p.done && p.out >= n))
