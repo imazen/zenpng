@@ -806,3 +806,113 @@ fn r4_overwrite_consumed_leaves_sweep() {
         eprintln!("  {l}");
     }
 }
+
+/// Cut edges placed by `zenflate::zlib_scan`, both directions: overwriting the bytes the
+/// inventory reports unconsumed (an IDAT/fdAT run's `Unreferenced` tail and the chunks
+/// after it) changes nothing a caller receives, except that a tail after the last row may
+/// turn the decode into an error, as its detail says (the decoder inflates past the rows);
+/// at a cut after the last row, flipping the last byte claimed read changes the result.
+/// Returns the number of mutations checked.
+fn cut_edges(name: &str, file: &[u8], bad: &mut Vec<String>) -> usize {
+    let inv = inv_with(file, None);
+    let base = observe(file);
+    let mut checked = 0;
+    for id in inv.children(None) {
+        let p = inv.get(id).unwrap();
+        if !matches!(p.tag(), PartTag::FourCc(t) if t == b"IDAT" || t == b"fdAT") {
+            continue;
+        }
+        let top = p.range();
+        let data = top.start + 8..top.end - 4;
+        let tail =
+            |d: Option<&str>| d.map(|d| (d.contains("never read"), d.contains("decoded ahead")));
+        let unread: Vec<_> =
+            if p.disposition() == D::Skipped && tail(p.detail()).is_some_and(|(n, a)| n || a) {
+                vec![(data.clone(), tail(p.detail()).unwrap().1)]
+            } else {
+                inv.children(Some(id))
+                    .into_iter()
+                    .map(|k| inv.get(k).unwrap())
+                    .filter(|k| k.disposition() == D::Unreferenced)
+                    .map(|k| (k.range(), tail(k.detail()).is_some_and(|t| t.1)))
+                    .collect()
+            };
+        let mutate = |at: std::ops::Range<u64>, x: u8| {
+            let mut m = file.to_vec();
+            for b in &mut m[at.start as usize..at.end as usize] {
+                *b ^= x;
+            }
+            fix_crc(&mut m, top.start as usize);
+            observe(&m)
+        };
+        for (r, ahead) in unread.iter().filter(|r| !r.0.is_empty()) {
+            checked += 1;
+            let got = mutate(r.clone(), 0xA5);
+            if got != base && !(*ahead && got.starts_with("err ")) {
+                bad.push(format!(
+                    "{name}: overwriting unconsumed {r:?} changed the result"
+                ));
+            }
+        }
+        if p.disposition() != D::Skipped
+            && p.detail().is_some_and(|d| d.contains("after the last row"))
+        {
+            let cut = unread.first().map_or(data.end, |r| r.0.start);
+            if cut > data.start {
+                checked += 1;
+                if mutate(cut - 1..cut, 0xFF) == base {
+                    bad.push(format!(
+                        "{name}: last byte read ({}) changes nothing",
+                        cut - 1
+                    ));
+                }
+            }
+        }
+    }
+    checked
+}
+
+#[test]
+fn scan_cut_edges_hold_under_mutation() {
+    let mut bad = Vec::new();
+    let mut synthetic = 0;
+    // Rows plus excess in one stream, stored and at three zenflate levels, whole and split
+    // over three IDATs; and clean streams followed by junk.
+    let rows: Vec<u8> = (0..16 * 49)
+        .map(|i| if i % 49 == 0 { 0 } else { (i * 7 % 13) as u8 })
+        .collect();
+    let excess: Vec<u8> = (0..1500).map(|i| (i * 31 % 251) as u8).collect();
+    let level = |l: zenflate::CompressionLevel, d: &[u8]| {
+        let mut c = zenflate::Compressor::new(l);
+        let mut out = vec![0u8; zenflate::Compressor::zlib_compress_bound(d.len())];
+        let n = c.zlib_compress(d, &mut out, zenflate::Unstoppable).unwrap();
+        out.truncate(n);
+        out
+    };
+    let with_excess = [&rows[..], &excess[..]].concat();
+    let mut streams = vec![zlib_stored(&with_excess)];
+    for l in [
+        zenflate::CompressionLevel::fastest(),
+        zenflate::CompressionLevel::balanced(),
+        zenflate::CompressionLevel::best(),
+    ] {
+        streams.push(level(l, &with_excess));
+        streams.push([level(l, &rows), b"junk after the stream end".to_vec()].concat());
+    }
+    for (i, z) in streams.iter().enumerate() {
+        for parts in [1, 3] {
+            let mut v = SIG.to_vec();
+            v.extend(ihdr(16, 16, 8, 2));
+            for c in z.chunks(z.len().div_ceil(parts)) {
+                v.extend(chunk(b"IDAT", c));
+            }
+            v.extend(chunk(b"IEND", &[]));
+            let n = cut_edges(&format!("synthetic {i}/{parts}"), &v, &mut bad);
+            assert!(n > 0, "synthetic {i}/{parts}: no cut found");
+            synthetic += n;
+        }
+    }
+    // (The conformance corpora hold no bytes the decoder skips: no cut edges there.)
+    eprintln!("cut-edge mutations checked: {synthetic}");
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}

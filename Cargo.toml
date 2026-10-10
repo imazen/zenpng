@@ -189,4 +189,7 @@ zencodec = { git = "https://github.com/imazen/zencodec", branch = "feat/inventor
 # (main since imazen/zenflate#10 merged), not yet released. Local builds use the sibling checkout;
 # CI checks out zenflate main at ../zenflate. Replace with the released version
 # once it ships.
-zenflate = { path = "../zenflate" }
+# TEMPORARY: zenflate::zlib_scan (imazen/zenflate branch feat/deflate-scan, on top of
+# main with the PNG strip API) places the inventory's IDAT/fdAT cuts. Back to the
+# released version once both ship.
+zenflate = { git = "https://github.com/imazen/zenflate", branch = "feat/deflate-scan" }
