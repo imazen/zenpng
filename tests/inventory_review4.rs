@@ -539,3 +539,33 @@ fn r4_max_input_bytes_rejection_is_reported() {
         "{inv}"
     );
 }
+
+/// Pitfalls "More than one reader": a bad-CRC pre-IDAT eXIf reaches decode() but not probe()
+/// or the animation decoder's info; the detail does not name those readers.
+#[test]
+fn r4_bad_crc_exif_names_the_other_readers() {
+    let exif = b"II*\0\x08\0\0\0\0\0";
+    let mut v = SIG.to_vec();
+    v.extend(ihdr(2, 1, 8, 2));
+    v.extend(bad_crc(chunk(b"eXIf", exif)));
+    v.extend(rgb_idat());
+    v.extend(chunk(b"IEND", &[]));
+    let d = decode_with(&v, None).unwrap();
+    let probe = PngDecoderConfig::new().job().probe(&v).unwrap();
+    let inv = inv_with(&v, None);
+    let p = &parts_of(&inv, b"eXIf")[0];
+    eprintln!(
+        "decode exif={} probe exif={} detail={:?}",
+        d.info().metadata().exif.is_some(),
+        probe.metadata().exif.is_some(),
+        p.detail
+    );
+    assert!(d.info().metadata().exif.is_some());
+    assert!(probe.metadata().exif.is_none());
+    assert!(
+        p.detail
+            .as_deref()
+            .unwrap_or("")
+            .contains("probe() and the animation decoder skip it")
+    );
+}

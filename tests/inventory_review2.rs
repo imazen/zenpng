@@ -419,7 +419,21 @@ fn r2_post_idat_bad_crc_detail_does_not_claim_strict_skips_it() {
     png.extend(chunk(b"IEND", &[]));
     let inv = inv_with(&png, Some(DecodePolicy::none().with_strict(true)));
     let d = parts_of(&inv, b"eXIf")[0].detail.clone().unwrap();
-    assert!(d.contains("no decode path checks it"), "{d}");
+    assert!(d.contains("decode() reads it unchecked"), "{d}");
+    assert!(
+        d.contains("probe() and the animation decoder skip it"),
+        "{d}"
+    );
+    // probe() checks the CRC, so it drops the chunk the still decode reads.
+    assert!(
+        PngDecoderConfig::new()
+            .job()
+            .probe(&png)
+            .unwrap()
+            .metadata()
+            .exif
+            .is_none()
+    );
     assert!(!d.contains("strict policy skips"), "{d}");
 }
 

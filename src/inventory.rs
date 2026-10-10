@@ -676,9 +676,9 @@ impl Walker<'_> {
             let after_idat = phase == Phase::Late || (phase == Phase::Idat && &ty != b"IDAT");
             if crc_bad {
                 entry.note(if ancillary && after_idat {
-                    "crc mismatch (no decode path checks it: finish_metadata reads chunks after the IDAT run unchecked)"
+                    "crc mismatch (decode() reads it unchecked: finish_metadata does not check CRCs after the IDAT run, under any policy; probe() and the animation decoder skip it for ImageInfo: their probe checks CRCs)"
                 } else if ancillary {
-                    "crc mismatch (the default decode does not check it; a strict policy skips the chunk)"
+                    "crc mismatch (the default decode does not check it; a strict policy skips the chunk; probe() and the animation decoder skip it for ImageInfo: their probe checks CRCs)"
                 } else {
                     "crc mismatch in a critical chunk: DecodeJob::decode rejects the file \
                      (its probe pre-check verifies critical CRCs even when decode skips them)"
