@@ -59,6 +59,21 @@ const SEARCH_WORK_BUDGET: u64 = 512 * 1024 * 1024;
 /// Search for the first-row-complete position is skipped above this much compressed data.
 const RUN_SEARCH_CAP: usize = 16 * 1024 * 1024;
 
+/// Work bounds of one walk: the constants above, lowered by unit tests to reach the
+/// budget fallbacks with small inputs.
+#[derive(Clone, Copy)]
+struct Budget {
+    search: u64,
+    run_cap: usize,
+}
+
+impl Budget {
+    const DEFAULT: Budget = Budget {
+        search: SEARCH_WORK_BUDGET,
+        run_cap: RUN_SEARCH_CAP,
+    };
+}
+
 /// One chunk's classification, built per chunk and pushed by [`Walker::commit`].
 struct Entry {
     start: u64,
@@ -68,8 +83,9 @@ struct Entry {
     label: Option<String>,
     detail: Vec<String>,
     /// Byte ranges (absolute) inside the chunk's data that are split off as children while
-    /// the chunk is consumed: bytes the decoder never reads (`Unreferenced`), or a tail past an
-    /// internal end that still reaches the caller (`delivered`: keeps the chunk's disposition).
+    /// the chunk is consumed: bytes the decoder never reads (`Unreferenced`), a tail past an
+    /// internal end that still reaches the caller (keeps the chunk's disposition), or bytes a
+    /// work budget left unverified (`Unknown`).
     holes: Vec<Hole>,
     /// Singleton slot this chunk takes (replacing, and demoting, the previous holder).
     win: Option<Slot>,
@@ -79,7 +95,17 @@ struct Hole {
     start: u64,
     end: u64,
     note: Cow<'static, str>,
-    delivered: bool,
+    kind: HoleKind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HoleKind {
+    /// The decoder never reads these bytes: `Unreferenced`.
+    Unread,
+    /// Past a blob's internal end, still handed to the caller: the chunk's disposition.
+    Delivered,
+    /// A work budget ran out before the walker could tell: `Unknown` (the decoder may read them).
+    Unverified,
 }
 
 impl Entry {
@@ -110,7 +136,20 @@ impl Entry {
                 start: start as u64,
                 end: end as u64,
                 note: Cow::Borrowed(note),
-                delivered: false,
+                kind: HoleKind::Unread,
+            });
+        }
+    }
+
+    /// A work budget ran out before the walker could tell whether the decoder reads absolute
+    /// bytes `start..end` of this chunk.
+    fn unverified(&mut self, start: usize, end: usize, note: &'static str) {
+        if start < end {
+            self.holes.push(Hole {
+                start: start as u64,
+                end: end as u64,
+                note: Cow::Borrowed(note),
+                kind: HoleKind::Unverified,
             });
         }
     }
@@ -123,7 +162,7 @@ impl Entry {
                 start: start as u64,
                 end: end as u64,
                 note: Cow::Owned(note),
-                delivered: true,
+                kind: HoleKind::Delivered,
             });
         }
     }
@@ -275,6 +314,7 @@ struct Walker<'a> {
     frame0_alt: Option<u64>,
     /// Inflate output spent by prefix searches so far (see `SEARCH_WORK_BUDGET`).
     search_work: u64,
+    budget: Budget,
     /// Post-IDAT frames accepted so far, and how the fdATs after the last fcTL are treated.
     late_frames: u32,
     /// The next chunk is the first after an accepted fcTL (read as frame data whatever its type).
@@ -301,6 +341,15 @@ fn limit_err(_: InventoryError) -> PngError {
 
 /// Walk `data` and return its inventory.
 pub(crate) fn walk(data: &[u8], stop: &dyn Stop, opts: Options) -> Result<Inventory, PngError> {
+    walk_with(data, stop, opts, Budget::DEFAULT)
+}
+
+fn walk_with(
+    data: &[u8],
+    stop: &dyn Stop,
+    opts: Options,
+    budget: Budget,
+) -> Result<Inventory, PngError> {
     let len = data.len() as u64;
     let mut inv = Inventory::new(ImageFormat::Png, len);
 
@@ -367,6 +416,7 @@ pub(crate) fn walk(data: &[u8], stop: &dyn Stop, opts: Options) -> Result<Invent
         pre_fctl_dims: None,
         frame0_alt: None,
         search_work: 0,
+        budget,
         late_frames: 0,
         fd_first: false,
         fd_mode: FdMode::Skip("fdAT not directly after an fcTL"),
@@ -383,7 +433,27 @@ pub(crate) fn walk(data: &[u8], stop: &dyn Stop, opts: Options) -> Result<Invent
     Ok(inv)
 }
 
-const SEARCH_LIMIT_NOTE: &str = "inflate work limit for placing the stream end reached; bytes after the end of the data the decoder reads are not distinguished";
+const ROWS_CAP_NOTE: &str = "compressed data over the 16 MiB search cap: the end of the rows was not searched for, so the decoder may read these bytes";
+const ROWS_LIMIT_NOTE: &str = "inflate work limit reached before the end of the rows was placed: the decoder may read these bytes";
+const END_LIMIT_NOTE: &str =
+    "inflate work limit reached before the stream end was placed: the decoder may read these bytes";
+const UNREAD_NOTE: &str = "bytes after the data the decoder reads from the zlib stream: never read";
+
+/// Where the data the decoder reads from a run's zlib stream ends (file offsets).
+#[derive(Clone, Copy)]
+enum Cut {
+    /// Not placed: the stream does not complete.
+    Unplaced,
+    /// The first byte the decoder does not read.
+    At(usize),
+    /// A work budget ran out: the decoder reads the bytes before `lo` and never the bytes
+    /// from `hi` on; the ones between are unverified.
+    Between {
+        lo: usize,
+        hi: usize,
+        why: &'static str,
+    },
+}
 
 /// `PngDecodeConfig::validate` with the decoder's limits: pixel count, then estimated memory.
 fn pixel_limits(lim: &zencodec::ResourceLimits, w: u32, h: u32, bpp: u32) -> Result<(), String> {
@@ -534,7 +604,10 @@ impl Walker<'_> {
         }
         if let Some(kids) = self.kids.get(&id.index()).cloned() {
             for k in kids {
-                if self.inv.get(k).map(|p| p.disposition) != Some(Disposition::Unreferenced) {
+                if !matches!(
+                    self.inv.get(k).map(|p| p.disposition),
+                    Some(Disposition::Unreferenced | Disposition::Unknown)
+                ) {
                     self.inv.set_disposition(k, disp);
                 }
             }
@@ -575,15 +648,19 @@ impl Walker<'_> {
                         .with_detail("bytes the decoder reads");
                     push(self, head)?;
                 }
-                let hole = if h.delivered {
-                    Part::new(PartKind::Field, PartTag::None, hs..he, e.disp)
-                } else {
-                    Part::new(
+                let hole = match h.kind {
+                    HoleKind::Delivered => {
+                        Part::new(PartKind::Field, PartTag::None, hs..he, e.disp)
+                    }
+                    HoleKind::Unread => Part::new(
                         PartKind::Gap,
                         PartTag::None,
                         hs..he,
                         Disposition::Unreferenced,
-                    )
+                    ),
+                    HoleKind::Unverified => {
+                        Part::new(PartKind::Field, PartTag::None, hs..he, Disposition::Unknown)
+                    }
                 }
                 .with_detail(h.note.clone());
                 push(self, hole)?;
@@ -1057,13 +1134,19 @@ impl Walker<'_> {
         tag: [u8; 4],
         needed: Option<u64>,
     ) -> Result<(Vec<PartId>, u64), PngError> {
-        let (end_abs, extra, out) = self.place_run(&run, needed)?;
+        let (cut, extra, out) = self.place_run(&run, needed)?;
+        // (read below, never read from, why the bytes between are unverified)
+        let span = match cut {
+            Cut::Unplaced => None,
+            Cut::At(end) => Some((end, end, None)),
+            Cut::Between { lo, hi, why } => Some((lo, hi, Some(why))),
+        };
         let mut ids = Vec::with_capacity(run.len());
         // Remarks about the whole run go on the chunk holding the cut (else the first chunk).
-        let carrier = end_abs
-            .and_then(|end| {
+        let carrier = span
+            .and_then(|(lo, _, _)| {
                 run.iter()
-                    .position(|c| c.data_start <= end && end <= c.data_end)
+                    .position(|c| c.data_start <= lo && lo <= c.data_end)
             })
             .unwrap_or(0);
         for (i, c) in run.iter().enumerate() {
@@ -1084,17 +1167,15 @@ impl Walker<'_> {
                     e.note(n.clone());
                 }
             }
-            if let Some(end) = end_abs {
-                if c.data_start >= end && c.data_end > c.data_start {
+            if let Some((lo, hi, why)) = span {
+                if c.data_start >= hi && c.data_end > c.data_start {
                     e.disp = Disposition::Skipped;
                     e.note("after the end of the data the decoder reads from the zlib stream: never read");
-                } else if c.data_end > end && end >= c.data_start {
-                    e.used_prefix(
-                        c.data_start,
-                        end - c.data_start,
-                        c.data_end - c.data_start,
-                        "bytes after the data the decoder reads from the zlib stream: never read",
-                    );
+                } else {
+                    if let Some(why) = why {
+                        e.unverified(lo.max(c.data_start), hi.min(c.data_end), why);
+                    }
+                    e.hole(hi.max(c.data_start), c.data_end, UNREAD_NOTE);
                 }
             }
             ids.push(self.commit(e)?);
@@ -1170,7 +1251,7 @@ impl Walker<'_> {
     }
 
     /// File offset where the data the decoder reads from the run's zlib stream ends, plus
-    /// remarks. `None` when it can't be placed.
+    /// remarks. When a work bound stops the search, the bracket it reached (`Cut::Between`).
     ///
     /// - If the stream inflates to more than `needed` bytes (the rows), or breaks after the
     ///   rows, the end is the shortest input prefix that yields `needed` bytes.
@@ -1183,12 +1264,12 @@ impl Walker<'_> {
         &mut self,
         run: &[IdatChunk],
         needed: Option<u64>,
-    ) -> Result<(Option<usize>, Vec<String>, u64), PngError> {
+    ) -> Result<(Cut, Vec<String>, u64), PngError> {
         let total: usize = run.iter().map(|c| c.data_end - c.data_start).sum();
         // Inflate past the rows only as far as the search budget allows, to learn whether the
         // stream ends cleanly or breaks after them.
         let stop = needed.map(|n| n.saturating_add(1));
-        let extra = SEARCH_WORK_BUDGET.saturating_sub(self.search_work);
+        let extra = self.budget.search.saturating_sub(self.search_work);
         let p = self.inflate_run(run, total, stop, extra)?;
         if let Some(n) = needed {
             self.search_work += p.out.saturating_sub(n);
@@ -1214,19 +1295,30 @@ impl Walker<'_> {
         if let Some(n) = needed
             && ((p.done && p.out > n) || (!p.done && p.out >= n))
         {
-            if total > RUN_SEARCH_CAP {
-                return Ok((
-                    None,
-                    vec![String::from(
-                        "stream holds more than the image rows (or breaks after them); too large to place the cut, bytes after the rows are not distinguished",
-                    )],
-                    p.out,
-                ));
+            // A prefix known to yield the rows: the first pass's position. The bracket's
+            // lower end is a prefix known not to.
+            let over = || {
+                vec![String::from(
+                    "the stream holds more than the image rows (or breaks after them)",
+                )]
+            };
+            if total > self.budget.run_cap {
+                let cut = Cut::Between {
+                    lo: to_file(0),
+                    hi: to_file(p.pos.min(total)),
+                    why: ROWS_CAP_NOTE,
+                };
+                return Ok((cut, over(), p.out));
             }
             let (mut a, mut b) = (0usize, total);
             while a < b {
-                if self.search_work > SEARCH_WORK_BUDGET {
-                    return Ok((None, vec![String::from(SEARCH_LIMIT_NOTE)], p.out));
+                if self.search_work > self.budget.search {
+                    let cut = Cut::Between {
+                        lo: to_file(a),
+                        hi: to_file(b.min(p.pos)),
+                        why: ROWS_LIMIT_NOTE,
+                    };
+                    return Ok((cut, over(), p.out));
                 }
                 let mid = a + (b - a) / 2;
                 let q = self.inflate_run(run, mid, Some(n), 0)?;
@@ -1252,11 +1344,11 @@ impl Walker<'_> {
                     "more decompressed data follows the last row and is discarded; the stream past it was not inflated further (inflate work limit), so whether it ends cleanly is not known",
                 )
             };
-            return Ok((Some(to_file(b)), vec![why], p.out));
+            return Ok((Cut::At(to_file(b)), vec![why], p.out));
         }
         if !p.done {
             return Ok((
-                None,
+                Cut::Unplaced,
                 vec![String::from(
                     "zlib stream does not complete; bytes after its end are not distinguished",
                 )],
@@ -1279,26 +1371,37 @@ impl Walker<'_> {
         };
         let hi = p.pos;
         let lo = hi.saturating_sub(OVERREAD_WINDOW).max(2);
+        // The prefix `hi` completes; every prefix below `a` is known not to (completion is
+        // monotone in the prefix length).
+        let mut a = lo;
         let mut found = None;
+        let limit = |a: usize, b: usize| Cut::Between {
+            lo: to_file(a),
+            hi: to_file(b),
+            why: END_LIMIT_NOTE,
+        };
         for l in lo..=hi {
             if l >= 4
                 && u32::from_be_bytes([byte(l - 4), byte(l - 3), byte(l - 2), byte(l - 1)])
                     == p.adler
-                && {
-                    let q = self.inflate_run(run, l, None, 0)?;
-                    self.search_work += q.out;
-                    q.done
-                }
             {
-                found = Some(l);
-                break;
+                if self.search_work > self.budget.search {
+                    return Ok((limit(a, hi), Vec::new(), p.out));
+                }
+                let q = self.inflate_run(run, l, None, 0)?;
+                self.search_work += q.out;
+                if q.done {
+                    found = Some(l);
+                    break;
+                }
+                a = l + 1;
             }
         }
         if found.is_none() {
-            let (mut a, mut b) = (lo, hi);
+            let mut b = hi;
             while a < b {
-                if self.search_work > SEARCH_WORK_BUDGET {
-                    return Ok((None, vec![String::from(SEARCH_LIMIT_NOTE)], p.out));
+                if self.search_work > self.budget.search {
+                    return Ok((limit(a, b), Vec::new(), p.out));
                 }
                 let mid = a + (b - a) / 2;
                 let q = self.inflate_run(run, mid, None, 0)?;
@@ -1312,7 +1415,7 @@ impl Walker<'_> {
             found = Some(b);
         }
         Ok((
-            Some(to_file(found.unwrap_or(hi))),
+            Cut::At(to_file(found.unwrap_or(hi))),
             vec![String::from(
                 "the stream ends here with its Adler-32 footer (last 4 bytes): not verified by the default decode; a strict policy verifies it",
             )],
@@ -2104,5 +2207,173 @@ fn other(e: &mut Entry, ty: &[u8; 4], why: &str) {
     } else {
         e.disp = Disposition::Unknown;
         e.note(why.to_string());
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    //! The budget fallbacks of `place_run`, reached with small inputs by lowering the bounds.
+
+    use super::*;
+    use alloc::vec;
+
+    fn chunk(ty: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut v = (data.len() as u32).to_be_bytes().to_vec();
+        v.extend_from_slice(ty);
+        v.extend_from_slice(data);
+        v.extend_from_slice(&crc32(crc32(0, ty), data).to_be_bytes());
+        v
+    }
+
+    /// A PNG whose IDAT run carries `stream` split into chunks of `split` bytes.
+    fn png(w: u32, h: u32, color: u8, stream: &[u8], split: usize) -> Vec<u8> {
+        let mut v = PNG_SIGNATURE.to_vec();
+        let mut d = w.to_be_bytes().to_vec();
+        d.extend_from_slice(&h.to_be_bytes());
+        d.extend_from_slice(&[8, color, 0, 0, 0]);
+        v.extend(chunk(b"IHDR", &d));
+        for part in stream.chunks(split) {
+            v.extend(chunk(b"IDAT", part));
+        }
+        v.extend(chunk(b"IEND", &[]));
+        v
+    }
+
+    fn zlib(raw: &[u8]) -> Vec<u8> {
+        let mut c = zenflate::Compressor::new(zenflate::CompressionLevel::fastest());
+        let mut out = vec![0u8; zenflate::Compressor::zlib_compress_bound(raw.len())];
+        let k = c.zlib_compress(raw, &mut out, Unstoppable).unwrap();
+        out.truncate(k);
+        out
+    }
+
+    fn patterned(n: usize) -> Vec<u8> {
+        (0..n)
+            .map(|i| (((i * 7919) % 251) ^ (i / 97)) as u8)
+            .collect()
+    }
+
+    fn walk_budget(bytes: &[u8], budget: Budget) -> Inventory {
+        let inv = walk_with(bytes, &Unstoppable, Options::default(), budget).unwrap();
+        inv.validate().unwrap();
+        inv
+    }
+
+    /// Per IDAT data byte, in file order: 0 = read (`ImageData`), 1 = unverified (`Unknown`),
+    /// 2 = never read; plus the details of the `Unknown` parts.
+    fn labels(inv: &Inventory) -> (Vec<u8>, Vec<String>) {
+        let (mut out, mut notes) = (Vec::new(), Vec::new());
+        for id in inv.children(None) {
+            let p = inv.get(id).unwrap();
+            if p.tag != PartTag::FourCc(*b"IDAT") {
+                continue;
+            }
+            let kids: Vec<&Part> = inv
+                .children(Some(id))
+                .into_iter()
+                .map(|k| inv.get(k).unwrap())
+                .collect();
+            for k in &kids {
+                if k.disposition == Disposition::Unknown {
+                    notes.push(k.detail.clone().unwrap_or_default());
+                }
+            }
+            for i in p.range.start + 8..p.range.end - 4 {
+                let disp = if kids.is_empty() {
+                    p.disposition
+                } else {
+                    kids.iter()
+                        .find(|k| k.range.contains(&i))
+                        .unwrap()
+                        .disposition
+                };
+                out.push(match disp {
+                    Disposition::ImageData => 0,
+                    Disposition::Unknown => 1,
+                    Disposition::Unreferenced | Disposition::Skipped => 2,
+                    d => panic!("IDAT data byte {i} is {d:?}"),
+                });
+            }
+        }
+        (out, notes)
+    }
+
+    /// Lowered budgets never claim a byte the full search places differently: the
+    /// read / never-read split of the default walk falls inside the `Unknown` bracket.
+    /// Returns the (read, unverified) counts per budget.
+    fn check_brackets(bytes: &[u8], budgets: &[Budget], note: &str) -> Vec<(usize, usize)> {
+        let (truth, none) = labels(&walk_budget(bytes, Budget::DEFAULT));
+        assert!(none.is_empty(), "default budget left bytes unverified");
+        assert!(truth.windows(2).all(|w| w[0] <= w[1]) && !truth.contains(&1));
+        let cut = truth.iter().filter(|&&l| l == 0).count();
+        let mut seen = Vec::new();
+        for &b in budgets {
+            let (got, notes) = labels(&walk_budget(bytes, b));
+            assert_eq!(got.len(), truth.len());
+            assert!(
+                got.windows(2).all(|w| w[0] <= w[1]),
+                "not read, unverified, never read in order"
+            );
+            let r = got.iter().filter(|&&l| l == 0).count();
+            let u = got.iter().filter(|&&l| l == 1).count();
+            assert!(
+                r <= cut && cut <= r + u,
+                "bracket {r}..{} misses the cut {cut}",
+                r + u
+            );
+            assert!(notes.iter().all(|n| n == note), "{notes:?}");
+            seen.push((r, u));
+        }
+        seen
+    }
+
+    #[test]
+    fn end_search_budget_reports_bracket_unknown() {
+        // 64x64 gray8, wrong Adler-32 (the binary-search fallback), junk after the stream,
+        // spread over 300-byte IDATs.
+        let mut z = zlib(&patterned(64 * 65));
+        *z.last_mut().unwrap() ^= 0xff;
+        z.extend_from_slice(&[0x5a; 37]);
+        let bytes = png(64, 64, 0, &z, 300);
+        let budgets: Vec<Budget> = (0..40)
+            .map(|k| Budget {
+                search: k * 2000,
+                run_cap: RUN_SEARCH_CAP,
+            })
+            .collect();
+        let seen = check_brackets(&bytes, &budgets, END_LIMIT_NOTE);
+        assert!(seen.iter().any(|&(r, u)| r > 0 && u > 0), "{seen:?}");
+        assert!(seen.iter().any(|&(_, u)| u == 0), "{seen:?}");
+    }
+
+    #[test]
+    fn rows_search_budget_reports_bracket_unknown() {
+        // 64x8 RGB8 rows, then 5000 bytes of excess in the same stream, over 200-byte IDATs.
+        let z = zlib(&patterned(8 * 193 + 5000));
+        let bytes = png(64, 8, 2, &z, 200);
+        let budgets: Vec<Budget> = (0..60)
+            .map(|k| Budget {
+                search: k * 1000,
+                run_cap: RUN_SEARCH_CAP,
+            })
+            .collect();
+        let seen = check_brackets(&bytes, &budgets, ROWS_LIMIT_NOTE);
+        assert!(seen.iter().any(|&(r, u)| r > 0 && u > 0), "{seen:?}");
+        assert!(seen.iter().any(|&(_, u)| u == 0), "{seen:?}");
+    }
+
+    #[test]
+    fn run_cap_reports_up_to_first_pass_unknown() {
+        // Over the search cap no search runs: everything below the first pass's position is
+        // unverified, nothing is claimed read.
+        let z = zlib(&patterned(7 + 5000));
+        let bytes = png(2, 1, 2, &z, 200);
+        let cap = Budget {
+            search: SEARCH_WORK_BUDGET,
+            run_cap: 0,
+        };
+        let seen = check_brackets(&bytes, &[cap], ROWS_CAP_NOTE);
+        assert_eq!(seen[0].0, 0, "{seen:?}");
+        assert!(seen[0].1 > 0, "{seen:?}");
     }
 }

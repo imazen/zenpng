@@ -196,10 +196,18 @@ fn inventory_cost() {
         .inventory(&bytes)
         .unwrap()
         .unwrap();
+    let wall = t.elapsed();
+    // Parts a work bound left unverified (`Unknown`), with their bytes.
+    let unknown: Vec<_> = inv
+        .parts()
+        .iter()
+        .filter(|p| p.disposition == zencodec::inventory::Disposition::Unknown)
+        .collect();
+    let unknown_bytes: u64 = unknown.iter().map(|p| p.range.end - p.range.start).sum();
     eprintln!(
-        "COST case={case} input={} B parts={} wall={:?}",
+        "COST case={case} input={} B parts={} unknown={} ({unknown_bytes} B) wall={wall:?}",
         bytes.len(),
         inv.parts().len(),
-        t.elapsed()
+        unknown.len(),
     );
 }
