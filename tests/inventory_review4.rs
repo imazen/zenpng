@@ -388,3 +388,88 @@ fn r4_idat_typed_frame_chunk() {
     assert_eq!(fb, fw, "decoder reads the IDAT-typed chunk as frame data");
     assert_eq!(late_idat.disposition, D::ImageData, "{inv}");
 }
+
+/// Pitfalls "Tails the caller still receives": uncompressed XMP with bytes after the xpacket
+/// end trailer. The decoder hands them over; the doc asks for a child at the boundary with the
+/// parent's Metadata disposition and a detail.
+#[test]
+fn r4_xmp_trailer_tail_is_a_delivered_child() {
+    let packet =
+        b"<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?><x:xmpmeta/><?xpacket end=\"w\"?>";
+    let text = [&packet[..], SECRET].concat();
+    let mut v = SIG.to_vec();
+    v.extend(ihdr(2, 1, 8, 2));
+    v.extend(chunk(b"iTXt", &itxt("XML:com.adobe.xmp", 0, &text)));
+    v.extend(rgb_idat());
+    v.extend(chunk(b"IEND", &[]));
+    let inv = inv_with(&v, None);
+    let out = decode_with(&v, None).unwrap();
+    let xmp = out.info().metadata().xmp.unwrap();
+    assert!(xmp.ends_with(SECRET), "the decoder delivers the tail");
+    let boundary = (v
+        .windows(packet.len())
+        .position(|w| w == &packet[..])
+        .unwrap()
+        + packet.len()) as u64;
+    let has_boundary = inv
+        .parts()
+        .iter()
+        .any(|p| p.range.start == boundary || p.range.end == boundary);
+    eprintln!(
+        "boundary at {boundary}: part boundary present = {has_boundary}; leaf: {}",
+        leaf_over(&inv, &v, SECRET)
+    );
+    assert!(has_boundary, "a child marks the xpacket end\n{inv}");
+    let tail = inv
+        .parts()
+        .iter()
+        .find(|p| p.parent.is_some() && p.range.start == boundary)
+        .unwrap();
+    assert_eq!(tail.disposition, D::Metadata(M::Xmp));
+    assert!(tail.detail.as_deref().unwrap().contains("reach the caller"));
+}
+
+/// Same for an ICC profile whose header declares a smaller size than the inflated data.
+#[test]
+fn r4_icc_tail_past_declared_size_is_a_delivered_child() {
+    let mut profile = [0u8; 128];
+    profile[..4].copy_from_slice(&128u32.to_be_bytes());
+    profile[36..40].copy_from_slice(b"acsp");
+    let full = [&profile[..], SECRET].concat();
+    let mut body = b"icc\0\0".to_vec();
+    body.extend(zlib_stored(&full));
+    let mut v = SIG.to_vec();
+    v.extend(ihdr(2, 1, 8, 2));
+    v.extend(chunk(b"iCCP", &body));
+    v.extend(rgb_idat());
+    v.extend(chunk(b"IEND", &[]));
+    let inv = inv_with(&v, None);
+    let out = decode_with(&v, None).unwrap();
+    let icc = out.info().metadata().icc_profile.unwrap();
+    assert_eq!(
+        icc.len(),
+        128 + SECRET.len(),
+        "the decoder delivers the bytes past the declared size"
+    );
+    let p = &parts_of(&inv, b"iCCP")[0];
+    let at = v.windows(SECRET.len()).position(|w| w == SECRET).unwrap() as u64;
+    let has_boundary = inv
+        .parts()
+        .iter()
+        .any(|q| q.range.start == at || q.range.end == at);
+    eprintln!(
+        "iCCP {:?} {:?}; boundary present = {has_boundary}",
+        p.disposition, p.detail
+    );
+    assert!(has_boundary, "{inv}");
+    let tail = inv
+        .parts()
+        .iter()
+        .find(|q| q.parent.is_some() && q.range.start == at)
+        .unwrap();
+    assert_eq!(tail.disposition, D::Metadata(M::Icc));
+    assert!(
+        tail.detail.as_deref().unwrap().contains("declares 128"),
+        "{inv}"
+    );
+}

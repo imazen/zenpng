@@ -66,11 +66,19 @@ struct Entry {
     disp: Disposition,
     label: Option<String>,
     detail: Vec<String>,
-    /// Byte ranges (absolute) inside the chunk's data that the decoder never reads; split
-    /// off as `Unreferenced` children while the chunk is consumed.
-    holes: Vec<(u64, u64, &'static str)>,
+    /// Byte ranges (absolute) inside the chunk's data that are split off as children while
+    /// the chunk is consumed: bytes the decoder never reads (`Unreferenced`), or a tail past an
+    /// internal end that still reaches the caller (`delivered`: keeps the chunk's disposition).
+    holes: Vec<Hole>,
     /// Singleton slot this chunk takes (replacing, and demoting, the previous holder).
     win: Option<Slot>,
+}
+
+struct Hole {
+    start: u64,
+    end: u64,
+    note: Cow<'static, str>,
+    delivered: bool,
 }
 
 impl Entry {
@@ -90,18 +98,32 @@ impl Entry {
     /// The decoder reads only `used` data bytes of this chunk (data starts at `data_start`).
     fn used_prefix(&mut self, data_start: usize, used: usize, data_len: usize, note: &'static str) {
         if used < data_len {
-            self.holes.push((
-                (data_start + used) as u64,
-                (data_start + data_len) as u64,
-                note,
-            ));
+            self.hole(data_start + used, data_start + data_len, note);
         }
     }
 
     /// The decoder never reads absolute bytes `start..end` of this chunk.
     fn hole(&mut self, start: usize, end: usize, note: &'static str) {
         if start < end {
-            self.holes.push((start as u64, end as u64, note));
+            self.holes.push(Hole {
+                start: start as u64,
+                end: end as u64,
+                note: Cow::Borrowed(note),
+                delivered: false,
+            });
+        }
+    }
+
+    /// Absolute bytes `start..end` lie past a blob's internal end but the decoder still hands
+    /// them to the caller: a child with the chunk's own disposition.
+    fn delivered_tail(&mut self, start: usize, end: usize, note: String) {
+        if start < end {
+            self.holes.push(Hole {
+                start: start as u64,
+                end: end as u64,
+                note: Cow::Owned(note),
+                delivered: true,
+            });
         }
     }
 }
@@ -345,6 +367,14 @@ pub(crate) fn walk(data: &[u8], stop: &dyn Stop, opts: Options) -> Result<Invent
 
 const SEARCH_LIMIT_NOTE: &str = "inflate work limit for placing the stream end reached; bytes after the end of the data the decoder reads are not distinguished";
 
+/// Offset just past the `<?xpacket end=...?>` processing instruction, if any.
+fn xpacket_end(text: &[u8]) -> Option<usize> {
+    const PI: &[u8] = b"<?xpacket end=";
+    let at = text.windows(PI.len()).rposition(|w| w == PI)?;
+    let close = text[at..].windows(2).position(|w| w == b"?>")?;
+    Some(at + close + 2)
+}
+
 fn md(kind: MetadataKind) -> Disposition {
     Disposition::Metadata(kind)
 }
@@ -499,7 +529,7 @@ impl Walker<'_> {
         }
         let id = self.inv.push(None, part).map_err(limit_err)?;
         if split {
-            e.holes.sort();
+            e.holes.sort_by_key(|h| (h.start, h.end));
             let data_end = e.end - 4;
             let mut kids = Vec::new();
             let mut cursor = e.start;
@@ -507,8 +537,8 @@ impl Walker<'_> {
                 kids.push(w.inv.push(Some(id), p).map_err(limit_err)?);
                 Ok(())
             };
-            for &(hs, he, note) in &e.holes {
-                let (hs, he) = (hs.max(cursor), he.min(data_end));
+            for h in &e.holes {
+                let (hs, he) = (h.start.max(cursor), h.end.min(data_end));
                 if hs >= he {
                     continue;
                 }
@@ -517,13 +547,17 @@ impl Walker<'_> {
                         .with_detail("bytes the decoder reads");
                     push(self, head)?;
                 }
-                let hole = Part::new(
-                    PartKind::Gap,
-                    PartTag::None,
-                    hs..he,
-                    Disposition::Unreferenced,
-                )
-                .with_detail(note);
+                let hole = if h.delivered {
+                    Part::new(PartKind::Field, PartTag::None, hs..he, e.disp)
+                } else {
+                    Part::new(
+                        PartKind::Gap,
+                        PartTag::None,
+                        hs..he,
+                        Disposition::Unreferenced,
+                    )
+                }
+                .with_detail(h.note.clone());
                 push(self, hole)?;
                 cursor = he;
             }
@@ -1458,9 +1492,32 @@ impl Walker<'_> {
             return;
         }
         match self.inflate(compressed, ICC_INFLATE_CAP) {
-            Ok((_, consumed)) => {
+            Ok((n, consumed)) => {
                 e.disp = md(MetadataKind::Icc);
                 e.win = Some(Slot::Iccp);
+                // The decoder hands over the whole inflated stream; compare it with the size the
+                // profile header declares (bytes 0..4).
+                if n >= 4 {
+                    let declared = be32(&self.scratch[..4]) as usize;
+                    // One final stored block: inflated offsets map 1:1 onto the chunk.
+                    let stored_len = (compressed.len() >= 7 && compressed[2] & 0x07 == 0x01)
+                        .then(|| usize::from(u16::from_le_bytes([compressed[3], compressed[4]])));
+                    if declared < n {
+                        let why = format!(
+                            "inflated profile is {n} bytes, header declares {declared}; the tail past the declared size reaches the caller in ImageInfo ICC"
+                        );
+                        if stored_len == Some(n) {
+                            let data_at = body_start + nul + 2 + 7;
+                            e.delivered_tail(data_at + declared, data_at + n, why);
+                        } else {
+                            e.note(why);
+                        }
+                    } else if declared > n {
+                        e.note(format!(
+                            "inflated profile is {n} bytes, header declares {declared}"
+                        ));
+                    }
+                }
                 let used = nul + 2 + consumed;
                 e.used_prefix(
                     body_start,
@@ -1669,16 +1726,28 @@ impl Walker<'_> {
         // skipped by `try_parse_xmp`; they can be any length.
         let text_off = body.len() - text.len();
         if text_off > KW + 5 {
-            e.holes.push((
-                (body_start + KW + 3) as u64,
-                (body_start + text_off) as u64,
+            e.hole(
+                body_start + KW + 3,
+                body_start + text_off,
                 "iTXt language tag and translated keyword: not read",
-            ));
+            );
         }
         match flag {
             0 if !text.is_empty() => {
                 e.disp = md(MetadataKind::Xmp);
                 e.win = Some(Slot::Xmp);
+                if let Some(end) = xpacket_end(text)
+                    && end < text.len()
+                {
+                    e.delivered_tail(
+                        body_start + text_off + end,
+                        body_start + body.len(),
+                        format!(
+                            "{} bytes after the <?xpacket end?> trailer: past the packet's end, but they reach the caller in ImageInfo XMP",
+                            text.len() - end
+                        ),
+                    );
+                }
             }
             0 => e.note("XMP iTXt text is empty; ignored"),
             1 => {
@@ -1693,6 +1762,14 @@ impl Walker<'_> {
                     Ok((n, consumed)) if n > 0 => {
                         e.disp = md(MetadataKind::Xmp);
                         e.win = Some(Slot::Xmp);
+                        if let Some(end) = xpacket_end(&self.scratch[..n])
+                            && end < n
+                        {
+                            e.note(format!(
+                                "inflated XMP has {} bytes after the <?xpacket end?> trailer; past the packet's end, but they reach the caller (compressed, so not split)",
+                                n - end
+                            ));
+                        }
                         e.used_prefix(
                             body_start,
                             body.len() - text.len() + consumed,
