@@ -69,6 +69,45 @@ fn zlib_zeros(n: usize) -> Vec<u8> {
     out
 }
 
+/// Pseudo-random bytes from an alphabet of `k` symbols (xorshift; deterministic).
+fn noise(n: usize, k: u32) -> Vec<u8> {
+    let mut x = 0x9E37_79B9_7F4A_7C15u64;
+    (0..n)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            ((x >> 24) as u32 % k) as u8
+        })
+        .collect()
+}
+
+fn zlib_level(raw: &[u8], wrong_adler: bool) -> Vec<u8> {
+    let mut c = zenflate::Compressor::new(zenflate::CompressionLevel::fastest());
+    let mut out = vec![0u8; zenflate::Compressor::zlib_compress_bound(raw.len())];
+    let k = c
+        .zlib_compress(raw, &mut out, zenflate::Unstoppable)
+        .unwrap();
+    out.truncate(k);
+    if wrong_adler {
+        *out.last_mut().unwrap() ^= 0xff;
+    }
+    out
+}
+
+/// Filtered gray8 rows (filter byte 0) of `noise`, deflated.
+fn deflate_rows(w: usize, h: usize, k: u32, wrong_adler: bool) -> Vec<u8> {
+    let px = noise(w * h, k);
+    let mut raw = Vec::with_capacity(h * (w + 1));
+    for row in px.chunks(w) {
+        raw.push(0);
+        raw.extend_from_slice(row);
+    }
+    let z = zlib_level(&raw, wrong_adler);
+    eprintln!("deflate stream {} B for {} B of rows", z.len(), raw.len());
+    z
+}
+
 #[test]
 fn inventory_cost() {
     let Some(case) = std::env::var_os("INVENTORY_COST_CASE") else {
@@ -133,6 +172,22 @@ fn inventory_cost() {
             eprintln!("deflate stream {} B for {} B of rows", out.len(), n);
             png(w, h, 8, 0, &out)
         }
+        // Incompressible rows: 4096x4096 gray8 of pseudo-random bytes, deflated (the stream
+        // is about as large as the rows, ~16 MiB), valid Adler-32.
+        "incompressible_16m" => png(4096, 4096, 8, 0, &deflate_rows(4096, 4096, 256, false)),
+        // The same with a wrong Adler-32: the binary-search fallback over ~16 MiB of input.
+        "incompressible_16m_wrong_adler" => {
+            png(4096, 4096, 8, 0, &deflate_rows(4096, 4096, 256, true))
+        }
+        // 2x1 rows, then ~16 MiB of incompressible excess: the rows-prefix search.
+        "incompressible_16m_excess" => {
+            let mut raw = vec![0u8, 1, 2, 3, 4, 5, 6];
+            raw.extend(noise(16 * MIB - 4096, 256));
+            png(2, 1, 8, 2, &zlib_level(&raw, false))
+        }
+        // Compressible rows (4-symbol alphabet, about 4:1): 64 MiB of rows in ~16 MiB of
+        // deflate, wrong Adler-32.
+        "compressible_16m_wrong_adler" => png(8192, 8191, 8, 0, &deflate_rows(8192, 8191, 4, true)),
         other => panic!("unknown case {other}"),
     };
     let t = std::time::Instant::now();

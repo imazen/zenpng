@@ -83,7 +83,7 @@ inventory-fuzz seconds="660":
 # Worst-case cost of the inventory's zlib-end placement; one process per case so peak RSS is per case.
 inventory-cost:
     cargo test --release --test inventory_cost --no-run
-    for c in excess_stored broken_after_rows wrong_adler_full_image bomb_excess bomb_huge_ihdr bomb_huge_ihdr_wrong_adler wrong_adler_deflate_128m; do \
+    for c in excess_stored broken_after_rows wrong_adler_full_image bomb_excess bomb_huge_ihdr bomb_huge_ihdr_wrong_adler wrong_adler_deflate_128m incompressible_16m incompressible_16m_wrong_adler incompressible_16m_excess compressible_16m_wrong_adler; do \
       INVENTORY_COST_CASE=$c /usr/bin/time -v $(ls -t target/release/deps/inventory_cost-* | grep -v '\.d$' | head -1) --nocapture 2>&1 | grep -E "COST|Maximum resident|Elapsed|User time"; done
 
 # Both-direction check: flip a byte in every consumed leaf of the conformance corpus and list
