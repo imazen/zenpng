@@ -60,6 +60,7 @@ mod indexed;
 /// [`EncodeConfig::with_internal_params`].
 #[cfg(feature = "__expert")]
 pub mod internal_params;
+mod inventory;
 mod optimize;
 mod quantize;
 mod simd;

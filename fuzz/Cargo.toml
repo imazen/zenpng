@@ -10,6 +10,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 enough = "0.4"
+# TEMPORARY: zencodec PR (structural inventories); swap for the released version before merge.
+zencodec = { git = "https://github.com/imazen/zencodec", branch = "feat/inventory" }
 
 [dependencies.zenpng]
 path = ".."
@@ -36,6 +38,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "inventory"
+path = "fuzz_targets/inventory.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "fuzz_decode_strict"
 path = "fuzz_targets/fuzz_decode_strict.rs"
 test = false
@@ -49,4 +58,9 @@ bench = false
 # CI checks out zenflate main at ../zenflate. Replace with the released version
 # once it ships. The fuzz crate is its own workspace, so the root patch does not reach it.
 [patch.crates-io]
-zenflate = { path = "../../zenflate" }
+# TEMPORARY: zenflate::zlib_scan (imazen/zenflate branch feat/deflate-scan, on top of
+# main with the PNG strip API) places the inventory's IDAT/fdAT cuts. Back to the
+# released version once both ship.
+zenflate = { git = "https://github.com/imazen/zenflate", branch = "feat/deflate-scan" }
+# TEMPORARY: unify zencodec with the inventory PR branch (see above).
+zencodec = { git = "https://github.com/imazen/zencodec", branch = "feat/inventory" }

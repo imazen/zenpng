@@ -6,6 +6,11 @@ All notable changes to zenpng are documented here.
 
 ### Added
 
+- **Structural inventory** (`DecodeJob::inventory`, capability `inventory`): a byte-exact map of
+  the signature, every chunk through IEND (CRC status, text keywords, iCCP names as labels) and
+  trailing data, each part marked with what the zencodec decode path does with it (zencodec
+  imazen/zencodec#133). Commit ef7a12f. `Cargo.toml` points zencodec at the
+  PR branch until it ships.
 - **Multi-threaded decode of Apple `iDOT` PNGs** (`PngDecodeConfig::max_threads`,
   default 0 = automatic; 1 = single-threaded). Strips are decoded on a work
   queue straight into the output buffer. On hybrid CPUs (Linux), workers are

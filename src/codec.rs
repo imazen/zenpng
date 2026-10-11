@@ -1968,6 +1968,7 @@ static PNG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_xmp(true)
     .with_cicp(true)
     .with_stop(true)
+    .with_inventory(true)
     .with_animation(true)
     .with_cheap_probe(true)
     .with_native_gray(true)
@@ -2065,6 +2066,35 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
 
     fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {
         self.probe_inner(data).map_err(CodecError::of)
+    }
+
+    fn inventory(
+        &self,
+        data: &[u8],
+    ) -> Result<Option<zencodec::inventory::Inventory>, At<CodecError>> {
+        let cancel: &dyn enough::Stop = match self.stop {
+            Some(ref s) => s as &dyn enough::Stop,
+            None => &enough::Unstoppable,
+        };
+        let opts = crate::inventory::Options {
+            strict_crc: self.policy.as_ref().is_some_and(|p| p.strict == Some(true)),
+            drop_icc: self.policy.as_ref().is_some_and(|p| !p.resolve_icc(true)),
+            drop_exif: self.policy.as_ref().is_some_and(|p| !p.resolve_exif(true)),
+            drop_xmp: self.policy.as_ref().is_some_and(|p| !p.resolve_xmp(true)),
+            no_animation: self
+                .policy
+                .as_ref()
+                .is_some_and(|p| !p.resolve_animation(true)),
+            no_progressive: self
+                .policy
+                .as_ref()
+                .is_some_and(|p| !p.resolve_progressive(true)),
+            limits: *self.limits.as_ref().unwrap_or(&self.config.limits),
+            anim_limits: self.config.limits,
+        };
+        crate::inventory::walk(data, cancel, opts)
+            .map(Some)
+            .map_err(|e| CodecError::of(at!(e)))
     }
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<CodecError>> {
@@ -6581,8 +6611,8 @@ mod tests {
 
         // Both should decode correctly
         let dec = PngDecoderConfig::new();
-        let d_lossless = dec.decode(out_lossless.data()).unwrap();
-        let d_lossy = dec.decode(out_lossy.data()).unwrap();
+        let d_lossless = PngDecoderConfig::decode(&dec, out_lossless.data()).unwrap();
+        let d_lossy = PngDecoderConfig::decode(&dec, out_lossy.data()).unwrap();
         assert_eq!(d_lossless.width(), 2);
         assert_eq!(d_lossy.width(), 2);
     }

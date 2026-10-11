@@ -55,12 +55,11 @@ miniz_oxide = "0.9.1"
 fdeflate = "0.3.7"
 zopfli = "0.8"
 lodepng = "3.12.2"
-# zencodec conformance harness (unpublished companion crate). Git-pinned to the
-# SAME zencodec tag as the [patch.crates-io] below so both resolve to one
-# unified zencodec. Provides check_decode_truncation_series (EOF/truncation).
-# Drop for a crates.io version dep once zencodec-testkit itself publishes
-# (zencodec 0.1.26 already shipped; this tag is byte-identical to that release).
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", tag = "v0.1.26" }
+# zencodec conformance harness (unpublished companion crate), on the same zencodec branch
+# as the [patch.crates-io] below so both resolve to one unified zencodec.
+# TEMPORARY: zencodec PR imazen/zencodec#133 (structural inventories, `check_inventory`).
+# Swap for the released testkit / a crates.io version before merge.
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", branch = "feat/inventory" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 codec-corpus = "1.0.2"
@@ -178,20 +177,19 @@ harness = false
 required-features = ["_dev"]
 
 [patch.crates-io]
-# zencodec-testkit is unpublished (path-deps zencodec internally); unify the
-# graph on the content-identical released tag until the testkit ships on
-# crates.io. Without this patch, Cargo resolves two distinct `zencodec`
-# instances (crates.io 0.1.26 direct vs. git-via-testkit), and
-# `tests/integration/truncation_series.rs` (which passes zenpng's own
-# `PngDecoderConfig` into testkit's `check_decode_truncation_series<D:
-# DecoderConfig>`) fails to typecheck across the two instances (E0277 — the
-# trait bound is on a *different* `DecoderConfig`). `tag = "v0.1.26"` is
-# commit 998edf5f, byte-identical to the published crate — keep this in sync
-# with the `zencodec-testkit` dev-dep's tag above.
-zencodec = { git = "https://github.com/imazen/zencodec", tag = "v0.1.26" }
+# zencodec-testkit is unpublished (path-deps zencodec internally): without this patch
+# Cargo resolves two distinct `zencodec` instances (crates.io direct vs. git via the
+# testkit) and `tests/integration/truncation_series.rs`, which passes zenpng's own
+# `PngDecoderConfig` into the testkit, fails to typecheck across them (E0277).
+# TEMPORARY: zencodec PR imazen/zencodec#133 (structural inventories). Swap for the
+# released version before merge.
+zencodec = { git = "https://github.com/imazen/zencodec", branch = "feat/inventory" }
 # DEV-ONLY: zenflate's PNG strip API (`zenflate::png::{StripCompressor,
 # StripDecoder}`, `CompressionLevel::png`) is in imazen/zenflate#10
 # (main since imazen/zenflate#10 merged), not yet released. Local builds use the sibling checkout;
 # CI checks out zenflate main at ../zenflate. Replace with the released version
 # once it ships.
-zenflate = { path = "../zenflate" }
+# TEMPORARY: zenflate::zlib_scan (imazen/zenflate branch feat/deflate-scan, on top of
+# main with the PNG strip API) places the inventory's IDAT/fdAT cuts. Back to the
+# released version once both ship.
+zenflate = { git = "https://github.com/imazen/zenflate", branch = "feat/deflate-scan" }
