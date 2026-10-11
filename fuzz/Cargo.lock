@@ -376,7 +376,7 @@ dependencies = [
 [[package]]
 name = "zenflate"
 version = "0.4.1"
-source = "git+https://github.com/imazen/zenflate?branch=feat%2Fdeflate-scan#4b2d424138d69974970423aa22ccb3d753e9b680"
+source = "git+https://github.com/imazen/zenflate?branch=feat%2Fdeflate-scan#0fa809a999889913a5fa9c1103337c6728d9b067"
 dependencies = [
  "archmage",
  "enough",
