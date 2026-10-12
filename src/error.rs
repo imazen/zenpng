@@ -8,7 +8,7 @@ pub type Result<T> = core::result::Result<T, At<PngError>>;
 /// Errors from PNG encode/decode operations.
 ///
 /// Each variant maps to exactly one coarse [`zencodec::ErrorCategory`] (see the
-/// [`CategorizedError`](zencodec::CategorizedError) impl) so consumers can route
+/// [`zencodec::CategorizedError`] impl) so consumers can route
 /// on the category — HTTP status, retry policy, logging — without matching this
 /// enum directly.
 #[derive(Debug, thiserror::Error)]
@@ -170,7 +170,7 @@ pub enum PngError {
     /// Quantization error (zenquant backend). Most of zenquant's own variants
     /// are themselves caller-request faults (bad dimensions, out-of-range
     /// config) or a cancellation; the rest are an unclassified
-    /// zenquant-internal failure. See the [`CategorizedError`] impl below for
+    /// zenquant-internal failure. See the [`zencodec::CategorizedError`] impl below for
     /// the full split — it is not a blanket [`ErrorCategory::Internal`].
     ///
     /// [`ErrorCategory::Internal`]: zencodec::ErrorCategory::Internal
@@ -272,10 +272,10 @@ impl zencodec::CategorizedError for PngError {
     }
 }
 
-/// Categorize a [`ProbeError`]: structural pre-decode probe failures.
+/// Categorize a [`crate::detect::ProbeError`]: structural pre-decode probe failures.
 ///
 /// `ProbeError` is caller-facing (returned by [`crate::detect::probe`]), so it
-/// carries its own [`CategorizedError`](zencodec::CategorizedError) impl too.
+/// carries its own [`zencodec::CategorizedError`] impl too.
 impl zencodec::CategorizedError for crate::detect::ProbeError {
     fn codec_name(&self) -> Option<&'static str> {
         Some("zenpng")

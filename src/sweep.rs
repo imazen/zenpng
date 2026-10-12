@@ -6,13 +6,13 @@
 //! across every compression cell, `min(bytes)` comparisons are exact,
 //! and no quality grid exists — each compression stratum is one cell.
 //!
-//! The **quantize axis** ([`QuantizeSpec`]) is the one lossy axis: it
+//! The **quantize axis** ([`crate::sweep::QuantizeSpec`]) is the one lossy axis: it
 //! palette-reduces the image to `max_colors` entries via a backend
-//! ([`QuantBackend::Imagequant`] or [`QuantBackend::Zenquant`]). Those
+//! ([`crate::sweep::QuantBackend::Imagequant`] or [`crate::sweep::QuantBackend::Zenquant`]). Those
 //! cells DO change pixels, so they are metric-class — a picker compares
 //! their rate/distortion against the lossless cells, not `min(bytes)`.
 //! The axis is a **union**, not a cross: the compression cells stay
-//! truecolor (`quantize: None`), and each [`QuantizeSpec`] adds exactly
+//! truecolor (`quantize: None`), and each [`crate::sweep::QuantizeSpec`] adds exactly
 //! one cell at the default ([`Compression::Balanced`]) compression.
 //!
 //! Deliberately excluded from the curated axes, with reasons:
@@ -214,8 +214,8 @@ fn preset_token(c: Compression) -> String {
 /// Reconstruct the [`SweepVariant`] a cell id denotes. Grammar:
 /// `png-<preset>` (named tiers) or `png-e<effort>` (explicit),
 /// optionally suffixed by a quantize stratum `-iq<N>`
-/// ([`QuantBackend::Imagequant`]) or `-zq<N>`
-/// ([`QuantBackend::Zenquant`]), e.g. `png-balanced-iq256`. The
+/// ([`crate::sweep::QuantBackend::Imagequant`]) or `-zq<N>`
+/// ([`crate::sweep::QuantBackend::Zenquant`]), e.g. `png-balanced-iq256`. The
 /// renderer and parser move in lockstep
 /// (`cell_ids_roundtrip_to_their_variants`); evolution is
 /// additive-only. Note `png-e13` and `png-balanced` are distinct
@@ -257,7 +257,7 @@ pub fn variant_from_cell_id(id: &str) -> Result<SweepVariant, String> {
 }
 
 /// Split `rest` (the part after `png-`) into the compression token and
-/// an optional [`QuantizeSpec`]. A trailing `-iq<N>` / `-zq<N>` segment
+/// an optional [`crate::sweep::QuantizeSpec`]. A trailing `-iq<N>` / `-zq<N>` segment
 /// is the quantize stratum; everything before it is the compression
 /// token. `<N>` must be a 2–256 color count.
 fn parse_quantize_suffix<'a>(
@@ -377,7 +377,7 @@ pub fn all_quantize_specs() -> Vec<QuantizeSpec> {
 /// Axes: compression presets (most-important first) plus the quantize
 /// strata. The two axes form a **union**, not a cross — see
 /// [`plan_constrained`]: every compression preset is one truecolor cell,
-/// and each [`QuantizeSpec`] adds one palette cell at the default
+/// and each [`crate::sweep::QuantizeSpec`] adds one palette cell at the default
 /// ([`Compression::Balanced`]) compression.
 #[derive(Clone, Debug)]
 pub struct SweepAxes {
@@ -442,7 +442,7 @@ impl SweepAxes {
     /// 200) stay out even here: each costs minutes per megapixel for a
     /// sliver of extra ratio, so the curve they'd add is dominated by
     /// runaway wall time, not signal a scalar head can use — the same
-    /// rationale that keeps them off [`modes_full`].
+    /// rationale that keeps them off [`Self::modes_full`].
     #[must_use]
     pub fn scalar_dense() -> Self {
         Self {

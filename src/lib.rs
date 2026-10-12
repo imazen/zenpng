@@ -25,8 +25,8 @@
 //!
 //! # zencodec traits
 //!
-//! [`PngEncoderConfig`] implements [`zencodec::EncoderConfig`] and [`PngDecoderConfig`]
-//! implements [`zencodec::DecoderConfig`] for use with multi-codec dispatchers.
+//! [`PngEncoderConfig`] implements [`zencodec::encode::EncoderConfig`] and [`PngDecoderConfig`]
+//! implements [`zencodec::decode::DecoderConfig`] for use with multi-codec dispatchers.
 //! Note: [`PngDecodeConfig`] (used in the quick start) is the lower-level decode config;
 //! [`PngDecoderConfig`] wraps it for the zencodec trait interface.
 

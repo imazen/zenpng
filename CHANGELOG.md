@@ -8,6 +8,8 @@ All notable changes to zenpng are documented here.
   PRs on current main. The new `encode(PixelSlice)` wrapper returns the common
   job's `At<CodecError>` without discarding native causes or location traces.
   Current decode threading and exact content-light metadata remain supported.
+  Combined validation: `88c325ab`; docs-only correction `03376a23`.
+  [Validation scope and evidence](benchmarks/api_integration_2026-10-12.md).
 
 ### Fixed
 

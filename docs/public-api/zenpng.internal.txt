@@ -12,20 +12,20 @@
 #   pub modules                                 2
 #   pub types (struct/enum/trait/alias)         6
 #   pub consts/statics                          1
-#   free functions                             16
+#   free functions                             20
 #   inherent methods                           35
 #   struct fields                              16
 #   trait roster entries (type × trait)        38
 #   auto-trait-complete types                   3
 #
 # per-module pub lines:
-#   (root)                           34
+#   (root)                           38
 #   __bench_scan                     31
 #   detect                            3
 #   internal_params                   6
 #   sweep                             2
 
-## items (75 lines)
+## items (79 lines)
 
 #[non_exhaustive] pub struct InternalParams [also: internal_params]
 pub const fn __bench_scan::FusedRequest::all() -> Self
@@ -70,6 +70,10 @@ pub fn __bench_scan::scalar_is_grayscale_rgb8(&[u8]) -> bool
 pub fn __bench_scan::scalar_is_grayscale_rgba8(&[u8]) -> bool
 pub fn __bench_scan::scalar_is_opaque_rgba8(&[u8]) -> bool
 pub fn __bench_unfilter_row(u8, &mut [u8], &[u8], usize)
+pub fn __idot_stats() -> (usize, usize)
+pub fn __pipeline_runs() -> usize
+pub fn __set_idot_min_bytes(usize)
+pub fn __set_pipeline_min_bytes(usize)
 pub fn detect::ColorType::assert_fields_are_eq(&self)
 pub fn detect::ProbeError::assert_fields_are_eq(&self)
 pub fn detect::Recommendation::assert_fields_are_eq(&self)

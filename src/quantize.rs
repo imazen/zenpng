@@ -150,7 +150,7 @@ pub trait Quantizer: Send + Sync {
 
 /// Create a default quantizer (zenquant if available, else first enabled backend).
 ///
-/// Quality metrics are enabled for zenquant (needed for [`QualityGate::MaxMpe`] / [`MinSsim2`]).
+/// Quality metrics are enabled for zenquant (needed for [`crate::QualityGate::MaxMpe`] / [`crate::QualityGate::MinSsim2`]).
 #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
 pub fn default_quantizer() -> Box<dyn Quantizer> {
     #[cfg(feature = "quantize")]
@@ -270,7 +270,7 @@ mod zenquant_backend {
 
         /// Enable quality metric computation (MPE, SSIM2, butteraugli estimates).
         ///
-        /// Required for [`QualityGate::MaxMpe`] and [`QualityGate::MinSsim2`].
+        /// Required for [`crate::QualityGate::MaxMpe`] and [`crate::QualityGate::MinSsim2`].
         #[must_use]
         pub fn with_compute_quality_metric(mut self, compute: bool) -> Self {
             self.config = self.config.with_compute_quality_metric(compute);

@@ -130,7 +130,7 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
 
 // ── PngEncoderConfig ─────────────────────────────────────────────────
 
-/// PNG encoder configuration implementing [`EncoderConfig`](zencodec::EncoderConfig).
+/// PNG encoder configuration implementing [`EncoderConfig`](zencodec::encode::EncoderConfig).
 ///
 /// Use [`with_compression`](PngEncoderConfig::with_compression) to control compression level.
 /// When the `quantize` feature is enabled, setting quality < 100 enables
@@ -601,9 +601,9 @@ impl zencodec::encode::EncoderConfig for PngEncoderConfig {
     /// - `Lossless` → PNG's native lossless mode (the default).
     /// - `Lossy(CodecSpecificQuality(q))` → the lossy palette quality dial.
     /// - `Lossy(ApproxSsim2(s))` → mapped onto the quality dial via the
-    ///   inverse SSIM2 calibration ([`ssim2_to_quality`]).
+    ///   inverse SSIM2 calibration (`ssim2_to_quality`).
     /// - `Lossy(ApproxButteraugli(d))` → coarse-mapped via
-    ///   [`butteraugli_to_quality`] (no native PNG butteraugli model).
+    ///   `butteraugli_to_quality` (no native PNG butteraugli model).
     ///
     /// The lossy path is palette quantization (feature-gated); with no
     /// quantizer the quality is inert but the resolved report stays consistent.
@@ -1691,7 +1691,7 @@ struct AccumulatedFrame {
 
 /// APNG frame-by-frame encoder implementing [`AnimationFrameEncoder`](zencodec::encode::AnimationFrameEncoder).
 ///
-/// Accumulates canvas-sized RGBA8/16 frames, then encodes them all on [`finish()`](PngAnimationFrameEncoder::do_finish).
+/// Accumulates canvas-sized RGBA8/16 frames, then encodes them all on [`finish()`](zencodec::encode::AnimationFrameEncoder::finish).
 pub struct PngAnimationFrameEncoder {
     frames: Vec<AccumulatedFrame>,
     canvas_width: u32,
@@ -2043,7 +2043,7 @@ impl PngAnimationFrameEncoder {
 
 // ── PngDecoderConfig ─────────────────────────────────────────────────
 
-/// PNG decoder configuration implementing [`DecoderConfig`](zencodec::DecoderConfig).
+/// PNG decoder configuration implementing [`DecoderConfig`](zencodec::decode::DecoderConfig).
 #[derive(Clone, Debug)]
 pub struct PngDecoderConfig {
     limits: ResourceLimits,

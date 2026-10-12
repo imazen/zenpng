@@ -6,28 +6,28 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpng.txt 430 lines (supported surface) | zenpng.features.txt 21 added (features: avx512,cms,imagequant,joint,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 97 lines (117 hidden + 34 excluded-feature)
+# files: zenpng.txt 443 lines (supported surface) | zenpng.features.txt 21 added (features: avx512,cms,imagequant,joint,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 101 lines (121 hidden + 34 excluded-feature)
 
 ## summary
 #
 #   pub modules                                 4
 #   pub types (struct/enum/trait/alias)        49
-#   pub consts/statics                          9
-#   free functions                             27
-#   inherent methods                           68
-#   struct fields                             151
+#   pub consts/statics                         10
+#   free functions                             29
+#   inherent methods                           73
+#   struct fields                             156
 #   enum variants                              67
 #   trait roster entries (type × trait)       164
 #   auto-trait-complete types                  40
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                          288
+#   (root)                          301
 #   detect                           41
 #   heuristics                       13
 #   sweep                            33
 
-## items (375 lines)
+## items (388 lines)
 
 pub mod zenpng
 pub mod detect
@@ -234,6 +234,8 @@ pub EncodeConfig::chromaticities: core::option::Option<PngChromaticities>
 pub EncodeConfig::cicp: core::option::Option<zenpixels::cicp::Cicp>
 pub EncodeConfig::compression: Compression
 pub EncodeConfig::content_light_level: core::option::Option<zenpixels::hdr::ContentLightLevel>
+pub EncodeConfig::content_light_level_raw: core::option::Option<[u32; 2]>
+pub EncodeConfig::decode_segments: u32
 pub EncodeConfig::downcast: DowncastFlags
 pub EncodeConfig::filter: Filter
 pub EncodeConfig::last_modified: core::option::Option<PngTime>
@@ -251,6 +253,8 @@ pub fn EncodeConfig::with_chromaticities(self, core::option::Option<PngChromatic
 pub fn EncodeConfig::with_cicp(self, core::option::Option<zenpixels::cicp::Cicp>) -> Self
 pub fn EncodeConfig::with_compression(self, Compression) -> Self
 pub fn EncodeConfig::with_content_light_level(self, core::option::Option<zenpixels::hdr::ContentLightLevel>) -> Self
+pub fn EncodeConfig::with_content_light_level_raw(self, core::option::Option<[u32; 2]>) -> Self
+pub fn EncodeConfig::with_decode_segments(self, u32) -> Self
 pub fn EncodeConfig::with_downcast(self, DowncastFlags) -> Self
 pub fn EncodeConfig::with_filter(self, Filter) -> Self
 pub fn EncodeConfig::with_last_modified(self, PngTime) -> Self
@@ -281,6 +285,7 @@ pub PngChromaticities::white_y: i32
 #[non_exhaustive] pub struct PngDecodeConfig
 pub PngDecodeConfig::max_memory_bytes: core::option::Option<u64>
 pub PngDecodeConfig::max_pixels: core::option::Option<u64>
+pub PngDecodeConfig::max_threads: usize
 pub PngDecodeConfig::skip_critical_chunk_crc: bool
 pub PngDecodeConfig::skip_decompression_checksum: bool
 pub const PngDecodeConfig::DEFAULT_MAX_MEMORY: u64
@@ -290,6 +295,7 @@ pub const fn PngDecodeConfig::none() -> Self
 pub const fn PngDecodeConfig::strict() -> Self
 pub const fn PngDecodeConfig::with_max_memory(self, u64) -> Self
 pub const fn PngDecodeConfig::with_max_pixels(self, u64) -> Self
+pub const fn PngDecodeConfig::with_max_threads(self, usize) -> Self
 pub const fn PngDecodeConfig::with_skip_critical_chunk_crc(self, bool) -> Self
 pub const fn PngDecodeConfig::with_skip_decompression_checksum(self, bool) -> Self
 pub struct PngDecodeJob
@@ -326,8 +332,11 @@ pub fn PngEncoderConfig::new() -> Self
 pub fn PngEncoderConfig::with_cicp(self, core::option::Option<zenpixels::cicp::Cicp>) -> Self
 pub fn PngEncoderConfig::with_compression(self, Compression) -> Self
 pub fn PngEncoderConfig::with_content_light_level(self, core::option::Option<zenpixels::hdr::ContentLightLevel>) -> Self
+pub fn PngEncoderConfig::with_content_light_level_raw(self, core::option::Option<[u32; 2]>) -> Self
+pub fn PngEncoderConfig::with_downcast(self, DowncastFlags) -> Self
 pub fn PngEncoderConfig::with_filter(self, Filter) -> Self
 pub fn PngEncoderConfig::with_near_lossless_bits(self, u8) -> Self
+pub fn PngEncoderConfig::with_parallel(self, bool) -> Self
 #[non_exhaustive] pub struct PngInfo
 pub PngInfo::background: core::option::Option<PngBackground>
 pub PngInfo::bit_depth: u8
@@ -336,6 +345,7 @@ pub PngInfo::cicp: core::option::Option<zenpixels::cicp::Cicp>
 pub PngInfo::color_type: u8
 pub PngInfo::compressed_data_size: u64
 pub PngInfo::content_light_level: core::option::Option<zenpixels::hdr::ContentLightLevel>
+pub PngInfo::content_light_level_raw: core::option::Option<[u32; 2]>
 pub PngInfo::creating_tool: core::option::Option<alloc::string::String>
 pub PngInfo::exif: core::option::Option<alloc::vec::Vec<u8>>
 pub PngInfo::has_alpha: bool
@@ -344,6 +354,7 @@ pub PngInfo::icc_profile: core::option::Option<alloc::vec::Vec<u8>>
 pub PngInfo::interlaced: bool
 pub PngInfo::last_modified: core::option::Option<PngTime>
 pub PngInfo::mastering_display: core::option::Option<zenpixels::hdr::MasteringDisplay>
+pub PngInfo::mastering_display_raw: core::option::Option<[u8; 24]>
 pub PngInfo::palette_size: core::option::Option<u16>
 pub PngInfo::phys_unit: core::option::Option<PhysUnit>
 pub PngInfo::pixels_per_unit_x: core::option::Option<u32>
@@ -389,7 +400,9 @@ pub fn Quantizer::with_quality_metrics(&self) -> core::option::Option<alloc::box
 pub fn available_backends() -> &'static [&'static str]
 pub fn decode(&[u8], &PngDecodeConfig, &dyn enough::Stop) -> core::result::Result<PngDecodeOutput, whereat::at::At<PngError>>
 pub fn decode_apng(&[u8], &PngDecodeConfig, &dyn enough::Stop) -> core::result::Result<ApngDecodeOutput, whereat::at::At<PngError>>
+pub fn decode_rgba8(&[u8]) -> core::result::Result<(alloc::vec::Vec<u8>, u32, u32), whereat::at::At<PngError>>
 pub fn default_quantizer() -> alloc::boxed::Box<dyn Quantizer>
+pub fn encode(zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<zencodec::error::CodecError>>
 pub fn encode_apng(&[ApngFrameInput<'_>], u32, u32, &ApngEncodeConfig, core::option::Option<&zencodec::metadata::Metadata>, &dyn enough::Stop, &dyn enough::Stop) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<PngError>>
 pub fn encode_apng_auto(&ApngEncodeParams<'_>, QualityGate) -> core::result::Result<AutoEncodeResult, whereat::at::At<PngError>>
 pub fn encode_apng_indexed(&ApngEncodeParams<'_>) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<PngError>>
@@ -464,4 +477,4 @@ PngAnimationFrameEncoder: !RefUnwindSafe !UnwindSafe
 PngDecodeJob: !RefUnwindSafe !UnwindSafe
 PngDecoder<'a>: !RefUnwindSafe !UnwindSafe
 PngEncodeJob: !RefUnwindSafe !UnwindSafe
-PngEncoder: !RefUnwindSafe !UnwindSafe
+PngEncoder: !RefUnwindSafe !Sync !UnwindSafe
