@@ -497,6 +497,15 @@ use `/usr/bin/log`).
   error-type changes already exist relative to 0.1.4. See
   `docs/metadata-api-audit.md` and the queued breaking changelog entries.
 
+- Fixed 2026-10-12: a parallel zencodec job policy reset an explicit encoder
+  `max_threads` cap to zero. It now preserves the cap; a sequential job limit
+  still forces one worker. `encode_threading_policy_and_job_limits_preserve_worker_cap`
+  covers both precedence directions.
+
+- Fixed 2026-10-12: the expert-feature `parallel_field_applies` test asserted
+  the old false default after parallel encoding became the default. The test
+  now checks the current default and both override directions.
+
 - Fixed 2026-10-12: the threading-defaults merge omitted `content_light_level_raw`
   from `EncodeConfig::default`, causing E0063. It defaults to `None`, matching
   the previous derived default. Library compilation exercises this initializer.

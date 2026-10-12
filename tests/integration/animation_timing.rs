@@ -258,6 +258,34 @@ fn sixteen_bit_animation_preserves_all_sample_bits_and_color_signaling() {
         }
         let output = encoder.finish(None).unwrap();
         assert_eq!(output.data()[24], 16, "IHDR sample depth");
+        // Independently decode every emitted delta rectangle, including RGB
+        // samples beneath zero alpha and their big-endian wire order.
+        let mut oracle = png_main::Decoder::new(std::io::Cursor::new(output.data()))
+            .read_info()
+            .unwrap();
+        let mut raw = vec![0; oracle.output_buffer_size().unwrap()];
+        for source in &frames {
+            let info = oracle.next_frame(&mut raw).unwrap();
+            assert_eq!(info.bit_depth, png_main::BitDepth::Sixteen);
+            assert_eq!(info.color_type, png_main::ColorType::Rgba);
+            let control = oracle.info().frame_control.unwrap();
+            assert_eq!(control.delay_num, 1001);
+            assert_eq!(control.delay_den, 30000);
+            assert_eq!(control.blend_op, png_main::BlendOp::Source);
+            for y in 0..info.height {
+                let view = source.as_slice();
+                let row = view.row(control.y_offset + y);
+                let start = control.x_offset as usize * 8;
+                let expected: Vec<u8> = row[start..start + info.width as usize * 8]
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .flat_map(|&sample| u16::from_ne_bytes(sample).to_be_bytes())
+                    .collect();
+                let offset = y as usize * info.line_size;
+                assert_eq!(&raw[offset..offset + info.line_size], expected);
+            }
+        }
         let mut decoder = PngDecoderConfig::new()
             .job()
             .animation_frame_decoder(Cow::Borrowed(output.data()), &[])

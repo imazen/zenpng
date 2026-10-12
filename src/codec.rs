@@ -244,15 +244,22 @@ impl PngEncoderConfig {
         self
     }
 
-    /// Allow multi-threaded encoding: strips compressed concurrently at
-    /// efforts 1-15 (one-shot and `push_rows` strip streaming; output then
-    /// differs slightly from the single-threaded encode but not between
-    /// thread counts), concurrent candidate searches above. Default off. The
-    /// thread count is all cores unless the job's limits set a
-    /// single-threaded policy.
+    /// Select sequential or automatic parallel encoding. The default is
+    /// [`ThreadingPolicy::Parallel`](zencodec::ThreadingPolicy::Parallel).
+    /// A sequential job limit takes precedence over this setting.
+    /// [`with_max_threads`](Self::with_max_threads) caps automatic parallelism.
     #[must_use]
-    pub fn with_parallel(mut self, parallel: bool) -> Self {
-        self.config.parallel = parallel;
+    pub fn with_threading(mut self, policy: zencodec::ThreadingPolicy) -> Self {
+        self.config.parallel = policy.is_parallel();
+        self
+    }
+
+    /// Cap native encoder workers. `0` (the default) uses available cores;
+    /// `1` forces sequential encoding regardless of the threading policy.
+    /// The cap is retained when a job requests automatic parallelism.
+    #[must_use]
+    pub fn with_max_threads(mut self, max_threads: usize) -> Self {
+        self.config.max_threads = max_threads;
         self
     }
 
@@ -526,10 +533,7 @@ fn decode_threads(policy: zencodec::ThreadingPolicy) -> usize {
 
 /// Apply threading policy to PNG encode config fields.
 fn apply_threading(config: &mut crate::encode::EncodeConfig, policy: zencodec::ThreadingPolicy) {
-    if policy.is_parallel() {
-        // max_threads 0 = no limit (use ambient pool / all cores)
-        config.max_threads = 0;
-    } else {
+    if !policy.is_parallel() {
         config.max_threads = 1;
         config.parallel = false;
     }
@@ -816,7 +820,7 @@ enum StreamingMode {
 /// multi-threaded strip encoder runs, all downcasts and near-lossless off,
 /// no `iDOT` segments, and an image of at least two strips). The output is
 /// byte-identical to a one-shot encode of the same rows with
-/// `with_parallel(true)` on two or more threads; memory is one strip of rows
+/// `with_threading(ThreadingPolicy::Parallel)` on two or more threads; memory is one strip of rows
 /// plus the compressed output instead of the image.
 struct StripStreamingState {
     /// Signature, IHDR, metadata, the IDAT length placeholder and type, then
@@ -7786,6 +7790,67 @@ mod tests {
     // ── ThreadingPolicy tests ──
 
     #[test]
+    fn encode_threading_policy_and_job_limits_preserve_worker_cap() {
+        use zencodec::ThreadingPolicy;
+        use zencodec::encode::{EncodeJob, EncoderConfig};
+
+        let config = PngEncoderConfig::new()
+            .with_threading(ThreadingPolicy::Sequential)
+            .with_max_threads(4);
+        assert!(!config.config.parallel);
+        assert_eq!(config.config.max_threads, 4);
+
+        // A later Parallel choice re-enables workers without losing the cap.
+        let config = config.with_threading(ThreadingPolicy::Parallel);
+        assert!(config.config.parallel);
+        assert_eq!(config.config.max_threads, 4);
+        let parallel = config
+            .clone()
+            .job()
+            .with_limits(ResourceLimits::none().with_threading(ThreadingPolicy::Parallel))
+            .encoder()
+            .unwrap()
+            .config_with_threading();
+        assert!(parallel.parallel);
+        assert_eq!(parallel.max_threads, 4);
+
+        // A job's sequential limit wins over the configured policy and cap.
+        let sequential = config
+            .job()
+            .with_limits(ResourceLimits::none().with_threading(ThreadingPolicy::Sequential))
+            .encoder()
+            .unwrap()
+            .config_with_threading();
+        assert!(!sequential.parallel);
+        assert_eq!(sequential.max_threads, 1);
+    }
+
+    #[test]
+    fn encode_parallel_job_does_not_override_sequential_config_or_one_thread_cap() {
+        use zencodec::ThreadingPolicy;
+        use zencodec::encode::{EncodeJob, EncoderConfig};
+
+        for config in [
+            PngEncoderConfig::new().with_threading(ThreadingPolicy::Sequential),
+            PngEncoderConfig::new()
+                .with_threading(ThreadingPolicy::Parallel)
+                .with_max_threads(1),
+        ] {
+            let effective = config
+                .job()
+                .with_limits(ResourceLimits::none().with_threading(ThreadingPolicy::Parallel))
+                .encoder()
+                .unwrap()
+                .config_with_threading();
+            assert!(
+                !effective
+                    .compress_options(&enough::Unstoppable, &enough::Unstoppable, None)
+                    .parallel
+            );
+        }
+    }
+
+    #[test]
     fn encode_single_thread_produces_valid_png() {
         use zencodec::ThreadingPolicy;
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
@@ -9071,12 +9136,12 @@ mod tests {
 /// `push_rows` strip streaming (efforts 1-15 with downcasts off, at least
 /// two strips) must write exactly the bytes a one-shot multi-threaded encode
 /// of the same rows writes, for every pixel format it converts, whatever
-/// the push sizes. (A unit test: no public builder turns downcasts off on
-/// `PngEncoderConfig` yet.)
+/// the push sizes.
 #[cfg(test)]
 mod strip_stream_tests {
     use super::PngEncoderConfig;
     use crate::Compression;
+    use zencodec::ThreadingPolicy;
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
     use zenpixels::{PixelDescriptor, PixelSlice};
 
@@ -9103,12 +9168,12 @@ mod strip_stream_tests {
     }
 
     fn config(effort: u32) -> PngEncoderConfig {
-        let mut c = PngEncoderConfig::new().with_compression(Compression::Effort(effort));
-        c.config.downcast = crate::encode::DowncastFlags::none();
         // The one-shot reference runs the multi-threaded strip encoder.
-        c.config.parallel = true;
-        c.config.max_threads = 4;
-        c
+        PngEncoderConfig::new()
+            .with_compression(Compression::Effort(effort))
+            .with_downcast(crate::encode::DowncastFlags::none())
+            .with_threading(ThreadingPolicy::Parallel)
+            .with_max_threads(4)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -9134,9 +9199,14 @@ mod strip_stream_tests {
         chunk: u32,
     ) -> Vec<u8> {
         let stride = w as usize * desc.bytes_per_pixel();
-        let mut cfg = config(effort);
-        cfg.config.parallel = threads > 1;
-        cfg.config.max_threads = threads;
+        let policy = if threads > 1 {
+            ThreadingPolicy::Parallel
+        } else {
+            ThreadingPolicy::Sequential
+        };
+        let cfg = config(effort)
+            .with_threading(policy)
+            .with_max_threads(threads);
         let mut enc = cfg.job().with_canvas_size(w, h).encoder().unwrap();
         let mut y = 0;
         while y < h {
