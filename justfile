@@ -85,6 +85,14 @@ test-api-integration:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
     just api-doc
 
+# Review gate for threading and APNG integration, including expert knobs.
+pr-review-check:
+    cargo fmt -p zenpng -- --check
+    cargo clippy --all-targets --all-features -- -D warnings
+    cargo test --all-features
+    cargo test --no-default-features
+    just api-doc-check
+
 # Compile every fuzz target with the coordinated API dependency pins.
 check-fuzz-api:
     cargo check --manifest-path fuzz/Cargo.toml --bins

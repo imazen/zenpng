@@ -14,7 +14,7 @@
 ///   effort E, after `with_canvas_size`.
 /// - `sstream<E>` / `soneshot<E>`: the same with `DowncastFlags::none()`
 ///   (efforts 1-15 then stream strip by strip).
-/// - `PARALLEL=1`: every encode mode with `with_parallel(true)`.
+/// - `PARALLEL=1`: every encode mode with parallel threading enabled.
 /// - `ALPHA=1`: an RGB8 input gets an alpha ramp (RGBA8 measurements);
 ///   `SAVE=<path>` writes the encoded PNG.
 /// - `dec_whole` / `dec_whole_mt`: `zenpng::decode`, 1 / all threads.
@@ -116,9 +116,14 @@ fn load(file: &[u8]) -> Pixels {
 fn enc_config(e: u32, verbatim: bool) -> PngEncoderConfig {
     // PARALLEL=1: multi-threaded encode (strip-parallel at efforts 1-15).
     let parallel = std::env::var_os("PARALLEL").is_some_and(|v| v == "1");
+    let threading = if parallel {
+        zencodec::ThreadingPolicy::Parallel
+    } else {
+        zencodec::ThreadingPolicy::Sequential
+    };
     let c = PngEncoderConfig::new()
         .with_compression(Compression::Effort(e))
-        .with_parallel(parallel);
+        .with_threading(threading);
     if verbatim {
         c.with_downcast(zenpng::DowncastFlags::none())
     } else {
