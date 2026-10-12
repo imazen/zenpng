@@ -60,6 +60,8 @@ mod indexed;
 /// [`EncodeConfig::with_internal_params`].
 #[cfg(feature = "__expert")]
 pub mod internal_params;
+#[cfg(feature = "inventory")]
+mod inventory;
 mod optimize;
 mod quantize;
 mod simd;
@@ -247,3 +249,6 @@ pub mod __bench_scan {
         }
     }
 }
+
+#[cfg(feature = "metadata-rewrite")]
+pub mod metadata;

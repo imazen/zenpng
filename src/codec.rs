@@ -2232,6 +2232,7 @@ impl Default for PngDecoderConfig {
 }
 
 static PNG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
+    .with_inventory(cfg!(feature = "inventory"))
     .with_icc(true)
     .with_exif(true)
     .with_xmp(true)
@@ -2334,6 +2335,35 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
 
     fn probe(&self, data: &[u8]) -> Result<ImageInfo, At<CodecError>> {
         self.probe_inner(data).map_err(CodecError::of)
+    }
+
+    #[cfg(feature = "inventory")]
+    fn inventory(&self, data: &[u8]) -> Result<zencodec::inventory::Inventory, At<CodecError>> {
+        self.limits
+            .as_ref()
+            .unwrap_or(&self.config.limits)
+            .check_input_size(data.len() as u64)
+            .map_err(|e| CodecError::of(at!(PngError::LimitExceeded(e))))?;
+        let cancel: &dyn enough::Stop = match self.stop {
+            Some(ref s) => s as &dyn enough::Stop,
+            None => &enough::Unstoppable,
+        };
+        let opts = crate::inventory::Options {
+            strict_crc: self.policy.as_ref().is_some_and(|p| p.strict == Some(true)),
+            drop_icc: self.policy.as_ref().is_some_and(|p| !p.resolve_icc(true)),
+            drop_exif: self.policy.as_ref().is_some_and(|p| !p.resolve_exif(true)),
+            drop_xmp: self.policy.as_ref().is_some_and(|p| !p.resolve_xmp(true)),
+            no_animation: self
+                .policy
+                .as_ref()
+                .is_some_and(|p| !p.resolve_animation(true)),
+            no_progressive: self
+                .policy
+                .as_ref()
+                .is_some_and(|p| !p.resolve_progressive(true)),
+            limits: *self.limits.as_ref().unwrap_or(&self.config.limits),
+        };
+        crate::inventory::walk(data, cancel, opts).map_err(|e| CodecError::of(at!(e)))
     }
 
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<CodecError>> {

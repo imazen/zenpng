@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -46,6 +47,14 @@ jobs:
 
       - name: Test (default)
         run: cargo test
+
+      - name: Optional inventory and typed errors
+        run: cargo test --features inventory --test inventory --test inventory_review --test inventory_review2 --test inventory_review3 --test inventory_review4 --test inventory_feature --test fuzz_regression
+
+      - name: Codec-owned metadata rewrite
+        run: cargo test --no-default-features --features metadata-rewrite --test metadata_rewrite
+      - name: Inventory disabled contract
+        run: cargo test --no-default-features --test inventory_feature
 
       - name: Test (cms feature)
         run: cargo test --features cms
@@ -108,13 +117,19 @@ jobs:
       - name: Fetch png-idot corpus
         run: |
           git clone --depth 1 --filter=blob:none --sparse https://github.com/imazen/codec-corpus .ci-corpus
-          git -C .ci-corpus sparse-checkout set png-idot
+          git -C .ci-corpus sparse-checkout set png-idot pngsuite png-conformance apng-conformance
           # Relative: cross mounts the project at a different path inside the
           # container, and cargo runs tests from the package root.
           echo "ZENPNG_IDOT_CORPUS=.ci-corpus/png-idot" >> "$GITHUB_ENV"
+          echo "ZENPNG_CODEC_CORPUS=.ci-corpus" >> "$GITHUB_ENV"
 
       - name: Test (i686)
         run: cross test --target i686-unknown-linux-gnu
+
+      - name: Metadata rewrite (i686)
+        run: cross test --no-default-features --features metadata-rewrite --target i686-unknown-linux-gnu --test metadata_rewrite
+      - name: Optional inventory (i686)
+        run: cross test --features inventory --target i686-unknown-linux-gnu --test inventory --test inventory_review --test inventory_review2 --test inventory_review3 --test inventory_review4 --test inventory_feature --test fuzz_regression
 
   wasm:
     name: Test (wasm32)

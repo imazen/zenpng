@@ -9,6 +9,10 @@
 use std::path::PathBuf;
 
 use zenpng::{PngDecodeConfig, PngError};
+#[cfg(feature = "inventory")]
+mod inventory_check {
+    include!("../fuzz/fuzz_targets/inventory_check.rs");
+}
 
 fn regression_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fuzz/regression")
@@ -70,6 +74,8 @@ fn regression_seeds_survive_every_fuzz_entry_point() {
         let _ = zenpng::decode_apng(&data, &PngDecodeConfig::default(), &enough::Unstoppable);
         // fuzz_probe
         let _ = zenpng::probe(&data);
+        #[cfg(feature = "inventory")]
+        inventory_check::check(&data);
         eprintln!("seed {name}: ok");
     }
 }

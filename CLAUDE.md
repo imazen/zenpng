@@ -489,6 +489,14 @@ use `/usr/bin/log`).
 
 ## Known Bugs
 
+- Fixed in metadata integration (2026-10-12): inventory compressed-stream
+  cancellation re-queried the stop token and could lose a one-shot timeout.
+  Preserve the first scanner cause; `every_stop_poll_retains_a_one_shot_timeout`
+  exercises each actual poll through generic and dynamic jobs.
+- Published-API audit (2026-10-12): encoder auto-trait losses and nine associated
+  error-type changes already exist relative to 0.1.4. See
+  `docs/metadata-api-audit.md` and the queued breaking changelog entries.
+
 - Fixed 2026-10-12: a parallel zencodec job policy reset an explicit encoder
   `max_threads` cap to zero. It now preserves the cap; a sequential job limit
   still forces one worker. `encode_threading_policy_and_job_limits_preserve_worker_cap`

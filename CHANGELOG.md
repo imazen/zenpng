@@ -4,6 +4,26 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Metadata rewriting
+
+- Add default-off `metadata-rewrite` and `metadata::rewrite`, moving the PNG/APNG
+  planner and existing tests from zencodecs (`aa21cba0`). Public request/plan
+  types belong to zencodec; shared packet processing belongs to zenmeta.
+  This is additive relative to crates.io 0.1.4 and needs neither zenpipe nor
+  inventory. Preserve timeout reasons during chunk CRC processing.
+- Update the unpublished shared contract pin to `a31a9b68`.
+
+
+- Add default-off `inventory` using the existing PNG chunk and DEFLATE scanner
+  work from PR32 and zenflate PR15. Generic and dynamic decode jobs share their
+  configured limits, policy and cancellation; disabled builds return typed
+  `UnsupportedOperation::Inventory`. Inventory reports codec behavior without
+  requiring zenmeta, zencodecs or zenpipe. Coordinated dependency pins are
+  temporary until the shared contracts and scanner are released.
+- Preserve the typed input-size and inventory-part-limit causes, including
+  one-shot cancellation reasons from compressed metadata and image streams.
+- [Published API audit against zenpng 0.1.4](docs/metadata-api-audit.md).
+
 - Support native GrayAlpha8/16 through typed buffered and strided-row encoding,
   sharing the PNG filtering/compression and exact alpha semantics.
 
@@ -78,7 +98,9 @@ All notable changes to zenpng are documented here.
 
 ### QUEUED BREAKING CHANGES
 
-None.
+- `d6ff72d`: nine codec trait `Error` associated types changed from `At<PngError>` to `At<CodecError>` after published 0.1.4; native convenience methods remain codec-specific.
+- `5035d47`: `PngEncoder` no longer implements `Sync` after adding strip-streaming state; this predates the inventory integration.
+- `70d320e`: `PngAnimationFrameEncoder` no longer implements `UnwindSafe` or `RefUnwindSafe` after adding cancellation state; this predates the inventory integration.
 
 ### Fixed
 
