@@ -31,3 +31,9 @@ mod sink_truncation;
 
 #[path = "integration/content_light_raw.rs"]
 mod content_light_raw;
+
+#[path = "integration/animation_timing.rs"]
+mod animation_timing;
+
+#[path = "integration/animation_compositing.rs"]
+mod animation_compositing;

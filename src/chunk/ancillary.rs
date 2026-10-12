@@ -92,6 +92,7 @@ impl FrameControl {
 
     /// Frame delay in milliseconds.
     /// Per APNG spec, if delay_den is 0 it is treated as 100.
+    #[cfg(test)]
     pub fn delay_ms(&self) -> u32 {
         let den = if self.delay_den == 0 {
             100

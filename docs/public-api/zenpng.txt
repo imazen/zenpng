@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpng.txt 417 lines (supported surface) | zenpng.features.txt 21 added (features: avx512,cms,imagequant,joint,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 97 lines (117 hidden + 34 excluded-feature)
+# files: zenpng.txt 430 lines (supported surface) | zenpng.features.txt 21 added (features: avx512,cms,imagequant,joint,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 97 lines (117 hidden + 34 excluded-feature)
 
 ## summary
 #
@@ -16,18 +16,18 @@
 #   free functions                             27
 #   inherent methods                           68
 #   struct fields                             151
-#   enum variants                              56
-#   trait roster entries (type × trait)       160
-#   auto-trait-complete types                  41
-#   auto-trait exceptions                       6
+#   enum variants                              67
+#   trait roster entries (type × trait)       164
+#   auto-trait-complete types                  40
+#   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                          277
+#   (root)                          288
 #   detect                           41
 #   heuristics                       13
 #   sweep                            33
 
-## items (364 lines)
+## items (375 lines)
 
 pub mod zenpng
 pub mod detect
@@ -146,11 +146,22 @@ pub PngBackground::Gray(u16)
 pub PngBackground::Indexed(u8)
 pub PngBackground::Rgb(u16, u16, u16)
 #[non_exhaustive] pub enum PngError
+pub PngError::CmsRequired(alloc::string::String)
 pub PngError::Decode(alloc::string::String)
+pub PngError::Internal(zencodec::error::InternalKind, alloc::string::String)
+pub PngError::InvalidBuffer(alloc::string::String)
 pub PngError::InvalidInput(alloc::string::String)
-pub PngError::LimitExceeded(alloc::string::String)
+pub PngError::InvalidState(alloc::string::String)
+pub PngError::Io(alloc::string::String)
+pub PngError::LimitExceeded(zencodec::limits::LimitExceeded)
+pub PngError::NotPng(alloc::string::String)
+pub PngError::OutOfMemory(alloc::string::String)
+pub PngError::PolicyRejected(zencodec::error::PolicyKind, alloc::string::String)
 pub PngError::Quantize(zenquant::error::QuantizeError)
 pub PngError::Stopped(enough::reason::StopReason)
+pub PngError::Truncated(alloc::string::String)
+pub PngError::Unsupported(zencodec::capabilities::UnsupportedOperation)
+pub PngError::UnsupportedFeature(alloc::string::String)
 #[non_exhaustive] pub enum PngWarning
 pub PngWarning::CicpChrmConflict
 pub PngWarning::CicpIccpConflict
@@ -394,7 +405,7 @@ pub fn probe(&[u8]) -> core::result::Result<PngInfo, whereat::at::At<PngError>>
 pub fn quantizer_by_name(&str) -> core::result::Result<alloc::boxed::Box<dyn Quantizer>, whereat::at::At<PngError>>
 pub type PngLimits = PngDecodeConfig
 
-## trait impls (46 types)
+## trait impls (47 types)
 
 ApngDecodeOutput: Debug
 ApngEncodeConfig: Clone, Debug, Default
@@ -420,7 +431,7 @@ PngDecoderConfig: Clone, Debug, Default, zencodec::traits::decoding::DecoderConf
 PngEncodeJob: zencodec::traits::encoding::EncodeJob
 PngEncoder: zencodec::traits::encoder::Encoder
 PngEncoderConfig: Clone, Debug, Default, zencodec::traits::encoding::EncoderConfig
-PngError: Debug, Display, Error, From<enough::reason::StopReason>, From<zencodec::capabilities::UnsupportedOperation>, From<zenquant::error::QuantizeError>
+PngError: Debug, Display, Error, From<enough::reason::StopReason>, From<zencodec::capabilities::UnsupportedOperation>, From<zencodec::limits::LimitExceeded>, From<zenquant::error::QuantizeError>, zencodec::error::CategorizedError
 PngInfo: Clone, Debug
 PngTime: Clone, Copy, Debug, Eq, Hash, PartialEq
 PngWarning: Clone, Debug, Eq, Hash, PartialEq
@@ -432,7 +443,7 @@ ZenquantQuantizer: Clone, Debug, Default, Quantizer
 detect::ColorType: Clone, Copy, Debug, Eq, PartialEq
 detect::CompressionAssessment: Clone, Debug
 detect::PngProbe: Clone, Debug, zencodec::detect::SourceEncodingDetails
-detect::ProbeError: Clone, Debug, Display, Eq, Error, PartialEq
+detect::ProbeError: Clone, Debug, Display, Eq, Error, PartialEq, zencodec::error::CategorizedError
 detect::Recommendation: Clone, Debug, Eq, PartialEq
 heuristics::DecodeEstimate: Clone, Copy, Debug
 heuristics::EncodeEstimate: Clone, Copy, Debug
@@ -442,12 +453,14 @@ sweep::SweepAxes: Clone, Debug
 sweep::SweepCell: Clone, Debug
 sweep::SweepPlan: Clone, Debug
 sweep::SweepVariant: Clone, Debug
+whereat::at::At<zencodec::error::CodecError>: From<PngError>
 
 ## auto traits
 
-41 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+40 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 ApngEncodeParams<'a>: !RefUnwindSafe !UnwindSafe
 PngAnimationFrameDecoder: !RefUnwindSafe !UnwindSafe
+PngAnimationFrameEncoder: !RefUnwindSafe !UnwindSafe
 PngDecodeJob: !RefUnwindSafe !UnwindSafe
 PngDecoder<'a>: !RefUnwindSafe !UnwindSafe
 PngEncodeJob: !RefUnwindSafe !UnwindSafe

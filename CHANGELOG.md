@@ -4,6 +4,65 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+- Integrate the typed one-shot, exact animation/color and streaming-config API
+  PRs on current main. The new `encode(PixelSlice)` wrapper returns the common
+  job's `At<CodecError>` without discarding native causes or location traces.
+  Current decode threading and exact content-light metadata remain supported.
+
+### Fixed
+
+- Honor an exact native decode preference even when file CICP describes a
+  format absent from the static advertised list, including linear RGBA16.
+  Preserve unrecognized CICP primaries/transfers as `Unknown` rather than
+  assuming sRGB; the raw code points remain available on the pixel context.
+
+- **Incremental APNG decode now returns composited canvases.** The adapter used
+  to expose raw subframe rectangles, so repeated frames could become 1×1 images
+  and frame skipping lost disposal/blending history. It now shares the native
+  compositor, including 8/16-bit SOURCE/OVER and NONE/BACKGROUND/PREVIOUS modes.
+  Conversion scratch is one row; the default output borrows the canvas.
+- **Animation timing is exact.** The codec trait preserves rational APNG delays,
+  including zero and the specified zero-denominator interpretation of 100.
+  Unrepresentable timing is rejected before accepting a frame; integral delays
+  above 65.535 seconds are no longer clipped.
+- **APNG encoding accepts 16-bit integer frames** without reducing precision,
+  uses big-endian samples on the wire, and preserves descriptor CICP and frame
+  ICC context. Frames must agree on precision and color interpretation. The
+  16-bit path uses exact delta rectangles; the existing blend optimizer remains
+  specific to 8-bit input. Float, premultiplied, undefined-alpha, and narrow-range
+  inputs require explicit conversion first.
+- Job and per-call cancellation are combined during animation encode/decode;
+  admission checks precede buffer allocation/state mutation. Decode job limits
+  now reach the native animation decoder. An error during compositing prevents
+  subsequent frames from being returned from a partially updated canvas.
+
+
+### Added
+
+- `PngEncoderConfig::with_parallel(bool)`: zencodec callers can enable the
+  multi-threaded encoder (until now only `EncodeConfig` could; the limits'
+  threading policy only capped threads). 1407_rgb8_4096 at effort 7 on 4
+  cores: 1.85 s -> 0.54 s one-shot, 0.53 s strip-streaming `push_rows`.
+- `PngEncoderConfig::with_downcast(DowncastFlags)`: the zencodec encoder
+  config can turn the whole-image downcasts off. With
+  `DowncastFlags::none()`, `push_rows` at efforts 1-15 streams strip by strip:
+  at 4096x4096 RGBA8 the encoder's heap peak drops from 374 MB (one-shot) /
+  441 MB (buffered `push_rows`) to 11 MB at effort 7 (heaptrack,
+  `benchmarks/stream_memory_x86_2026-10-07.txt`).
+
+### Added
+- **One-shot convenience functions: `encode` + `decode_rgba8`.** Purely-additive
+  top-level free functions for the two most common jobs in a single call:
+  `encode(img: zenpixels::PixelSlice<'_>) -> Result<Vec<u8>>` encodes a
+  self-describing pixel slice (format, dimensions, and row stride ride *with* the
+  pixels — no separate `width`/`height` args and no buffer-length-mismatch class
+  of bug) at the default `PngEncoderConfig`, and
+  `decode_rgba8(&png) -> Result<(Vec<u8>, u32, u32)>` decodes any PNG to packed
+  RGBA8 + dimensions (normalizing grayscale / indexed / RGB / 16-bit sources to
+  8-bit RGBA). Both wrap the existing builder path, so the full power API (custom
+  filter/effort, metadata, 16-bit, cancellation) is unchanged. README quick-start
+  leads with these; each fn carries the round-trip as a runnable doctest.
+
 ### QUEUED BREAKING CHANGES
 
 None.

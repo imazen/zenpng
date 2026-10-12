@@ -75,3 +75,12 @@ arm-scan-tiers-macos:
 test-content-light-raw:
     cargo test --no-default-features --test integration content_light_raw::
     cargo test --no-default-features --lib raw_hdr_mastering_payload_is_exact
+
+# Combined typed one-shot, exact animation and strip-config API integration.
+test-api-integration:
+    cargo test --release --lib --test integration --test animation_color_negotiation
+    cargo test --release --no-default-features --test integration --test animation_color_negotiation
+    cargo test --doc
+    cargo clippy --all-targets --all-features -- -D warnings
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+    just api-doc
