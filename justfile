@@ -94,3 +94,33 @@ test-mastering-raw: test-api-integration
 
 # Hidden RGB, ICC authority and retained PNG/APNG API behavior.
 test-exact-transcode: test-api-integration
+
+# Reused inventory suites plus the always-callable generic/dynamic contract.
+metadata-inventory-check:
+    cargo test --no-default-features --features inventory --test inventory --test inventory_review --test inventory_review2 --test inventory_review3 --test inventory_review4 --test inventory_cost
+
+metadata-inventory-oracle:
+    INVENTORY_ORACLE_EXIFTOOL=exiftool cargo test --no-default-features --features inventory --test inventory oracle_exiftool_chunk_offsets -- --nocapture
+
+metadata-feature-check:
+    cargo test --no-default-features --test inventory_feature
+    cargo test --no-default-features --features inventory --test inventory_feature --test fuzz_regression
+    cargo clippy --all-targets --no-default-features --features inventory -- -D warnings
+    cargo check --manifest-path fuzz/Cargo.toml --bin inventory
+
+metadata-api-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    baseline=$(cargo read zenpng==0.1.4 --path-only)
+    RUSTC_BOOTSTRAP=1 cargo rustdoc --lib --all-features -- -Zunstable-options --output-format json
+    RUSTC_BOOTSTRAP=1 cargo rustdoc --locked --manifest-path "$baseline/Cargo.toml" --target-dir "$PWD/target/published-api/0.1.4" --lib --all-features -- -Zunstable-options --output-format json
+    cargo semver-checks check-release -p zenpng --current-rustdoc target/doc/zenpng.json --baseline-rustdoc target/published-api/0.1.4/doc/zenpng.json --release-type patch
+
+metadata-i686-check:
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test --no-default-features --features inventory --target i686-unknown-linux-gnu --test inventory --test inventory_review --test inventory_review2 --test inventory_review3 --test inventory_review4 --test inventory_feature --test fuzz_regression
+
+# Existing decode/encode behavior with inventory compiled in, plus public snapshots.
+metadata-existing-check:
+    cargo test --no-default-features --features inventory --lib --test integration --test animation_color_negotiation
+    cargo test --doc --features inventory
+    just api-doc

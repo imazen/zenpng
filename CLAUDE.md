@@ -489,6 +489,14 @@ use `/usr/bin/log`).
 
 ## Known Bugs
 
+- Fixed in metadata integration (2026-10-12): inventory compressed-stream
+  cancellation re-queried the stop token and could lose a one-shot timeout.
+  Preserve the first scanner cause; `every_stop_poll_retains_a_one_shot_timeout`
+  exercises each actual poll through generic and dynamic jobs.
+- Published-API audit (2026-10-12): encoder auto-trait losses and nine associated
+  error-type changes already exist relative to 0.1.4. See
+  `docs/metadata-api-audit.md` and the queued breaking changelog entries.
+
 - Fixed 2026-10-12: the threading-defaults merge omitted `content_light_level_raw`
   from `EncodeConfig::default`, causing E0063. It defaults to `None`, matching
   the previous derived default. Library compilation exercises this initializer.

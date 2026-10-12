@@ -10,9 +10,11 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 enough = "0.4"
+zencodec = ">=0.1.27, <0.3.0"
 
 [dependencies.zenpng]
 path = ".."
+features = ["inventory"]
 
 [[bin]]
 name = "fuzz_decode"
@@ -46,10 +48,16 @@ bench = false
 # This standalone workspace must use the same unreleased API sources as the root.
 [patch.crates-io]
 # Coordinated exact animation timing series; one source for shared types.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "2031094449ad1177ff96461d7c4d586c7ed384e6" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "2031094449ad1177ff96461d7c4d586c7ed384e6" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "c1c3292ff10f386191780ad407526951165da47a" }
 zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "789d69dbc314e748676b7f2f19542c17473ba40b" }
 zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "789d69dbc314e748676b7f2f19542c17473ba40b" }
 # Retain main's strip-compression API source.
-zenflate = { git = "https://github.com/imazen/zenflate", rev = "9f8684bf789297bb8bf043bc9d43f2c3b6f5dae2" }
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a193e343018ae2cfb1a6c31edd" }
 
+
+[[bin]]
+name = "inventory"
+path = "fuzz_targets/inventory.rs"
+test = false
+doc = false
+bench = false

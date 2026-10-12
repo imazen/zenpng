@@ -120,7 +120,7 @@ pub enum PngError {
     ///
     /// [`ErrorCategory::Resource`]: zencodec::ErrorCategory::Resource
     #[error("resource limit exceeded: {0}")]
-    LimitExceeded(zencodec::LimitExceeded),
+    LimitExceeded(#[source] zencodec::LimitExceeded),
 
     /// Memory acquisition failed: a fallible allocation returned an error, or
     /// a size computation overflowed the platform's address space (so the

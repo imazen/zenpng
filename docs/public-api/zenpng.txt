@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpng.txt 447 lines (supported surface) | zenpng.features.txt 21 added (features: avx512,cms,imagequant,joint,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 101 lines (121 hidden + 34 excluded-feature)
+# files: zenpng.txt 447 lines (supported surface) | zenpng.features.txt 22 added (features: avx512,cms,imagequant,inventory,joint,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 101 lines (121 hidden + 34 excluded-feature)
 
 ## summary
 #
