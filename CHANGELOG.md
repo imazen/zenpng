@@ -4,6 +4,16 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Metadata rewriting
+
+- Add default-off `metadata-rewrite` and `metadata::rewrite`, moving the PNG/APNG
+  planner and existing tests from zencodecs (`aa21cba0`). Public request/plan
+  types belong to zencodec; shared packet processing belongs to zenmeta.
+  This is additive relative to crates.io 0.1.4 and needs neither zenpipe nor
+  inventory. Preserve timeout reasons during chunk CRC processing.
+- Update the unpublished shared contract pin to `a31a9b68`.
+
+
 - Add default-off `inventory` using the existing PNG chunk and DEFLATE scanner
   work from PR32 and zenflate PR15. Generic and dynamic decode jobs share their
   configured limits, policy and cancellation; disabled builds return typed

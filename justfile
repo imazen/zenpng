@@ -124,3 +124,8 @@ metadata-existing-check:
     cargo test --no-default-features --features inventory --lib --test integration --test animation_color_negotiation
     cargo test --doc --features inventory
     just api-doc
+
+metadata-rewrite-check:
+    cargo test -p zenpng --no-default-features --features metadata-rewrite --test metadata_rewrite
+    cargo clippy -p zenpng --no-default-features --features metadata-rewrite --lib --test metadata_rewrite -- -D warnings
+    CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenpng --no-default-features --features metadata-rewrite --test metadata_rewrite --target i686-unknown-linux-gnu

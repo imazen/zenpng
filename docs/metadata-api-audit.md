@@ -71,3 +71,17 @@ input admission contract; the test is not skipped.
 The enabled inventory and all four review suites also passed on native x86-64
 and i686 after that approved expectation change. The disabled feature, stable
 fuzz replay, all-target clippy and existing encode/decode suites passed.
+
+## Codec-owned rewrite planner
+
+The additive `metadata-rewrite` feature exposes `metadata::rewrite` with
+zencodec-owned Request, Plan and Error types. The planner and original PNG/APNG
+assertions moved from zencodecs `aa21cba0`; zenmeta `a31a9b68` owns the bounded
+EXIF/service/plan helpers. Existing decode APIs are unchanged.
+
+`just metadata-rewrite-check` covers private chunks and trailers, SDR/16-bit
+HDR sample preservation, CRC/order/truncation rejection, APNG frames and timing,
+and timeouts at every observed CRC/container poll. Image-png independently
+reads back the rewritten samples. No inventory feature or zenpipe dependency
+is needed. The planner leaves encoded image streams opaque; it does not certify
+every compressed sample or transform embedded rendering metadata.

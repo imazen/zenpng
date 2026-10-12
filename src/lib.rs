@@ -249,3 +249,6 @@ pub mod __bench_scan {
         }
     }
 }
+
+#[cfg(feature = "metadata-rewrite")]
+pub mod metadata;

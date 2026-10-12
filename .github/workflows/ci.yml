@@ -51,6 +51,8 @@ jobs:
       - name: Optional inventory and typed errors
         run: cargo test --features inventory --test inventory --test inventory_review --test inventory_review2 --test inventory_review3 --test inventory_review4 --test inventory_feature --test fuzz_regression
 
+      - name: Codec-owned metadata rewrite
+        run: cargo test --no-default-features --features metadata-rewrite --test metadata_rewrite
       - name: Inventory disabled contract
         run: cargo test --no-default-features --test inventory_feature
 
@@ -124,6 +126,8 @@ jobs:
       - name: Test (i686)
         run: cross test --target i686-unknown-linux-gnu
 
+      - name: Metadata rewrite (i686)
+        run: cross test --no-default-features --features metadata-rewrite --target i686-unknown-linux-gnu --test metadata_rewrite
       - name: Optional inventory (i686)
         run: cross test --features inventory --target i686-unknown-linux-gnu --test inventory --test inventory_review --test inventory_review2 --test inventory_review3 --test inventory_review4 --test inventory_feature --test fuzz_regression
 
