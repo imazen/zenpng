@@ -1,10 +1,14 @@
 # Typed PNG and exact animation API integration
 
-The integration combines the existing typed one-shot interface, exact APNG
+The original integration combines the existing typed one-shot interface, exact APNG
 timing/compositing, native color negotiation and strip-streaming configuration
 PRs with main `1df6b2f8`. Current threading, strip compression and exact cLLI
 metadata remain intact. The new `encode(PixelSlice)` returns the underlying
 job's `At<CodecError>` so native causes and traces survive the wrapper.
+
+PR18’s two convenience functions were subsequently reverted at user direction.
+The validation below describes the original integration; the retained APIs are
+exact animation/color and streaming configuration.
 
 Runtime `88c325ab382eb7c1182e8ce3ca787d0c43459da2` passed release default
 library/integration/native-color tests, minimal integration/native-color tests,

@@ -400,9 +400,7 @@ pub fn Quantizer::with_quality_metrics(&self) -> core::option::Option<alloc::box
 pub fn available_backends() -> &'static [&'static str]
 pub fn decode(&[u8], &PngDecodeConfig, &dyn enough::Stop) -> core::result::Result<PngDecodeOutput, whereat::at::At<PngError>>
 pub fn decode_apng(&[u8], &PngDecodeConfig, &dyn enough::Stop) -> core::result::Result<ApngDecodeOutput, whereat::at::At<PngError>>
-pub fn decode_rgba8(&[u8]) -> core::result::Result<(alloc::vec::Vec<u8>, u32, u32), whereat::at::At<PngError>>
 pub fn default_quantizer() -> alloc::boxed::Box<dyn Quantizer>
-pub fn encode(zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<zencodec::error::CodecError>>
 pub fn encode_apng(&[ApngFrameInput<'_>], u32, u32, &ApngEncodeConfig, core::option::Option<&zencodec::metadata::Metadata>, &dyn enough::Stop, &dyn enough::Stop) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<PngError>>
 pub fn encode_apng_auto(&ApngEncodeParams<'_>, QualityGate) -> core::result::Result<AutoEncodeResult, whereat::at::At<PngError>>
 pub fn encode_apng_indexed(&ApngEncodeParams<'_>) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<PngError>>

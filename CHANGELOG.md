@@ -4,12 +4,13 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
-- Integrate the typed one-shot, exact animation/color and streaming-config API
-  PRs on current main. The new `encode(PixelSlice)` wrapper returns the common
-  job's `At<CodecError>` without discarding native causes or location traces.
-  Current decode threading and exact content-light metadata remain supported.
+- Integrate exact animation/color and streaming-config APIs while retaining
+  current decode threading and exact content-light metadata.
   Combined validation: `88c325ab`; docs-only correction `03376a23`.
   [Validation scope and evidence](benchmarks/api_integration_2026-10-12.md).
+- Revert the unreleased PR18 convenience functions `encode` and `decode_rgba8`.
+  Use the typed codec jobs or native `decode` output to retain pixel format,
+  precision and color context. Exact animation/color and streaming APIs remain.
 
 ### Fixed
 
@@ -51,19 +52,6 @@ All notable changes to zenpng are documented here.
   at 4096x4096 RGBA8 the encoder's heap peak drops from 374 MB (one-shot) /
   441 MB (buffered `push_rows`) to 11 MB at effort 7 (heaptrack,
   `benchmarks/stream_memory_x86_2026-10-07.txt`).
-
-### Added
-- **One-shot convenience functions: `encode` + `decode_rgba8`.** Purely-additive
-  top-level free functions for the two most common jobs in a single call:
-  `encode(img: zenpixels::PixelSlice<'_>) -> Result<Vec<u8>>` encodes a
-  self-describing pixel slice (format, dimensions, and row stride ride *with* the
-  pixels — no separate `width`/`height` args and no buffer-length-mismatch class
-  of bug) at the default `PngEncoderConfig`, and
-  `decode_rgba8(&png) -> Result<(Vec<u8>, u32, u32)>` decodes any PNG to packed
-  RGBA8 + dimensions (normalizing grayscale / indexed / RGB / 16-bit sources to
-  8-bit RGBA). Both wrap the existing builder path, so the full power API (custom
-  filter/effort, metadata, 16-bit, cancellation) is unchanged. README quick-start
-  leads with these; each fn carries the round-trip as a runnable doctest.
 
 ### QUEUED BREAKING CHANGES
 
