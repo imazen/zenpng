@@ -4,6 +4,18 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+
+None.
+
+### Added
+
+- Exact PNG content-light metadata through `PngInfo::content_light_level_raw`
+  and `EncodeConfig` / `PngEncoderConfig::with_content_light_level_raw`.
+  The two u32 values retain 0.0001-nit precision, unknown zero and the entire
+  PNG range. The existing whole-nit compatibility view is unchanged.
+  `PngInfo::mastering_display_raw` also preserves the exact 24-byte `mDCV` payload.
+
 ### Added
 
 - **Multi-threaded decode of Apple `iDOT` PNGs** (`PngDecodeConfig::max_threads`,

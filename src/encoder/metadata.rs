@@ -28,6 +28,8 @@ pub(crate) struct PngWriteMetadata<'a> {
     pub cicp: Option<Cicp>,
     /// Content Light Level (HDR).
     pub content_light_level: Option<ContentLightLevel>,
+    /// Exact PNG units; takes precedence over the whole-nit view.
+    pub content_light_level_raw: Option<[u32; 2]>,
     /// Mastering Display Color Volume (HDR).
     pub mastering_display: Option<MasteringDisplay>,
     /// Physical pixel dimensions (pHYs).
@@ -55,6 +57,7 @@ impl<'a> PngWriteMetadata<'a> {
             chromaticities: None,
             cicp,
             content_light_level,
+            content_light_level_raw: None,
             mastering_display,
             pixels_per_unit_x: None,
             pixels_per_unit_y: None,
@@ -134,7 +137,15 @@ pub(crate) fn write_all_metadata(
 
     // cLLi (content light level info) — written whenever present. PNG-3 does not
     // require cICP to accompany cLLi, so it is not gated on cICP.
-    if let Some(clli) = &meta.content_light_level {
+    let clli = meta.content_light_level_raw.or_else(|| {
+        meta.content_light_level.map(|c| {
+            [
+                u32::from(c.max_content_light_level) * 10_000,
+                u32::from(c.max_frame_average_light_level) * 10_000,
+            ]
+        })
+    });
+    if let Some(clli) = clli {
         write_clli_chunk(out, clli);
     }
 
@@ -237,11 +248,7 @@ fn write_mdcv_chunk(out: &mut Vec<u8>, mdcv: &MasteringDisplay) {
     write_chunk(out, b"mDCV", &data);
 }
 
-fn write_clli_chunk(out: &mut Vec<u8>, clli: &ContentLightLevel) {
-    // cLLi: u32 max_content_light_level + u32 max_frame_average_light_level
-    // PNG cLLi uses 0.0001 cd/m² units; zencodec ContentLightLevel uses cd/m² (u16)
-    let max_cll = clli.max_content_light_level as u32 * 10000;
-    let max_fall = clli.max_frame_average_light_level as u32 * 10000;
+fn write_clli_chunk(out: &mut Vec<u8>, [max_cll, max_fall]: [u32; 2]) {
     let mut data = [0u8; 8];
     data[0..4].copy_from_slice(&max_cll.to_be_bytes());
     data[4..8].copy_from_slice(&max_fall.to_be_bytes());
@@ -363,7 +370,7 @@ pub(crate) fn metadata_size_estimate(meta: &PngWriteMetadata<'_>) -> usize {
     if has_cicp && meta.mastering_display.is_some() {
         size += 36;
     }
-    if meta.content_light_level.is_some() {
+    if meta.content_light_level_raw.is_some() || meta.content_light_level.is_some() {
         size += 20;
     }
     if meta.pixels_per_unit_x.is_some() && meta.pixels_per_unit_y.is_some() {

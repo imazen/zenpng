@@ -195,6 +195,14 @@ impl PngEncoderConfig {
         self
     }
 
+    /// Set exact PNG `cLLI` values in 0.0001 cd/m² units.
+    /// Overrides the whole-nit metadata view; zero means unknown.
+    #[must_use]
+    pub fn with_content_light_level_raw(mut self, clli: Option<[u32; 2]>) -> Self {
+        self.config = self.config.with_content_light_level_raw(clli);
+        self
+    }
+
     /// Set near-lossless bit rounding (0-4).
     ///
     /// Rounds least-significant bits of each 8-bit sample to improve

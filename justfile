@@ -70,3 +70,8 @@ arm-unfilters-macos group="":
 arm-scan-tiers-macos:
     mkdir -p "$HOME/tmp"
     CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 /usr/bin/time -l cargo bench --locked -p zenpng --bench scalar_vs_simd --features _dev -- --format=llm > "$HOME/tmp/png-arm-scan-tiers.log" 2>&1
+
+# Exact PNG cLLI, including independent PNG reader and APNG paths.
+test-content-light-raw:
+    cargo test --no-default-features --test integration content_light_raw::
+    cargo test --no-default-features --lib raw_hdr_mastering_payload_is_exact

@@ -434,6 +434,13 @@ use `/usr/bin/log`).
 
 ## Known Issues
 
+- Exact HDR metadata: the generic whole-nit `ContentLightLevel` view truncates
+  fractional nits and caps values at 65535. Native `PngInfo` and `EncodeConfig`
+  now offer `content_light_level_raw` in PNG's u32 0.0001-nit units. Use it for
+  faithful transcodes; the generic compatibility view remains unchanged.
+  `just test-content-light-raw` checks native still/APNG paths and an independent
+  PNG reader. No sample conversion is involved.
+
 - **Fixed 2026-08-27 — GA16 corrupted by RGBA8 transparent zeroing.** The
   `compress_filtered` zeroing gate was `bpp == 4`, which 16-bit gray+alpha also
   satisfies; a GA16 pixel `[G_hi, G_lo, A_hi, A_lo]` with alpha low byte 0 had
