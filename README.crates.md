@@ -282,8 +282,10 @@ every effort without a brute-force or recompress phase (1–15). The
 strips join into one ordinary zlib stream, so every decoder reads the file, and
 the output does not depend on the thread count. On 4096 px images with 8
 cores: effort 1 is about 5.5× faster and effort 5 about 7× faster, with sizes
-within −0.4% to +0.25% of a single-threaded encode. It is off by default, like
-`parallel`; `max_threads` caps the thread count.
+within −0.4% to +0.25% of a single-threaded encode. Native encoding uses
+parallel workers by default; `max_threads` caps the thread count. For the
+zencodec adapter, use `PngEncoderConfig::with_threading(ThreadingPolicy::Sequential)`
+to disable workers or `with_max_threads(n)` to cap them.
 
 ## Multi-threaded decode of `iDOT` PNGs
 

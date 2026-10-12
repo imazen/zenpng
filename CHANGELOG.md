@@ -63,10 +63,12 @@ All notable changes to zenpng are documented here.
 
 ### Added
 
-- `PngEncoderConfig::with_parallel(bool)`: zencodec callers can enable the
-  multi-threaded encoder (until now only `EncodeConfig` could; the limits'
-  threading policy only capped threads). 1407_rgb8_4096 at effort 7 on 4
-  cores: 1.85 s -> 0.54 s one-shot, 0.53 s strip-streaming `push_rows`.
+- `PngEncoderConfig::with_threading(ThreadingPolicy)` selects sequential or
+  automatic parallel encoding, and `with_max_threads(usize)` caps workers.
+  A sequential job limit takes precedence; a parallel job limit preserves
+  the configured mode and cap. The previous `with_parallel(bool)` setter is
+  replaced. 1407_rgb8_4096 at effort 7 on 4 cores: 1.85 s -> 0.54 s
+  one-shot, 0.53 s strip-streaming `push_rows`.
 - `PngEncoderConfig::with_downcast(DowncastFlags)`: the zencodec encoder
   config can turn the whole-image downcasts off. With
   `DowncastFlags::none()`, `push_rows` at efforts 1-15 streams strip by strip:

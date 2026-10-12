@@ -136,13 +136,16 @@ mod tests {
 
     #[test]
     fn parallel_field_applies() {
-        // Default is false; setting Some(true) must flip it.
-        assert!(!baseline().parallel);
-        let cfg = baseline().with_internal_params(InternalParams {
-            parallel: Some(true),
-            ..Default::default()
-        });
-        assert!(cfg.parallel);
+        assert!(baseline().parallel);
+        for initial in [false, true] {
+            let cfg = baseline()
+                .with_parallel(initial)
+                .with_internal_params(InternalParams {
+                    parallel: Some(!initial),
+                    ..Default::default()
+                });
+            assert_eq!(cfg.parallel, !initial);
+        }
     }
 
     #[test]

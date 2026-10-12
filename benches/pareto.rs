@@ -601,9 +601,14 @@ fn bench_stream_decode(suite: &mut Suite) {
 /// zencodec encoder config: `verbatim` turns every downcast off (what lets
 /// `push_rows` stream strip by strip), `parallel` enables threads.
 fn zencodec_cfg(e: u32, verbatim: bool, parallel: bool) -> zenpng::PngEncoderConfig {
+    let threading = if parallel {
+        zencodec::ThreadingPolicy::Parallel
+    } else {
+        zencodec::ThreadingPolicy::Sequential
+    };
     let c = zenpng::PngEncoderConfig::new()
         .with_compression(zenpng::Compression::Effort(e))
-        .with_parallel(parallel);
+        .with_threading(threading);
     if verbatim {
         c.with_downcast(zenpng::DowncastFlags::none())
     } else {
