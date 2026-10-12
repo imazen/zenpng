@@ -84,3 +84,7 @@ test-api-integration:
     cargo clippy --all-targets --all-features -- -D warnings
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
     just api-doc
+
+# Compile every fuzz target with the coordinated API dependency pins.
+check-fuzz-api:
+    cargo check --manifest-path fuzz/Cargo.toml --bins

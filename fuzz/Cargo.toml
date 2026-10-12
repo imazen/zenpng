@@ -43,10 +43,13 @@ doc = false
 bench = false
 
 
-# DEV-ONLY: zenflate's PNG strip API (`zenflate::png::{StripCompressor,
-# StripDecoder}`, `CompressionLevel::png`) is in imazen/zenflate#10
-# (main since imazen/zenflate#10 merged), not yet released. Local builds use the sibling checkout;
-# CI checks out zenflate main at ../zenflate. Replace with the released version
-# once it ships. The fuzz crate is its own workspace, so the root patch does not reach it.
+# This standalone workspace must use the same unreleased API sources as the root.
 [patch.crates-io]
-zenflate = { path = "../../zenflate" }
+# Coordinated exact animation timing series; one source for shared types.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "2031094449ad1177ff96461d7c4d586c7ed384e6" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "2031094449ad1177ff96461d7c4d586c7ed384e6" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "789d69dbc314e748676b7f2f19542c17473ba40b" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "789d69dbc314e748676b7f2f19542c17473ba40b" }
+# Retain main's strip-compression API source.
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "9f8684bf789297bb8bf043bc9d43f2c3b6f5dae2" }
+

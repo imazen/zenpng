@@ -492,3 +492,7 @@ use `/usr/bin/log`).
 - Fixed 2026-10-12: the threading-defaults merge omitted `content_light_level_raw`
   from `EncodeConfig::default`, causing E0063. It defaults to `None`, matching
   the previous derived default. Library compilation exercises this initializer.
+
+- Fixed 2026-10-12: the standalone fuzz workspace resolved released zencodec
+  without the newly integrated animation timing API. Its patches now match the
+  root git pins. `just check-fuzz-api` compiles all fuzz targets.

@@ -14,6 +14,9 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- Align the standalone fuzz workspace with the root animation API dependency
+  pins; root Cargo patches do not propagate into standalone consumers.
+
 - Honor an exact native decode preference even when file CICP describes a
   format absent from the static advertised list, including linear RGBA16.
   Preserve unrecognized CICP primaries/transfers as `Unknown` rather than
