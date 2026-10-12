@@ -89,6 +89,8 @@ const RGBA8_P3: PixelDescriptor = PixelDescriptor::new_full(
 );
 
 static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
+    PixelDescriptor::GRAYA8_SRGB,
+    PixelDescriptor::GRAYA16_SRGB,
     PixelDescriptor::RGB8_SRGB,
     PixelDescriptor::RGBA8_SRGB,
     PixelDescriptor::GRAY8_SRGB,
@@ -1111,6 +1113,21 @@ impl PngEncoder {
                 let bytes = contiguous_bytes(&pixels);
                 self.do_encode(&bytes, w, h, crate::encode::ColorType::Grayscale)
             }
+            PixelFormat::GrayA8 => {
+                let bytes = contiguous_bytes(&pixels);
+                self.do_encode(&bytes, w, h, crate::encode::ColorType::GrayscaleAlpha)
+            }
+            PixelFormat::GrayA16 => {
+                let bytes = contiguous_bytes(&pixels);
+                let be = native_to_be_16(&bytes);
+                self.do_encode_with_depth(
+                    &be,
+                    w,
+                    h,
+                    crate::encode::ColorType::GrayscaleAlpha,
+                    crate::encode::BitDepth::Sixteen,
+                )
+            }
             PixelFormat::Rgb16 => {
                 let bytes = contiguous_bytes(&pixels);
                 let be = native_to_be_16(&bytes);
@@ -1470,10 +1487,16 @@ impl PngEncoder {
                     // Convert source pixels into PNG byte order, then write
                     // as a stored DEFLATE row. convert_buf is reused per row.
                     match format {
-                        PixelFormat::Rgb8 | PixelFormat::Rgba8 | PixelFormat::Gray8 => {
+                        PixelFormat::Rgb8
+                        | PixelFormat::Rgba8
+                        | PixelFormat::Gray8
+                        | PixelFormat::GrayA8 => {
                             state.push_raw_row(&src[..state.row_bytes]);
                         }
-                        PixelFormat::Rgb16 | PixelFormat::Rgba16 | PixelFormat::Gray16 => {
+                        PixelFormat::Rgb16
+                        | PixelFormat::Rgba16
+                        | PixelFormat::Gray16
+                        | PixelFormat::GrayA16 => {
                             let samples: &[u16] = bytemuck::cast_slice(&src[..state.row_bytes]);
                             for (i, &val) in samples.iter().enumerate() {
                                 let be = val.to_be_bytes();
@@ -1543,10 +1566,16 @@ impl PngEncoder {
                 for y in 0..h {
                     let src = rows.row(y);
                     match format {
-                        PixelFormat::Rgb8 | PixelFormat::Rgba8 | PixelFormat::Gray8 => {
+                        PixelFormat::Rgb8
+                        | PixelFormat::Rgba8
+                        | PixelFormat::Gray8
+                        | PixelFormat::GrayA8 => {
                             state.push_raw_row(&src[..state.row_bytes]);
                         }
-                        PixelFormat::Rgb16 | PixelFormat::Rgba16 | PixelFormat::Gray16 => {
+                        PixelFormat::Rgb16
+                        | PixelFormat::Rgba16
+                        | PixelFormat::Gray16
+                        | PixelFormat::GrayA16 => {
                             let samples: &[u16] = bytemuck::cast_slice(&src[..state.row_bytes]);
                             for (i, &val) in samples.iter().enumerate() {
                                 let be = val.to_be_bytes();
@@ -3644,6 +3673,14 @@ fn pixel_format_to_png(
             crate::encode::ColorType::Grayscale,
             crate::encode::BitDepth::Eight,
         )),
+        PixelFormat::GrayA8 => Some((
+            crate::encode::ColorType::GrayscaleAlpha,
+            crate::encode::BitDepth::Eight,
+        )),
+        PixelFormat::GrayA16 => Some((
+            crate::encode::ColorType::GrayscaleAlpha,
+            crate::encode::BitDepth::Sixteen,
+        )),
         PixelFormat::Rgb16 => Some((
             crate::encode::ColorType::Rgb,
             crate::encode::BitDepth::Sixteen,
@@ -3697,10 +3734,13 @@ fn append_png_rows(
     for y in 0..h {
         let src = rows.row(y);
         match format {
-            PixelFormat::Rgb8 | PixelFormat::Rgba8 | PixelFormat::Gray8 => {
+            PixelFormat::Rgb8 | PixelFormat::Rgba8 | PixelFormat::Gray8 | PixelFormat::GrayA8 => {
                 out.extend_from_slice(&src[..row_bytes]);
             }
-            PixelFormat::Rgb16 | PixelFormat::Rgba16 | PixelFormat::Gray16 => {
+            PixelFormat::Rgb16
+            | PixelFormat::Rgba16
+            | PixelFormat::Gray16
+            | PixelFormat::GrayA16 => {
                 let samples: &[u16] = bytemuck::cast_slice(&src[..row_bytes]);
                 for &val in samples {
                     out.extend_from_slice(&val.to_be_bytes());

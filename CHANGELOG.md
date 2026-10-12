@@ -4,6 +4,9 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+- Support native GrayAlpha8/16 through typed buffered and strided-row encoding,
+  sharing the PNG filtering/compression and exact alpha semantics.
+
 - Add `with_preserve_transparent_rgb` to native and common encode configuration.
   It disables hidden-RGB zeroing in still/row/iDOT routes and uses byte-exact
   SOURCE deltas for truecolor APNG, retaining the requested compression effort.

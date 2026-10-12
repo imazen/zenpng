@@ -502,3 +502,9 @@ use `/usr/bin/log`).
   profile. Descriptor inference now requires no explicit ICC. Regression:
   `explicit_icc_is_not_overridden_by_descriptor_derived_cicp` with an independent
   PNG metadata reader.
+
+- Fixed 2026-10-12: typed still/row encoding rejected GrayAlpha8/16 although PNG
+  and the shared pixel descriptors represent both. Routing now retains two
+  channels and native depth through the existing writer. Independent-reader
+  regression: `gray_alpha_native_depth_and_strided_rows` (stored, prefiltered,
+  strip modes, including GA16 alpha low-byte zero).

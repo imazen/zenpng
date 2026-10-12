@@ -157,3 +157,60 @@ fn explicit_icc_is_not_overridden_by_descriptor_derived_cicp() {
     assert_eq!(oracle.info().icc_profile.as_deref(), Some(icc));
     assert!(oracle.info().coding_independent_code_points.is_none());
 }
+
+#[test]
+fn gray_alpha_native_depth_and_strided_rows() {
+    for descriptor in [PixelDescriptor::GRAYA8_SRGB, PixelDescriptor::GRAYA16_SRGB] {
+        assert!(PngEncoderConfig::supported_descriptors().contains(&descriptor));
+        let (w, h) = (1024u32, 600u32);
+        let bytes = descriptor.bytes_per_pixel();
+        let row_bytes = w as usize * bytes;
+        let stride = row_bytes + 12;
+        let mut padded = vec![0xee; stride * h as usize];
+        let mut expected = Vec::new();
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                let at = y * stride + x * bytes;
+                if bytes == 2 {
+                    let pair = [(x % 251) as u8, if x % 3 == 0 { 0 } else { 255 }];
+                    padded[at..at + 2].copy_from_slice(&pair);
+                    expected.extend_from_slice(&pair);
+                } else {
+                    // Alpha with a zero low byte must not be mistaken for RGBA8.
+                    for (c, v) in [(x * 71 + y) as u16, 0xff00u16].into_iter().enumerate() {
+                        padded[at + c * 2..at + c * 2 + 2].copy_from_slice(&v.to_ne_bytes());
+                        expected.extend_from_slice(&v.to_be_bytes());
+                    }
+                }
+            }
+        }
+        for effort in [0, 1, 7] {
+            let pixels = PixelSlice::new(&padded, w, h, stride, descriptor).unwrap();
+            let whole = config(effort)
+                .job()
+                .encoder()
+                .unwrap()
+                .encode(pixels)
+                .unwrap();
+            let mut rows = config(effort)
+                .job()
+                .with_canvas_size(w, h)
+                .encoder()
+                .unwrap();
+            for row in padded.chunks_exact(stride) {
+                rows.push_rows(PixelSlice::new(row, w, 1, stride, descriptor).unwrap())
+                    .unwrap();
+            }
+            for output in [whole, rows.finish().unwrap()] {
+                let mut reader = png::Decoder::new(Cursor::new(output.data()))
+                    .read_info()
+                    .unwrap();
+                let mut raw = vec![0; reader.output_buffer_size().unwrap()];
+                let info = reader.next_frame(&mut raw).unwrap();
+                assert_eq!(info.color_type, png::ColorType::GrayscaleAlpha);
+                assert_eq!(info.bit_depth as usize, bytes * 4);
+                assert_eq!(&raw[..info.buffer_size()], expected);
+            }
+        }
+    }
+}
