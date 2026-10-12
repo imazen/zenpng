@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpng.txt 441 lines (supported surface) | zenpng.features.txt 21 added (features: avx512,cms,imagequant,joint,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 101 lines (121 hidden + 34 excluded-feature)
+# files: zenpng.txt 444 lines (supported surface) | zenpng.features.txt 21 added (features: avx512,cms,imagequant,joint,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 101 lines (121 hidden + 34 excluded-feature)
 
 ## summary
 #
@@ -14,20 +14,20 @@
 #   pub types (struct/enum/trait/alias)        49
 #   pub consts/statics                         10
 #   free functions                             27
-#   inherent methods                           73
-#   struct fields                             156
+#   inherent methods                           75
+#   struct fields                             157
 #   enum variants                              67
 #   trait roster entries (type × trait)       164
 #   auto-trait-complete types                  40
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                          299
+#   (root)                          302
 #   detect                           41
 #   heuristics                       13
 #   sweep                            33
 
-## items (386 lines)
+## items (389 lines)
 
 pub mod zenpng
 pub mod detect
@@ -240,6 +240,7 @@ pub EncodeConfig::downcast: DowncastFlags
 pub EncodeConfig::filter: Filter
 pub EncodeConfig::last_modified: core::option::Option<PngTime>
 pub EncodeConfig::mastering_display: core::option::Option<zenpixels::hdr::MasteringDisplay>
+pub EncodeConfig::mastering_display_raw: core::option::Option<[u8; 24]>
 pub EncodeConfig::max_threads: usize
 pub EncodeConfig::near_lossless_bits: u8
 pub EncodeConfig::parallel: bool
@@ -259,6 +260,7 @@ pub fn EncodeConfig::with_downcast(self, DowncastFlags) -> Self
 pub fn EncodeConfig::with_filter(self, Filter) -> Self
 pub fn EncodeConfig::with_last_modified(self, PngTime) -> Self
 pub fn EncodeConfig::with_mastering_display(self, core::option::Option<zenpixels::hdr::MasteringDisplay>) -> Self
+pub fn EncodeConfig::with_mastering_display_raw(self, core::option::Option<[u8; 24]>) -> Self
 pub fn EncodeConfig::with_near_lossless_bits(self, u8) -> Self
 pub fn EncodeConfig::with_parallel(self, bool) -> Self
 pub fn EncodeConfig::with_phys(self, u32, u32, PhysUnit) -> Self
@@ -335,6 +337,7 @@ pub fn PngEncoderConfig::with_content_light_level(self, core::option::Option<zen
 pub fn PngEncoderConfig::with_content_light_level_raw(self, core::option::Option<[u32; 2]>) -> Self
 pub fn PngEncoderConfig::with_downcast(self, DowncastFlags) -> Self
 pub fn PngEncoderConfig::with_filter(self, Filter) -> Self
+pub fn PngEncoderConfig::with_mastering_display_raw(self, core::option::Option<[u8; 24]>) -> Self
 pub fn PngEncoderConfig::with_near_lossless_bits(self, u8) -> Self
 pub fn PngEncoderConfig::with_parallel(self, bool) -> Self
 #[non_exhaustive] pub struct PngInfo
