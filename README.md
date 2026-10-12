@@ -600,5 +600,8 @@ override the whole-nit compatibility field; calling `with_content_light_level`
 clears that raw override. The generic zencodec whole-nit view remains unchanged.
 See [PNG third-edition cLLI](https://www.w3.org/TR/png-3/#11cLLI).
 
-`PngInfo::mastering_display_raw` retains the exact 24-byte `mDCV` payload for
-transcoders that must avoid a float roundtrip of its integer fields.
+`PngInfo::mastering_display_raw` retains the exact 24-byte `mDCV` payload.
+Pass it to `EncodeConfig::with_mastering_display_raw` (or the codec configuration)
+for output without a float roundtrip. Raw data overrides the floating-point view;
+setting the typed value clears the raw override. PNG requires accompanying cICP,
+so no mDCV is emitted without it.

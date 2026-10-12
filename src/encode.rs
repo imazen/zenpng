@@ -69,6 +69,9 @@ pub struct EncodeConfig {
     /// Mastering display color volume for the `mDCV` chunk (PNG-3 HDR). Written
     /// only alongside a [`cicp`](Self::cicp) chunk (PNG-3 §11.3.2.7).
     pub mastering_display: Option<MasteringDisplay>,
+    /// Exact 24-byte PNG `mDCV` payload, overriding the floating-point view.
+    /// Written only alongside cICP. `None` uses the floating-point fallback.
+    pub mastering_display_raw: Option<[u8; 24]>,
     /// Near-lossless: number of least-significant bits to round (0-4).
     ///
     /// When set to N > 0, each 8-bit sample has its lowest N bits rounded
@@ -145,6 +148,7 @@ impl Default for EncodeConfig {
             content_light_level: None,
             content_light_level_raw: None,
             mastering_display: None,
+            mastering_display_raw: None,
             near_lossless_bits: 0,
             max_threads: 0,
             pixels_per_unit_x: None,
@@ -306,6 +310,15 @@ impl EncodeConfig {
     #[must_use]
     pub fn with_mastering_display(mut self, mdcv: Option<MasteringDisplay>) -> Self {
         self.mastering_display = mdcv;
+        self.mastering_display_raw = None;
+        self
+    }
+
+    /// Set exact PNG `mDCV` bytes without float rounding. Written only with cICP.
+    /// Overrides the floating-point view; `None` restores that fallback.
+    #[must_use]
+    pub fn with_mastering_display_raw(mut self, mdcv: Option<[u8; 24]>) -> Self {
+        self.mastering_display_raw = mdcv;
         self
     }
 
@@ -618,6 +631,7 @@ pub(crate) fn png_write_meta<'a>(
     // `from_metadata` may already have populated these from `metadata`.
     write_meta.cicp = config.cicp.or(write_meta.cicp);
     write_meta.content_light_level_raw = config.content_light_level_raw;
+    write_meta.mastering_display_raw = config.mastering_display_raw;
     write_meta.content_light_level = config
         .content_light_level
         .or(write_meta.content_light_level);
@@ -1106,6 +1120,7 @@ pub(crate) fn encode_apng_depth(
     // Builder values override the Metadata-derived ones, but only when set.
     write_meta.cicp = config.encode.cicp.or(write_meta.cicp);
     write_meta.content_light_level_raw = config.encode.content_light_level_raw;
+    write_meta.mastering_display_raw = config.encode.mastering_display_raw;
     write_meta.content_light_level = config
         .encode
         .content_light_level

@@ -203,6 +203,14 @@ impl PngEncoderConfig {
         self
     }
 
+    /// Set exact PNG `mDCV` bytes, overriding the floating-point metadata view.
+    /// The payload is emitted only alongside cICP, as required by PNG.
+    #[must_use]
+    pub fn with_mastering_display_raw(mut self, mdcv: Option<[u8; 24]>) -> Self {
+        self.config = self.config.with_mastering_display_raw(mdcv);
+        self
+    }
+
     /// Set near-lossless bit rounding (0-4).
     ///
     /// Rounds least-significant bits of each 8-bit sample to improve

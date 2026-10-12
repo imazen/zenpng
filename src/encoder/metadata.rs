@@ -32,6 +32,8 @@ pub(crate) struct PngWriteMetadata<'a> {
     pub content_light_level_raw: Option<[u32; 2]>,
     /// Mastering Display Color Volume (HDR).
     pub mastering_display: Option<MasteringDisplay>,
+    /// Exact PNG payload; overrides the floating-point metadata view.
+    pub mastering_display_raw: Option<[u8; 24]>,
     /// Physical pixel dimensions (pHYs).
     pub pixels_per_unit_x: Option<u32>,
     /// Physical pixel dimensions Y (pHYs).
@@ -59,6 +61,7 @@ impl<'a> PngWriteMetadata<'a> {
             content_light_level,
             content_light_level_raw: None,
             mastering_display,
+            mastering_display_raw: None,
             pixels_per_unit_x: None,
             pixels_per_unit_y: None,
             phys_unit: None,
@@ -131,8 +134,12 @@ pub(crate) fn write_all_metadata(
     // mDCV (mastering display color volume). PNG-3 §11.3.2.7: "a cICP chunk must
     // accompany the use of mDCV" (cICP establishes the primaries/white point that
     // mDCV refines), so suppress a naked mDCV when no cICP is present.
-    if has_cicp && let Some(mdcv) = &meta.mastering_display {
-        write_mdcv_chunk(out, mdcv);
+    if has_cicp {
+        if let Some(raw) = &meta.mastering_display_raw {
+            write_chunk(out, b"mDCV", raw);
+        } else if let Some(mdcv) = &meta.mastering_display {
+            write_mdcv_chunk(out, mdcv);
+        }
     }
 
     // cLLi (content light level info) — written whenever present. PNG-3 does not
@@ -367,7 +374,7 @@ pub(crate) fn metadata_size_estimate(meta: &PngWriteMetadata<'_>) -> usize {
     if has_cicp {
         size += 16; // cICP(4) + 12
     }
-    if has_cicp && meta.mastering_display.is_some() {
+    if has_cicp && (meta.mastering_display_raw.is_some() || meta.mastering_display.is_some()) {
         size += 36;
     }
     if meta.content_light_level_raw.is_some() || meta.content_light_level.is_some() {

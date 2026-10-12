@@ -76,7 +76,7 @@ test-content-light-raw:
     cargo test --no-default-features --test integration content_light_raw::
     cargo test --no-default-features --lib raw_hdr_mastering_payload_is_exact
 
-# Combined typed one-shot, exact animation and strip-config API integration.
+# Exact animation, native color and strip-config API integration.
 test-api-integration:
     cargo test --release --lib --test integration --test animation_color_negotiation
     cargo test --release --no-default-features --test integration --test animation_color_negotiation
@@ -88,3 +88,6 @@ test-api-integration:
 # Compile every fuzz target with the coordinated API dependency pins.
 check-fuzz-api:
     cargo check --manifest-path fuzz/Cargo.toml --bins
+
+# Exact HDR payload output, retained API routes, strict lint/docs and snapshots.
+test-mastering-raw: test-api-integration

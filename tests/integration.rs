@@ -37,3 +37,6 @@ mod animation_timing;
 
 #[path = "integration/animation_compositing.rs"]
 mod animation_compositing;
+
+#[path = "integration/mastering_raw.rs"]
+mod mastering_raw;

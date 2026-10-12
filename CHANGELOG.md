@@ -4,6 +4,13 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+- Add exact 24-byte mastering-display output through
+  `EncodeConfig::with_mastering_display_raw` and the codec configuration. Raw
+  values override floating-point metadata in still, APNG and row writers.
+  Calling the typed setter clears the override; emission still requires cICP.
+- Require zencodec 0.1.27, which contains the integrated rational timing API;
+  the coordinated git pin remains until release.
+
 - Integrate exact animation/color and streaming-config APIs while retaining
   current decode threading and exact content-light metadata.
   Combined validation: `88c325ab`; docs-only correction `03376a23`.
