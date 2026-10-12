@@ -139,6 +139,22 @@ pub fn __set_idot_min_bytes(bytes: usize) {
     decoder::idot::MIN_BYTES_OVERRIDE.store(bytes, core::sync::atomic::Ordering::Relaxed);
 }
 
+/// Lower the two-thread decode pipeline's size threshold (bytes of filtered
+/// data; 0 restores the per-format default) so small test images take it.
+/// Process-wide; for tests and benchmarks only.
+#[cfg(feature = "_dev")]
+#[doc(hidden)]
+pub fn __set_pipeline_min_bytes(bytes: usize) {
+    decoder::pipeline::MIN_BYTES_OVERRIDE.store(bytes, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Two-thread pipelined decodes started on the calling thread.
+#[cfg(feature = "_dev")]
+#[doc(hidden)]
+pub fn __pipeline_runs() -> usize {
+    decoder::pipeline::RUNS.with(|r| r.get())
+}
+
 /// Benchmarking access to the SIMD downcast predicates. Public via `_dev`
 /// only; the names are unstable. See `benches/scan_predicates.rs`.
 #[cfg(feature = "_dev")]

@@ -1,6 +1,7 @@
 # Streaming in zenpng: what streams today
 
-State on 2026-10-08 (main `92e2797`, zenflate `f041b61`). Measurements:
+State on 2026-10-08 (main `92e2797` plus the threading-defaults PR, zenflate
+`f041b61`). Measurements:
 `benchmarks/stream_memory_x86_2026-10-07.txt` (heap / RSS / wall, 4096 px)
 and the streaming time ratios in `benchmarks/streaming_timing_x86_2026-10-07.md`.
 "PR #25" is imazen/zenpng#25 (`PngEncoderConfig::with_downcast` and
@@ -20,9 +21,12 @@ zencodec `Encoder::push_rows` + `finish` picks a mode on the first push:
 Why the conditions: downcasts (opaque RGBA → RGB, gray, palette, `tRNS`,
 16 → 8 bit) need every pixel before the color type is known; efforts 16+
 run brute-force and fork/beam searches over the whole image; `iDOT`
-segments are planned from the whole stream. Strip-streamed output is
-byte-identical to the one-shot multi-threaded encode of the same rows
-(0.02-0.3% larger than the single-threaded one-shot encode at efforts 2-15).
+segments are planned from the whole stream. The one-shot encode uses the
+same strips at every thread count but chooses filters over the whole image;
+strip streaming can't see the strips to come and chooses per strip:
+e2-e7 +0.01-0.02% geomean over the one-shot encode, e8-e15 +0.07-0.17%
+(worst +6.8%, line art at e10;
+`benchmarks/strip_layout_sizes_2026-10-08.md`).
 
 What a caller can reach:
 
@@ -61,15 +65,26 @@ to 5.7x slower.
 
 | API | Streams? | Threads |
 |---|---|---|
-| `zenpng::decode` | row by row internally into one output buffer | `max_threads` 0 (default): `iDOT` files decode strips in parallel; other non-palette, ≥ 8-bit images with ≥ 512 KiB of filtered data inflate on a second thread |
+| `zenpng::decode` | row by row internally into one output buffer | `max_threads` 0 (default): `iDOT` files decode strips in parallel; other non-palette, ≥ 8-bit images inflate on a second thread from a per-format size (below) |
 | zencodec `push_decoder` | rows decoded straight into the sink's buffer (the sink provides the full height; interlaced images: full decode then copy) | same pipeline as `decode` when the limits' threading policy is parallel (the zencodec default); no `iDOT` parallelism |
 | zencodec `streaming_decoder` | yes: batches of ~32 KiB of rows per `next_batch`, input held but output never whole; interlaced images rejected | pipelined like `decode` (borrowed input is copied once for the inflate thread); sequential policy keeps the input borrowed |
 
 Palette and sub-byte gray images never pipeline: their row expansion is the
-bottleneck and the handoff made pal8 1.32x slower. Pipelined vs one thread
-(i265 P-cores, `benchmarks/streaming_timing_x86_2026-10-07.md`): 0.70-0.85x
-at 1024 px and 0.59-0.70x at 4096 px for gray8/RGB8/RGBA8/RGB16, equal for
-all three APIs; no change at 256 px (below 512 KiB of filtered rows).
+bottleneck and the handoff made pal8 1.32x slower. The others pipeline from
+the size where two threads were measured at least 1.3x faster
+(`benchmarks/decode_pipeline_crossover_2026-10-08.md`, `pipeline_min_bytes_for`):
+
+| filtered data | gray8 | RGB8 | RGBA8 | RGB16 and other layouts |
+|---|---|---|---|---|
+| x86_64 | 1.69 MiB | 2.25 MiB | 3 MiB | 10.13 MiB |
+| other targets (Neoverse-N1 data) | 12 MiB | 14.06 MiB | 6.75 MiB | 28.13 MiB |
+
+Pipelined vs one thread (i265 P-cores,
+`benchmarks/streaming_timing_x86_2026-10-07.md`, measured with the earlier
+512 KiB threshold): 0.70-0.85x at 1024 px and 0.59-0.70x at 4096 px for
+gray8/RGB8/RGBA8/RGB16, equal for all three APIs. On Neoverse-N1 the same
+pipeline was 1.04-1.27x *slower* at 768-1024 px RGB8 and gray8, hence the
+higher thresholds there.
 
 `iDOT` files (independently decodable strips with a table) decode their
 strips in parallel in `zenpng::decode` only: 0.18-0.32x of the serial time
