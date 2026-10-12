@@ -472,3 +472,9 @@ use `/usr/bin/log`).
 - **Open (design, not a defect):** buffered RGBA8 encodes zero RGB under
   `alpha == 0`; the `push_rows` effort-1 streaming path does not. Both decode to
   the same visible image. Resolving it either way needs the `exact` knob decision.
+
+## Known Bugs
+
+- Fixed 2026-10-12: the threading-defaults merge omitted `content_light_level_raw`
+  from `EncodeConfig::default`, causing E0063. It defaults to `None`, matching
+  the previous derived default. Library compilation exercises this initializer.

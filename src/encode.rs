@@ -143,6 +143,7 @@ impl Default for EncodeConfig {
             chromaticities: None,
             cicp: None,
             content_light_level: None,
+            content_light_level_raw: None,
             mastering_display: None,
             near_lossless_bits: 0,
             max_threads: 0,

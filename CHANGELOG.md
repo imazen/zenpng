@@ -8,6 +8,11 @@ All notable changes to zenpng are documented here.
 
 None.
 
+### Fixed
+
+- Initialize exact content-light metadata to `None` in the manual encoder
+  default, restoring compilation after the threading defaults merge.
+
 ### Added
 
 - Exact PNG content-light metadata through `PngInfo::content_light_level_raw`
