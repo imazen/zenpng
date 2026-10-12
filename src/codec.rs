@@ -211,6 +211,14 @@ impl PngEncoderConfig {
         self
     }
 
+    /// Preserve RGB samples under zero alpha in still, row and truecolor APNG output.
+    /// Explicit quantization/conversion settings remain independent.
+    #[must_use]
+    pub fn with_preserve_transparent_rgb(mut self, preserve: bool) -> Self {
+        self.config = self.config.with_preserve_transparent_rgb(preserve);
+        self
+    }
+
     /// Set near-lossless bit rounding (0-4).
     ///
     /// Rounds least-significant bits of each 8-bit sample to improve
@@ -1039,7 +1047,13 @@ impl PngEncoder {
         use linear_srgb::default::{linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice};
         use zenpixels::PixelFormat;
 
-        if self.config.config.cicp.is_none() {
+        if self.config.config.cicp.is_none()
+            && self
+                .metadata
+                .as_ref()
+                .and_then(|m| m.icc_profile.as_ref())
+                .is_none()
+        {
             self.config.config.cicp = Self::cicp_from_descriptor(pixels.descriptor());
         }
 
@@ -1257,6 +1271,7 @@ impl PngEncoder {
         let Some(stream) = crate::encoder::compress::StripStream::new(
             config.compression.effort(),
             format,
+            config.preserve_transparent_rgb,
             row_bytes,
             h as usize,
             threads,

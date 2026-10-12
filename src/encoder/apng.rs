@@ -113,6 +113,7 @@ fn trial_compress_size(
     cancel: &dyn Stop,
 ) -> crate::error::Result<usize> {
     let opts = CompressOptions {
+        preserve_transparent_rgb: false,
         parallel: false,
         cancel,
         deadline: &enough::Unstoppable,
@@ -1057,6 +1058,7 @@ pub(crate) fn encode_apng_truecolor(
         write_meta,
         num_plays,
         effort,
+        false,
         cancel,
         deadline,
     )
@@ -1073,6 +1075,7 @@ pub(crate) fn encode_apng_truecolor_depth(
     write_meta: &PngWriteMetadata<'_>,
     num_plays: u32,
     effort: u32,
+    preserve_transparent_rgb: bool,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> crate::error::Result<Vec<u8>> {
@@ -1103,7 +1106,8 @@ pub(crate) fn encode_apng_truecolor_depth(
     };
 
     // Run optimizer when effort > 2 and >1 frame (otherwise trial = final, no benefit)
-    let use_optimizer = bit_depth == 8 && effort > 2 && frames.len() > 1;
+    let use_optimizer =
+        !preserve_transparent_rgb && bit_depth == 8 && effort > 2 && frames.len() > 1;
     let optimized = if use_optimizer {
         Some(optimize_apng_truecolor(
             frames,
@@ -1183,6 +1187,7 @@ pub(crate) fn encode_apng_truecolor_depth(
             };
 
             let opts = CompressOptions {
+                preserve_transparent_rgb,
                 parallel: false,
                 cancel,
                 deadline,
@@ -1228,6 +1233,7 @@ pub(crate) fn encode_apng_truecolor_depth(
         let row_bytes = canvas_width as usize * bpp;
         let height = canvas_height as usize;
         let opts = CompressOptions {
+            preserve_transparent_rgb,
             parallel: false,
             cancel,
             deadline,
@@ -1283,6 +1289,7 @@ pub(crate) fn encode_apng_truecolor_depth(
             let sub_row_bytes = region.width as usize * bpp;
             let sub_height = region.height as usize;
             let opts = CompressOptions {
+                preserve_transparent_rgb,
                 parallel: false,
                 cancel,
                 deadline,
@@ -1514,6 +1521,7 @@ pub(crate) fn encode_apng_indexed_from_indices(
             );
 
             let opts = CompressOptions {
+                preserve_transparent_rgb: false,
                 parallel: false,
                 cancel,
                 deadline,
@@ -1592,6 +1600,7 @@ pub(crate) fn encode_apng_indexed_from_indices(
             );
 
             let opts = CompressOptions {
+                preserve_transparent_rgb: false,
                 parallel: false,
                 cancel,
                 deadline,

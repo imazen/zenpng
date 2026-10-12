@@ -1239,12 +1239,14 @@ pub(crate) fn compress_segmented(
         return Ok(None);
     }
     let owned_rows;
-    let packed_rows = if format.rgba8 && has_any_transparent_pixel(packed_rows) {
-        owned_rows = zero_transparent_rgba8(packed_rows);
-        &owned_rows
-    } else {
-        packed_rows
-    };
+    let packed_rows =
+        if format.rgba8 && !opts.preserve_transparent_rgb && has_any_transparent_pixel(packed_rows)
+        {
+            owned_rows = zero_transparent_rgba8(packed_rows);
+            &owned_rows
+        } else {
+            packed_rows
+        };
     let rows = super::segments::split_rows(height, n);
     let Some(strips) = compress_strips(
         packed_rows,
@@ -1632,6 +1634,7 @@ impl StripStream {
     pub(crate) fn new(
         effort: u32,
         format: RowFormat,
+        preserve_transparent_rgb: bool,
         row_bytes: usize,
         height: usize,
         threads: usize,
@@ -1659,7 +1662,7 @@ impl StripStream {
             bounds,
             row_bytes,
             bpp: format.bpp,
-            rgba8: format.rgba8,
+            rgba8: format.rgba8 && !preserve_transparent_rgb,
             header,
             next: 0,
             adler: 1,
@@ -2421,12 +2424,14 @@ pub(crate) fn compress_filtered(
     // the declared layout, NOT on `bpp == 4`: GA16 rows are also 4 bytes
     // per pixel and must pass through untouched.
     let owned_rows;
-    let packed_rows = if format.rgba8 && has_any_transparent_pixel(packed_rows) {
-        owned_rows = zero_transparent_rgba8(packed_rows);
-        &owned_rows
-    } else {
-        packed_rows
-    };
+    let packed_rows =
+        if format.rgba8 && !opts.preserve_transparent_rgb && has_any_transparent_pixel(packed_rows)
+        {
+            owned_rows = zero_transparent_rgba8(packed_rows);
+            &owned_rows
+        } else {
+            packed_rows
+        };
 
     if let Some(s) = &mut stats {
         s.raw_size = filtered_size;
@@ -4219,6 +4224,7 @@ mod tests {
     fn compress_filtered_effort_0() {
         let data = vec![128u8; 12 * 4]; // 4 rows of 12 bytes
         let opts = super::super::CompressOptions {
+            preserve_transparent_rgb: false,
             cancel: &Unstoppable,
             deadline: &Unstoppable,
             parallel: false,
@@ -4237,6 +4243,7 @@ mod tests {
     fn compress_filtered_effort_1() {
         let data = vec![128u8; 12 * 4];
         let opts = super::super::CompressOptions {
+            preserve_transparent_rgb: false,
             cancel: &Unstoppable,
             deadline: &Unstoppable,
             parallel: false,
@@ -4255,6 +4262,7 @@ mod tests {
     fn compress_filtered_effort_10_with_stats() {
         let data = vec![128u8; 12 * 4];
         let opts = super::super::CompressOptions {
+            preserve_transparent_rgb: false,
             cancel: &Unstoppable,
             deadline: &Unstoppable,
             parallel: false,
@@ -4289,6 +4297,7 @@ mod tests {
     fn compress_filtered_parallel() {
         let data = vec![128u8; 12 * 4];
         let opts = super::super::CompressOptions {
+            preserve_transparent_rgb: false,
             cancel: &Unstoppable,
             deadline: &Unstoppable,
             parallel: true,
@@ -4337,6 +4346,7 @@ mod tests {
             data
         };
         let opts = || super::super::CompressOptions {
+            preserve_transparent_rgb: false,
             cancel: &Unstoppable,
             deadline: &Unstoppable,
             parallel: false,
@@ -4374,6 +4384,7 @@ mod tests {
         data[3] = 0; // A=0 (transparent)
 
         let opts = super::super::CompressOptions {
+            preserve_transparent_rgb: false,
             cancel: &Unstoppable,
             deadline: &Unstoppable,
             parallel: false,

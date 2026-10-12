@@ -40,3 +40,6 @@ mod animation_compositing;
 
 #[path = "integration/mastering_raw.rs"]
 mod mastering_raw;
+
+#[path = "integration/exact_transcode.rs"]
+mod exact_transcode;

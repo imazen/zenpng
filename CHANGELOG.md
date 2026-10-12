@@ -4,6 +4,14 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+- Add `with_preserve_transparent_rgb` to native and common encode configuration.
+  It disables hidden-RGB zeroing in still/row/iDOT routes and uses byte-exact
+  SOURCE deltas for truecolor APNG, retaining the requested compression effort.
+  Explicit lossy/quantization settings remain independent; default bytes remain
+  unchanged.
+- Keep explicit ICC metadata authoritative when a common still encoder receives
+  a descriptor from which CICP could otherwise be inferred.
+
 - Add exact 24-byte mastering-display output through
   `EncodeConfig::with_mastering_display_raw` and the codec configuration. Raw
   values override floating-point metadata in still, APNG and row writers.

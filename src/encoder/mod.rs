@@ -25,6 +25,8 @@ pub(crate) use self::metadata::{PngWriteMetadata, metadata_size_estimate, write_
 pub(crate) struct CompressOptions<'a> {
     /// Run screening and refinement phases in parallel.
     pub parallel: bool,
+    /// Preserve RGB sample codes even when alpha is zero.
+    pub preserve_transparent_rgb: bool,
     /// Hard cancel — passed into zenflate/zenzop, aborts mid-compression.
     pub cancel: &'a dyn Stop,
     /// Soft deadline — checked between phases/strategies for graceful early return.
@@ -607,6 +609,7 @@ mod tests {
 
     fn default_opts() -> CompressOptions<'static> {
         CompressOptions {
+            preserve_transparent_rgb: false,
             parallel: false,
             cancel: &Unstoppable,
             deadline: &Unstoppable,

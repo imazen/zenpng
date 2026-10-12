@@ -42,6 +42,10 @@ pub struct EncodeConfig {
     /// Each thread adds working memory: at 4096x3072 RGB8 with 4 threads,
     /// 38-74 MB more peak RSS at efforts 2-13.
     pub parallel: bool,
+    /// Keep RGB sample codes under zero alpha. Default false permits zeroing
+    /// those invisible values for compression. This does not disable explicit
+    /// near-lossless, quantization or color/precision conversion settings.
+    pub preserve_transparent_rgb: bool,
     /// Source gamma for gAMA chunk (scaled by 100000, e.g. 45455 = 1/2.2).
     ///
     /// Suppressed in output when sRGB, iCCP, or cICP is present (PNGv3 precedence).
@@ -141,6 +145,7 @@ impl Default for EncodeConfig {
             compression: Compression::default(),
             filter: Filter::default(),
             parallel: true,
+            preserve_transparent_rgb: false,
             source_gamma: None,
             srgb_intent: None,
             chromaticities: None,
@@ -322,6 +327,15 @@ impl EncodeConfig {
         self
     }
 
+    /// Preserve RGB under zero alpha in still, row and truecolor APNG output.
+    /// Exact APNG uses byte-based SOURCE delta rectangles instead of the
+    /// blend/disposal search, whose choices are based on visible pixels.
+    #[must_use]
+    pub fn with_preserve_transparent_rgb(mut self, preserve: bool) -> Self {
+        self.preserve_transparent_rgb = preserve;
+        self
+    }
+
     /// Set near-lossless bit rounding (0-4).
     #[must_use]
     pub fn with_near_lossless_bits(mut self, bits: u8) -> Self {
@@ -381,6 +395,7 @@ impl EncodeConfig {
         remaining_ns: Option<&'a dyn Fn() -> Option<u64>>,
     ) -> crate::encoder::CompressOptions<'a> {
         crate::encoder::CompressOptions {
+            preserve_transparent_rgb: self.preserve_transparent_rgb,
             parallel: self.parallel && self.max_threads != 1,
             cancel,
             deadline,
@@ -467,9 +482,9 @@ pub fn encode_rgb8(
 
 /// Encode RGBA8 pixels to PNG.
 ///
-/// # Bytes under fully-transparent alpha are not preserved
+/// # Bytes under fully-transparent alpha
 ///
-/// Whenever the rows are written as 8-bit RGBA at any effort above 0, the
+/// By default, when rows are written as 8-bit RGBA at any effort above 0, the
 /// R, G, B bytes of every pixel with `alpha == 0` are zeroed before
 /// filtering (the same optimization libwebp applies unless `exact` is
 /// set). The visible image is unchanged and every pixel that can be seen
@@ -479,6 +494,9 @@ pub fn encode_rgb8(
 /// RGB. `Compression::None` (effort 0) and the effort-1 row-streaming path
 /// (`push_rows` on the zencodec encoder) store the rows as supplied. No
 /// other layout is touched — 16-bit RGBA, gray+alpha at either depth,
+/// Set [`EncodeConfig::with_preserve_transparent_rgb`] to retain hidden RGB.
+/// This is independent of explicit near-lossless or quantization settings.
+///
 /// RGB, gray, and indexed output all round-trip byte-exact.
 pub fn encode_rgba8(
     img: ImgRef<Rgba<u8>>,
@@ -1145,6 +1163,7 @@ pub(crate) fn encode_apng_depth(
         &write_meta,
         config.num_plays,
         effort,
+        config.encode.preserve_transparent_rgb,
         cancel,
         deadline,
     )

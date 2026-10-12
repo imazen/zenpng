@@ -230,6 +230,14 @@ Three gate types:
 `encode_apng_auto()` works the same way but checks the gate per frame and
 falls back to truecolor if any frame fails.
 
+## Exact transparent samples
+
+`EncodeConfig::with_preserve_transparent_rgb(true)` (also on
+`PngEncoderConfig`) retains RGB codes under zero alpha at every compression
+effort. It covers still, row, iDOT and truecolor APNG output. APNG uses exact
+SOURCE delta rectangles; its visible-pixel blend/disposal search is bypassed.
+Explicit near-lossless, quantization and conversion settings remain independent.
+
 ## Decode options
 
 ```rust

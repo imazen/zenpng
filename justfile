@@ -91,3 +91,6 @@ check-fuzz-api:
 
 # Exact HDR payload output, retained API routes, strict lint/docs and snapshots.
 test-mastering-raw: test-api-integration
+
+# Hidden RGB, ICC authority and retained PNG/APNG API behavior.
+test-exact-transcode: test-api-integration

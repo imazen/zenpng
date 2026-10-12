@@ -496,3 +496,9 @@ use `/usr/bin/log`).
 - Fixed 2026-10-12: the standalone fuzz workspace resolved released zencodec
   without the newly integrated animation timing API. Its patches now match the
   root git pins. `just check-fuzz-api` compiles all fuzz targets.
+
+- Fixed 2026-10-12: common still encoding could infer descriptor CICP even with
+  explicit ICC metadata, making PNG readers prioritize CICP over the supplied
+  profile. Descriptor inference now requires no explicit ICC. Regression:
+  `explicit_icc_is_not_overridden_by_descriptor_derived_cicp` with an independent
+  PNG metadata reader.
