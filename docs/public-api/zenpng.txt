@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpng.txt 447 lines (supported surface) | zenpng.features.txt 22 added (features: avx512,cms,imagequant,inventory,joint,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 101 lines (121 hidden + 34 excluded-feature)
+# files: zenpng.txt 448 lines (supported surface) | zenpng.features.txt 24 added (features: avx512,cms,imagequant,inventory,joint,metadata-rewrite,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 101 lines (121 hidden + 34 excluded-feature)
 
 ## summary
 #
@@ -14,7 +14,7 @@
 #   pub types (struct/enum/trait/alias)        49
 #   pub consts/statics                         10
 #   free functions                             27
-#   inherent methods                           77
+#   inherent methods                           78
 #   struct fields                             158
 #   enum variants                              67
 #   trait roster entries (type × trait)       164
@@ -22,12 +22,12 @@
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                          305
+#   (root)                          306
 #   detect                           41
 #   heuristics                       13
 #   sweep                            33
 
-## items (392 lines)
+## items (393 lines)
 
 pub mod zenpng
 pub mod detect
@@ -340,9 +340,10 @@ pub fn PngEncoderConfig::with_content_light_level_raw(self, core::option::Option
 pub fn PngEncoderConfig::with_downcast(self, DowncastFlags) -> Self
 pub fn PngEncoderConfig::with_filter(self, Filter) -> Self
 pub fn PngEncoderConfig::with_mastering_display_raw(self, core::option::Option<[u8; 24]>) -> Self
+pub fn PngEncoderConfig::with_max_threads(self, usize) -> Self
 pub fn PngEncoderConfig::with_near_lossless_bits(self, u8) -> Self
-pub fn PngEncoderConfig::with_parallel(self, bool) -> Self
 pub fn PngEncoderConfig::with_preserve_transparent_rgb(self, bool) -> Self
+pub fn PngEncoderConfig::with_threading(self, zencodec::limits::ThreadingPolicy) -> Self
 #[non_exhaustive] pub struct PngInfo
 pub PngInfo::background: core::option::Option<PngBackground>
 pub PngInfo::bit_depth: u8
