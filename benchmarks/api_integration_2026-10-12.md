@@ -39,3 +39,16 @@ Evidence key: `output/zenpng/api_integration_2026-10-12`, canonical and dev mirr
 `/mnt/v/output/zenpng/api_integration_2026-10-12`. Both copies' six content hashes
 verified. `SHA256SUMS` digest:
 `c5b9aaa12dcdcab3eedb369471efcdbe4a7d37fbcdd093c94121cf20a91868fd`.
+
+## PR18 revert
+
+`ef31abe4107b70753d16c552a751aa5a28589d1e` removes only the two PR18
+convenience functions and their documentation. PR22 remains merged, including
+native animation color negotiation. `just test-api-integration` passed release
+library tests, default/minimal integration and native-color tests, doctests,
+all-target/all-feature strict Clippy, strict docs and API snapshot generation.
+The regenerated snapshot removes exactly those two public functions.
+
+Whole-job validation: `run-heavy: done rc=0 68s | peak-RSS 0.77GiB |
+min-avail 22125MiB | peak-load 4.85`; this is build/test resource usage.
+Full log: artifact key `output/zenpng/revert_pr18_2026-10-12/gate.log`.

@@ -6,14 +6,14 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpng.txt 443 lines (supported surface) | zenpng.features.txt 21 added (features: avx512,cms,imagequant,joint,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 101 lines (121 hidden + 34 excluded-feature)
+# files: zenpng.txt 441 lines (supported surface) | zenpng.features.txt 21 added (features: avx512,cms,imagequant,joint,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 101 lines (121 hidden + 34 excluded-feature)
 
 ## summary
 #
 #   pub modules                                 4
 #   pub types (struct/enum/trait/alias)        49
 #   pub consts/statics                         10
-#   free functions                             29
+#   free functions                             27
 #   inherent methods                           73
 #   struct fields                             156
 #   enum variants                              67
@@ -22,12 +22,12 @@
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                          301
+#   (root)                          299
 #   detect                           41
 #   heuristics                       13
 #   sweep                            33
 
-## items (388 lines)
+## items (386 lines)
 
 pub mod zenpng
 pub mod detect
