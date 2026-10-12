@@ -579,3 +579,16 @@ See [LICENSE-COMMERCIAL](https://github.com/imazen/zenpng/blob/main/LICENSE-COMM
 [imageflow-dotnet]: https://github.com/imazen/imageflow-dotnet
 [imageflow-node]: https://github.com/imazen/imageflow-node
 [imageflow-go]: https://github.com/imazen/imageflow-go
+
+### Exact HDR content-light metadata
+
+`PngInfo::content_light_level_raw` exposes PNG's `[MaxCLL, MaxFALL]` as two
+`u32` values in 0.0001 cd/m² units. Pass it to
+`EncodeConfig::with_content_light_level_raw` (or the codec configuration method)
+to preserve fractional nits and the full range. Zero means unknown. Raw values
+override the whole-nit compatibility field; calling `with_content_light_level`
+clears that raw override. The generic zencodec whole-nit view remains unchanged.
+See [PNG third-edition cLLI](https://www.w3.org/TR/png-3/#11cLLI).
+
+`PngInfo::mastering_display_raw` retains the exact 24-byte `mDCV` payload for
+transcoders that must avoid a float roundtrip of its integer fields.

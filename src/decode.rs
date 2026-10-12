@@ -135,10 +135,17 @@ pub struct PngInfo {
     pub chromaticities: Option<PngChromaticities>,
     /// CICP color description from cICP chunk.
     pub cicp: Option<Cicp>,
-    /// Content light level from cLLi chunk (HDR).
+    /// Whole-nit compatibility view of `cLLI` (fractional nits truncated,
+    /// values above 65535 nits capped). Use the raw field for exact metadata.
     pub content_light_level: Option<ContentLightLevel>,
+    /// Exact PNG `cLLI`: `[MaxCLL, MaxFALL]` in 0.0001 cd/m² units.
+    /// Zero means unknown. No float conversion, rounding or clamping.
+    pub content_light_level_raw: Option<[u32; 2]>,
     /// Mastering display color volume from mDCV chunk (HDR).
     pub mastering_display: Option<MasteringDisplay>,
+    /// Exact 24-byte PNG `mDCV` payload, for metadata-preserving transcodes.
+    /// Keeps integer chromaticities and luminances without float conversion.
+    pub mastering_display_raw: Option<[u8; 24]>,
     /// Physical pixel dimensions X (pHYs chunk).
     pub pixels_per_unit_x: Option<u32>,
     /// Physical pixel dimensions Y (pHYs chunk).

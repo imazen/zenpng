@@ -51,6 +51,10 @@ pub struct EncodeConfig {
     pub cicp: Option<Cicp>,
     /// Content light level info for the `cLLI` chunk (PNG-3 HDR: MaxCLL/MaxFALL).
     pub content_light_level: Option<ContentLightLevel>,
+    /// Exact PNG `cLLI`: `[MaxCLL, MaxFALL]` in 0.0001 cd/m² units.
+    /// Zero means unknown. When present, overrides the whole-nit field
+    /// and generic metadata without rounding or clamping.
+    pub content_light_level_raw: Option<[u32; 2]>,
     /// Mastering display color volume for the `mDCV` chunk (PNG-3 HDR). Written
     /// only alongside a [`cicp`](Self::cicp) chunk (PNG-3 §11.3.2.7).
     pub mastering_display: Option<MasteringDisplay>,
@@ -245,6 +249,15 @@ impl EncodeConfig {
     #[must_use]
     pub fn with_content_light_level(mut self, clli: Option<ContentLightLevel>) -> Self {
         self.content_light_level = clli;
+        self.content_light_level_raw = None;
+        self
+    }
+
+    /// Set exact PNG `cLLI` values in 0.0001 cd/m² units, overriding
+    /// the whole-nit field. `None` returns to the whole-nit fallback.
+    #[must_use]
+    pub fn with_content_light_level_raw(mut self, clli: Option<[u32; 2]>) -> Self {
+        self.content_light_level_raw = clli;
         self
     }
 
@@ -564,6 +577,7 @@ pub(crate) fn png_write_meta<'a>(
     // Builder values override the Metadata-derived ones, but only when set —
     // `from_metadata` may already have populated these from `metadata`.
     write_meta.cicp = config.cicp.or(write_meta.cicp);
+    write_meta.content_light_level_raw = config.content_light_level_raw;
     write_meta.content_light_level = config
         .content_light_level
         .or(write_meta.content_light_level);
@@ -1010,6 +1024,7 @@ pub fn encode_apng(
     write_meta.chromaticities = config.encode.chromaticities;
     // Builder values override the Metadata-derived ones, but only when set.
     write_meta.cicp = config.encode.cicp.or(write_meta.cicp);
+    write_meta.content_light_level_raw = config.encode.content_light_level_raw;
     write_meta.content_light_level = config
         .encode
         .content_light_level

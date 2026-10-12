@@ -119,7 +119,9 @@ pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &PngAncillary) -> PngInfo {
         chromaticities,
         cicp,
         content_light_level,
+        content_light_level_raw: ancillary.clli,
         mastering_display,
+        mastering_display_raw: ancillary.mdcv.as_deref().and_then(|m| m.try_into().ok()),
         pixels_per_unit_x,
         pixels_per_unit_y,
         phys_unit,
@@ -1384,7 +1386,9 @@ mod tests {
             chromaticities: None,
             cicp: None,
             content_light_level: None,
+            content_light_level_raw: None,
             mastering_display: None,
+            mastering_display_raw: None,
             pixels_per_unit_x: None,
             pixels_per_unit_y: None,
             phys_unit: None,
@@ -2322,6 +2326,47 @@ mod tests {
     }
 
     /// Craft a minimal valid 1×1 RGBA8 PNG and return its bytes.
+    #[test]
+    fn raw_hdr_mastering_payload_is_exact() {
+        let source = craft_valid_1x1_png();
+        let mut raw = [0u8; 24];
+        for (slot, value) in [32000u16, 16500, 15000, 30000, 7500, 3000, 15635, 16450]
+            .iter()
+            .enumerate()
+        {
+            raw[slot * 2..slot * 2 + 2].copy_from_slice(&value.to_be_bytes());
+        }
+        raw[16..20].copy_from_slice(&(u32::MAX - 17).to_be_bytes());
+        raw[20..24].copy_from_slice(&123u32.to_be_bytes());
+        // Fixture starts with the signature and the 25-byte IHDR chunk.
+        let mut png = source[..33].to_vec();
+        crate::chunk::write::write_chunk(&mut png, b"cICP", &[9, 16, 0, 1]);
+        crate::chunk::write::write_chunk(&mut png, b"mDCV", &raw);
+        png.extend_from_slice(&source[33..]);
+        assert_eq!(crate::probe(&png).unwrap().mastering_display_raw, Some(raw));
+        assert_eq!(
+            crate::decode(
+                &png,
+                &crate::PngDecodeConfig::strict(),
+                &enough::Unstoppable
+            )
+            .unwrap()
+            .info
+            .mastering_display_raw,
+            Some(raw)
+        );
+        let oracle = png::Decoder::new(std::io::Cursor::new(&png))
+            .read_info()
+            .unwrap();
+        let volume = oracle
+            .info()
+            .mastering_display_color_volume
+            .as_ref()
+            .unwrap();
+        assert_eq!(volume.max_luminance, u32::MAX - 17);
+        assert_eq!(volume.min_luminance, 123);
+    }
+
     fn craft_valid_1x1_png() -> Vec<u8> {
         let img = imgref::ImgVec::new(
             vec![rgb::Rgba {

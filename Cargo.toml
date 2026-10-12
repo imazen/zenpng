@@ -189,9 +189,7 @@ required-features = ["_dev"]
 # commit 998edf5f, byte-identical to the published crate — keep this in sync
 # with the `zencodec-testkit` dev-dep's tag above.
 zencodec = { git = "https://github.com/imazen/zencodec", tag = "v0.1.26" }
-# DEV-ONLY: zenflate's PNG strip API (`zenflate::png::{StripCompressor,
-# StripDecoder}`, `CompressionLevel::png`) is in imazen/zenflate#10
-# (main since imazen/zenflate#10 merged), not yet released. Local builds use the sibling checkout;
-# CI checks out zenflate main at ../zenflate. Replace with the released version
-# once it ships.
-zenflate = { path = "../zenflate" }
+# PNG strip API is unreleased; pin its source so HDR/API checks and CI use
+# the same implementation without depending on a sibling checkout.
+# Replace this patch when the API is published.
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "9f8684bf789297bb8bf043bc9d43f2c3b6f5dae2" }

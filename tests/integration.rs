@@ -28,3 +28,6 @@ mod apng_alloc;
 
 #[path = "integration/sink_truncation.rs"]
 mod sink_truncation;
+
+#[path = "integration/content_light_raw.rs"]
+mod content_light_raw;
