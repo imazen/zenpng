@@ -4,6 +4,9 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+- Keep the independent fuzz workspace on the same shared-contract revision as
+  its codec dependency, avoiding duplicate zencodec trait identities.
+
 ### Shared rewrite contract
 
 - Move the existing exact APNG implementation to `push_frame_exact`; the shared
