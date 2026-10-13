@@ -263,6 +263,15 @@ impl PngEncoderConfig {
         self
     }
 
+    /// Supply ancillary chunks emitted verbatim around the image data,
+    /// including on the `push_rows` streaming paths.
+    /// See [`EncodeConfig::unknown_chunks`] for naming and ownership rules.
+    #[must_use]
+    pub fn with_unknown_chunks(mut self, chunks: Vec<crate::OwnedAncillaryChunk>) -> Self {
+        self.config.unknown_chunks = chunks;
+        self
+    }
+
     /// Convenience: encode RGB8 pixels in one call.
     pub fn encode_rgb8(
         &self,
@@ -832,6 +841,8 @@ struct StripStreamingState {
     pending: Vec<u8>,
     row_bytes: usize,
     rows_pushed: u32,
+    /// Serialized `AfterIdat` unknown chunks, written before `IEND`.
+    tail: Vec<u8>,
 }
 
 /// Buffered state: accumulates raw pixel bytes, delegates to encode_raw in finish().
@@ -871,6 +882,8 @@ struct TrueStreamingState {
     block_remaining: usize,
     /// Remaining filtered bytes in the entire image.
     filtered_remaining: usize,
+    /// Serialized `AfterIdat` unknown chunks, written before `IEND`.
+    tail: Vec<u8>,
 }
 
 /// Pre-filtered streaming state: filters rows on arrival, compresses in finish().
@@ -905,6 +918,8 @@ struct PreFilteredState {
     /// Zenflate compression effort for finish().
     /// The zenflate level effort 1 compresses at (one-shot and streaming match).
     level: zenflate::CompressionLevel,
+    /// Serialized `AfterIdat` unknown chunks, written before `IEND`.
+    tail: Vec<u8>,
 }
 
 impl PngEncoder {
@@ -1311,7 +1326,7 @@ impl PngEncoder {
             self.policy.as_ref(),
             Some(color_type.channels()),
         )?;
-        let write_meta = crate::encode::png_write_meta(effective_meta.as_ref(), config);
+        let write_meta = crate::encode::png_write_meta(effective_meta.as_ref(), config)?;
         let mut output = Vec::new();
         output.extend_from_slice(&PNG_SIGNATURE);
         let mut ihdr = [0u8; 13];
@@ -1332,6 +1347,7 @@ impl PngEncoder {
             pending: Vec::new(),
             row_bytes,
             rows_pushed: 0,
+            tail: crate::encoder::tail_ancillary_bytes(&write_meta),
         }))
     }
 
@@ -1696,6 +1712,7 @@ impl PngEncoder {
                     .copy_from_slice(&len.to_be_bytes());
                 let crc = zenflate::crc32(0, &state.output[state.idat_len_pos + 4..]);
                 state.output.extend_from_slice(&crc.to_be_bytes());
+                state.output.extend_from_slice(&state.tail);
                 crate::chunk::write::write_chunk(&mut state.output, b"IEND", &[]);
                 if let Some(ref limits) = self.limits {
                     limits
@@ -2504,6 +2521,7 @@ impl PngDecoder<'_> {
             skip_decompression_checksum: true,
             skip_critical_chunk_crc: true,
             max_threads: decode_threads(limits.threading()),
+            collect_unknown_chunks: false,
             alloc_pref: limits.prefer_fallible_allocations,
         };
         apply_decode_policy(config, self.policy.as_ref())
@@ -2670,6 +2688,7 @@ fn push_decoder_native_noninterlaced<'a>(
         skip_decompression_checksum: true,
         skip_critical_chunk_crc: true,
         max_threads: decode_threads(limits.threading()),
+        collect_unknown_chunks: false,
         alloc_pref: limits.prefer_fallible_allocations,
     };
     let png_config = apply_decode_policy(png_config, job.policy.as_ref());
@@ -2910,6 +2929,7 @@ impl<'a> PngStreamingDecoder<'a> {
             skip_decompression_checksum: true,
             skip_critical_chunk_crc: true,
             max_threads: decode_threads(effective_limits.threading()),
+            collect_unknown_chunks: false,
             alloc_pref: effective_limits.prefer_fallible_allocations,
         };
         let png_config = apply_decode_policy(png_config, policy);
@@ -3166,6 +3186,7 @@ impl PngAnimationFrameDecoder {
                 skip_decompression_checksum: true,
                 skip_critical_chunk_crc: true,
                 max_threads: decode_threads(limits.threading()),
+                collect_unknown_chunks: false,
                 alloc_pref: limits.prefer_fallible_allocations,
             },
             policy,
@@ -3857,7 +3878,7 @@ impl TrueStreamingState {
 
         // Build metadata
         let effective_meta = apply_encode_policy(metadata, policy, Some(color_type.channels()))?;
-        let write_meta = crate::encode::png_write_meta(effective_meta.as_ref(), config);
+        let write_meta = crate::encode::png_write_meta(effective_meta.as_ref(), config)?;
 
         let est = 8 + 25 + (12 + idat_data_len) + 12 + metadata_size_estimate(&write_meta);
         let mut output = Vec::with_capacity(est);
@@ -3901,6 +3922,7 @@ impl TrueStreamingState {
             idat_len_pos,
             block_remaining: 0,
             filtered_remaining: total_filtered,
+            tail: crate::encoder::tail_ancillary_bytes(&write_meta),
         })
     }
 
@@ -3998,6 +4020,7 @@ impl TrueStreamingState {
         self.output.extend_from_slice(&crc.to_be_bytes());
 
         // IEND
+        self.output.extend_from_slice(&self.tail);
         crate::chunk::write::write_chunk(&mut self.output, b"IEND", &[]);
 
         self.output
@@ -4022,7 +4045,7 @@ impl PreFilteredState {
         use crate::encoder::{metadata_size_estimate, write_all_metadata};
 
         let effective_meta = apply_encode_policy(metadata, policy, Some(color_type.channels()))?;
-        let write_meta = crate::encode::png_write_meta(effective_meta.as_ref(), config);
+        let write_meta = crate::encode::png_write_meta(effective_meta.as_ref(), config)?;
 
         // Build preamble: PNG signature + IHDR + metadata
         let est = 8 + 25 + metadata_size_estimate(&write_meta);
@@ -4057,6 +4080,7 @@ impl PreFilteredState {
             bpp,
             row_bytes,
             rows_pushed: 0,
+            tail: crate::encoder::tail_ancillary_bytes(&write_meta),
             color_type,
             bit_depth,
             level: crate::encoder::compress::effort1_level(),
@@ -4121,6 +4145,7 @@ impl PreFilteredState {
             preamble,
             filtered_data,
             level,
+            tail,
             ..
         } = self;
 
@@ -4147,10 +4172,11 @@ impl PreFilteredState {
         // Free the filtered data before building output.
         drop(filtered_data);
 
-        // Assemble: preamble + IDAT + IEND
+        // Assemble: preamble + IDAT + tail ancillary chunks + IEND
         let mut out = preamble;
-        out.reserve(12 + compressed.len() + 12);
+        out.reserve(12 + compressed.len() + tail.len() + 12);
         write_chunk(&mut out, b"IDAT", &compressed);
+        out.extend_from_slice(&tail);
         write_chunk(&mut out, b"IEND", &[]);
 
         Ok(out)

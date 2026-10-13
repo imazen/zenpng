@@ -137,6 +137,23 @@ pub struct EncodeConfig {
     /// bit-exact for the chosen format. Disable individual flags for
     /// debugging or to skip the scan cost on inputs known not to benefit.
     pub downcast: DowncastFlags,
+    /// Caller-supplied ancillary chunks emitted verbatim, in the order given.
+    ///
+    /// `BeforeIdat` chunks follow zenpng's own metadata chunks (still before
+    /// `PLTE`/`tRNS`/`IDAT`); `AfterIdat` chunks are written after the image
+    /// data, before `IEND`. Chunk names must be ancillary PNG names —
+    /// lowercase first letter, ASCII letters only, uppercase third letter —
+    /// and must not name a chunk zenpng writes itself (rejecting them keeps
+    /// semantic metadata from being duplicated): `IHDR`, `PLTE`, `IDAT`,
+    /// `IEND`, `acTL`, `fcTL`, `fdAT`, `tRNS`, `gAMA`, `cHRM`, `sRGB`,
+    /// `iCCP`, `cICP`, `mDCV`, `cLLI`, `eXIf`, `iTXt`, `tEXt`, `pHYs`,
+    /// `tIME`, `iDOT`.
+    ///
+    /// PNG-3 copy semantics are the caller's responsibility: emit an unknown
+    /// chunk only when its safe-to-copy bit (lowercase fourth letter, see
+    /// [`OwnedAncillaryChunk::is_safe_to_copy`]) permits copying it past the
+    /// changes this encode makes to critical image data.
+    pub unknown_chunks: Vec<crate::chunk::OwnedAncillaryChunk>,
 }
 
 impl Default for EncodeConfig {
@@ -163,6 +180,7 @@ impl Default for EncodeConfig {
             last_modified: None,
             decode_segments: 0,
             downcast: DowncastFlags::default(),
+            unknown_chunks: Vec::new(),
         }
     }
 }
@@ -634,13 +652,49 @@ pub fn encode_gray16(
     )
 }
 
+/// Chunk names the encoder writes itself. `unknown_chunks` entries naming
+/// one of these are rejected so semantic metadata cannot be duplicated.
+const EMITTED_CHUNK_TAGS: [[u8; 4]; 21] = [
+    *b"IHDR", *b"PLTE", *b"IDAT", *b"IEND", *b"acTL", *b"fcTL", *b"fdAT", *b"tRNS", *b"gAMA",
+    *b"cHRM", *b"sRGB", *b"iCCP", *b"cICP", *b"mDCV", *b"cLLI", *b"eXIf", *b"iTXt", *b"tEXt",
+    *b"pHYs", *b"tIME", *b"iDOT",
+];
+
+/// Reject `unknown_chunks` entries that are not legal ancillary PNG chunk
+/// names or name a chunk the encoder writes from semantic fields.
+fn validate_unknown_chunks(
+    chunks: &[crate::chunk::OwnedAncillaryChunk],
+) -> crate::error::Result<()> {
+    for c in chunks {
+        let valid_name = c.tag[0].is_ascii_lowercase()
+            && c.tag[2].is_ascii_uppercase()
+            && c.tag.iter().all(u8::is_ascii_alphabetic);
+        if !valid_name {
+            return Err(at!(PngError::InvalidInput(alloc::format!(
+                "unknown_chunks tag {:?} is not an ancillary PNG chunk name \
+                 (lowercase first letter, ASCII letters, uppercase third letter)",
+                core::str::from_utf8(&c.tag).unwrap_or("????")
+            ))));
+        }
+        if EMITTED_CHUNK_TAGS.contains(&c.tag) {
+            return Err(at!(PngError::InvalidInput(alloc::format!(
+                "unknown_chunks tag {:?} is written from zenpng's semantic \
+                 config fields; passing it would duplicate the chunk",
+                core::str::from_utf8(&c.tag).unwrap_or("????")
+            ))));
+        }
+    }
+    Ok(())
+}
+
 /// The ancillary chunks a PNG gets from `metadata` and the config's builder
 /// values (shared by the one-shot encoder and every `push_rows` mode, so they
 /// write the same header).
 pub(crate) fn png_write_meta<'a>(
     metadata: Option<&'a Metadata>,
     config: &'a EncodeConfig,
-) -> PngWriteMetadata<'a> {
+) -> crate::error::Result<PngWriteMetadata<'a>> {
+    validate_unknown_chunks(&config.unknown_chunks)?;
     let mut write_meta = PngWriteMetadata::from_metadata(metadata);
     write_meta.source_gamma = config.source_gamma;
     write_meta.srgb_intent = config.srgb_intent;
@@ -659,7 +713,8 @@ pub(crate) fn png_write_meta<'a>(
     write_meta.phys_unit = config.phys_unit;
     write_meta.text_chunks.clone_from(&config.text_chunks);
     write_meta.last_modified = config.last_modified;
-    write_meta
+    write_meta.unknown_chunks = &config.unknown_chunks;
+    Ok(write_meta)
 }
 
 /// Low-level encode: raw bytes to PNG with metadata and config applied.
@@ -683,7 +738,7 @@ pub(crate) fn encode_raw(
 ) -> crate::error::Result<Vec<u8>> {
     let effort = config.compression.effort();
 
-    let mut write_meta = png_write_meta(metadata, config);
+    let mut write_meta = png_write_meta(metadata, config)?;
 
     let w = width as usize;
     let h = height as usize;
@@ -878,7 +933,7 @@ fn encode_raw_with_stats(
 ) -> crate::error::Result<(Vec<u8>, crate::encoder::PhaseStats)> {
     let effort = config.compression.effort();
 
-    let write_meta = png_write_meta(metadata, config);
+    let write_meta = png_write_meta(metadata, config)?;
 
     let w = width as usize;
     let h = height as usize;
@@ -1172,6 +1227,7 @@ pub(crate) fn encode_apng_depth(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chunk::{AncillaryPosition, OwnedAncillaryChunk};
     use enough::Unstoppable;
     use imgref::Img;
 
@@ -2333,5 +2389,187 @@ mod tests {
         // HDR light-level + mastering-display chunks wired through the public encode API.
         assert_eq!(decoded.info.content_light_level, Some(clli));
         assert!(decoded.info.mastering_display.is_some());
+    }
+
+    fn small_rgba() -> Img<Vec<Rgba<u8>>> {
+        let pixels: Vec<Rgba<u8>> = (0..16)
+            .map(|i| Rgba {
+                r: (i * 7) as u8,
+                g: (i * 5) as u8,
+                b: (i * 3) as u8,
+                a: 255,
+            })
+            .collect();
+        Img::new(pixels, 4, 4)
+    }
+
+    fn unknown(tag: &[u8; 4], data: &[u8], position: AncillaryPosition) -> OwnedAncillaryChunk {
+        OwnedAncillaryChunk {
+            tag: *tag,
+            data: data.to_vec(),
+            position,
+        }
+    }
+
+    #[test]
+    fn unknown_chunks_written_both_sides_of_idat() {
+        let mut config = EncodeConfig::default()
+            .with_compression(Compression::Fastest)
+            .with_downcast(DowncastFlags::none());
+        config.unknown_chunks = vec![
+            unknown(b"vpAg", b"pre-payload", AncillaryPosition::BeforeIdat),
+            unknown(b"prVa", b"post-payload", AncillaryPosition::AfterIdat),
+        ];
+        let encoded = encode_rgba8(
+            small_rgba().as_ref(),
+            None,
+            &config,
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let chunks: Vec<_> = crate::ancillary_chunks(&encoded, false)
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let pre = chunks.iter().find(|c| &c.tag == b"vpAg").unwrap();
+        assert_eq!(pre.data, b"pre-payload");
+        assert_eq!(pre.position, AncillaryPosition::BeforeIdat);
+        let post = chunks.iter().find(|c| &c.tag == b"prVa").unwrap();
+        assert_eq!(post.data, b"post-payload");
+        assert_eq!(post.position, AncillaryPosition::AfterIdat);
+    }
+
+    #[test]
+    fn unknown_chunks_reject_critical_and_invalid_names() {
+        let img = small_rgba();
+        for (tag, name) in [
+            (*b"IDAT", "critical"),
+            (*b"VpAg", "uppercase first"),
+            (*b"vpag", "lowercase third"),
+            (*b"v1Ag", "non-letter"),
+        ] {
+            let config = EncodeConfig {
+                unknown_chunks: vec![unknown(&tag, b"x", AncillaryPosition::BeforeIdat)],
+                ..Default::default()
+            };
+            let err =
+                encode_rgba8(img.as_ref(), None, &config, &Unstoppable, &Unstoppable).unwrap_err();
+            assert!(
+                err.to_string().contains("not an ancillary PNG chunk name")
+                    || err.to_string().contains("duplicate"),
+                "{name}: unexpected error {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_chunks_reject_emitted_tags() {
+        let config = EncodeConfig {
+            unknown_chunks: vec![unknown(b"tRNS", b"x", AncillaryPosition::BeforeIdat)],
+            ..Default::default()
+        };
+        let err = encode_rgba8(
+            small_rgba().as_ref(),
+            None,
+            &config,
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("duplicate"), "{err}");
+    }
+
+    #[test]
+    fn unknown_chunks_streaming_path_emits_tail() {
+        // Effort 0 with a declared canvas takes the incremental
+        // true-streaming path; its AfterIdat chunks must still land
+        // between IDAT and IEND.
+        use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+        use zenpixels::{PixelDescriptor, PixelSlice};
+        let mut rows = crate::PngEncoderConfig::new()
+            .with_compression(Compression::None)
+            .with_downcast(DowncastFlags::none())
+            .with_unknown_chunks(vec![unknown(
+                b"prVa",
+                b"streamed",
+                AncillaryPosition::AfterIdat,
+            )])
+            .job()
+            .with_canvas_size(4, 4)
+            .encoder()
+            .unwrap();
+        let pixels = [7u8; 4 * 4 * 4];
+        for row in pixels.as_chunks::<16>().0 {
+            rows.push_rows(PixelSlice::new(row, 4, 1, 16, PixelDescriptor::RGBA8_SRGB).unwrap())
+                .unwrap();
+        }
+        let out = rows.finish().unwrap();
+        let chunks: Vec<_> = crate::ancillary_chunks(out.data(), false)
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let post = chunks.iter().find(|c| &c.tag == b"prVa").unwrap();
+        assert_eq!(post.data, b"streamed");
+        assert_eq!(post.position, AncillaryPosition::AfterIdat);
+    }
+
+    #[test]
+    fn decode_reports_only_uninterpreted_unknowns_with_positions() {
+        let mut config = EncodeConfig::default()
+            .with_compression(Compression::Fastest)
+            .with_downcast(DowncastFlags::none());
+        config.unknown_chunks = vec![
+            unknown(b"vpAg", b"pre", AncillaryPosition::BeforeIdat),
+            unknown(b"prVa", b"post", AncillaryPosition::AfterIdat),
+        ];
+        let encoded = encode_rgba8(
+            small_rgba().as_ref(),
+            None,
+            &config,
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let decode_config = crate::PngDecodeConfig::default().with_collect_unknown_chunks(true);
+        let decoded = crate::decode(&encoded, &decode_config, &Unstoppable).unwrap();
+        // Opt-in collection reports both supplied chunks verbatim with their
+        // declared side — the same records the decoder skipped while walking
+        // the file once. Off by default (no decode-time payload copies).
+        assert!(
+            crate::decode(&encoded, &crate::PngDecodeConfig::default(), &Unstoppable)
+                .unwrap()
+                .info
+                .unknown_chunks
+                .is_empty()
+        );
+        assert_eq!(decoded.info.unknown_chunks.len(), 2);
+        assert_eq!(&decoded.info.unknown_chunks[0].tag, b"vpAg");
+        assert_eq!(decoded.info.unknown_chunks[0].data, b"pre");
+        assert_eq!(
+            decoded.info.unknown_chunks[0].position,
+            AncillaryPosition::BeforeIdat
+        );
+        assert_eq!(&decoded.info.unknown_chunks[1].tag, b"prVa");
+        assert_eq!(decoded.info.unknown_chunks[1].data, b"post");
+        assert_eq!(
+            decoded.info.unknown_chunks[1].position,
+            AncillaryPosition::AfterIdat
+        );
+        // Feeding them back verbatim round-trips the unknown metadata.
+        let mut reconfig = EncodeConfig::default()
+            .with_compression(Compression::Fastest)
+            .with_downcast(DowncastFlags::none());
+        reconfig.unknown_chunks = decoded.info.unknown_chunks.clone();
+        let reencoded = encode_rgba8(
+            small_rgba().as_ref(),
+            None,
+            &reconfig,
+            &Unstoppable,
+            &Unstoppable,
+        )
+        .unwrap();
+        let redecoded = crate::decode(&reencoded, &decode_config, &Unstoppable).unwrap();
+        assert_eq!(redecoded.info.unknown_chunks, decoded.info.unknown_chunks);
     }
 }

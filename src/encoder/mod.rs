@@ -19,7 +19,10 @@ use crate::error::PngError;
 use whereat::at;
 
 pub(crate) use self::compress::{RowFormat, compress_filtered};
-pub(crate) use self::metadata::{PngWriteMetadata, metadata_size_estimate, write_all_metadata};
+pub(crate) use self::metadata::{
+    PngWriteMetadata, metadata_size_estimate, tail_ancillary_bytes, write_all_metadata,
+    write_tail_ancillary,
+};
 
 /// Compression options passed through the pipeline.
 pub(crate) struct CompressOptions<'a> {
@@ -184,6 +187,7 @@ pub(crate) fn write_indexed_png(
     segments::write_idat(&mut out, &idat);
 
     // IEND
+    write_tail_ancillary(&mut out, write_meta);
     write_chunk(&mut out, b"IEND", &[]);
 
     Ok(out)
@@ -267,6 +271,7 @@ pub(crate) fn write_truecolor_png(
         }
 
         segments::write_idat(&mut out, &idat);
+        write_tail_ancillary(&mut out, write_meta);
         write_chunk(&mut out, b"IEND", &[]);
 
         return Ok(out);
@@ -343,6 +348,7 @@ pub(crate) fn write_truecolor_png(
         let crc = zenflate::crc32(zenflate::crc32(0, b"IDAT"), &out[idat_start..]);
         out.extend_from_slice(&crc.to_be_bytes());
 
+        write_tail_ancillary(&mut out, write_meta);
         write_chunk(&mut out, b"IEND", &[]);
         return Ok(out);
     }
@@ -388,6 +394,7 @@ pub(crate) fn write_truecolor_png(
     segments::write_idat(&mut out, &idat);
 
     // IEND
+    write_tail_ancillary(&mut out, write_meta);
     write_chunk(&mut out, b"IEND", &[]);
 
     Ok(out)
@@ -462,6 +469,7 @@ pub(crate) fn write_truecolor_png_with_stats(
             write_chunk(&mut out, b"tRNS", trns_data);
         }
         segments::write_idat(&mut out, &idat);
+        write_tail_ancillary(&mut out, write_meta);
         write_chunk(&mut out, b"IEND", &[]);
 
         return Ok(out);
@@ -523,6 +531,7 @@ pub(crate) fn write_truecolor_png_with_stats(
         write_chunk(&mut out, b"tRNS", trns_data);
     }
     segments::write_idat(&mut out, &idat);
+    write_tail_ancillary(&mut out, write_meta);
     write_chunk(&mut out, b"IEND", &[]);
 
     Ok(out)

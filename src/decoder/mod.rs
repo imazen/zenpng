@@ -30,7 +30,7 @@ use self::row::RowDecoder;
 // ── PngInfo construction ────────────────────────────────────────────
 
 /// Build `PngInfo` from parsed IHDR and ancillary metadata.
-pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &PngAncillary) -> PngInfo {
+pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &mut PngAncillary) -> PngInfo {
     let has_alpha = ihdr.has_alpha() || ancillary.trns.is_some();
     let sequence = if let Some((n, _)) = ancillary.actl {
         zencodec::ImageSequence::Animation {
@@ -136,6 +136,10 @@ pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &PngAncillary) -> PngInfo {
             .map(|p| (p.len() / 3).min(u16::MAX as usize) as u16),
         compressed_data_size: ancillary.idat_bytes,
         creating_tool: ancillary.creating_tool.clone(),
+        // Moved, not cloned: payload bytes live in exactly one place, so
+        // enabling collection adds one payload copy beyond the input, never
+        // two live copies at once.
+        unknown_chunks: core::mem::take(&mut ancillary.unknown_chunks),
     }
 }
 
@@ -148,7 +152,9 @@ pub(crate) fn probe_png(data: &[u8]) -> crate::error::Result<PngInfo> {
 
 /// [`probe_png`] that skips critical-chunk CRC checks when the decode it
 /// precedes does (`PngDecodeConfig::skip_critical_chunk_crc`), so probing
-/// never rejects a file the decoder accepts.
+/// never rejects a file the decoder accepts. `unknown_chunks` stays empty:
+/// probe is a pre-scan, and verbatim payload copies are reserved for the
+/// decoder's opt-in (`PngDecodeConfig::collect_unknown_chunks`).
 pub(crate) fn probe_png_with(
     data: &[u8],
     skip_critical_crc: bool,
@@ -207,7 +213,7 @@ pub(crate) fn probe_png_with(
     }
     ancillary.idat_bytes = idat_bytes;
 
-    Ok(build_png_info(&ihdr, &ancillary))
+    Ok(build_png_info(&ihdr, &mut ancillary))
 }
 
 // ── Full decode ─────────────────────────────────────────────────────
@@ -271,7 +277,7 @@ pub(crate) fn decode_png(
             let all_pixels = all_pixels?;
             reader.finish_metadata();
             let mut warnings = reader.collect_decode_warnings();
-            let ancillary = reader.ancillary();
+            let ancillary = reader.ancillary_mut();
             let info = build_png_info(&ihdr, ancillary);
             warnings.extend(crate::decode::detect_color_warnings(
                 ancillary.srgb_intent,
@@ -356,7 +362,7 @@ pub(crate) fn decode_png(
         reader.finish_metadata();
 
         let mut warnings = reader.collect_decode_warnings();
-        let ancillary = reader.ancillary();
+        let ancillary = reader.ancillary_mut();
         let info = build_png_info(&ihdr, ancillary);
 
         warnings.extend(crate::decode::detect_color_warnings(
@@ -476,7 +482,7 @@ pub(crate) fn decode_png(
 
     let mut warnings = reader.collect_decode_warnings();
 
-    let ancillary = reader.ancillary();
+    let ancillary = reader.ancillary_mut();
     let info = build_png_info(&ihdr, ancillary);
     let pixels = build_pixel_buffer(&ihdr, ancillary, buf, w, h)?;
 
@@ -828,10 +834,11 @@ fn decode_interlaced_to_output(
     config: &crate::decode::PngDecodeConfig,
     cancel: &dyn Stop,
 ) -> crate::error::Result<PngDecodeOutput> {
-    let (ihdr, ancillary, pixels, _fmt, mut warnings) = decode_interlaced(data, config, cancel)?;
+    let (ihdr, mut ancillary, pixels, _fmt, mut warnings) =
+        decode_interlaced(data, config, cancel)?;
     let w = ihdr.width as usize;
     let h = ihdr.height as usize;
-    let info = build_png_info(&ihdr, &ancillary);
+    let info = build_png_info(&ihdr, &mut ancillary);
     let pixel_data = build_pixel_data(&ihdr, &ancillary, pixels, w, h)?;
 
     warnings.extend(crate::decode::detect_color_warnings(
@@ -1400,6 +1407,7 @@ mod tests {
             palette_size: None,
             compressed_data_size: 0,
             creating_tool: None,
+            unknown_chunks: Vec::new(),
         };
 
         Ok(PngDecodeOutput {
@@ -3047,19 +3055,19 @@ mod tests {
     #[test]
     fn build_png_info_with_cicp() {
         let ihdr = Ihdr::parse(&make_ihdr(8, 8, 8, 2, 0)).unwrap();
-        let ancillary = crate::chunk::ancillary::PngAncillary {
+        let mut ancillary = crate::chunk::ancillary::PngAncillary {
             cicp: Some([1, 13, 0, 1]),
             ..Default::default()
         };
-        let info = build_png_info(&ihdr, &ancillary);
+        let info = build_png_info(&ihdr, &mut ancillary);
         assert!(info.cicp.is_some());
     }
 
     #[test]
     fn build_png_info_minimal() {
         let ihdr = Ihdr::parse(&make_ihdr(4, 4, 8, 6, 0)).unwrap();
-        let ancillary = crate::chunk::ancillary::PngAncillary::default();
-        let info = build_png_info(&ihdr, &ancillary);
+        let mut ancillary = crate::chunk::ancillary::PngAncillary::default();
+        let info = build_png_info(&ihdr, &mut ancillary);
         assert_eq!(info.width, 4);
         assert_eq!(info.height, 4);
         assert!(info.has_alpha);

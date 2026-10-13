@@ -453,7 +453,10 @@ impl<'a> RowDecoder<'a> {
         let ihdr = Ihdr::parse_fields(ihdr_chunk.data)?;
 
         // Collect pre-IDAT ancillary chunks
-        let mut ancillary = PngAncillary::default();
+        let mut ancillary = PngAncillary {
+            keep_unknown: config.collect_unknown_chunks,
+            ..Default::default()
+        };
         let mut first_idat_pos = None;
         // (chunk position, data range) of the iDOT chunk; a second iDOT
         // makes the table ambiguous, so it is dropped (`Some(None)`).
@@ -554,6 +557,12 @@ impl<'a> RowDecoder<'a> {
     /// Get the ancillary metadata.
     pub fn ancillary(&self) -> &PngAncillary {
         &self.ancillary
+    }
+
+    /// Mutable ancillary metadata: final info construction moves the
+    /// opt-in unknown-chunk list out instead of cloning it.
+    pub(crate) fn ancillary_mut(&mut self) -> &mut PngAncillary {
+        &mut self.ancillary
     }
 
     /// Byte offset of the first IDAT chunk header.

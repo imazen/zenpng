@@ -24,6 +24,19 @@ All notable changes to zenpng are documented here.
   one-shot cancellation reasons from compressed metadata and image streams.
 - [Published API audit against zenpng 0.1.4](docs/metadata-api-audit.md).
 
+- Report ancillary chunks the decoder did not interpret through
+  `PngInfo::unknown_chunks` — file order, before/after-IDAT position and
+  safe-to-copy flag, collected during the decode chunk walk. Reporting is
+  opt-in via `PngDecodeConfig::with_collect_unknown_chunks` (default off):
+  it keeps a verbatim copy of each uninterpreted payload, admitting up to
+  roughly one input-size of allocation the pixel budget does not cover — the
+  list is moved into `PngInfo`, so peak stays a single copy — so ordinary
+  decode and `probe` leave it off. Also add `ancillary_chunks` for read-side
+  iteration over raw PNG bytes, plus `EncodeConfig::unknown_chunks` /
+  `PngEncoderConfig::with_unknown_chunks` to emit caller-supplied ancillary
+  chunks at their declared position on all encode paths. Chunk names that
+  duplicate encoder-emitted types or violate ancillary naming rules are
+  rejected.
 - Support native GrayAlpha8/16 through typed buffered and strided-row encoding,
   sharing the PNG filtering/compression and exact alpha semantics.
 

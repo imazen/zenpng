@@ -7,7 +7,9 @@ use enough::Stop;
 use crate::chunk::PNG_SIGNATURE;
 use crate::chunk::write::write_chunk;
 use crate::encode::ApngFrameInput;
-use crate::encoder::metadata::{PngWriteMetadata, metadata_size_estimate, write_all_metadata};
+use crate::encoder::metadata::{
+    PngWriteMetadata, metadata_size_estimate, write_all_metadata, write_tail_ancillary,
+};
 use crate::error::PngError;
 #[allow(unused_imports)]
 use whereat::at;
@@ -1313,6 +1315,7 @@ pub(crate) fn encode_apng_truecolor_depth(
     }
 
     // IEND
+    write_tail_ancillary(&mut out, write_meta);
     write_chunk(&mut out, b"IEND", &[]);
 
     Ok(out)
@@ -1628,6 +1631,7 @@ pub(crate) fn encode_apng_indexed_from_indices(
     }
 
     // IEND
+    write_tail_ancillary(&mut out, write_meta);
     write_chunk(&mut out, b"IEND", &[]);
 
     Ok(out)
