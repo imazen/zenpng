@@ -44,6 +44,11 @@ pub(crate) struct PngWriteMetadata<'a> {
     pub text_chunks: Vec<TextChunk>,
     /// Last modification time (tIME).
     pub last_modified: Option<PngTime>,
+    /// Caller-supplied ancillary chunks (`EncodeConfig::unknown_chunks`).
+    /// `BeforeIdat` entries are written at the end of [`write_all_metadata`];
+    /// `AfterIdat` entries go to [`write_tail_ancillary`], emitted before
+    /// `IEND`.
+    pub unknown_chunks: &'a [crate::chunk::OwnedAncillaryChunk],
 }
 
 impl<'a> PngWriteMetadata<'a> {
@@ -67,6 +72,7 @@ impl<'a> PngWriteMetadata<'a> {
             phys_unit: None,
             text_chunks: Vec::new(),
             last_modified: None,
+            unknown_chunks: &[],
         }
     }
 }
@@ -192,7 +198,34 @@ pub(crate) fn write_all_metadata(
         write_time_chunk(out, t);
     }
 
+    // Caller-supplied unknown chunks — after zenpng's own metadata, still
+    // before PLTE/tRNS/IDAT.
+    for c in meta.unknown_chunks {
+        if c.position == crate::chunk::AncillaryPosition::BeforeIdat {
+            write_chunk(out, &c.tag, &c.data);
+        }
+    }
+
     Ok(())
+}
+
+/// Write caller-supplied `AfterIdat` unknown chunks, in order. Called after
+/// image data, before `IEND`, on every encode path (still and animated,
+/// one-shot and streaming).
+pub(crate) fn write_tail_ancillary(out: &mut Vec<u8>, meta: &PngWriteMetadata<'_>) {
+    for c in meta.unknown_chunks {
+        if c.position == crate::chunk::AncillaryPosition::AfterIdat {
+            write_chunk(out, &c.tag, &c.data);
+        }
+    }
+}
+
+/// Serialize `AfterIdat` unknown chunks for streaming states that drop
+/// `PngWriteMetadata` before writing `IEND`.
+pub(crate) fn tail_ancillary_bytes(meta: &PngWriteMetadata<'_>) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_tail_ancillary(&mut out, meta);
+    out
 }
 
 // ---- Individual chunk writers ----
@@ -388,6 +421,9 @@ pub(crate) fn metadata_size_estimate(meta: &PngWriteMetadata<'_>) -> usize {
     }
     if meta.last_modified.is_some() {
         size += 12 + 7; // tIME
+    }
+    for c in meta.unknown_chunks {
+        size += 12 + c.data.len();
     }
     size
 }

@@ -81,7 +81,10 @@ pub(crate) fn decode_interlaced(
     let ihdr = Ihdr::parse_fields(ihdr_chunk.data)?;
 
     // Collect pre-IDAT metadata
-    let mut ancillary = PngAncillary::default();
+    let mut ancillary = PngAncillary {
+        keep_unknown: config.collect_unknown_chunks,
+        ..Default::default()
+    };
     let mut first_idat_pos = None;
     for chunk_result in &mut chunks {
         let chunk = chunk_result?;

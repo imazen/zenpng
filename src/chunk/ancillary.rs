@@ -171,6 +171,18 @@ pub(crate) struct PngAncillary {
     /// zTXt/iTXt chunks. Capped by [`MAX_TEXT_COMPRESSED_BYTES`]; once exceeded
     /// further compressed text payloads are dropped without decompression.
     pub text_compressed_bytes_consumed: u64,
+
+    /// Ancillary chunks this collector did not interpret, in file order with
+    /// each chunk's position relative to `IDAT`. APNG frame-stream structure
+    /// (`fcTL`, `fdAT`) and the `iDOT` decode hint are never collected —
+    /// they cannot be replayed verbatim onto different image data.
+    ///
+    /// Filled only when `keep_unknown` is on: verbatim payload copies are an
+    /// opt-in (`PngDecodeConfig::collect_unknown_chunks`), not a decode tax.
+    pub unknown_chunks: Vec<crate::chunk::OwnedAncillaryChunk>,
+    /// Whether [`collect_unknown`](Self::collect_unknown) stores payloads.
+    /// Set from `PngDecodeConfig::collect_unknown_chunks` by the decoder.
+    pub keep_unknown: bool,
 }
 
 impl PngAncillary {
@@ -280,9 +292,29 @@ impl PngAncillary {
             b"sBIT" => {
                 self.parse_sbit(chunk.data);
             }
-            _ => {} // ignore unknown chunks
+            _ => self.collect_unknown(chunk, crate::chunk::AncillaryPosition::BeforeIdat),
         }
         Ok(false)
+    }
+
+    /// Keep an uninterpreted ancillary chunk verbatim: ancillary-named
+    /// (lowercase first letter), not part of APNG frame-stream structure and
+    /// not the `iDOT` decode hint. Everything else reaching the `_` match
+    /// arms — critical chunks, `PLTE` duplicates, `acTL` — stays dropped,
+    /// matching what the decoder actually interprets.
+    fn collect_unknown(&mut self, chunk: &ChunkRef<'_>, position: crate::chunk::AncillaryPosition) {
+        const STRUCTURAL: [[u8; 4]; 3] = [*b"fcTL", *b"fdAT", *b"iDOT"];
+        if !self.keep_unknown
+            || chunk.chunk_type[0] & 0x20 == 0
+            || STRUCTURAL.contains(&chunk.chunk_type)
+        {
+            return;
+        }
+        self.unknown_chunks.push(crate::chunk::OwnedAncillaryChunk {
+            tag: chunk.chunk_type,
+            data: chunk.data.to_vec(),
+            position,
+        });
     }
 
     /// Parse iCCP chunk: null-terminated profile name, compression method, compressed data.
@@ -590,7 +622,7 @@ impl PngAncillary {
                     second: chunk.data[6],
                 });
             }
-            _ => {}
+            _ => self.collect_unknown(chunk, crate::chunk::AncillaryPosition::AfterIdat),
         }
     }
 }
@@ -762,11 +794,54 @@ mod tests {
     }
 
     #[test]
-    fn collect_unknown_chunk_ignored() {
+    fn collect_unknown_off_by_default() {
+        // Without keep_unknown the verbatim copies never happen — ordinary
+        // decode/probe pays nothing for the feature.
         let mut anc = PngAncillary::default();
-        anc.collect(&make_chunk(b"zZzZ", &[1, 2, 3])).unwrap();
-        // No fields changed
+        anc.collect(&make_chunk(b"vpAg", &[1, 2, 3])).unwrap();
+        anc.collect_late(&make_chunk(b"vpAg", &[4, 5, 6]));
+        assert!(anc.unknown_chunks.is_empty());
+    }
+
+    #[test]
+    fn collect_unknown_chunk_recorded() {
+        let mut anc = PngAncillary {
+            keep_unknown: true,
+            ..Default::default()
+        };
+        anc.collect(&make_chunk(b"vpAg", &[1, 2, 3])).unwrap();
+        // No semantic fields changed; the chunk is kept verbatim instead.
         assert!(anc.palette.is_none());
+        assert_eq!(anc.unknown_chunks.len(), 1);
+        assert_eq!(&anc.unknown_chunks[0].tag, b"vpAg");
+        assert_eq!(anc.unknown_chunks[0].data, &[1, 2, 3]);
+        assert_eq!(
+            anc.unknown_chunks[0].position,
+            crate::chunk::AncillaryPosition::BeforeIdat
+        );
+        assert!(anc.unknown_chunks[0].is_safe_to_copy());
+        // Interpreted chunks never land in the unknown list.
+        anc.collect(&make_chunk(b"tEXt", b"k\0v")).unwrap();
+        assert_eq!(anc.unknown_chunks.len(), 1);
+        // An uninterpreted unsafe-to-copy chunk is still reported; dropping
+        // it across a re-encode is the caller's copy policy, not ours.
+        anc.collect(&make_chunk(b"vpAG", &[7])).unwrap();
+        assert!(!anc.unknown_chunks[1].is_safe_to_copy());
+    }
+
+    #[test]
+    fn collect_unknown_skips_structural_and_critical() {
+        let mut anc = PngAncillary {
+            keep_unknown: true,
+            ..Default::default()
+        };
+        for tag in [b"fcTL", b"fdAT", b"iDOT", b"IDAT", b"IHDR"] {
+            anc.collect_late(&make_chunk(tag, &[1, 2, 3]));
+        }
+        assert!(anc.unknown_chunks.is_empty());
+        // APLTE-style junk: a critical-named record is not ancillary data.
+        anc.collect(&make_chunk(b"ABCD", &[1])).unwrap();
+        assert!(anc.unknown_chunks.is_empty());
     }
 
     // ---- collect_late ----
@@ -790,9 +865,17 @@ mod tests {
     }
 
     #[test]
-    fn collect_late_unknown_ignored() {
-        let mut anc = PngAncillary::default();
+    fn collect_late_unknown_recorded_after_idat() {
+        let mut anc = PngAncillary {
+            keep_unknown: true,
+            ..Default::default()
+        };
         anc.collect_late(&make_chunk(b"zZzZ", &[1, 2, 3]));
+        assert_eq!(anc.unknown_chunks.len(), 1);
+        assert_eq!(
+            anc.unknown_chunks[0].position,
+            crate::chunk::AncillaryPosition::AfterIdat
+        );
     }
 
     // ---- XMP parsing ----

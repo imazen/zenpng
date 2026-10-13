@@ -74,6 +74,9 @@ pub mod sweep;
 // #[cfg(feature = "zennode")]
 // pub mod zennode_defs;
 
+pub use crate::chunk::{
+    AncillaryChunk, AncillaryChunks, AncillaryPosition, OwnedAncillaryChunk, ancillary_chunks,
+};
 pub use codec::{
     PngAnimationFrameDecoder, PngAnimationFrameEncoder, PngDecodeJob, PngDecoder, PngDecoderConfig,
     PngEncodeJob, PngEncoder, PngEncoderConfig,

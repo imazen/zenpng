@@ -174,6 +174,19 @@ pub struct PngInfo {
     /// tEXt chunks or `Software`/`Creator` iTXt chunks, matching the rules
     /// used by [`crate::detect::probe`]. `None` if no such chunk is present.
     pub creating_tool: Option<alloc::string::String>,
+    /// Ancillary chunks the decoder did not interpret, in file order, each
+    /// with its position relative to `IDAT` and the PNG safe-to-copy bit on
+    /// [`crate::OwnedAncillaryChunk::is_safe_to_copy`]. APNG frame-stream
+    /// structure (`fcTL`/`fdAT`) and the `iDOT` decode hint are never
+    /// reported.
+    ///
+    /// Empty unless the decode config opted in with
+    /// [`PngDecodeConfig::with_collect_unknown_chunks`]; [`crate::probe`]
+    /// never fills it. PNG-3 copy policy stays with the caller: after
+    /// changes to critical image data, entries may be re-emitted — for
+    /// example through `EncodeConfig::unknown_chunks` — only when
+    /// safe-to-copy, each on its original side of `IDAT`.
+    pub unknown_chunks: Vec<crate::OwnedAncillaryChunk>,
 }
 
 /// Non-fatal issues detected during PNG decoding.
@@ -258,6 +271,10 @@ pub struct PngDecodeConfig {
     /// The output is byte-identical to a single-threaded decode; any `iDOT`
     /// segment that does not prove that falls back to the serial decoder.
     pub max_threads: usize,
+    /// Collect uninterpreted ancillary chunks into
+    /// [`PngInfo::unknown_chunks`]. Default off — see
+    /// [`with_collect_unknown_chunks`](Self::with_collect_unknown_chunks).
+    pub collect_unknown_chunks: bool,
     /// Caller preference for allocation fallibility, applied per call site.
     ///
     /// Internal carrier (`pub(crate)`): the zencodec decode path sets it from
@@ -304,6 +321,7 @@ impl PngDecodeConfig {
             skip_decompression_checksum: true,
             skip_critical_chunk_crc: true,
             max_threads: 0,
+            collect_unknown_chunks: false,
             alloc_pref: zencodec::AllocPreference::CodecDefault,
         }
     }
@@ -332,6 +350,7 @@ impl PngDecodeConfig {
             skip_decompression_checksum: false,
             skip_critical_chunk_crc: false,
             max_threads: 0,
+            collect_unknown_chunks: false,
             alloc_pref: zencodec::AllocPreference::CodecDefault,
         }
     }
@@ -377,6 +396,21 @@ impl PngDecodeConfig {
         self
     }
 
+    /// Collect ancillary chunks the decoder does not interpret into
+    /// [`PngInfo::unknown_chunks`].
+    ///
+    /// Default off: collection keeps a verbatim copy of each uninterpreted
+    /// chunk's payload, so enabling it admits up to roughly one input-size
+    /// of extra allocation that the pixel/memory budgets do not cover — the
+    /// list is moved into `PngInfo`, not cloned, so peak stays a single
+    /// copy. Leave it off for untrusted input unless the extra payload
+    /// storage is wanted. [`crate::probe`] never fills the list.
+    #[must_use]
+    pub const fn with_collect_unknown_chunks(mut self, collect: bool) -> Self {
+        self.collect_unknown_chunks = collect;
+        self
+    }
+
     pub(crate) fn validate(
         &self,
         width: u32,
@@ -417,6 +451,7 @@ impl Default for PngDecodeConfig {
             skip_decompression_checksum: true,
             skip_critical_chunk_crc: true,
             max_threads: 0,
+            collect_unknown_chunks: false,
             alloc_pref: zencodec::AllocPreference::CodecDefault,
         }
     }
@@ -515,9 +550,9 @@ pub fn decode_apng(
         });
     }
 
-    let result = crate::decoder::apng::decode_apng_composed(data, config, cancel)?;
+    let mut result = crate::decoder::apng::decode_apng_composed(data, config, cancel)?;
 
-    let info = crate::decoder::build_png_info(&result.ihdr, &result.ancillary);
+    let info = crate::decoder::build_png_info(&result.ihdr, &mut result.ancillary);
 
     Ok(ApngDecodeOutput {
         frames: result.frames,

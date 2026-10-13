@@ -108,7 +108,10 @@ impl<'a> ApngDecoder<'a> {
         ihdr.check_row_fits_platform()?;
 
         // Scan pre-IDAT chunks: collect ancillary, find acTL, look for fcTL before IDAT
-        let mut ancillary = PngAncillary::default();
+        let mut ancillary = PngAncillary {
+            keep_unknown: config.collect_unknown_chunks,
+            ..Default::default()
+        };
         let mut pos = ihdr_crc_end;
         let mut first_idat_pos = None;
         let mut frame0_fctl = None;
