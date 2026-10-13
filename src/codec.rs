@@ -2846,10 +2846,15 @@ impl IncrementalDecode for PngIncrementalDecoder {
         self.info.as_ref()
     }
 
+    fn output_descriptor(&self) -> Option<PixelDescriptor> {
+        self.descriptor
+    }
+
     fn is_complete(&self) -> bool {
         self.is_complete
     }
 }
+
 
 // ── PngAnimationFrameDecoder ──────────────────────────────────────────────
 
