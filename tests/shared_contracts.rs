@@ -1,8 +1,10 @@
 use std::borrow::Cow;
+use zencodec::Metadata;
+#[cfg(feature = "metadata-rewrite")]
+use zencodec::MetadataPolicy;
 use zencodec::animation::FrameDuration as Duration;
 use zencodec::decode::{Decode, DecodeJob, DecodePolicy, DecoderConfig};
 use zencodec::encode::{EncodeJob, EncodePolicy, EncoderConfig};
-use zencodec::{Metadata, MetadataPolicy};
 use zencodec_testkit as tk;
 use zenpng::{PngDecoderConfig as D, PngEncoderConfig as E};
 
