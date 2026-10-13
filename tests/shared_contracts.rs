@@ -22,7 +22,7 @@ fn shared_timing_boundaries_and_dispatch() {
         (d(1, 24), Some(d(1, 24))),
     ];
     for exact in [true, false] {
-        tk::check_animation_timing(E::new(), D::new(), &img, exact, &cases).unwrap();
+        tk::check_animation_timing(E::new(), D::new(), img.as_slice(), exact, &cases).unwrap();
     }
 }
 
@@ -45,7 +45,7 @@ fn policy_and_inventory_contracts() {
         tk::check_encode_policy_admission(
             enc.clone(),
             D::new(),
-            &img,
+            img.as_slice(),
             Metadata::none(),
             EncodePolicy::none(),
             policy,
