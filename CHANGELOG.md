@@ -4,6 +4,19 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Metadata rewriting now retains XMP without an editor when the requested
+  policy keeps it, including `PreserveExact`. Shared conformance caught this
+  previously unconditional removal.
+
+
+### Tests
+
+- Run shared timing, policy, inventory and rewrite conformance checks; verify
+  rewritten samples independently with image-png.
+
+
 - Keep the independent fuzz workspace on the same shared-contract revision as
   its codec dependency, avoiding duplicate zencodec trait identities.
 

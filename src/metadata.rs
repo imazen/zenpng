@@ -249,7 +249,11 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                 }
                 xmp_seen = true;
                 if !req.edit_xmp() {
-                    out.remove(req, range, "XMP")?;
+                    if req.policy().fields().xmp.keeps() {
+                        out.keep(req, range, "XMP")?;
+                    } else {
+                        out.remove(req, range, "XMP")?;
+                    }
                 } else {
                     let xml = read_xmp(req, data)?;
                     if let Some(xml) = req.xmp(&xml)? {

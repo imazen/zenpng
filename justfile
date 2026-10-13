@@ -140,5 +140,8 @@ metadata-rewrite-check:
 
 # Coordinated shared-contract migration, including the existing timing oracle.
 shared-contract-check:
+    cargo test -p zenpng --no-default-features --features inventory,metadata-rewrite --test shared_contracts
+    cargo test -p zenpng --no-default-features --features metadata-rewrite --test shared_contracts
+    cargo clippy -p zenpng --no-default-features --features inventory,metadata-rewrite --test shared_contracts -- -D warnings
     just metadata-rewrite-check
     cargo test -p zenpng --no-default-features --test integration animation_timing
