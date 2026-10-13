@@ -238,7 +238,8 @@ fn frames_or_err(png: &[u8]) -> Result<Vec<Vec<u8>>, String> {
         vec![format!("loops={:?} count={:?}", d.loop_count(), d.frame_count()).into_bytes()];
     while let Some(f) = d.render_next_frame(None).map_err(|e| e.to_string())? {
         let s = f.pixels();
-        let mut v = f.duration_ms().to_le_bytes().to_vec();
+        let mut v = f.duration().numerator().to_le_bytes().to_vec();
+        v.extend_from_slice(&f.duration().denominator().to_le_bytes());
         for y in 0..s.rows() {
             v.extend_from_slice(s.row(y));
         }

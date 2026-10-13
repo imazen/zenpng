@@ -6,28 +6,28 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpng.txt 448 lines (supported surface) | zenpng.features.txt 24 added (features: avx512,cms,imagequant,inventory,joint,metadata-rewrite,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 101 lines (121 hidden + 34 excluded-feature)
+# files: zenpng.txt 472 lines (supported surface) | zenpng.features.txt 24 added (features: avx512,cms,imagequant,inventory,joint,metadata-rewrite,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 105 lines (125 hidden + 34 excluded-feature)
 
 ## summary
 #
 #   pub modules                                 4
-#   pub types (struct/enum/trait/alias)        49
-#   pub consts/statics                         10
-#   free functions                             27
-#   inherent methods                           78
-#   struct fields                             158
-#   enum variants                              67
-#   trait roster entries (type × trait)       164
-#   auto-trait-complete types                  40
+#   pub types (struct/enum/trait/alias)        53
+#   pub consts/statics                         11
+#   free functions                             28
+#   inherent methods                           81
+#   struct fields                             167
+#   enum variants                              69
+#   trait roster entries (type × trait)       178
+#   auto-trait-complete types                  44
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                          306
+#   (root)                          326
 #   detect                           41
 #   heuristics                       13
 #   sweep                            33
 
-## items (393 lines)
+## items (413 lines)
 
 pub mod zenpng
 pub mod detect
@@ -120,6 +120,9 @@ pub fn sweep::fingerprint(&sweep::SweepVariant) -> u64
 pub fn sweep::plan(&sweep::SweepAxes) -> sweep::SweepPlan
 pub fn sweep::plan_constrained(&sweep::SweepAxes, core::option::Option<u8>, core::option::Option<u8>) -> sweep::SweepPlan
 pub fn sweep::variant_from_cell_id(&str) -> core::result::Result<sweep::SweepVariant, alloc::string::String>
+#[non_exhaustive] pub enum AncillaryPosition
+pub AncillaryPosition::AfterIdat
+pub AncillaryPosition::BeforeIdat
 #[non_exhaustive] pub enum Compression
 pub Compression::Aggressive
 pub Compression::Balanced
@@ -182,6 +185,12 @@ pub SignificantBits::Gray(u8)
 pub SignificantBits::GrayAlpha(u8, u8)
 pub SignificantBits::Rgb(u8, u8, u8)
 pub SignificantBits::Rgba(u8, u8, u8, u8)
+pub struct AncillaryChunk<'a>
+pub AncillaryChunk::data: &'a [u8]
+pub AncillaryChunk::position: AncillaryPosition
+pub AncillaryChunk::tag: [u8; 4]
+pub fn AncillaryChunk<'_>::is_safe_to_copy(&self) -> bool
+pub struct AncillaryChunks<'a>
 #[non_exhaustive] pub struct ApngDecodeOutput
 pub ApngDecodeOutput::frames: alloc::vec::Vec<ApngFrame>
 pub ApngDecodeOutput::info: PngInfo
@@ -251,6 +260,7 @@ pub EncodeConfig::preserve_transparent_rgb: bool
 pub EncodeConfig::source_gamma: core::option::Option<u32>
 pub EncodeConfig::srgb_intent: core::option::Option<u8>
 pub EncodeConfig::text_chunks: alloc::vec::Vec<TextChunk>
+pub EncodeConfig::unknown_chunks: alloc::vec::Vec<OwnedAncillaryChunk>
 pub fn EncodeConfig::with_chromaticities(self, core::option::Option<PngChromaticities>) -> Self
 pub fn EncodeConfig::with_cicp(self, core::option::Option<zenpixels::cicp::Cicp>) -> Self
 pub fn EncodeConfig::with_compression(self, Compression) -> Self
@@ -275,6 +285,11 @@ pub MultiFrameOutput::frame_indices: alloc::vec::Vec<alloc::vec::Vec<u8>>
 pub MultiFrameOutput::mpe_scores: alloc::vec::Vec<core::option::Option<f32>>
 pub MultiFrameOutput::palette_rgba: alloc::vec::Vec<[u8; 4]>
 pub MultiFrameOutput::ssim2_estimates: alloc::vec::Vec<core::option::Option<f32>>
+pub struct OwnedAncillaryChunk
+pub OwnedAncillaryChunk::data: alloc::vec::Vec<u8>
+pub OwnedAncillaryChunk::position: AncillaryPosition
+pub OwnedAncillaryChunk::tag: [u8; 4]
+pub fn OwnedAncillaryChunk::is_safe_to_copy(&self) -> bool
 pub struct PngAnimationFrameDecoder
 pub struct PngAnimationFrameEncoder
 pub struct PngChromaticities
@@ -287,6 +302,7 @@ pub PngChromaticities::red_y: i32
 pub PngChromaticities::white_x: i32
 pub PngChromaticities::white_y: i32
 #[non_exhaustive] pub struct PngDecodeConfig
+pub PngDecodeConfig::collect_unknown_chunks: bool
 pub PngDecodeConfig::max_memory_bytes: core::option::Option<u64>
 pub PngDecodeConfig::max_pixels: core::option::Option<u64>
 pub PngDecodeConfig::max_threads: usize
@@ -297,6 +313,7 @@ pub const PngDecodeConfig::DEFAULT_MAX_PIXELS: u64
 pub const fn PngDecodeConfig::lenient() -> Self
 pub const fn PngDecodeConfig::none() -> Self
 pub const fn PngDecodeConfig::strict() -> Self
+pub const fn PngDecodeConfig::with_collect_unknown_chunks(self, bool) -> Self
 pub const fn PngDecodeConfig::with_max_memory(self, u64) -> Self
 pub const fn PngDecodeConfig::with_max_pixels(self, u64) -> Self
 pub const fn PngDecodeConfig::with_max_threads(self, usize) -> Self
@@ -344,6 +361,7 @@ pub fn PngEncoderConfig::with_max_threads(self, usize) -> Self
 pub fn PngEncoderConfig::with_near_lossless_bits(self, u8) -> Self
 pub fn PngEncoderConfig::with_preserve_transparent_rgb(self, bool) -> Self
 pub fn PngEncoderConfig::with_threading(self, zencodec::limits::ThreadingPolicy) -> Self
+pub fn PngEncoderConfig::with_unknown_chunks(self, alloc::vec::Vec<OwnedAncillaryChunk>) -> Self
 #[non_exhaustive] pub struct PngInfo
 pub PngInfo::background: core::option::Option<PngBackground>
 pub PngInfo::bit_depth: u8
@@ -371,6 +389,7 @@ pub PngInfo::significant_bits: core::option::Option<SignificantBits>
 pub PngInfo::source_gamma: core::option::Option<u32>
 pub PngInfo::srgb_intent: core::option::Option<u8>
 pub PngInfo::text_chunks: alloc::vec::Vec<TextChunk>
+pub PngInfo::unknown_chunks: alloc::vec::Vec<OwnedAncillaryChunk>
 pub PngInfo::width: u32
 pub PngInfo::xmp: core::option::Option<alloc::vec::Vec<u8>>
 pub struct PngTime
@@ -404,6 +423,7 @@ pub fn Quantizer::name(&self) -> &str
 pub fn Quantizer::quantize_multi_frame(&self, &[&[[u8; 4]]], usize, usize) -> core::result::Result<MultiFrameOutput, PngError>
 pub fn Quantizer::quantize_rgba(&self, &[[u8; 4]], usize, usize) -> core::result::Result<QuantizeOutput, PngError>
 pub fn Quantizer::with_quality_metrics(&self) -> core::option::Option<alloc::boxed::Box<dyn Quantizer>>
+pub fn ancillary_chunks(&[u8], bool) -> core::result::Result<AncillaryChunks<'_>, PngError>
 pub fn available_backends() -> &'static [&'static str]
 pub fn decode(&[u8], &PngDecodeConfig, &dyn enough::Stop) -> core::result::Result<PngDecodeOutput, whereat::at::At<PngError>>
 pub fn decode_apng(&[u8], &PngDecodeConfig, &dyn enough::Stop) -> core::result::Result<ApngDecodeOutput, whereat::at::At<PngError>>
@@ -423,8 +443,11 @@ pub fn probe(&[u8]) -> core::result::Result<PngInfo, whereat::at::At<PngError>>
 pub fn quantizer_by_name(&str) -> core::result::Result<alloc::boxed::Box<dyn Quantizer>, whereat::at::At<PngError>>
 pub type PngLimits = PngDecodeConfig
 
-## trait impls (47 types)
+## trait impls (51 types)
 
+AncillaryChunk<'a>: Clone, Copy, Debug
+AncillaryChunks<'a>: Iterator
+AncillaryPosition: Clone, Copy, Debug, Eq, PartialEq
 ApngDecodeOutput: Debug
 ApngEncodeConfig: Clone, Debug, Default
 ApngFrame: Debug
@@ -436,6 +459,7 @@ DowncastFlags: Clone, Copy, Debug, Default, Eq, PartialEq
 EncodeConfig: Clone, Debug, Default
 Filter: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 MultiFrameOutput: Clone, Debug
+OwnedAncillaryChunk: Clone, Debug, Eq, From<AncillaryChunk<'_>>, PartialEq
 PhysUnit: Clone, Copy, Debug, Eq, Hash, PartialEq
 PngAnimationFrameDecoder: zencodec::traits::decoder::AnimationFrameDecoder
 PngAnimationFrameEncoder: zencodec::traits::encoder::AnimationFrameEncoder
@@ -475,7 +499,7 @@ whereat::at::At<zencodec::error::CodecError>: From<PngError>
 
 ## auto traits
 
-40 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+44 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 ApngEncodeParams<'a>: !RefUnwindSafe !UnwindSafe
 PngAnimationFrameDecoder: !RefUnwindSafe !UnwindSafe
 PngAnimationFrameEncoder: !RefUnwindSafe !UnwindSafe
