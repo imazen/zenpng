@@ -25,3 +25,7 @@ mod truncation_series;
 
 #[path = "integration/apng_alloc.rs"]
 mod apng_alloc;
+
+#[path = "integration/incremental_consumers.rs"]
+mod incremental_consumers;
+

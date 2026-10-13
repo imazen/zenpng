@@ -46,6 +46,7 @@ flate2 = "1"
 miniz_oxide = "0.9.1"
 zopfli = "0.8"
 lodepng = "3.12.2"
+tokio = { version = "1", features = ["rt", "macros", "io-util"] }
 # zencodec conformance harness (unpublished companion crate). Git-pinned to the
 # SAME zencodec tag as the [patch.crates-io] below so both resolve to one
 # unified zencodec. Provides check_decode_truncation_series (EOF/truncation).
@@ -137,14 +138,9 @@ harness = false
 required-features = ["_dev"]
 
 [patch.crates-io]
-# zencodec-testkit is unpublished (path-deps zencodec internally); unify the
-# graph on the content-identical released tag until the testkit ships on
-# crates.io. Without this patch, Cargo resolves two distinct `zencodec`
-# instances (crates.io 0.1.26 direct vs. git-via-testkit), and
-# `tests/integration/truncation_series.rs` (which passes zenpng's own
-# `PngDecoderConfig` into testkit's `check_decode_truncation_series<D:
-# DecoderConfig>`) fails to typecheck across the two instances (E0277 — the
-# trait bound is on a *different* `DecoderConfig`). `tag = "v0.1.26"` is
-# commit 998edf5f, byte-identical to the published crate — keep this in sync
-# with the `zencodec-testkit` dev-dep's tag above.
-zencodec = { git = "https://github.com/imazen/zencodec", tag = "v0.1.26" }
+zencodec = { path = "../zencodec" }
+
+[patch."https://github.com/imazen/zencodec"]
+zencodec = { path = "../zencodec" }
+zencodec-testkit = { path = "../zencodec/zencodec-testkit" }
+

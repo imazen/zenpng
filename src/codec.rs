@@ -2838,6 +2838,10 @@ impl IncrementalDecode for PngIncrementalDecoder {
         }
     }
 
+    fn wrap_sink_error(err: zencodec::decode::SinkError) -> Self::Error {
+        PngError::Io(alloc::format!("sink error: {err}")).into()
+    }
+
     fn info(&self) -> Option<&ImageInfo> {
         self.info.as_ref()
     }
