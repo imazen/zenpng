@@ -12,6 +12,19 @@ All notable changes to zenpng are documented here.
   PNG. The header is reported as soon as it probes; rows come from
   `push_decoder` once the whole file is offered (zenflate's inflate cannot yet
   resume between inputs).
+- Streaming encode output (zencodec PR 149): `Encoder::begin` chooses the row
+  mode and returns an `OutputTiming`. Effort 0 writes each row as stored
+  DEFLATE as it arrives, `streaming(0)`, byte-identical to the one-shot encode
+  (the IDAT CRC is kept running so bytes can leave before `finish`). The
+  strip efforts (1-15, every downcast, near-lossless and `iDOT` off, at least
+  two ~512 KiB strips) write each strip as its own IDAT chunk once its last
+  row arrives: the same zlib stream as the non-streamed strip encode, split
+  into one chunk per strip, so chunk boundaries never depend on push sizes or
+  worker timing. The lag is the largest strip less one row (199 rows for
+  1024x1000 RGB8 sequential; with worker threads the strips in flight count
+  too, capped at the image height). Whole-image configurations report
+  `AT_FINISH`. The output-size limit counts bytes already handed out.
+  Declares `EncodeCapabilities::streaming_output` (`tests/streaming_output.rs`).
 
 ### Fixed
 
