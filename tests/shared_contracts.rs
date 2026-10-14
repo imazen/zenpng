@@ -111,3 +111,19 @@ fn rewrite_preserves_pixels_with_independent_png_reader() {
         .unwrap();
     }
 }
+
+#[test]
+fn exact_timing_refusal_survives_erasure() {
+    use zencodec::encode::AnimationFrameEncoder;
+    use zencodec::{CodecErrorExt, UnsupportedOperation};
+    let img = tk::TestImage::rgba8_gradient(16, 16);
+    let mut encoder = E::new().job().animation_frame_encoder().unwrap();
+    let err = encoder
+        .push_frame_exact(img.as_slice(), Duration::new(1, 65537).unwrap(), None)
+        .unwrap_err();
+    let erased: Box<dyn std::error::Error + Send + Sync> = Box::new(err);
+    assert_eq!(
+        erased.unsupported_operation(),
+        Some(&UnsupportedOperation::AnimationTiming)
+    );
+}

@@ -533,3 +533,8 @@ failed before the XMP planner fix: `PreserveExact` removed the iTXt XMP carrier
 unless editing was enabled. No-editor retention must copy the carrier unchanged;
 editing and retention are separate decisions. The default stripping policy still
 removes the carrier. Verified with image-png pixel decoding and packet presence.
+
+### Typed refusal regression
+
+The native unsupported-operation variant did not expose its shared cause through
+`Error::source`. `exact_timing_refusal_survives_erasure` now tests this contract.

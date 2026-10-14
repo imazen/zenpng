@@ -4,6 +4,10 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve shared unsupported-operation causes through erased error chains, including exact APNG timing refusal.
+
 ### Dependency integration
 
 - Align temporary zencodec/zenmeta/testkit pins with the checked fidelity and operation-matrix contracts (`4fda4391`). Replace coordinated git pins with released versions before publication.

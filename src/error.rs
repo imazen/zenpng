@@ -92,7 +92,7 @@ pub enum PngError {
     ///
     /// [`ErrorCategory::Request`]: zencodec::ErrorCategory::Request
     #[error("unsupported operation: {0}")]
-    Unsupported(zencodec::UnsupportedOperation),
+    Unsupported(#[source] zencodec::UnsupportedOperation),
 
     /// The encode target's color needs a synthesized ICC/CMS transform this
     /// build will not perform itself — e.g. a CICP profile with no ICC
