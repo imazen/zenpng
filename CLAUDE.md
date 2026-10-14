@@ -525,3 +525,11 @@ use `/usr/bin/log`).
   channels and native depth through the existing writer. Independent-reader
   regression: `gray_alpha_native_depth_and_strided_rows` (stored, prefiltered,
   strip modes, including GA16 alpha low-byte zero).
+
+## Known Bugs: rewrite retention regression (fixed)
+
+The shared contract test `rewrite_preserves_pixels_with_independent_png_reader`
+failed before the XMP planner fix: `PreserveExact` removed the iTXt XMP carrier
+unless editing was enabled. No-editor retention must copy the carrier unchanged;
+editing and retention are separate decisions. The default stripping policy still
+removes the carrier. Verified with image-png pixel decoding and packet presence.

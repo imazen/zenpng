@@ -32,7 +32,6 @@ jobs:
           - ubuntu-latest
           - ubuntu-24.04-arm
           - macos-latest
-          - macos-26-intel
           - windows-latest
           - windows-11-arm
     steps:
@@ -53,6 +52,10 @@ jobs:
 
       - name: Codec-owned metadata rewrite
         run: cargo test --no-default-features --features metadata-rewrite --test metadata_rewrite
+      - name: Shared metadata and timing contracts
+        run: |
+          cargo test --features inventory,metadata-rewrite --test shared_contracts
+          cargo test --features metadata-rewrite --test shared_contracts
       - name: Inventory disabled contract
         run: cargo test --no-default-features --test inventory_feature
 

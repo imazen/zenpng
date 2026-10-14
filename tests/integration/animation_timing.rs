@@ -344,3 +344,32 @@ fn animation_inherits_frame_icc_and_enforces_decode_job_limits() {
         Some(icc)
     );
 }
+
+#[test]
+fn explicit_exact_timing_retains_native_fraction_and_rejects_before_mutation() {
+    let source = pixels();
+    let mut encoder = PngEncoderConfig::new()
+        .job()
+        .animation_frame_encoder()
+        .unwrap();
+    assert!(
+        encoder
+            .push_frame_exact(
+                source.as_slice(),
+                FrameDuration::new(1, 65536).unwrap(),
+                None
+            )
+            .is_err()
+    );
+    encoder
+        .push_frame_exact(
+            source.as_slice(),
+            FrameDuration::new(1001, 30000).unwrap(),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        wire_delays(encoder.finish(None).unwrap().data()),
+        [(1001, 30000)]
+    );
+}

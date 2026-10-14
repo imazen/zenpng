@@ -4,6 +4,32 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Metadata rewriting now retains XMP without an editor when the requested
+  policy keeps it, including `PreserveExact`. Shared conformance caught this
+  previously unconditional removal.
+
+
+### Tests
+
+- Run shared timing, policy, inventory and rewrite conformance checks; verify
+  rewritten samples independently with image-png.
+
+
+- Keep the independent fuzz workspace on the same shared-contract revision as
+  its codec dependency, avoiding duplicate zencodec trait identities.
+
+### Shared rewrite contract
+
+- Move the existing exact APNG implementation to `push_frame_exact`; the shared
+  ordinary wrapper reports its accepted rational duration. Timing remains exact
+  for representable u16 fractions; other fractions still return a typed error.
+
+- Migrate unpublished metadata rewrite errors to shared typed `LimitKind` values.
+  Pin zencodec/zenmeta to `47895ac4`; configured input/output and metadata caps
+  retain rejection behavior without string matching.
+
 ### Metadata rewriting
 
 - Add default-off `metadata-rewrite` and `metadata::rewrite`, moving the PNG/APNG

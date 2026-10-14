@@ -561,6 +561,7 @@ static PNG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_cicp_safe_sole_carrier(false)
     .with_stop(true)
     .with_animation(true)
+    .with_animation_timing(true)
     .with_lossless(true)
     .with_lossy(true)
     .with_native_gray(true)
@@ -1923,14 +1924,14 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
         duration_ms: u32,
         stop: Option<&dyn enough::Stop>,
     ) -> Result<(), At<CodecError>> {
-        self.push_frame_timed(
+        self.push_frame_exact(
             pixels,
             zencodec::animation::FrameDuration::from_millis(duration_ms),
             stop,
         )
     }
 
-    fn push_frame_timed(
+    fn push_frame_exact(
         &mut self,
         pixels: PixelSlice<'_>,
         duration: zencodec::animation::FrameDuration,

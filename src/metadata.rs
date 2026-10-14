@@ -249,7 +249,11 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                 }
                 xmp_seen = true;
                 if !req.edit_xmp() {
-                    out.remove(req, range, "XMP")?;
+                    if req.policy().fields().xmp.keeps() {
+                        out.keep(req, range, "XMP")?;
+                    } else {
+                        out.remove(req, range, "XMP")?;
+                    }
                 } else {
                     let xml = read_xmp(req, data)?;
                     if let Some(xml) = req.xmp(&xml)? {
@@ -367,7 +371,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                 }
                 sequence = sequence
                     .checked_add(1)
-                    .ok_or(Error::Limit("APNG sequence"))?;
+                    .ok_or(Error::Limit(zencodec::LimitKind::Frames))?;
                 let w = be32(&data[4..])?;
                 let h = be32(&data[8..])?;
                 let x = be32(&data[12..])?;
@@ -399,7 +403,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                 }
                 sequence = sequence
                     .checked_add(1)
-                    .ok_or(Error::Limit("APNG sequence"))?;
+                    .ok_or(Error::Limit(zencodec::LimitKind::Frames))?;
                 frame_has_data = true;
                 out.keep(req, range, "APNG frame data")?;
             }
@@ -442,7 +446,8 @@ pub(super) fn chunk(
     data: &[u8],
     stop: &dyn enough::Stop,
 ) -> Result<Vec<u8>, Error> {
-    let len = u32::try_from(data.len()).map_err(|_| Error::Limit("PNG chunk size"))?;
+    let len =
+        u32::try_from(data.len()).map_err(|_| Error::Limit(zencodec::LimitKind::OutputSize))?;
     let mut out = Vec::new();
     out.try_reserve_exact(data.len() + 12)
         .map_err(|_| Error::Allocation)?;

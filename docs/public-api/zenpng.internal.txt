@@ -13,27 +13,29 @@
 #   pub types (struct/enum/trait/alias)         6
 #   pub consts/statics                          1
 #   free functions                             20
-#   inherent methods                           35
+#   inherent methods                           37
 #   struct fields                              16
-#   trait roster entries (type × trait)        38
+#   trait roster entries (type × trait)        40
 #   auto-trait-complete types                   3
 #
 # per-module pub lines:
-#   (root)                           38
+#   (root)                           40
 #   __bench_scan                     31
 #   detect                            3
 #   internal_params                   6
 #   sweep                             2
 
-## items (79 lines)
+## items (81 lines)
 
 #[non_exhaustive] pub struct InternalParams [also: internal_params]
 pub const fn __bench_scan::FusedRequest::all() -> Self
+pub fn AncillaryPosition::assert_fields_are_eq(&self)
 pub fn ApngFrameInfo::assert_fields_are_eq(&self)
 pub fn Compression::assert_fields_are_eq(&self)
 pub fn DowncastFlags::assert_fields_are_eq(&self)
 pub fn EncodeConfig::with_internal_params(self, internal_params::InternalParams) -> Self
 pub fn Filter::assert_fields_are_eq(&self)
+pub fn OwnedAncillaryChunk::assert_fields_are_eq(&self)
 pub fn PhaseStat::clone(&self) -> PhaseStat
 pub fn PhaseStat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn PhaseStats::clone(&self) -> PhaseStats
@@ -107,8 +109,10 @@ pub __bench_scan::FusedResult::is_opaque: bool
 pub internal_params::InternalParams::compression: core::option::Option<Compression>
 pub internal_params::InternalParams::parallel: core::option::Option<bool>
 
-## trait impls (21 types)
+## trait impls (23 types)
 
+AncillaryChunk<'a>: TrivialClone
+AncillaryPosition: TrivialClone
 ApngFrameInfo: TrivialClone
 ApngFrameInput<'a>: TrivialClone
 Compression: TrivialClone

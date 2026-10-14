@@ -137,3 +137,12 @@ metadata-rewrite-check:
     cargo test -p zenpng --no-default-features --features metadata-rewrite --test metadata_rewrite
     cargo clippy -p zenpng --no-default-features --features metadata-rewrite --lib --test metadata_rewrite -- -D warnings
     CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=env cargo test -p zenpng --no-default-features --features metadata-rewrite --test metadata_rewrite --target i686-unknown-linux-gnu
+
+# Coordinated shared-contract migration, including the existing timing oracle.
+shared-contract-check:
+    cargo clippy -p zenpng --no-default-features --test shared_contracts -- -D warnings
+    cargo test -p zenpng --no-default-features --features inventory,metadata-rewrite --test shared_contracts
+    cargo test -p zenpng --no-default-features --features metadata-rewrite --test shared_contracts
+    cargo clippy -p zenpng --no-default-features --features inventory,metadata-rewrite --test shared_contracts -- -D warnings
+    just metadata-rewrite-check
+    cargo test -p zenpng --no-default-features --test integration animation_timing
