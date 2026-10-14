@@ -2250,6 +2250,7 @@ impl Default for PngDecoderConfig {
 }
 
 static PNG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
+    .with_incremental(true)
     .with_inventory(cfg!(feature = "inventory"))
     .with_icc(true)
     .with_exif(true)
@@ -2464,6 +2465,21 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
     ) -> Result<OutputInfo, At<CodecError>> {
         push_decoder_native(self, data, sink, preferred)
     }
+
+    /// Incremental (sans-I/O) decode: the header is reported as soon as it
+    /// probes, and the image decodes through `push_decoder` once the whole
+    /// file is offered (zenflate's inflate cannot yet resume between inputs).
+    fn dyn_incremental_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+    ) -> Result<
+        alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
+        zencodec::decode::BoxedError,
+    > {
+        Ok(zencodec::decode::erase_incremental(
+            zencodec::helpers::WholeFileIncremental::new(self, preferred),
+        ))
+    }
 }
 
 impl PngDecodeJob {
@@ -2572,10 +2588,29 @@ impl PngDecoder<'_> {
         } else {
             negotiate_and_convert(result.pixels, &self.preferred)
         };
+        // The buffers are built from typed pixels, which leave the transfer
+        // `Unknown`. Native output takes the descriptor `output_info`,
+        // `push_decoder` and the streaming decoder report
+        // (`native_output_descriptor`), so every path labels the same pixels
+        // the same way (tests/push_parity.rs).
+        let native = pixels.descriptor();
+        let native = if self.preferred.is_empty() {
+            let intrinsic_alpha = matches!(result.info.color_type, 4 | 6);
+            let has_trns = result.info.has_alpha && !intrinsic_alpha;
+            let expected =
+                native_output_descriptor(result.info.color_type, result.info.bit_depth, has_trns);
+            if expected.format == native.format {
+                expected
+            } else {
+                native
+            }
+        } else {
+            native
+        };
         // Re-tag color signaling from cICP after negotiation: layout/depth
         // conversion keeps the source's code-value encoding, so transfer and
         // primaries carry through to whatever layout the caller asked for.
-        let enriched = enrich_descriptor_from_cicp(pixels.descriptor(), result.info.cicp);
+        let enriched = enrich_descriptor_from_cicp(native, result.info.cicp);
         let pixels = pixels.with_descriptor(enriched);
         let output = DecodeOutput::new(pixels, info).with_source_encoding_details(probe);
         Ok(output)

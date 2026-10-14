@@ -4,8 +4,22 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Incremental (sans-I/O) decode: `dyn_incremental_decoder` returns
+  `zencodec::helpers::WholeFileIncremental` and `DecodeCapabilities::incremental`
+  is declared, so the zencodec-io drivers (files, streams, async sources) serve
+  PNG. The header is reported as soon as it probes; rows come from
+  `push_decoder` once the whole file is offered (zenflate's inflate cannot yet
+  resume between inputs).
+
 ### Fixed
 
+- One-shot `decode()` labelled native buffers with an `Unknown` transfer while
+  `output_info`, `push_decoder` and the streaming decoder report sRGB for the
+  same file (164 of 204 PngSuite/iDOT files disagreed). Native output now takes
+  `native_output_descriptor`, so every path reports the same descriptor;
+  `tests/push_parity.rs` holds them together on every PngSuite file.
 - Preserve shared unsupported-operation causes through erased error chains, including exact APNG timing refusal.
 
 ### Dependency integration
