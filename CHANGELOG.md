@@ -4,6 +4,11 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Dependency integration
+
+- Align temporary zencodec/zenmeta/testkit pins with the checked fidelity and operation-matrix contracts (`4fda4391`). Replace coordinated git pins with released versions before publication.
+
+
 ### Fixed
 
 - Metadata rewriting now retains XMP without an editor when the requested
