@@ -56,10 +56,15 @@ impl DecodeRowSink for Rows {
 
 fn files() -> Vec<PathBuf> {
     let mut v = Vec::new();
-    let suite = codec_corpus::Corpus::new()
-        .expect("codec-corpus cache unavailable")
-        .github_repo("imazen/codec-corpus", "pngsuite", "main")
-        .expect("fetching imazen/codec-corpus pngsuite (main) failed");
+    // `$ZENPNG_CODEC_CORPUS/pngsuite` (a local checkout, read-only: the i686
+    // cross container cannot write the codec-corpus cache) or the cache.
+    let suite = match std::env::var_os("ZENPNG_CODEC_CORPUS") {
+        Some(d) => PathBuf::from(d).join("pngsuite"),
+        None => codec_corpus::Corpus::new()
+            .expect("codec-corpus cache unavailable")
+            .github_repo("imazen/codec-corpus", "pngsuite", "main")
+            .expect("fetching imazen/codec-corpus pngsuite (main) failed"),
+    };
     for dir in [
         suite,
         PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/idot")),
