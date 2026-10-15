@@ -2025,6 +2025,11 @@ pub struct PngAnimationFrameEncoder {
     declared_frames: Option<u32>,
     /// Frame-at-a-time output, when `begin` chose it.
     streaming: Option<ApngStreaming>,
+    /// A pushed frame's pixel format can carry transparency. When none can,
+    /// the frames are RGB data and writing RGB is no downcast, whatever
+    /// `DowncastFlags::rgba_to_rgb` says (the streaming path decides the
+    /// same way from `begin`'s descriptor).
+    transparent_input: bool,
 }
 
 /// Streaming APNG output: each frame is written when it is pushed, against
@@ -2107,6 +2112,7 @@ impl PngAnimationFrameEncoder {
             cumulative_pixel_bytes: 0,
             stop: None,
             frame_descriptor: None,
+            transparent_input: false,
             frame_color: None,
             policy: None,
             begun: false,
@@ -2438,6 +2444,7 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
             .try_reserve(1)
             .map_err(|e| CodecError::of(at!(PngError::OutOfMemory(e.to_string()))))?;
         self.cumulative_pixel_bytes = new_cumulative;
+        self.transparent_input |= apng_descriptor(descriptor) != Some(false);
         if self.frame_descriptor.is_none() {
             self.capture_first_frame(&pixels);
         }
@@ -2530,7 +2537,9 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
             descriptor,
             frame_count,
             pushed: 0,
-            opaque: bit_depth == 8 && rgb_reduction && !transparent,
+            // A descriptor without transparency is RGB data: writing RGB
+            // drops nothing, so the reduction flag does not apply.
+            opaque: bit_depth == 8 && !transparent,
             bit_depth,
             writer: None,
             metadata: None,
@@ -2601,10 +2610,12 @@ impl PngAnimationFrameEncoder {
             })
             .collect();
 
-        let apng_config = crate::encode::ApngEncodeConfig {
+        let mut apng_config = crate::encode::ApngEncodeConfig {
             encode: self.config.clone(),
             num_plays: self.loop_count,
         };
+        // Frames with no alpha channel are written as RGB: not a downcast.
+        apng_config.encode.downcast.rgba_to_rgb |= !self.transparent_input;
 
         let deadline = default_deadline();
 

@@ -190,6 +190,21 @@ fn the_rgb_reduction_flag_is_honored_without_begin() {
 }
 
 #[test]
+fn rgb_input_stays_rgb_with_every_reduction_off() {
+    // RGB frames have no alpha to drop: RGB is their own colour type, not a
+    // reduction, so turning the reductions off must not widen them to RGBA.
+    let (w, h) = (40, 24);
+    let fr = frames(4, w, h, RGB8);
+    for effort in [1, 2, 5, 7] {
+        let c = cfg(effort, Some(DowncastFlags::none()));
+        let (_, whole, _) = encode(&c, &fr, (w, h, RGB8), None);
+        assert_eq!(whole[25], 2, "effort {effort}, without begin");
+        let (_, declared, _) = encode(&c, &fr, (w, h, RGB8), Some(Some(4)));
+        assert_eq!(declared, whole, "effort {effort}, with begin");
+    }
+}
+
+#[test]
 fn testkit_animation_streaming_output_honesty() {
     let fr: Vec<zencodec_testkit::TestImage> = (0..6)
         .map(|i| zencodec_testkit::TestImage::rgba8_gradient_seeded(24, 16, i * 40))

@@ -49,7 +49,10 @@ All notable changes to zenpng are documented here.
   zero IHDR dimension, which the format forbids; it is now refused, as `begin`
   already refused it. Found by zencodec's testkit, which now compares the two.
 - APNG ignored `DowncastFlags::rgba_to_rgb`: opaque RGBA frames were always
-  written as RGB. With the reduction off they stay RGBA.
+  written as RGB. With the reduction off they stay RGBA. Frames whose pixel
+  format has no alpha (RGB8, or RGBA declared opaque) are still written as RGB:
+  that drops nothing. A first version widened them to RGBA, which an
+  interleaved main-vs-PR benchmark caught (effort 7 took 1.9x as long).
 
 - One-shot `decode()` labelled native buffers with an `Unknown` transfer while
   `output_info`, `push_decoder` and the streaming decoder report sRGB for the
