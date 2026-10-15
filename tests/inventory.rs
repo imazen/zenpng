@@ -419,9 +419,73 @@ fn details_name_native_fields_and_reasons() {
     assert!(detail_of("eXIf", 0).contains("superseded"));
     assert!(detail_of("eXIf", 2).contains("earlier eXIf wins"));
     assert!(detail_of("iTXt", 1).contains("lang=en"));
+    // Compressed text is quoted once inflated, so an audit sees it as it sees tEXt bytes.
+    assert!(detail_of("zTXt", 0).contains("inflated text, 9 bytes: \"a comment\""));
+    // Uncompressed iTXt text is in the file's bytes already: no quote.
+    assert!(!detail_of("iTXt", 1).contains("inflated text"));
     assert!(detail_of("fdAT", 0).contains("sequence numbers are not checked"));
     // The IDAT run carries one remark: the zlib footer the default decode does not verify.
     assert!(detail_of("IDAT", 0).contains("Adler-32"));
+}
+
+/// A PNG with the given ancillary chunks before a minimal indexed image.
+fn png_with(chunks: &[Vec<u8>]) -> Vec<u8> {
+    let mut v = SIG.to_vec();
+    v.extend(ihdr(4, 2, 8, 3));
+    v.extend(chunk(b"PLTE", &[0, 0, 0, 255, 255, 255, 255, 0, 0]));
+    for c in chunks {
+        v.extend_from_slice(c);
+    }
+    v.extend(chunk(b"IDAT", &indexed_idat()));
+    v.extend(chunk(b"IEND", &[]));
+    v
+}
+
+fn detail(inv: &Inventory, tag: &[u8; 4], nth: usize) -> String {
+    inv.parts()
+        .iter()
+        .filter(|p| *p.tag() == PartTag::FourCc(*tag))
+        .nth(nth)
+        .and_then(|p| p.detail())
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[test]
+fn compressed_text_the_decoder_never_reads_is_quoted() {
+    let compressed = itxt(
+        "Author",
+        1,
+        "en",
+        "Autor",
+        &zlib_stored("Jürgen\u{7}".as_bytes()),
+    );
+    let wrong_method = {
+        let mut d = itxt("Note", 1, "", "", &zlib_stored(b"x"));
+        d[6] = 9; // compression method after "Note\0" and the flag
+        d
+    };
+    let inv = run(&png_with(&[
+        chunk(b"iTXt", &compressed),
+        chunk(b"iTXt", &wrong_method),
+    ]));
+    let d = detail(&inv, b"iTXt", 0);
+    assert!(d.contains("the decoder does not read it"), "{d}");
+    assert!(
+        d.contains("inflated text, 8 bytes: \"Jürgen\\u{7}\""),
+        "{d}"
+    );
+    assert!(detail(&inv, b"iTXt", 1).contains("compression method 9: not inflated"));
+}
+
+#[test]
+fn quoted_text_stops_at_4_kib_and_counts_the_rest() {
+    let text = vec![b'a'; 5000];
+    let z = [b"Comment\0\0".as_slice(), &zlib_stored(&text)].concat();
+    let inv = run(&png_with(&[chunk(b"zTXt", &z)]));
+    let d = detail(&inv, b"zTXt", 0);
+    assert!(d.contains("inflated text, 5000 bytes: \""), "{d}");
+    assert!(d.contains("\" and 904 more bytes"), "{d}");
 }
 
 #[test]

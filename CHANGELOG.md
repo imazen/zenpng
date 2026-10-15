@@ -10,6 +10,11 @@ All notable changes to zenpng are documented here.
 
 ### Added
 
+- Inventory: a `zTXt` part's detail quotes its inflated text, and an `iTXt` the decoder
+  never reads has its compressed text inflated and quoted, up to 4 KiB each with the rest
+  counted. Compressed text is then as visible to an audit as `tEXt` is in the file's
+  bytes. Inflating unread `iTXt` has its own 4 MiB budget, so the decoder-parity text caps
+  are unchanged.
 - Incremental (sans-I/O) decode: `dyn_incremental_decoder` returns
   `zencodec::helpers::WholeFileIncremental` and `DecodeCapabilities::incremental`
   is declared, so the zencodec-io drivers (files, streams, async sources) serve

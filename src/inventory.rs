@@ -63,6 +63,11 @@ const ICC_INFLATE_CAP: usize = 1024 * 1024;
 const ZTXT_INFLATE_CAP: usize = 1024 * 1024;
 /// Output cap for compressed XMP `iTXt` (`try_parse_xmp`).
 const XMP_INFLATE_CAP: usize = 4 * 1024 * 1024;
+/// Most inflated text quoted in a part's detail; the rest is counted, not shown.
+const TEXT_QUOTE_CAP: usize = 4096;
+/// Compressed bytes of `iTXt` chunks the decoder never reads that the walker inflates to
+/// quote their text. An inventory-only budget, separate from the decoder's text caps.
+const ITXT_QUOTE_BUDGET: u64 = 4 * 1024 * 1024;
 /// One chunk's classification, built per chunk and pushed by [`Walker::commit`].
 struct Entry {
     start: u64,
@@ -246,6 +251,7 @@ struct Walker<'a> {
     palette_len: Option<usize>,
     text_count: usize,
     text_compressed: u64,
+    itxt_quoted: u64,
     scratch: Vec<u8>,
     idat_notes: BTreeMap<usize, String>,
     /// A non-empty tRNS reached `PngAncillary::collect` (it widens the output pixel).
@@ -348,6 +354,7 @@ pub(crate) fn walk(data: &[u8], stop: &dyn Stop, opts: Options) -> Result<Invent
         palette_len: None,
         text_count: 0,
         text_compressed: 0,
+        itxt_quoted: 0,
         scratch: Vec::new(),
         idat_notes: BTreeMap::new(),
         trns_seen: false,
@@ -421,6 +428,32 @@ fn latin1(bytes: &[u8]) -> String {
         }
     }
     s
+}
+
+/// A detail line quoting inflated text (Latin-1 for zTXt, UTF-8 for iTXt), control
+/// characters escaped, at most [`TEXT_QUOTE_CAP`] bytes of it.
+fn quote(text: &[u8], utf8: bool) -> String {
+    let shown = &text[..text.len().min(TEXT_QUOTE_CAP)];
+    let body = if utf8 {
+        let mut s = String::with_capacity(shown.len());
+        for c in String::from_utf8_lossy(shown).chars() {
+            if c.is_control() {
+                s.push_str(&format!("\\u{{{:x}}}", c as u32));
+            } else {
+                s.push(c);
+            }
+        }
+        s
+    } else {
+        latin1(shown)
+    };
+    match text.len() - shown.len() {
+        0 => format!("inflated text, {} bytes: \"{body}\"", text.len()),
+        more => format!(
+            "inflated text, {} bytes: \"{body}\" and {more} more bytes",
+            text.len()
+        ),
+    }
 }
 
 fn be32(b: &[u8]) -> u32 {
@@ -1566,9 +1599,10 @@ impl Walker<'_> {
         }
         self.text_compressed = consumed;
         match self.inflate(compressed, ZTXT_INFLATE_CAP) {
-            Ok(_) => {
+            Ok((written, _)) => {
                 self.text_count += 1;
                 e.note("native PngInfo::text_chunks only");
+                e.note(quote(&self.scratch[..written], false));
             }
             Err(why) => {
                 e.disp = Disposition::Malformed;
@@ -1606,6 +1640,46 @@ impl Walker<'_> {
             e.note("iTXt without a terminated keyword; the decoder reads only XMP and Software/Creator");
         } else {
             e.note("iTXt keyword is not XML:com.adobe.xmp or Software/Creator: the decoder does not read it");
+            if let Some(n) = nul {
+                self.itxt_quote(&body[n + 1..], e);
+            }
+        }
+    }
+
+    /// Inflate a compressed `iTXt` the decoder never reads and quote its text, so the text
+    /// is as visible to an audit as uncompressed text is in the file's bytes. `rest` starts
+    /// at the compression flag.
+    fn itxt_quote(&mut self, rest: &[u8], e: &mut Entry) {
+        let (Some(&flag), Some(&method)) = (rest.first(), rest.get(1)) else {
+            return;
+        };
+        if flag != 1 {
+            return;
+        }
+        if method != 0 {
+            e.note(format!("iTXt compression method {method}: not inflated"));
+            return;
+        }
+        let rest = &rest[2..];
+        let Some(l) = rest.iter().position(|&b| b == 0) else {
+            return;
+        };
+        let rest = &rest[l + 1..];
+        let Some(t) = rest.iter().position(|&b| b == 0) else {
+            return;
+        };
+        let compressed = &rest[t + 1..];
+        let spent = self.itxt_quoted.saturating_add(compressed.len() as u64);
+        if spent > ITXT_QUOTE_BUDGET {
+            e.note("compressed text not inflated: the inventory's 4 MiB budget for unread iTXt is spent");
+            return;
+        }
+        self.itxt_quoted = spent;
+        match self.inflate(compressed, ZTXT_INFLATE_CAP) {
+            Ok((written, _)) => e.note(quote(&self.scratch[..written], true)),
+            Err(why) => e.note(format!(
+                "compressed text does not inflate within 1 MiB ({why})"
+            )),
         }
     }
 
