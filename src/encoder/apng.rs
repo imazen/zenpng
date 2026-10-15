@@ -203,9 +203,10 @@ fn trial_compress_size(
 /// alpha compositing produces a no-op. Changed pixels use their actual values.
 ///
 /// Only called from [`optimize_apng_truecolor`], which runs exclusively when
-/// `preserve_transparent_rgb` is false, so every consumer of the result
-/// normalizes alpha-0 RGB to zero before compression — unchanged pixels are
-/// emitted as `[0,0,0,0]` directly.
+/// `preserve_transparent_rgb` is false, so the result is emitted already
+/// normalized: unchanged pixels and changed alpha-0 pixels are `[0,0,0,0]`,
+/// exactly what the compressor's alpha-0 RGB normalization would produce.
+/// Callers pass `Some(false)` and the compressor skips that pass.
 ///
 /// Writes into `out` (cleared and re-zeroed first).
 ///
@@ -252,7 +253,16 @@ fn build_over_subframe_into(
                 }
             }
             if changed {
-                orow[start..dx * bpp].copy_from_slice(&trow[start..dx * bpp]);
+                let run = &mut orow[start..dx * bpp];
+                run.copy_from_slice(&trow[start..dx * bpp]);
+                // Normalize alpha-0 RGB, as `zero_transparent_rgba8` would.
+                if bpp == 4 {
+                    for px in run.as_chunks_mut::<4>().0 {
+                        if px[3] == 0 {
+                            *px = [0; 4];
+                        }
+                    }
+                }
             }
         }
     }
@@ -497,7 +507,7 @@ struct FrameEval {
     /// unchanged pixels to rewrite), so OVER can at best tie SOURCE and the
     /// strict `<` comparison always keeps SOURCE: neither trial matters.
     all_changed: bool,
-    /// OVER can reproduce every changed pixel (see `can_use_over_truecolor`).
+    /// OVER can reproduce every changed pixel (see [`region_pixel_scan_into`]).
     /// Always `false` for bpp != 4.
     can_use_over: bool,
     /// Every target pixel inside `region` has alpha 255 — a blit leaves no
@@ -541,6 +551,18 @@ fn apng_take(size: usize) -> Vec<u8> {
             .filter(|b| b.capacity() >= size)
             .unwrap_or_else(|| Vec::with_capacity(size))
     })
+}
+
+/// Frees this thread's APNG and compressor buffer pools when dropped: the
+/// pools serve one encode and are emptied when it returns, error or not.
+/// `par_map` workers are scoped threads, so their pools die with them.
+struct ReleasePools;
+
+impl Drop for ReleasePools {
+    fn drop(&mut self) {
+        drop(APNG_BUFS.with(|s| core::mem::take(&mut *s.borrow_mut())));
+        super::compress::release_thread_pools();
+    }
 }
 
 fn apng_give(buf: Vec<u8>) {
@@ -618,7 +640,10 @@ fn region_pixel_scan_into(
             } else if ta != ALPHA_MASK && c32 & ALPHA_MASK != 0 {
                 can_use_over = false;
             }
-            *op = if t32 == c32 { [0; 4] } else { *tp };
+            // Unchanged pixels and changed alpha-0 pixels are `[0,0,0,0]`:
+            // the alpha-0 RGB normalization the compressor would otherwise
+            // run, done here so the `Some(false)` hint stays true.
+            *op = if t32 == c32 || ta == 0 { [0; 4] } else { *tp };
         }
     }
     (all_changed, can_use_over, all_target_opaque)
@@ -1616,6 +1641,7 @@ pub(crate) fn encode_apng_packed_depth(
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> crate::error::Result<Vec<u8>> {
+    let _pools = ReleasePools;
     let num_frames = u32::try_from(frames.len())
         .map_err(|_| at!(PngError::InvalidInput("too many APNG frames".into())))?;
     let (bpp, color_type): (usize, u8) = if bit_depth == 16 {
@@ -1823,6 +1849,14 @@ pub(crate) struct ApngStreamWriter {
     seq: SeqCounter,
     /// The previous frame as written (RGB8 when `color_type` is 2).
     prev: Option<Vec<u8>>,
+}
+
+impl Drop for ApngStreamWriter {
+    /// Frames compress through this thread's buffer pools; free them when
+    /// the stream ends (`finish` consumes the writer) or is abandoned.
+    fn drop(&mut self) {
+        drop(ReleasePools);
+    }
 }
 
 impl ApngStreamWriter {
@@ -2928,7 +2962,7 @@ mod tests {
     fn optimizer_semi_transparent_roundtrip() {
         // Tests animation with semi-transparent pixels (0 < alpha < 255).
         // These cannot use BLEND_OP_OVER for changed pixels, testing
-        // the can_use_over_truecolor safety check.
+        // the `region_pixel_scan_into` OVER-eligibility check.
         let w = 8u32;
         let h = 8u32;
         let npx = (w * h) as usize;

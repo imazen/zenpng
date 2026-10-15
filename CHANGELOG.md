@@ -45,6 +45,19 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- APNG output changed in 8a9cd28 for RGBA frames whose fully transparent
+  pixels carry nonzero RGB (effort 3 and up, and the default). OVER
+  subframes kept that RGB but told the compressor they were already
+  normalized, so trial sizes, dispose/blend choices and emitted bytes
+  differed from 479a656. Both OVER builders now write `[0,0,0,0]` for
+  changed alpha-0 pixels, and output matches 479a656 again.
+  `tests/apng_byte_identity_partial.rs` (504 cases: sprites over static and
+  transparent backgrounds, noisy RGB under alpha 0, identical frames, odd
+  size with padded rows) pins goldens from 479a656 and asserts it reaches
+  OVER frames and non-NONE disposes; it failed 40 cases on 8a9cd28.
+- APNG encodes no longer keep their scratch-buffer pools after returning
+  (8a9cd28 held up to 80 MiB per thread after a 2048x2048 animation). The
+  pools are emptied when the encode or stream writer ends.
 - One-shot `encode` of a zero-width or zero-height image wrote a PNG with a
   zero IHDR dimension, which the format forbids; it is now refused, as `begin`
   already refused it. Found by zencodec's testkit, which now compares the two.

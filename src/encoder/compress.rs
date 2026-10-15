@@ -2493,6 +2493,15 @@ fn take_precompute(size: usize) -> Vec<u8> {
     })
 }
 
+/// Free this thread's compressor buffer pools (`SCRATCH_BUFS`,
+/// `PRECOMP_BUFS`). APNG encodes call it when they finish, so pooled buffers
+/// (up to several canvas-sized ones) live for one encode, not for the life
+/// of the calling thread.
+pub(crate) fn release_thread_pools() {
+    drop(SCRATCH_BUFS.with(|s| core::mem::take(&mut *s.borrow_mut())));
+    drop(PRECOMP_BUFS.with(|s| core::mem::take(&mut *s.borrow_mut())));
+}
+
 /// Return a precompute buffer to the per-thread pool.
 fn give_precompute(buf: Vec<u8>) {
     PRECOMP_BUFS.with(|s| {
