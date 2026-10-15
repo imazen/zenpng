@@ -373,7 +373,9 @@ impl EncodeConfig {
         self
     }
 
-    /// Add a text chunk (tEXt). Can be called multiple times.
+    /// Add a text chunk: `tEXt` when every character fits Latin-1 (it is encoded as
+    /// Latin-1), otherwise an uncompressed `iTXt` holding the text as UTF-8. Can be
+    /// called multiple times.
     #[must_use]
     pub fn with_text(mut self, keyword: impl Into<String>, text: impl Into<String>) -> Self {
         self.text_chunks.push(TextChunk {

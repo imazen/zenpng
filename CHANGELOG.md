@@ -53,6 +53,7 @@ All notable changes to zenpng are documented here.
   declared frame count binds either way (`tests/animation_streaming.rs`).
 
 ### Fixed
+- `EncodeConfig::with_text` wrote the text's UTF-8 bytes into `tEXt`, which holds Latin-1, so a non-ASCII character read back as two wrong ones. Text that fits Latin-1 is now encoded as Latin-1; text with a character outside it is written as an uncompressed `iTXt` (UTF-8). Test `tests/text_chunks.rs`.
 
 - Grey-valued RGB pixels written with an RGB ICC profile were reduced to a greyscale PNG that still carried the RGB iCCP, which the PNG spec forbids and readers reject or ignore. The grey reductions are now off when an RGB profile will be written. Test: `grey_pixels_with_an_rgb_icc_stay_rgb`.
 - f32 input is stored as 8-bit sRGB, but a caller's cICP calling it linear (transfer 8) was written unchanged, so readers decoded the sRGB samples as linear. The transfer now moves to sRGB (13), primaries kept, on the one-shot and streaming paths. Test: `a_linear_cicp_on_f32_input_is_written_as_srgb`.

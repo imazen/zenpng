@@ -189,9 +189,13 @@ pub(crate) fn write_all_metadata(
         write_phys_chunk(out, ppux, ppuy, unit_byte);
     }
 
-    // tEXt chunks — written before IDAT
+    // Text chunks — written before IDAT. tEXt holds Latin-1, so text with a character
+    // outside it goes in an uncompressed iTXt (UTF-8) rather than as mis-encoded tEXt.
     for tc in &meta.text_chunks {
-        write_text_chunk(out, &tc.keyword, &tc.text);
+        match latin1_bytes(&tc.text) {
+            Some(bytes) => write_text_chunk(out, &tc.keyword, &bytes),
+            None => write_itxt_chunk(out, &tc.keyword, &tc.text),
+        }
     }
 
     // tIME (last modification time) — can appear anywhere, we put it before IDAT
@@ -340,13 +344,19 @@ fn write_phys_chunk(out: &mut Vec<u8>, ppux: u32, ppuy: u32, unit: u8) {
     write_chunk(out, b"pHYs", &data);
 }
 
-fn write_text_chunk(out: &mut Vec<u8>, keyword: &str, text: &str) {
-    // tEXt: keyword + NUL + text (Latin-1, but we write UTF-8 which is
-    // compatible for ASCII and close enough for Latin-1 keywords)
-    let mut chunk_data = Vec::with_capacity(keyword.len() + 1 + text.len());
+/// The text as Latin-1 (ISO 8859-1) bytes, or `None` if a character falls outside it.
+fn latin1_bytes(text: &str) -> Option<Vec<u8>> {
+    text.chars()
+        .map(|c| u8::try_from(u32::from(c)).ok())
+        .collect()
+}
+
+fn write_text_chunk(out: &mut Vec<u8>, keyword: &str, latin1_text: &[u8]) {
+    // tEXt: keyword + NUL + Latin-1 text.
+    let mut chunk_data = Vec::with_capacity(keyword.len() + 1 + latin1_text.len());
     chunk_data.extend_from_slice(keyword.as_bytes());
     chunk_data.push(0);
-    chunk_data.extend_from_slice(text.as_bytes());
+    chunk_data.extend_from_slice(latin1_text);
     write_chunk(out, b"tEXt", &chunk_data);
 }
 
@@ -418,7 +428,8 @@ pub(crate) fn metadata_size_estimate(meta: &PngWriteMetadata<'_>) -> usize {
         size += 12 + 9; // pHYs
     }
     for tc in &meta.text_chunks {
-        size += 12 + tc.keyword.len() + 1 + tc.text.len();
+        // iTXt adds four bytes to tEXt's layout; Latin-1 is never longer than UTF-8.
+        size += 12 + tc.keyword.len() + 5 + tc.text.len();
     }
     if meta.last_modified.is_some() {
         size += 12 + 7; // tIME
