@@ -144,6 +144,10 @@ pub struct PngEncoderConfig {
     effort: Option<i32>,
     quality: Option<f32>,
     lossless: bool,
+    /// From `EncoderConfig::with_prefer_streaming`.
+    prefer_streaming: Option<bool>,
+    /// `with_downcast` was called: the streaming preference leaves it alone.
+    downcast_set: bool,
 }
 
 impl PngEncoderConfig {
@@ -155,6 +159,8 @@ impl PngEncoderConfig {
             effort: None,
             quality: None,
             lossless: true,
+            prefer_streaming: None,
+            downcast_set: false,
         }
     }
 
@@ -241,6 +247,7 @@ impl PngEncoderConfig {
     #[must_use]
     pub fn with_downcast(mut self, flags: DowncastFlags) -> Self {
         self.config.downcast = flags;
+        self.downcast_set = true;
         self
     }
 
@@ -580,6 +587,27 @@ static PNG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
 impl zencodec::encode::EncoderConfig for PngEncoderConfig {
     type Error = At<CodecError>;
     type Job = PngEncodeJob;
+
+    /// `true`: no whole-image downcasts (unless `with_downcast` chose them),
+    /// so efforts 1-15 stream in ~512 KiB strips and effort 0 row by row.
+    /// The cost is the reductions the downcasts would have found (dropping a
+    /// dead alpha channel, gray, palette). Efforts above 15 still search the
+    /// whole image and report `AT_FINISH`.
+    fn with_prefer_streaming(mut self, prefer: bool) -> Self {
+        self.prefer_streaming = Some(prefer);
+        if !self.downcast_set {
+            self.config.downcast = if prefer {
+                DowncastFlags::none()
+            } else {
+                DowncastFlags::default()
+            };
+        }
+        self
+    }
+
+    fn prefers_streaming(&self) -> Option<bool> {
+        Some(self.prefer_streaming.unwrap_or(false))
+    }
 
     fn format() -> ImageFormat {
         ImageFormat::Png
@@ -1043,6 +1071,12 @@ impl zencodec::encode::Encoder for PngEncoder {
     }
 
     fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<CodecError>> {
+        // The usage paths are exclusive.
+        if self.declared.is_some() || self.streaming.is_some() {
+            return Err(CodecError::of(at!(PngError::InvalidState(
+                "encode after begin or push_rows".into()
+            ))));
+        }
         self.encode_inner(pixels).map_err(CodecError::of)
     }
 
@@ -1450,6 +1484,9 @@ impl PngEncoder {
     ) -> Result<zencodec::encode::OutputTiming, At<PngError>> {
         use crate::encoder::compress::StripFraming;
         use zencodec::encode::OutputTiming;
+        if self.declared.is_some() {
+            return Err(at!(PngError::InvalidState("begin called twice".into())));
+        }
         if self.streaming.is_some() {
             return Err(at!(PngError::InvalidState("begin after push_rows".into())));
         }

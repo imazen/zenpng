@@ -1674,9 +1674,21 @@ impl StripStream {
         }
         let header =
             zenflate::png::StripCompressor::new(params.screen_effort.level()).zlib_header();
-        let threads = strip_threads(bounds.len(), effort, threads);
-        let pool = (threads > 1 && !cfg!(target_arch = "wasm32"))
+        let mut threads = strip_threads(bounds.len(), effort, threads);
+        // Streaming output promises a lag below the height: the strips in
+        // flight plus the one filling must leave at least one row out.
+        let max_rows = bounds.iter().map(|&(a, b)| b - a).max().unwrap_or(0);
+        let in_flight_cap = ((height - 1) / max_rows.max(1)).saturating_sub(1);
+        if framing == StripFraming::ChunkPerStrip && in_flight_cap == 0 {
+            threads = 1;
+        }
+        let mut pool = (threads > 1 && !cfg!(target_arch = "wasm32"))
             .then(|| StripPool::new(threads, effort, format, row_bytes, cancel));
+        if framing == StripFraming::ChunkPerStrip
+            && let Some(p) = pool.as_mut()
+        {
+            p.max_in_flight = p.max_in_flight.min(in_flight_cap);
+        }
         Some(Self {
             worker: StripWorker::new(&params),
             rows: Vec::with_capacity((bounds[0].1 + 1) * row_bytes),
@@ -1698,9 +1710,7 @@ impl StripStream {
     pub(crate) fn lag_rows(&self) -> u32 {
         let rows = self.bounds.iter().map(|&(a, b)| b - a).max().unwrap_or(0);
         let strips = 1 + self.pool.as_ref().map_or(0, |p| p.max_in_flight);
-        let height = self.bounds.last().map_or(0, |b| b.1);
-        // Never more than the image less its last row.
-        (rows * strips).min(height).saturating_sub(1) as u32
+        (rows * strips).saturating_sub(1) as u32
     }
 
     /// Write strip `k`'s compressed bytes `z`; `adler` already includes it.

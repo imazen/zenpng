@@ -189,8 +189,9 @@ fn worker_threads_give_the_same_file_and_a_larger_lag() {
     let (_, a, _) = rows(&serial, &px, (w, h), 16, true);
     let (timing, b, _) = rows(&parallel, &px, (w, h), 16, true);
     assert_eq!(a, b, "worker threads change the bytes");
-    // Strips in flight count too, capped at the image less one row.
-    assert_eq!(timing.unwrap().lag_rows(), Some(h - 1));
+    // Strips in flight count too; streaming caps them so the lag stays below
+    // the height: 3 in flight plus the one filling, 200 rows each.
+    assert_eq!(timing.unwrap().lag_rows(), Some(4 * 200 - 1));
 }
 
 #[test]
@@ -277,4 +278,36 @@ fn testkit_streaming_output_honesty() {
         &img,
     )
     .unwrap();
+}
+
+#[test]
+fn one_shot_after_begin_and_a_second_begin_are_refused() {
+    let px = image(32, 32);
+    let mut enc = cfg(0).job().encoder().unwrap();
+    enc.begin(32, 32, RGB8).unwrap();
+    let e = enc.begin(32, 32, RGB8).unwrap_err();
+    assert!(e.to_string().contains("twice"), "{e}");
+    let mut enc = cfg(0).job().encoder().unwrap();
+    enc.begin(32, 32, RGB8).unwrap();
+    let s = PixelSlice::new(&px, 32, 32, 96, RGB8).unwrap();
+    assert!(enc.encode(s).is_err());
+}
+
+#[test]
+fn prefer_streaming_drops_the_whole_image_downcasts_unless_chosen() {
+    let (w, h) = (1024u32, 1000u32);
+    let begin = |c: PngEncoderConfig| c.job().encoder().unwrap().begin(w, h, RGB8).unwrap();
+    let base = PngEncoderConfig::new()
+        .with_compression(Compression::Effort(5))
+        .with_threading(ThreadingPolicy::Sequential);
+    assert_eq!(begin(base.clone()), OutputTiming::AT_FINISH);
+    assert_eq!(base.prefers_streaming(), Some(false));
+    let prefer = base.clone().with_prefer_streaming(true);
+    assert_eq!(prefer.prefers_streaming(), Some(true));
+    assert_eq!(begin(prefer), OutputTiming::streaming(199));
+    // An explicit downcast choice wins.
+    let explicit = base
+        .with_downcast(DowncastFlags::default())
+        .with_prefer_streaming(true);
+    assert_eq!(begin(explicit), OutputTiming::AT_FINISH);
 }

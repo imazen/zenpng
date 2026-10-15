@@ -25,6 +25,12 @@ All notable changes to zenpng are documented here.
   too, capped at the image height). Whole-image configurations report
   `AT_FINISH`. The output-size limit counts bytes already handed out.
   Declares `EncodeCapabilities::streaming_output` (`tests/streaming_output.rs`).
+  Streaming caps the worker pool's strips in flight so the lag stays below
+  the height (799 rows for 1024x1000 RGB8 effort 5 on 4 threads); `encode`
+  after `begin` and a second `begin` are refused.
+- `EncoderConfig::with_prefer_streaming(true)`: no whole-image downcasts
+  unless `with_downcast` chose them, so efforts 0-15 stream;
+  `prefers_streaming()` reports it.
 
 ### Fixed
 

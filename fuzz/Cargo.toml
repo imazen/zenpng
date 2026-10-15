@@ -48,7 +48,7 @@ bench = false
 # This standalone workspace must use the same unreleased API sources as the root.
 [patch.crates-io]
 # Coordinated exact animation timing series; one source for shared types.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "b1bfe29303a022298d66b4eba7f60214f6f16081" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "4c031d808087d055f65a3670e68812f8b654a244" }
 zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "789d69dbc314e748676b7f2f19542c17473ba40b" }
 zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "789d69dbc314e748676b7f2f19542c17473ba40b" }
 # Retain main's strip-compression API source.
