@@ -15,7 +15,7 @@ fn exact_content_light_static_and_animation() {
     ] {
         let config = EncodeConfig::default()
             .with_compression(Compression::None)
-            .with_content_light_level(Some(zencodec::ContentLightLevel::new(42, 7)))
+            .with_content_light_level(Some(zenpixels::hdr::ContentLightLevel::new(42, 7)))
             .with_content_light_level_raw(Some(raw));
         let still = zenpng::encode_rgb8(
             ImgRef::new(&pixels, 2, 2),
@@ -60,7 +60,7 @@ fn exact_content_light_static_and_animation() {
             let mut out = vec![0; oracle.output_buffer_size().unwrap()];
             oracle.next_frame(&mut out).unwrap();
         }
-        let expected = zencodec::ContentLightLevel::new(
+        let expected = zenpixels::hdr::ContentLightLevel::new(
             (raw[0] / 10_000).min(65535) as u16,
             (raw[1] / 10_000).min(65535) as u16,
         );
@@ -69,8 +69,8 @@ fn exact_content_light_static_and_animation() {
             Some(expected)
         );
         // Existing setter explicitly returns to whole-nit input.
-        let reset =
-            config.with_content_light_level(Some(zencodec::ContentLightLevel::new(1000, 250)));
+        let reset = config
+            .with_content_light_level(Some(zenpixels::hdr::ContentLightLevel::new(1000, 250)));
         let bytes = zenpng::encode_rgb8(
             ImgRef::new(&pixels, 2, 2),
             None,

@@ -12,8 +12,9 @@ use alloc::vec::Vec;
 
 use enough::Stop;
 use imgref::ImgVec;
-use zencodec::{Cicp, ContentLightLevel, MasteringDisplay};
+use zencodec::Cicp;
 use zenpixels::PixelBuffer;
+use zenpixels::hdr::{ContentLightLevel, MasteringDisplay};
 
 use crate::chunk::ancillary::PngAncillary;
 use crate::chunk::ihdr::Ihdr;

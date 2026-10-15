@@ -4,6 +4,10 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- zenpixels/zenpixels-convert pinned to main 1d3ddd21 (converged 0.2.17), from 789d69db on the unmerged PR #76 branch. HDR metadata types come from `zenpixels::hdr` instead of the root aliases 0.2.17 deprecates (same types; `with_content_light_level`'s signature is unchanged). `cicp_only_display_p3_synthesizes_icc` checks that the embedded profile describes Display P3 with the sRGB curve instead of pinning the curated `DISPLAY_P3_V4` bytes, which 0.2.17 replaces with the exact cicp-tagged profile (zenpixels#86/#87).
+
 ### Added
 
 - Incremental (sans-I/O) decode: `dyn_incremental_decoder` returns

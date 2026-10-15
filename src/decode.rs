@@ -3,8 +3,9 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use enough::Stop;
-use zencodec::{Cicp, ContentLightLevel, MasteringDisplay};
+use zencodec::Cicp;
 use zenpixels::PixelBuffer;
+use zenpixels::hdr::{ContentLightLevel, MasteringDisplay};
 
 use crate::error::PngError;
 #[allow(unused_imports)]

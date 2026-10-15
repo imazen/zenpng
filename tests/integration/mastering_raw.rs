@@ -61,7 +61,7 @@ fn raw_mastering_still_animation_and_row_routes() {
     let config = EncodeConfig::default()
         .with_compression(Compression::None)
         .with_cicp(Some(cicp))
-        .with_mastering_display(Some(zencodec::MasteringDisplay::HDR10_REFERENCE))
+        .with_mastering_display(Some(zenpixels::hdr::MasteringDisplay::HDR10_REFERENCE))
         .with_mastering_display_raw(Some(raw));
     let still = zenpng::encode_rgb8(
         ImgRef::new(&pixels, 2, 2),

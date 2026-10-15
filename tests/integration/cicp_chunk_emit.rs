@@ -4,8 +4,9 @@
 //! PixelBuffer-native route for HDR renditions (`RGB16_BT2100_PQ`/HLG)
 //! where cICP is the canonical color signal.
 
+use zencodec::Cicp;
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-use zencodec::{Cicp, ContentLightLevel};
+use zenpixels::hdr::ContentLightLevel;
 use zenpixels::{PixelDescriptor, PixelSlice};
 use zenpng::{Compression, PngEncoderConfig};
 

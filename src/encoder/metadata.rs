@@ -2,8 +2,9 @@
 
 use alloc::vec::Vec;
 
-use zencodec::{Cicp, ContentLightLevel, MasteringDisplay, Metadata};
+use zencodec::{Cicp, Metadata};
 use zenflate::{CompressionLevel, Compressor, Unstoppable};
+use zenpixels::hdr::{ContentLightLevel, MasteringDisplay};
 
 use crate::chunk::write::write_chunk;
 use crate::decode::{PhysUnit, PngChromaticities, PngTime, TextChunk};

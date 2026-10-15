@@ -5,7 +5,8 @@ use alloc::vec::Vec;
 use imgref::ImgRef;
 use rgb::{Gray, Rgb, Rgba};
 
-use zencodec::{Cicp, ContentLightLevel, MasteringDisplay, Metadata};
+use zencodec::{Cicp, Metadata};
+use zenpixels::hdr::{ContentLightLevel, MasteringDisplay};
 
 use enough::Stop;
 
@@ -2386,7 +2387,8 @@ mod tests {
 
     #[test]
     fn png3_hdr_cicp_clli_mdcv_16bit_roundtrip() {
-        use zencodec::{Cicp, ContentLightLevel, MasteringDisplay};
+        use zencodec::Cicp;
+        use zenpixels::hdr::{ContentLightLevel, MasteringDisplay};
         // 4x4 16-bit RGB with HDR-range samples.
         let (w, h) = (4usize, 4usize);
         let pixels: Vec<Rgb<u16>> = (0..(w * h) as u16)

@@ -198,7 +198,10 @@ impl PngEncoderConfig {
     /// Set the content light level written to the PNG `cLLI` chunk
     /// (emitted only alongside a [`with_cicp`](Self::with_cicp) signal).
     #[must_use]
-    pub fn with_content_light_level(mut self, clli: Option<zencodec::ContentLightLevel>) -> Self {
+    pub fn with_content_light_level(
+        mut self,
+        clli: Option<zenpixels::hdr::ContentLightLevel>,
+    ) -> Self {
         self.config = self.config.with_content_light_level(clli);
         self
     }
@@ -7192,7 +7195,8 @@ mod tests {
     #[test]
     fn hdr_metadata_always_written_with_cicp() {
         // mDCV and cLLi always written alongside cICP
-        use zencodec::{Cicp, ContentLightLevel, MasteringDisplay, Metadata};
+        use zencodec::{Cicp, Metadata};
+        use zenpixels::hdr::{ContentLightLevel, MasteringDisplay};
 
         let pixels = vec![
             Rgb::<u8> {
@@ -7334,7 +7338,8 @@ mod tests {
 
     #[test]
     fn clli_mdcv_roundtrip() {
-        use zencodec::{Cicp, ContentLightLevel, MasteringDisplay, Metadata};
+        use zencodec::{Cicp, Metadata};
+        use zenpixels::hdr::{ContentLightLevel, MasteringDisplay};
 
         let pixels = vec![
             Rgb::<u8> {
@@ -8110,10 +8115,15 @@ mod tests {
             .icc_profile
             .as_deref()
             .expect("CICP-only Display P3 must synthesize + embed an ICC");
-        let expected = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+        // What the profile describes, not its bytes: zenpixels 0.2.17
+        // synthesizes the exact, cicp-tagged profile rather than the curated
+        // `DISPLAY_P3_V4`, whose colorants are truncated (zenpixels#86/#87).
+        let id = zenpixels::icc::identify_common(embedded).expect("a recognised profile");
+        let cicp = id.to_cicp().expect("CICP for the profile");
         assert_eq!(
-            embedded, expected,
-            "embedded ICC must be the bundled Display P3 profile synthesized from CICP"
+            (cicp.color_primaries, cicp.transfer_characteristics),
+            (12, 13),
+            "embedded ICC must describe Display P3 with the sRGB curve"
         );
     }
 
