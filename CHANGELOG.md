@@ -31,8 +31,25 @@ All notable changes to zenpng are documented here.
 - `EncoderConfig::with_prefer_streaming(true)`: no whole-image downcasts
   unless `with_downcast` chose them, so efforts 0-15 stream;
   `prefers_streaming()` reports it.
+- `Encoder::take_output` hands over the streaming output buffer itself when
+  the destination is empty (the effort-0 path keeps its running IDAT CRC).
+- APNG streams frame by frame (zencodec `AnimationFrameEncoder::begin`): with
+  the frame count declared, the cross-frame optimizer off (effort 0-2, or
+  16-bit) and a colour type that later frames cannot change (16-bit, a
+  descriptor without transparency, or the RGBA-to-RGB reduction off), each
+  frame is written as it is pushed against the one before, `streaming(0)`,
+  byte-identical to the encode without `begin`. The one-shot path at those
+  efforts now runs the same frame writer (output unchanged: 20 configurations
+  hashed before and after). Other configurations report `AT_FINISH`; a
+  declared frame count binds either way (`tests/animation_streaming.rs`).
 
 ### Fixed
+
+- One-shot `encode` of a zero-width or zero-height image wrote a PNG with a
+  zero IHDR dimension, which the format forbids; it is now refused, as `begin`
+  already refused it. Found by zencodec's testkit, which now compares the two.
+- APNG ignored `DowncastFlags::rgba_to_rgb`: opaque RGBA frames were always
+  written as RGB. With the reduction off they stay RGBA.
 
 - One-shot `decode()` labelled native buffers with an `Unknown` transfer while
   `output_info`, `push_decoder` and the streaming decoder report sRGB for the
