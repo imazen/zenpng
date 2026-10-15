@@ -144,6 +144,10 @@ pub struct PngEncoderConfig {
     effort: Option<i32>,
     quality: Option<f32>,
     lossless: bool,
+    /// From `EncoderConfig::with_prefer_streaming`.
+    prefer_streaming: Option<bool>,
+    /// `with_downcast` was called: the streaming preference leaves it alone.
+    downcast_set: bool,
 }
 
 impl PngEncoderConfig {
@@ -155,6 +159,8 @@ impl PngEncoderConfig {
             effort: None,
             quality: None,
             lossless: true,
+            prefer_streaming: None,
+            downcast_set: false,
         }
     }
 
@@ -241,6 +247,7 @@ impl PngEncoderConfig {
     #[must_use]
     pub fn with_downcast(mut self, flags: DowncastFlags) -> Self {
         self.config.downcast = flags;
+        self.downcast_set = true;
         self
     }
 
@@ -569,6 +576,8 @@ static PNG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_native_f32(true)
     .with_native_alpha(true)
     .with_push_rows(true)
+    // Effort 0 and the strip efforts on large enough images; see `begin`.
+    .with_streaming_output(true)
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
     .with_effort_range(0, 12)
@@ -578,6 +587,27 @@ static PNG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
 impl zencodec::encode::EncoderConfig for PngEncoderConfig {
     type Error = At<CodecError>;
     type Job = PngEncodeJob;
+
+    /// `true`: no whole-image downcasts (unless `with_downcast` chose them),
+    /// so efforts 1-15 stream in ~512 KiB strips and effort 0 row by row.
+    /// The cost is the reductions the downcasts would have found (dropping a
+    /// dead alpha channel, gray, palette). Efforts above 15 still search the
+    /// whole image and report `AT_FINISH`.
+    fn with_prefer_streaming(mut self, prefer: bool) -> Self {
+        self.prefer_streaming = Some(prefer);
+        if !self.downcast_set {
+            self.config.downcast = if prefer {
+                DowncastFlags::none()
+            } else {
+                DowncastFlags::default()
+            };
+        }
+        self
+    }
+
+    fn prefers_streaming(&self) -> Option<bool> {
+        Some(self.prefer_streaming.unwrap_or(false))
+    }
 
     fn format() -> ImageFormat {
         ImageFormat::Png
@@ -792,6 +822,10 @@ impl PngEncodeJob {
             canvas_width: self.canvas_width,
             canvas_height: self.canvas_height,
             streaming: None,
+            stream_out: false,
+            declared: None,
+            sent: 0,
+            emitted: 0,
         }
     }
 }
@@ -810,6 +844,15 @@ pub struct PngEncoder {
     canvas_height: u32,
     /// Streaming state, lazily initialized on first push_rows() call.
     streaming: Option<StreamingMode>,
+    /// `begin` declared the image and chose a mode whose bytes are final as
+    /// they are written: `pending_output` hands them out.
+    stream_out: bool,
+    /// The descriptor `begin` declared; rows must arrive in it.
+    declared: Option<zenpixels::PixelDescriptor>,
+    /// Bytes of the current output buffer already handed out.
+    sent: usize,
+    /// Bytes handed out and dropped from the buffer (for the output limit).
+    emitted: u64,
 }
 
 /// Streaming mode selection for push_rows/finish.
@@ -834,9 +877,13 @@ enum StreamingMode {
 /// plus the compressed output instead of the image.
 struct StripStreamingState {
     /// Signature, IHDR, metadata, the IDAT length placeholder and type, then
-    /// the zlib stream as strips complete.
+    /// the zlib stream as strips complete. With per-strip framing (streaming
+    /// output after `begin`): signature, IHDR, metadata, then one IDAT chunk
+    /// per completed strip.
     output: Vec<u8>,
+    /// Where the single IDAT's length goes (`Continuous` framing only).
     idat_len_pos: usize,
+    framing: crate::encoder::compress::StripFraming,
     stream: crate::encoder::compress::StripStream,
     /// One `push_rows` call's rows in PNG byte order.
     pending: Vec<u8>,
@@ -885,6 +932,9 @@ struct TrueStreamingState {
     filtered_remaining: usize,
     /// Serialized `AfterIdat` unknown chunks, written before `IEND`.
     tail: Vec<u8>,
+    /// Streaming output (after `begin`): the IDAT CRC so far and the output
+    /// index it covers up to, so bytes can be handed out before `finish`.
+    crc: Option<(u32, usize)>,
 }
 
 /// Pre-filtered streaming state: filters rows on arrival, compresses in finish().
@@ -1021,7 +1071,87 @@ impl zencodec::encode::Encoder for PngEncoder {
     }
 
     fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<CodecError>> {
+        // The usage paths are exclusive.
+        if self.declared.is_some() || self.streaming.is_some() {
+            return Err(CodecError::of(at!(PngError::InvalidState(
+                "encode after begin or push_rows".into()
+            ))));
+        }
         self.encode_inner(pixels).map_err(CodecError::of)
+    }
+
+    /// Declare the image and choose the row mode. Output streams in two
+    /// configurations: effort 0 (stored DEFLATE, each row written as it
+    /// arrives, byte-identical to the one-shot encode), and the efforts that
+    /// compress in independent ~512 KiB strips (1-15, with every downcast,
+    /// near-lossless and `iDOT` segments off, on an image of at least two
+    /// strips), where each strip is written as its own IDAT chunk once its
+    /// last row arrives: the same zlib stream as the one-shot encode, split
+    /// into one chunk per strip. Everything else (whole-image analysis,
+    /// small images, quantization) reports `AT_FINISH`.
+    fn begin(
+        &mut self,
+        width: u32,
+        height: u32,
+        descriptor: zenpixels::PixelDescriptor,
+    ) -> Result<zencodec::encode::OutputTiming, At<CodecError>> {
+        self.begin_inner(width, height, descriptor)
+            .map_err(CodecError::of)
+    }
+
+    fn pending_output(&self) -> &[u8] {
+        if !self.stream_out {
+            return &[];
+        }
+        match &self.streaming {
+            Some(StreamingMode::TrueStreaming(st)) => &st.output[self.sent..],
+            Some(StreamingMode::Strips(st)) => &st.output[self.sent..],
+            _ => &[],
+        }
+    }
+
+    fn consume_output(&mut self, n: usize) {
+        if !self.stream_out {
+            return;
+        }
+        let len = self.pending_output().len() + self.sent;
+        self.sent = (self.sent + n).min(len);
+        // Reclaim sent bytes when all are gone (a driver draining after every
+        // push), or when they dominate the buffer.
+        if self.sent == len || (self.sent >= 64 * 1024 && self.sent > len / 2) {
+            match &mut self.streaming {
+                Some(StreamingMode::TrueStreaming(st)) => st.drop_front(self.sent),
+                Some(StreamingMode::Strips(st)) => {
+                    st.output.drain(..self.sent);
+                }
+                _ => return,
+            }
+            self.emitted += self.sent as u64;
+            self.sent = 0;
+        }
+    }
+
+    /// Hands over the output buffer itself when `into` is empty and nothing
+    /// was partly consumed; otherwise copies.
+    fn take_output(&mut self, into: &mut Vec<u8>) {
+        let pending = self.pending_output().len();
+        if pending == 0 {
+            return;
+        }
+        if !(into.is_empty() && self.sent == 0) {
+            into.extend_from_slice(self.pending_output());
+            self.consume_output(pending);
+            return;
+        }
+        match &mut self.streaming {
+            Some(StreamingMode::TrueStreaming(st)) => *into = st.take_all(),
+            Some(StreamingMode::Strips(st)) => {
+                let capacity = st.output.len();
+                *into = core::mem::replace(&mut st.output, Vec::with_capacity(capacity));
+            }
+            _ => unreachable!("bytes pending only while streaming"),
+        }
+        self.emitted += pending as u64;
     }
 
     fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), At<CodecError>> {
@@ -1068,6 +1198,15 @@ impl PngEncoder {
     fn encode_inner(mut self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<PngError>> {
         use linear_srgb::default::{linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice};
         use zenpixels::PixelFormat;
+
+        // PNG forbids a zero width or height (IHDR); `begin` refuses them too.
+        if pixels.width() == 0 || pixels.rows() == 0 {
+            return Err(at!(PngError::InvalidInput(alloc::format!(
+                "PNG cannot encode a {}x{} image",
+                pixels.width(),
+                pixels.rows()
+            ))));
+        }
 
         if self.config.config.cicp.is_none()
             && self
@@ -1277,6 +1416,7 @@ impl PngEncoder {
         bit_depth: crate::encode::BitDepth,
         row_bytes: usize,
         bpp: usize,
+        framing: crate::encoder::compress::StripFraming,
     ) -> Result<Option<StripStreamingState>, At<PngError>> {
         use crate::chunk::{PNG_SIGNATURE, write::write_chunk};
         let config = &self.config.config;
@@ -1313,6 +1453,7 @@ impl PngEncoder {
             h as usize,
             threads,
             self.stop.clone(),
+            framing,
         ) else {
             return Ok(None);
         };
@@ -1338,18 +1479,173 @@ impl PngEncoder {
         write_chunk(&mut output, b"IHDR", &ihdr);
         crate::encoder::write_all_metadata(&mut output, &write_meta)?;
         let idat_len_pos = output.len();
-        output.extend_from_slice(&[0, 0, 0, 0]);
-        output.extend_from_slice(b"IDAT");
-        output.extend_from_slice(&stream.zlib_header());
+        if framing == crate::encoder::compress::StripFraming::Continuous {
+            output.extend_from_slice(&[0, 0, 0, 0]);
+            output.extend_from_slice(b"IDAT");
+            output.extend_from_slice(&stream.zlib_header());
+        }
         Ok(Some(StripStreamingState {
             output,
             idat_len_pos,
+            framing,
             stream,
             pending: Vec::new(),
             row_bytes,
             rows_pushed: 0,
             tail: crate::encoder::tail_ancillary_bytes(&write_meta),
         }))
+    }
+
+    /// The file's remaining bytes (all of it unless `begin` streamed some),
+    /// after the output-size limit over the whole file.
+    fn finish_output(&self, mut data: Vec<u8>) -> Result<EncodeOutput, At<PngError>> {
+        if let Some(ref limits) = self.limits {
+            limits
+                .check_output_size(self.emitted + data.len() as u64)
+                .map_err(|e| at!(PngError::LimitExceeded(e)))?;
+        }
+        data.drain(..self.sent);
+        Ok(EncodeOutput::new(data, ImageFormat::Png))
+    }
+
+    fn begin_inner(
+        &mut self,
+        width: u32,
+        height: u32,
+        descriptor: zenpixels::PixelDescriptor,
+    ) -> Result<zencodec::encode::OutputTiming, At<PngError>> {
+        use crate::encoder::compress::StripFraming;
+        use zencodec::encode::OutputTiming;
+        if self.declared.is_some() {
+            return Err(at!(PngError::InvalidState("begin called twice".into())));
+        }
+        if self.streaming.is_some() {
+            return Err(at!(PngError::InvalidState("begin after push_rows".into())));
+        }
+        if width == 0
+            || height == 0
+            || (self.canvas_width != 0 && self.canvas_width != width)
+            || (self.canvas_height != 0 && self.canvas_height != height)
+        {
+            return Err(at!(PngError::InvalidState(alloc::format!(
+                "begin: {width}x{height} does not match the canvas {}x{}",
+                self.canvas_width,
+                self.canvas_height
+            ))));
+        }
+        self.canvas_width = width;
+        self.canvas_height = height;
+        self.start_rows(descriptor, width, height, StripFraming::ChunkPerStrip)?;
+        self.declared = Some(descriptor);
+        let timing = match self.streaming.as_mut() {
+            Some(StreamingMode::TrueStreaming(st)) => {
+                st.stream_output();
+                OutputTiming::streaming(0)
+            }
+            Some(StreamingMode::Strips(st)) if st.framing == StripFraming::ChunkPerStrip => {
+                OutputTiming::streaming(st.stream.lag_rows())
+            }
+            _ => OutputTiming::AT_FINISH,
+        };
+        self.stream_out = timing.streams();
+        self.check_streamed_output(0)?;
+        Ok(timing)
+    }
+
+    /// With streaming output, the output-size limit over everything written
+    /// so far (handed out or pending) plus `more`.
+    fn check_streamed_output(&self, more: usize) -> Result<(), At<PngError>> {
+        let Some(ref limits) = self.limits else {
+            return Ok(());
+        };
+        let buffered = match &self.streaming {
+            Some(StreamingMode::TrueStreaming(st)) => st.output.len(),
+            Some(StreamingMode::Strips(st)) => st.output.len(),
+            _ => 0,
+        };
+        let total = self.emitted + (buffered + more) as u64;
+        limits
+            .check_output_size(total)
+            .map_err(|e| at!(PngError::LimitExceeded(e)))
+    }
+
+    /// Choose the row mode for an image `w` wide (and `canvas_height` tall,
+    /// when known) whose rows arrive in `descriptor`; `h` is the first
+    /// push's row count.
+    fn start_rows(
+        &mut self,
+        descriptor: zenpixels::PixelDescriptor,
+        w: u32,
+        h: u32,
+        framing: crate::encoder::compress::StripFraming,
+    ) -> Result<(), At<PngError>> {
+        let (color_type, bit_depth) = pixel_format_to_png(descriptor.pixel_format())
+            .ok_or_else(|| at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat)))?;
+
+        // Infer width from first push if not set via with_canvas_size
+        if self.canvas_width == 0 {
+            self.canvas_width = w;
+        }
+
+        let channels: usize = match color_type {
+            crate::encode::ColorType::Grayscale => 1,
+            crate::encode::ColorType::Rgb => 3,
+            crate::encode::ColorType::GrayscaleAlpha => 2,
+            crate::encode::ColorType::Rgba => 4,
+        };
+        let depth_bytes: usize = match bit_depth {
+            crate::encode::BitDepth::Eight => 1,
+            crate::encode::BitDepth::Sixteen => 2,
+        };
+        let row_bytes = self.canvas_width as usize * channels * depth_bytes;
+        let effort = self.config.config.compression.effort();
+
+        let bpp = channels * depth_bytes;
+        if effort == 0 && self.canvas_height > 0 {
+            // True streaming: write PNG header and IDAT incrementally.
+            self.streaming = Some(StreamingMode::TrueStreaming(TrueStreamingState::new(
+                self.canvas_width,
+                self.canvas_height,
+                color_type,
+                bit_depth,
+                row_bytes,
+                self.metadata.as_ref(),
+                self.policy.as_ref(),
+                &self.config.config,
+            )?));
+        } else if let Some(state) =
+            self.strip_streaming_state(color_type, bit_depth, row_bytes, bpp, framing)?
+        {
+            self.streaming = Some(StreamingMode::Strips(Box::new(state)));
+        } else if effort == 1 && self.canvas_height > 0 {
+            // Pre-filtered streaming: filter rows on arrival, compress in finish().
+            self.streaming = Some(StreamingMode::PreFiltered(PreFilteredState::new(
+                self.canvas_width,
+                self.canvas_height,
+                color_type,
+                bit_depth,
+                row_bytes,
+                bpp,
+                self.metadata.as_ref(),
+                self.policy.as_ref(),
+                &self.config.config,
+            )?));
+        } else {
+            // Buffered: accumulate pixel data, encode in finish().
+            let capacity = if self.canvas_height > 0 {
+                row_bytes * self.canvas_height as usize
+            } else {
+                row_bytes * h as usize
+            };
+            self.streaming = Some(StreamingMode::Buffered(BufferedStreamingState {
+                pixel_data: Vec::with_capacity(capacity),
+                color_type,
+                bit_depth,
+                row_bytes,
+                rows_pushed: 0,
+            }));
+        }
+        Ok(())
     }
 
     fn push_rows_inner(&mut self, rows: PixelSlice<'_>) -> Result<(), At<PngError>> {
@@ -1365,72 +1661,17 @@ impl PngEncoder {
 
         // Initialize streaming state on first call.
         if self.streaming.is_none() {
-            let (color_type, bit_depth) = pixel_format_to_png(rows.descriptor().pixel_format())
-                .ok_or_else(|| at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat)))?;
-
-            // Infer width from first push if not set via with_canvas_size
-            if self.canvas_width == 0 {
-                self.canvas_width = w;
-            }
-
-            let channels: usize = match color_type {
-                crate::encode::ColorType::Grayscale => 1,
-                crate::encode::ColorType::Rgb => 3,
-                crate::encode::ColorType::GrayscaleAlpha => 2,
-                crate::encode::ColorType::Rgba => 4,
-            };
-            let depth_bytes: usize = match bit_depth {
-                crate::encode::BitDepth::Eight => 1,
-                crate::encode::BitDepth::Sixteen => 2,
-            };
-            let row_bytes = self.canvas_width as usize * channels * depth_bytes;
-            let effort = self.config.config.compression.effort();
-
-            let bpp = channels * depth_bytes;
-            if effort == 0 && self.canvas_height > 0 {
-                // True streaming: write PNG header and IDAT incrementally.
-                self.streaming = Some(StreamingMode::TrueStreaming(TrueStreamingState::new(
-                    self.canvas_width,
-                    self.canvas_height,
-                    color_type,
-                    bit_depth,
-                    row_bytes,
-                    self.metadata.as_ref(),
-                    self.policy.as_ref(),
-                    &self.config.config,
-                )?));
-            } else if let Some(state) =
-                self.strip_streaming_state(color_type, bit_depth, row_bytes, bpp)?
-            {
-                self.streaming = Some(StreamingMode::Strips(Box::new(state)));
-            } else if effort == 1 && self.canvas_height > 0 {
-                // Pre-filtered streaming: filter rows on arrival, compress in finish().
-                self.streaming = Some(StreamingMode::PreFiltered(PreFilteredState::new(
-                    self.canvas_width,
-                    self.canvas_height,
-                    color_type,
-                    bit_depth,
-                    row_bytes,
-                    bpp,
-                    self.metadata.as_ref(),
-                    self.policy.as_ref(),
-                    &self.config.config,
-                )?));
-            } else {
-                // Buffered: accumulate pixel data, encode in finish().
-                let capacity = if self.canvas_height > 0 {
-                    row_bytes * self.canvas_height as usize
-                } else {
-                    row_bytes * h as usize
-                };
-                self.streaming = Some(StreamingMode::Buffered(BufferedStreamingState {
-                    pixel_data: Vec::with_capacity(capacity),
-                    color_type,
-                    bit_depth,
-                    row_bytes,
-                    rows_pushed: 0,
-                }));
-            }
+            self.start_rows(
+                rows.descriptor(),
+                w,
+                h,
+                crate::encoder::compress::StripFraming::Continuous,
+            )?;
+        }
+        if self.declared.is_some_and(|d| d != rows.descriptor()) {
+            return Err(at!(PngError::InvalidState(
+                "push_rows: pixel format differs from the one declared at begin".into()
+            )));
         }
 
         // Width must be consistent across calls.
@@ -1653,6 +1894,9 @@ impl PngEncoder {
                 }
             }
         }
+        if self.stream_out {
+            self.check_streamed_output(0)?;
+        }
         Ok(())
     }
 
@@ -1700,39 +1944,31 @@ impl PngEncoder {
             }
             StreamingMode::Strips(mut state) => {
                 state.stream.finish(&mut state.output)?;
-                let idat_len = state.output.len() - state.idat_len_pos - 8;
-                let len = u32::try_from(idat_len).map_err(|_| {
-                    at!(PngError::LimitExceeded(
-                        zencodec::LimitExceeded::OutputSize {
-                            actual: idat_len as u64,
-                            max: u32::MAX as u64,
-                        }
-                    ))
-                })?;
-                state.output[state.idat_len_pos..state.idat_len_pos + 4]
-                    .copy_from_slice(&len.to_be_bytes());
-                let crc = zenflate::crc32(0, &state.output[state.idat_len_pos + 4..]);
-                state.output.extend_from_slice(&crc.to_be_bytes());
+                if state.framing == crate::encoder::compress::StripFraming::Continuous {
+                    let idat_len = state.output.len() - state.idat_len_pos - 8;
+                    let len = u32::try_from(idat_len).map_err(|_| {
+                        at!(PngError::LimitExceeded(
+                            zencodec::LimitExceeded::OutputSize {
+                                actual: idat_len as u64,
+                                max: u32::MAX as u64,
+                            }
+                        ))
+                    })?;
+                    state.output[state.idat_len_pos..state.idat_len_pos + 4]
+                        .copy_from_slice(&len.to_be_bytes());
+                    let crc = zenflate::crc32(0, &state.output[state.idat_len_pos + 4..]);
+                    state.output.extend_from_slice(&crc.to_be_bytes());
+                }
                 state.output.extend_from_slice(&state.tail);
                 crate::chunk::write::write_chunk(&mut state.output, b"IEND", &[]);
-                if let Some(ref limits) = self.limits {
-                    limits
-                        .check_output_size(state.output.len() as u64)
-                        .map_err(|e| at!(PngError::LimitExceeded(e)))?;
-                }
-                Ok(EncodeOutput::new(state.output, ImageFormat::Png))
+                self.finish_output(state.output)
             }
             StreamingMode::TrueStreaming(state) => {
                 if state.rows_pushed == 0 {
                     return Err(at!(PngError::InvalidState("no pixel data pushed".into())));
                 }
                 let data = state.finish();
-                if let Some(ref limits) = self.limits {
-                    limits
-                        .check_output_size(data.len() as u64)
-                        .map_err(|e| at!(PngError::LimitExceeded(e)))?;
-                }
-                Ok(EncodeOutput::new(data, ImageFormat::Png))
+                self.finish_output(data)
             }
             StreamingMode::PreFiltered(state) => {
                 if state.rows_pushed == 0 {
@@ -1783,6 +2019,58 @@ pub struct PngAnimationFrameEncoder {
     frame_descriptor: Option<PixelDescriptor>,
     frame_color: Option<alloc::sync::Arc<zenpixels::ColorContext>>,
     policy: Option<zencodec::encode::EncodePolicy>,
+    /// `begin` succeeded.
+    begun: bool,
+    /// The frame count `begin` declared, binding on `finish`.
+    declared_frames: Option<u32>,
+    /// Frame-at-a-time output, when `begin` chose it.
+    streaming: Option<ApngStreaming>,
+    /// A pushed frame's pixel format can carry transparency. When none can,
+    /// the frames are RGB data and writing RGB is no downcast, whatever
+    /// `DowncastFlags::rgba_to_rgb` says (the streaming path decides the
+    /// same way from `begin`'s descriptor).
+    transparent_input: bool,
+}
+
+/// Streaming APNG output: each frame is written when it is pushed, against
+/// the one before it, so its bytes are final at once.
+struct ApngStreaming {
+    width: u32,
+    height: u32,
+    descriptor: PixelDescriptor,
+    frame_count: u32,
+    pushed: u32,
+    /// Write RGB8 (every frame is opaque by its descriptor).
+    opaque: bool,
+    bit_depth: u8,
+    /// Started with the first frame, whose colour context completes the
+    /// metadata.
+    writer: Option<crate::encoder::apng::ApngStreamWriter>,
+    /// The resolved metadata, for the chunks after the last frame.
+    metadata: Option<Metadata>,
+    out: zencodec::encode::OutputBuffer,
+}
+
+/// Whether a frame descriptor can be packed for APNG (as `pixels_to_rgba`
+/// does), and whether its alpha channel can carry transparency.
+fn apng_descriptor(desc: PixelDescriptor) -> Option<bool> {
+    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, SignalRange};
+    if !matches!(desc.channel_type(), ChannelType::U8 | ChannelType::U16)
+        || matches!(
+            desc.alpha(),
+            Some(AlphaMode::Premultiplied | AlphaMode::Undefined)
+        )
+        || desc.signal_range != SignalRange::Full
+    {
+        return None;
+    }
+    match desc.layout() {
+        ChannelLayout::Gray | ChannelLayout::Rgb => Some(false),
+        ChannelLayout::GrayAlpha | ChannelLayout::Rgba | ChannelLayout::Bgra => {
+            Some(desc.alpha() != Some(AlphaMode::Opaque))
+        }
+        _ => None,
+    }
 }
 
 struct AnimationStops<'a>(&'a dyn enough::Stop, &'a dyn enough::Stop);
@@ -1824,9 +2112,136 @@ impl PngAnimationFrameEncoder {
             cumulative_pixel_bytes: 0,
             stop: None,
             frame_descriptor: None,
+            transparent_input: false,
             frame_color: None,
             policy: None,
+            begun: false,
+            declared_frames: None,
+            streaming: None,
         }
+    }
+
+    /// Record what the first frame brings: its descriptor, and its colour
+    /// context as ICC/CICP metadata when the job set none.
+    fn capture_first_frame(&mut self, pixels: &PixelSlice<'_>) {
+        let descriptor = pixels.descriptor();
+        self.frame_color = pixels.color_context().cloned();
+        if let Some(context) = pixels.color_context() {
+            let mut metadata = self.metadata.clone().unwrap_or_else(Metadata::none);
+            if metadata.icc_profile.is_none() {
+                metadata.icc_profile = context.icc.clone();
+            }
+            if metadata.cicp.is_none() {
+                metadata.cicp = context.cicp;
+            }
+            self.metadata = Some(metadata);
+        }
+        if self.config.cicp.is_none()
+            && self.metadata.as_ref().and_then(|m| m.cicp).is_none()
+            && self
+                .metadata
+                .as_ref()
+                .and_then(|m| m.icc_profile.as_ref())
+                .is_none()
+        {
+            self.config.cicp = zenpixels::Cicp::from_descriptor(&descriptor);
+        }
+        self.frame_descriptor = Some(descriptor);
+    }
+
+    /// Write a frame of a streaming encode.
+    fn push_streamed_frame(
+        &mut self,
+        pixels: &PixelSlice<'_>,
+        delay_num: u16,
+        delay_den: u16,
+        cancel: &dyn enough::Stop,
+    ) -> Result<(), At<PngError>> {
+        let st = self.streaming.as_ref().expect("streaming");
+        if (pixels.width(), pixels.rows(), pixels.descriptor())
+            != (st.width, st.height, st.descriptor)
+        {
+            return Err(at!(PngError::InvalidInput(
+                "APNG frame differs from the canvas and descriptor declared at begin".into()
+            )));
+        }
+        if st.pushed == st.frame_count {
+            return Err(at!(PngError::InvalidInput(alloc::format!(
+                "more than the {} APNG frames declared at begin",
+                st.frame_count
+            ))));
+        }
+        if st.writer.is_some() && self.frame_color.as_ref() != pixels.color_context() {
+            return Err(at!(PngError::from(
+                zencodec::UnsupportedOperation::PixelFormat
+            )));
+        }
+        let rgba = Self::pixels_to_rgba(pixels, cancel)?;
+        if st.writer.is_none() {
+            self.capture_first_frame(pixels);
+            let metadata =
+                apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref(), Some(4))?;
+            let (config, loop_count) = (&self.config, self.loop_count);
+            let st = self.streaming.as_mut().expect("streaming");
+            let write_meta = crate::encode::apng_write_meta(config, metadata.as_ref());
+            st.writer = Some(crate::encoder::apng::ApngStreamWriter::start(
+                st.out.vec_mut(),
+                st.width,
+                st.height,
+                st.bit_depth,
+                st.opaque,
+                &write_meta,
+                st.frame_count,
+                loop_count,
+                config.compression.effort(),
+                config.preserve_transparent_rgb,
+            )?);
+            st.metadata = metadata;
+        }
+        let deadline = default_deadline();
+        let st = self.streaming.as_mut().expect("streaming");
+        let writer = st.writer.as_mut().expect("started above");
+        writer.push_frame(
+            st.out.vec_mut(),
+            &rgba,
+            delay_num,
+            delay_den,
+            cancel,
+            &deadline,
+        )?;
+        st.pushed += 1;
+        if let Some(limits) = &self.limits {
+            limits
+                .check_output_size(st.out.total())
+                .map_err(|e| at!(PngError::LimitExceeded(e)))?;
+        }
+        Ok(())
+    }
+
+    /// Finish a streaming encode: the chunks after the last frame, and the
+    /// bytes not yet handed out.
+    fn finish_streamed(self) -> Result<EncodeOutput, At<PngError>> {
+        let mut st = self.streaming.expect("streaming");
+        if st.pushed != st.frame_count {
+            return Err(at!(PngError::InvalidState(alloc::format!(
+                "finish: {} APNG frames pushed, {} declared at begin",
+                st.pushed,
+                st.frame_count
+            ))));
+        }
+        let writer = st.writer.take().ok_or_else(|| {
+            at!(PngError::InvalidState(
+                "APNG frame encoder: no frames pushed".into()
+            ))
+        })?;
+        let write_meta = crate::encode::apng_write_meta(&self.config, st.metadata.as_ref());
+        writer.finish(st.out.vec_mut(), &write_meta);
+        if let Some(limits) = &self.limits {
+            limits
+                .check_output_size(st.out.total())
+                .map_err(|e| at!(PngError::LimitExceeded(e)))?;
+        }
+        Ok(EncodeOutput::new(st.out.into_remaining(), ImageFormat::Png))
     }
 
     /// Pack a frame as RGBA8 or big-endian RGBA16, preserving sample codes.
@@ -1948,6 +2363,25 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
             stop.unwrap_or(&enough::Unstoppable),
         );
         enough::Stop::check(&cancel).map_err(|e| CodecError::of(at!(PngError::from(e))))?;
+        if self.streaming.is_some() {
+            // The job's stop token, cloned: the encoder is borrowed mutably.
+            let own = self.stop.clone();
+            let cancel = AnimationStops(
+                own.as_ref()
+                    .map_or(&enough::Unstoppable as &dyn enough::Stop, |s| s),
+                stop.unwrap_or(&enough::Unstoppable),
+            );
+            return self
+                .push_streamed_frame(&pixels, delay_num, delay_den, &cancel)
+                .map_err(CodecError::of);
+        }
+        if let Some(n) = self.declared_frames
+            && self.frames.len() as u64 >= u64::from(n)
+        {
+            return Err(CodecError::of(at!(PngError::InvalidInput(alloc::format!(
+                "more than the {n} APNG frames declared at begin"
+            )))));
+        }
         let (width, height) = (pixels.width(), pixels.rows());
         let descriptor = pixels.descriptor();
         if let Some(first) = self.frame_descriptor
@@ -2010,29 +2444,9 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
             .try_reserve(1)
             .map_err(|e| CodecError::of(at!(PngError::OutOfMemory(e.to_string()))))?;
         self.cumulative_pixel_bytes = new_cumulative;
+        self.transparent_input |= apng_descriptor(descriptor) != Some(false);
         if self.frame_descriptor.is_none() {
-            self.frame_color = pixels.color_context().cloned();
-            if let Some(context) = pixels.color_context() {
-                let mut metadata = self.metadata.clone().unwrap_or_else(Metadata::none);
-                if metadata.icc_profile.is_none() {
-                    metadata.icc_profile = context.icc.clone();
-                }
-                if metadata.cicp.is_none() {
-                    metadata.cicp = context.cicp;
-                }
-                self.metadata = Some(metadata);
-            }
-            if self.config.cicp.is_none()
-                && self.metadata.as_ref().and_then(|m| m.cicp).is_none()
-                && self
-                    .metadata
-                    .as_ref()
-                    .and_then(|m| m.icc_profile.as_ref())
-                    .is_none()
-            {
-                self.config.cicp = zenpixels::Cicp::from_descriptor(&descriptor);
-            }
-            self.frame_descriptor = Some(descriptor);
+            self.capture_first_frame(&pixels);
         }
         if canvas_unset {
             self.canvas_width = width;
@@ -2046,7 +2460,125 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
         Ok(())
     }
 
+    /// Streams when the frame count is declared, the cross-frame optimizer
+    /// is off (effort 2 or less, or 16-bit samples) and the colour type
+    /// cannot depend on later frames (16-bit, a descriptor without
+    /// transparency, or the RGBA-to-RGB reduction disabled). Each frame is
+    /// then written as it is pushed, against the one before: lag 0, the
+    /// same bytes as `finish` would write. The header waits for the first
+    /// frame, whose colour context can add ICC or CICP metadata.
+    fn begin(
+        &mut self,
+        width: u32,
+        height: u32,
+        descriptor: PixelDescriptor,
+        frame_count: Option<u32>,
+    ) -> Result<zencodec::encode::AnimationOutputTiming, At<CodecError>> {
+        use zencodec::encode::AnimationOutputTiming;
+        let invalid = |m: &str| CodecError::of(at!(PngError::InvalidInput(m.into())));
+        if self.begun {
+            return Err(invalid("begin called twice"));
+        }
+        if !self.frames.is_empty() {
+            return Err(invalid("begin after push_frame"));
+        }
+        let canvas_unset = self.canvas_width == 0 && self.canvas_height == 0;
+        if width == 0
+            || height == 0
+            || (!canvas_unset && (width, height) != (self.canvas_width, self.canvas_height))
+        {
+            return Err(invalid(
+                "APNG frame dimensions must match its nonempty canvas",
+            ));
+        }
+        let Some(transparent) = apng_descriptor(descriptor) else {
+            return Err(Self::reject(zencodec::UnsupportedOperation::PixelFormat));
+        };
+        if frame_count == Some(0) {
+            return Err(invalid("APNG requires at least one frame"));
+        }
+        if let Some(ref limits) = self.limits {
+            limits
+                .check_dimensions(width, height)
+                .map_err(|e| CodecError::of(at!(PngError::LimitExceeded(e))))?;
+            if let Some(n) = frame_count {
+                limits
+                    .check_frames(n)
+                    .map_err(|e| CodecError::of(at!(PngError::LimitExceeded(e))))?;
+            }
+        }
+        let bit_depth = if descriptor.channel_type() == zenpixels::ChannelType::U16 {
+            16
+        } else {
+            8
+        };
+        let rgb_reduction = self.config.downcast.rgba_to_rgb;
+        let streams = frame_count.is_some_and(|n| {
+            !crate::encoder::apng::apng_uses_optimizer(
+                bit_depth,
+                self.config.compression.effort(),
+                self.config.preserve_transparent_rgb,
+                n as usize,
+            ) && (bit_depth == 16 || !transparent || !rgb_reduction)
+        });
+        // Validated: commit.
+        self.begun = true;
+        self.declared_frames = frame_count;
+        if canvas_unset {
+            self.canvas_width = width;
+            self.canvas_height = height;
+        }
+        let (Some(frame_count), true) = (frame_count, streams) else {
+            return Ok(AnimationOutputTiming::AT_FINISH);
+        };
+        self.streaming = Some(ApngStreaming {
+            width,
+            height,
+            descriptor,
+            frame_count,
+            pushed: 0,
+            // A descriptor without transparency is RGB data: writing RGB
+            // drops nothing, so the reduction flag does not apply.
+            opaque: bit_depth == 8 && !transparent,
+            bit_depth,
+            writer: None,
+            metadata: None,
+            out: zencodec::encode::OutputBuffer::new(),
+        });
+        Ok(AnimationOutputTiming::streaming(0))
+    }
+
+    fn pending_output(&self) -> &[u8] {
+        self.streaming.as_ref().map_or(&[], |st| st.out.pending())
+    }
+
+    fn consume_output(&mut self, n: usize) {
+        if let Some(st) = &mut self.streaming {
+            st.out.consume(n);
+        }
+    }
+
+    fn take_output(&mut self, into: &mut Vec<u8>) {
+        if let Some(st) = &mut self.streaming {
+            st.out.take_into(into);
+        }
+    }
+
     fn finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, At<CodecError>> {
+        if self.streaming.is_some() {
+            if let Some(stop) = stop {
+                enough::Stop::check(stop).map_err(|e| CodecError::of(at!(PngError::from(e))))?;
+            }
+            return self.finish_streamed().map_err(CodecError::of);
+        }
+        if let Some(n) = self.declared_frames
+            && self.frames.len() as u64 != u64::from(n)
+        {
+            return Err(CodecError::of(at!(PngError::InvalidState(alloc::format!(
+                "finish: {} APNG frames pushed, {n} declared at begin",
+                self.frames.len()
+            )))));
+        }
         self.do_finish(stop).map_err(CodecError::of)
     }
 }
@@ -2078,10 +2610,12 @@ impl PngAnimationFrameEncoder {
             })
             .collect();
 
-        let apng_config = crate::encode::ApngEncodeConfig {
+        let mut apng_config = crate::encode::ApngEncodeConfig {
             encode: self.config.clone(),
             num_plays: self.loop_count,
         };
+        // Frames with no alpha channel are written as RGB: not a downcast.
+        apng_config.encode.downcast.rgba_to_rgb |= !self.transparent_input;
 
         let deadline = default_deadline();
 
@@ -3959,7 +4493,47 @@ impl TrueStreamingState {
             block_remaining: 0,
             filtered_remaining: total_filtered,
             tail: crate::encoder::tail_ancillary_bytes(&write_meta),
+            crc: None,
         })
+    }
+
+    /// Hand bytes out as they are written: the IDAT CRC is kept running
+    /// instead of computed over the buffer at `finish`.
+    fn stream_output(&mut self) {
+        let start = self.idat_len_pos + 4;
+        self.crc = Some((zenflate::crc32(0, &self.output[start..]), self.output.len()));
+    }
+
+    /// Fold the bytes written since the last call into the running CRC.
+    fn sync_crc(&mut self) {
+        if let Some((crc, from)) = self.crc {
+            self.crc = Some((
+                zenflate::crc32(crc, &self.output[from..]),
+                self.output.len(),
+            ));
+        }
+    }
+
+    /// Take every output byte (handed out), leaving a buffer of the same
+    /// capacity: [`drop_front`](Self::drop_front) of everything, without
+    /// the copy.
+    fn take_all(&mut self) -> Vec<u8> {
+        self.sync_crc();
+        let n = self.output.len();
+        let taken = core::mem::replace(&mut self.output, Vec::with_capacity(n));
+        if let Some((crc, from)) = self.crc {
+            self.crc = Some((crc, from - n));
+        }
+        taken
+    }
+
+    /// Drop the first `n` output bytes (handed out).
+    fn drop_front(&mut self, n: usize) {
+        self.sync_crc();
+        self.output.drain(..n);
+        if let Some((crc, from)) = self.crc {
+            self.crc = Some((crc, from - n));
+        }
     }
 
     /// Push one row from `self.convert_buf` (already written by caller).
@@ -4050,9 +4624,13 @@ impl TrueStreamingState {
         // Write Adler-32 checksum
         self.output.extend_from_slice(&self.adler.to_be_bytes());
 
-        // CRC-32 over "IDAT" + data (starts 4 bytes after idat_len_pos)
-        let crc_start = self.idat_len_pos + 4;
-        let crc = zenflate::crc32(0, &self.output[crc_start..]);
+        // CRC-32 over "IDAT" + data (starts 4 bytes after idat_len_pos),
+        // kept running when the bytes before it were handed out already.
+        self.sync_crc();
+        let crc = match self.crc {
+            Some((crc, _)) => crc,
+            None => zenflate::crc32(0, &self.output[self.idat_len_pos + 4..]),
+        };
         self.output.extend_from_slice(&crc.to_be_bytes());
 
         // IEND

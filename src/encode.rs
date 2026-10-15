@@ -1140,6 +1140,32 @@ pub fn encode_apng(
     )
 }
 
+/// The metadata chunks an APNG carries, from the encode configuration and
+/// the job's metadata (builder values win when set).
+pub(crate) fn apng_write_meta<'a>(
+    encode: &'a EncodeConfig,
+    metadata: Option<&'a Metadata>,
+) -> PngWriteMetadata<'a> {
+    let mut write_meta = PngWriteMetadata::from_metadata(metadata);
+    write_meta.source_gamma = encode.source_gamma;
+    write_meta.srgb_intent = encode.srgb_intent;
+    write_meta.chromaticities = encode.chromaticities;
+    // Builder values override the Metadata-derived ones, but only when set.
+    write_meta.cicp = encode.cicp.or(write_meta.cicp);
+    write_meta.content_light_level_raw = encode.content_light_level_raw;
+    write_meta.mastering_display_raw = encode.mastering_display_raw;
+    write_meta.content_light_level = encode
+        .content_light_level
+        .or(write_meta.content_light_level);
+    write_meta.mastering_display = encode.mastering_display.or(write_meta.mastering_display);
+    write_meta.pixels_per_unit_x = encode.pixels_per_unit_x;
+    write_meta.pixels_per_unit_y = encode.pixels_per_unit_y;
+    write_meta.phys_unit = encode.phys_unit;
+    write_meta.text_chunks.clone_from(&encode.text_chunks);
+    write_meta.last_modified = encode.last_modified;
+    write_meta
+}
+
 /// Internal typed-adapter seam: 16-bit frame buffers are already big endian.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_apng_depth(
@@ -1186,29 +1212,7 @@ pub(crate) fn encode_apng_depth(
     }
 
     let effort = config.encode.compression.effort();
-    let mut write_meta = PngWriteMetadata::from_metadata(metadata);
-    write_meta.source_gamma = config.encode.source_gamma;
-    write_meta.srgb_intent = config.encode.srgb_intent;
-    write_meta.chromaticities = config.encode.chromaticities;
-    // Builder values override the Metadata-derived ones, but only when set.
-    write_meta.cicp = config.encode.cicp.or(write_meta.cicp);
-    write_meta.content_light_level_raw = config.encode.content_light_level_raw;
-    write_meta.mastering_display_raw = config.encode.mastering_display_raw;
-    write_meta.content_light_level = config
-        .encode
-        .content_light_level
-        .or(write_meta.content_light_level);
-    write_meta.mastering_display = config
-        .encode
-        .mastering_display
-        .or(write_meta.mastering_display);
-    write_meta.pixels_per_unit_x = config.encode.pixels_per_unit_x;
-    write_meta.pixels_per_unit_y = config.encode.pixels_per_unit_y;
-    write_meta.phys_unit = config.encode.phys_unit;
-    write_meta
-        .text_chunks
-        .clone_from(&config.encode.text_chunks);
-    write_meta.last_modified = config.encode.last_modified;
+    let write_meta = apng_write_meta(&config.encode, metadata);
 
     crate::encoder::apng::encode_apng_truecolor_depth(
         frames,
@@ -1219,6 +1223,7 @@ pub(crate) fn encode_apng_depth(
         config.num_plays,
         effort,
         config.encode.preserve_transparent_rgb,
+        config.encode.downcast.rgba_to_rgb,
         cancel,
         deadline,
     )

@@ -12,8 +12,47 @@ All notable changes to zenpng are documented here.
   PNG. The header is reported as soon as it probes; rows come from
   `push_decoder` once the whole file is offered (zenflate's inflate cannot yet
   resume between inputs).
+- Streaming encode output (zencodec PR 149): `Encoder::begin` chooses the row
+  mode and returns an `OutputTiming`. Effort 0 writes each row as stored
+  DEFLATE as it arrives, `streaming(0)`, byte-identical to the one-shot encode
+  (the IDAT CRC is kept running so bytes can leave before `finish`). The
+  strip efforts (1-15, every downcast, near-lossless and `iDOT` off, at least
+  two ~512 KiB strips) write each strip as its own IDAT chunk once its last
+  row arrives: the same zlib stream as the non-streamed strip encode, split
+  into one chunk per strip, so chunk boundaries never depend on push sizes or
+  worker timing. The lag is the largest strip less one row (199 rows for
+  1024x1000 RGB8 sequential; with worker threads the strips in flight count
+  too, capped at the image height). Whole-image configurations report
+  `AT_FINISH`. The output-size limit counts bytes already handed out.
+  Declares `EncodeCapabilities::streaming_output` (`tests/streaming_output.rs`).
+  Streaming caps the worker pool's strips in flight so the lag stays below
+  the height (799 rows for 1024x1000 RGB8 effort 5 on 4 threads); `encode`
+  after `begin` and a second `begin` are refused.
+- `EncoderConfig::with_prefer_streaming(true)`: no whole-image downcasts
+  unless `with_downcast` chose them, so efforts 0-15 stream;
+  `prefers_streaming()` reports it.
+- `Encoder::take_output` hands over the streaming output buffer itself when
+  the destination is empty (the effort-0 path keeps its running IDAT CRC).
+- APNG streams frame by frame (zencodec `AnimationFrameEncoder::begin`): with
+  the frame count declared, the cross-frame optimizer off (effort 0-2, or
+  16-bit) and a colour type that later frames cannot change (16-bit, a
+  descriptor without transparency, or the RGBA-to-RGB reduction off), each
+  frame is written as it is pushed against the one before, `streaming(0)`,
+  byte-identical to the encode without `begin`. The one-shot path at those
+  efforts now runs the same frame writer (output unchanged: 20 configurations
+  hashed before and after). Other configurations report `AT_FINISH`; a
+  declared frame count binds either way (`tests/animation_streaming.rs`).
 
 ### Fixed
+
+- One-shot `encode` of a zero-width or zero-height image wrote a PNG with a
+  zero IHDR dimension, which the format forbids; it is now refused, as `begin`
+  already refused it. Found by zencodec's testkit, which now compares the two.
+- APNG ignored `DowncastFlags::rgba_to_rgb`: opaque RGBA frames were always
+  written as RGB. With the reduction off they stay RGBA. Frames whose pixel
+  format has no alpha (RGB8, or RGBA declared opaque) are still written as RGB:
+  that drops nothing. A first version widened them to RGBA, which an
+  interleaved main-vs-PR benchmark caught (effort 7 took 1.9x as long).
 
 - One-shot `decode()` labelled native buffers with an `Unknown` transfer while
   `output_info`, `push_decoder` and the streaming decoder report sRGB for the
