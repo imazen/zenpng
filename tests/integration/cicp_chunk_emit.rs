@@ -58,3 +58,56 @@ fn with_cicp_and_cll_emit_chunks_through_trait_encode() {
         "the builder cICP path must not synthesize an ICC"
     );
 }
+
+/// f32 input is stored as 8-bit sRGB, so a cICP that called the input linear
+/// must leave with the sRGB transfer (keeping its primaries), whichever way
+/// it was given and whichever path encodes.
+#[test]
+fn a_linear_cicp_on_f32_input_is_written_as_srgb() {
+    let (w, h) = (3u32, 2u32);
+    let floats: Vec<f32> = (0..w * h * 3).map(|i| (i as f32) / 20.0).collect();
+    let bytes: Vec<u8> = floats.iter().flat_map(|f| f.to_ne_bytes()).collect();
+    let desc = PixelDescriptor::RGBF32_LINEAR;
+    let slice = || PixelSlice::new(&bytes, w, h, (w * 12) as usize, desc).unwrap();
+    let p3_linear = Cicp::new(12, 8, 0, true);
+
+    let via_config = PngEncoderConfig::new()
+        .with_cicp(Some(p3_linear))
+        .job()
+        .encoder()
+        .unwrap()
+        .encode(slice())
+        .unwrap();
+    let via_metadata = PngEncoderConfig::new()
+        .job()
+        .with_metadata_policy(
+            zencodec::Metadata::none().with_cicp(p3_linear),
+            zencodec::MetadataPolicy::PreserveExact,
+        )
+        .encoder()
+        .unwrap()
+        .encode(slice())
+        .unwrap();
+    let mut streaming = PngEncoderConfig::new()
+        .job()
+        .with_metadata_policy(
+            zencodec::Metadata::none().with_cicp(p3_linear),
+            zencodec::MetadataPolicy::PreserveExact,
+        )
+        .encoder()
+        .unwrap();
+    streaming.push_rows(slice()).unwrap();
+    let streamed = streaming.finish().unwrap();
+
+    for (how, out) in [
+        ("with_cicp", &via_config),
+        ("metadata", &via_metadata),
+        ("push_rows", &streamed),
+    ] {
+        assert_eq!(
+            find_chunk(out.data(), b"cICP"),
+            Some(&[12u8, 13, 0, 1][..]),
+            "{how}: P3 primaries kept, transfer moved from linear to sRGB"
+        );
+    }
+}

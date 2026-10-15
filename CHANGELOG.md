@@ -45,6 +45,8 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- f32 input is stored as 8-bit sRGB, but a caller's cICP calling it linear (transfer 8) was written unchanged, so readers decoded the sRGB samples as linear. The transfer now moves to sRGB (13), primaries kept, on the one-shot and streaming paths. Test: `a_linear_cicp_on_f32_input_is_written_as_srgb`.
+
 - APNG output changed in 8a9cd28 for RGBA frames whose fully transparent
   pixels carry nonzero RGB (effort 3 and up, and the default). OVER
   subframes kept that RGB but told the compressor they were already

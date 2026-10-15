@@ -1195,6 +1195,26 @@ impl PngEncoder {
         zenpixels::Cicp::from_descriptor(&desc)
     }
 
+    /// f32 input is stored as 8-bit sRGB (`linear_to_srgb_u8_*`). A caller's
+    /// cICP saying "linear" described the input, not the file: move its
+    /// transfer to sRGB, keeping the primaries.
+    fn describe_stored_f32(&mut self, desc: zenpixels::PixelDescriptor) {
+        if desc.channel_type() != zenpixels::ChannelType::F32 {
+            return;
+        }
+        let to_srgb = |c: &mut zencodec::Cicp| {
+            if c.transfer_characteristics == 8 {
+                c.transfer_characteristics = 13;
+            }
+        };
+        if let Some(c) = self.config.config.cicp.as_mut() {
+            to_srgb(c);
+        }
+        if let Some(c) = self.metadata.as_mut().and_then(|m| m.cicp.as_mut()) {
+            to_srgb(c);
+        }
+    }
+
     fn encode_inner(mut self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<PngError>> {
         use linear_srgb::default::{linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice};
         use zenpixels::PixelFormat;
@@ -1217,6 +1237,7 @@ impl PngEncoder {
         {
             self.config.config.cicp = Self::cicp_from_descriptor(pixels.descriptor());
         }
+        self.describe_stored_f32(pixels.descriptor());
 
         let w = pixels.width();
         let h = pixels.rows();
@@ -1579,6 +1600,7 @@ impl PngEncoder {
         h: u32,
         framing: crate::encoder::compress::StripFraming,
     ) -> Result<(), At<PngError>> {
+        self.describe_stored_f32(descriptor);
         let (color_type, bit_depth) = pixel_format_to_png(descriptor.pixel_format())
             .ok_or_else(|| at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat)))?;
 
