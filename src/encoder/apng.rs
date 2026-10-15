@@ -1097,24 +1097,13 @@ pub(crate) fn encode_apng_truecolor_depth(
         (4, 6)
     };
 
-    // Convert frames to RGB if opaque
-    let rgb_frames: Vec<Vec<u8>>;
-    let frame_data: Vec<&[u8]> = if is_opaque {
-        rgb_frames = frames
-            .iter()
-            .map(|f| crate::optimize::rgba8_to_rgb8(&f.pixels[..expected_rgba]))
-            .collect();
-        rgb_frames.iter().map(|v| v.as_slice()).collect()
-    } else {
-        frames.iter().map(|f| &f.pixels[..expected_rgba]).collect()
-    };
-
     // Run optimizer when effort > 2 and >1 frame (otherwise trial = final, no benefit)
     let use_optimizer =
         apng_uses_optimizer(bit_depth, effort, preserve_transparent_rgb, frames.len());
     if !use_optimizer {
         // Frame by frame, each against the one before: the same writer
-        // streaming output uses, so both give the same bytes.
+        // streaming output uses, so both give the same bytes. Each frame is
+        // converted at most once and RGBA frames are borrowed.
         let mut out = Vec::new();
         let mut writer = ApngStreamWriter::start(
             &mut out,
@@ -1128,20 +1117,41 @@ pub(crate) fn encode_apng_truecolor_depth(
             effort,
             preserve_transparent_rgb,
         )?;
+        let mut prev: Option<alloc::borrow::Cow<'_, [u8]>> = None;
         for frame in frames {
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
-            writer.push_frame(
+            let rgba = &frame.pixels[..expected_rgba];
+            let curr = if is_opaque {
+                alloc::borrow::Cow::Owned(crate::optimize::rgba8_to_rgb8(rgba))
+            } else {
+                alloc::borrow::Cow::Borrowed(rgba)
+            };
+            writer.write_frame(
                 &mut out,
-                &frame.pixels[..expected_rgba],
+                &curr,
+                prev.as_deref(),
                 frame.delay_num,
                 frame.delay_den,
                 cancel,
                 deadline,
             )?;
+            prev = Some(curr);
         }
         writer.finish(&mut out, write_meta);
         return Ok(out);
     }
+
+    // Convert frames to RGB if opaque
+    let rgb_frames: Vec<Vec<u8>>;
+    let frame_data: Vec<&[u8]> = if is_opaque {
+        rgb_frames = frames
+            .iter()
+            .map(|f| crate::optimize::rgba8_to_rgb8(&f.pixels[..expected_rgba]))
+            .collect();
+        rgb_frames.iter().map(|v| v.as_slice()).collect()
+    } else {
+        frames.iter().map(|f| &f.pixels[..expected_rgba]).collect()
+    };
     let opt_frames = optimize_apng_truecolor(
         frames,
         &frame_data,
@@ -1344,7 +1354,8 @@ impl ApngStreamWriter {
         })
     }
 
-    /// Write one canvas-sized frame (RGBA8, or big-endian RGBA16).
+    /// Write one canvas-sized frame (RGBA8, or big-endian RGBA16), keeping
+    /// a copy as the next frame's reference.
     pub(crate) fn push_frame(
         &mut self,
         out: &mut Vec<u8>,
@@ -1359,7 +1370,35 @@ impl ApngStreamWriter {
         } else {
             rgba.to_vec()
         };
-        let (region, subframe) = match &self.prev {
+        let prev = self.prev.take();
+        self.write_frame(
+            out,
+            &curr,
+            prev.as_deref(),
+            delay_num,
+            delay_den,
+            cancel,
+            deadline,
+        )?;
+        self.prev = Some(curr);
+        Ok(())
+    }
+
+    /// Write one frame already in the written sample layout (RGB8 when the
+    /// colour type is 2), as the region that differs from `prev`, or whole
+    /// when `prev` is `None` (the first frame).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn write_frame(
+        &mut self,
+        out: &mut Vec<u8>,
+        curr: &[u8],
+        prev: Option<&[u8]>,
+        delay_num: u16,
+        delay_den: u16,
+        cancel: &dyn Stop,
+        deadline: &dyn Stop,
+    ) -> crate::error::Result<()> {
+        let (region, subframe) = match prev {
             None => (
                 DeltaRegion {
                     x: 0,
@@ -1371,17 +1410,17 @@ impl ApngStreamWriter {
             ),
             Some(prev) => match compute_delta_region(
                 prev,
-                &curr,
+                curr,
                 self.canvas_width,
                 self.canvas_height,
                 self.bpp,
             ) {
                 Some(region) => {
-                    let sub = extract_subframe(&curr, self.canvas_width, &region, self.bpp);
+                    let sub = extract_subframe(curr, self.canvas_width, &region, self.bpp);
                     (region, Some(sub))
                 }
                 None => {
-                    let (region, sub) = minimal_subframe(&curr, self.bpp);
+                    let (region, sub) = minimal_subframe(curr, self.bpp);
                     (region, Some(sub))
                 }
             },
@@ -1408,7 +1447,7 @@ impl ApngStreamWriter {
             decode_segments: 0,
         };
         let compressed = compress_filtered(
-            subframe.as_deref().unwrap_or(&curr),
+            subframe.as_deref().unwrap_or(curr),
             region.width as usize * self.bpp,
             region.height as usize,
             RowFormat::from_png(self.color_type, self.bit_depth),
@@ -1416,12 +1455,11 @@ impl ApngStreamWriter {
             opts,
             None,
         )?;
-        if self.prev.is_none() {
+        if prev.is_none() {
             write_chunk(out, b"IDAT", &compressed);
         } else {
             write_fdat(out, self.seq.next(), &compressed);
         }
-        self.prev = Some(curr);
         Ok(())
     }
 
