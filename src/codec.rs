@@ -1992,9 +1992,27 @@ impl PngEncoder {
 
 // ── PngAnimationFrameEncoder ──────────────────────────────────────────────
 
+/// The sample layout an accumulated APNG frame is packed in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FrameLayout {
+    /// 3 bytes/px: input layouts that cannot carry transparency are stored
+    /// directly as RGB, so an all-opaque animation converts zero frames.
+    Rgb8,
+    /// 4 bytes/px: alpha-capable input stays RGBA.
+    Rgba8,
+    /// 8 bytes/px: 16-bit input is stored as big-endian RGBA16 (the only
+    /// written layout for 16-bit APNG).
+    Rgba16,
+}
+
 /// Accumulated frame data for APNG encoding.
 struct AccumulatedFrame {
-    pixels: Vec<u8>, // Canvas-sized RGBA8 or big-endian RGBA16.
+    /// Canvas-sized pixels packed in `layout`.
+    pixels: Vec<u8>,
+    layout: FrameLayout,
+    /// The stored pixels carry no sub-maximum alpha sample. For `Rgba16` it
+    /// is informational only: 16-bit APNG always writes RGBA16.
+    opaque: bool,
     delay_num: u16,
     delay_den: u16,
 }
@@ -2176,7 +2194,14 @@ impl PngAnimationFrameEncoder {
                 zencodec::UnsupportedOperation::PixelFormat
             )));
         }
-        let rgba = Self::pixels_to_rgba(pixels, cancel)?;
+        let want = if st.bit_depth == 16 {
+            FrameLayout::Rgba16
+        } else if st.opaque {
+            FrameLayout::Rgb8
+        } else {
+            FrameLayout::Rgba8
+        };
+        let (curr, _opaque) = Self::pack_frame_to(pixels, want, cancel)?;
         if st.writer.is_none() {
             self.capture_first_frame(pixels);
             let metadata =
@@ -2203,7 +2228,7 @@ impl PngAnimationFrameEncoder {
         let writer = st.writer.as_mut().expect("started above");
         writer.push_frame(
             st.out.vec_mut(),
-            &rgba,
+            curr,
             delay_num,
             delay_den,
             cancel,
@@ -2244,22 +2269,29 @@ impl PngAnimationFrameEncoder {
         Ok(EncodeOutput::new(st.out.into_remaining(), ImageFormat::Png))
     }
 
-    /// Pack a frame as RGBA8 or big-endian RGBA16, preserving sample codes.
-    fn pixels_to_rgba(
+    /// Pack a frame into `want`, the layout it is stored or written in.
+    ///
+    /// Returns the packed pixels and whether they carry any sub-maximum
+    /// alpha sample. The bytes are what widening to RGBA then dropping the
+    /// alpha to RGB produced before: an alpha-capable source keeps its
+    /// samples, a descriptor whose alpha is `Opaque` contributes 255.
+    fn pack_frame_to(
         pixels: &PixelSlice<'_>,
+        want: FrameLayout,
         stop: &dyn enough::Stop,
-    ) -> Result<Vec<u8>, At<PngError>> {
+    ) -> Result<(Vec<u8>, bool), At<PngError>> {
         use zenpixels::{AlphaMode, ChannelLayout, ChannelType, SignalRange};
         let desc = pixels.descriptor();
-        let sample_bytes = match desc.channel_type() {
-            ChannelType::U8 => 1,
-            ChannelType::U16 => 2,
-            _ => {
-                return Err(at!(PngError::from(
-                    zencodec::UnsupportedOperation::PixelFormat
-                )));
-            }
-        };
+        // The same admission rules `apng_descriptor` applies.
+        if matches!(
+            desc.alpha(),
+            Some(AlphaMode::Premultiplied | AlphaMode::Undefined)
+        ) || desc.signal_range != SignalRange::Full
+        {
+            return Err(at!(PngError::from(
+                zencodec::UnsupportedOperation::PixelFormat
+            )));
+        }
         let channels = match desc.layout() {
             ChannelLayout::Gray => 1,
             ChannelLayout::GrayAlpha => 2,
@@ -2271,59 +2303,210 @@ impl PngAnimationFrameEncoder {
                 )));
             }
         };
-        if matches!(
-            desc.alpha(),
-            Some(AlphaMode::Premultiplied | AlphaMode::Undefined)
-        ) || desc.signal_range != SignalRange::Full
-        {
-            return Err(at!(PngError::from(
-                zencodec::UnsupportedOperation::PixelFormat
-            )));
-        }
-        let len = (pixels.width() as usize)
+        let npixels = (pixels.width() as usize)
             .checked_mul(pixels.rows() as usize)
-            .and_then(|n| n.checked_mul(4 * sample_bytes))
             .ok_or_else(|| {
                 at!(PngError::OutOfMemory(
                     "APNG frame exceeds address space".into()
                 ))
             })?;
+        match desc.channel_type() {
+            ChannelType::U16 => Self::pack_rgba16(pixels, channels, npixels, stop),
+            ChannelType::U8 => Self::pack_u8(pixels, channels, npixels, want, stop),
+            _ => Err(at!(PngError::from(
+                zencodec::UnsupportedOperation::PixelFormat
+            ))),
+        }
+    }
+
+    /// 8-bit packing: widen or swizzle each row into `want`, folding the
+    /// alpha byte down to an "all opaque" flag as it goes.
+    fn pack_u8(
+        pixels: &PixelSlice<'_>,
+        channels: usize,
+        npixels: usize,
+        want: FrameLayout,
+        stop: &dyn enough::Stop,
+    ) -> Result<(Vec<u8>, bool), At<PngError>> {
+        use zenpixels::{AlphaMode, ChannelLayout};
+        let desc = pixels.descriptor();
+        let layout = desc.layout();
+        let opaque_alpha = desc.alpha() == Some(AlphaMode::Opaque);
+        let w = pixels.width() as usize;
+        let h = pixels.rows();
+        let h_us = h as usize;
+        let out_bpp = match want {
+            FrameLayout::Rgb8 => 3,
+            FrameLayout::Rgba8 => 4,
+            FrameLayout::Rgba16 => {
+                return Err(at!(PngError::from(
+                    zencodec::UnsupportedOperation::PixelFormat
+                )));
+            }
+        };
+        let out_len = npixels.checked_mul(out_bpp).ok_or_else(|| {
+            at!(PngError::OutOfMemory(
+                "APNG frame exceeds address space".into()
+            ))
+        })?;
+        let in_row = w * channels;
+        let out_row = w * out_bpp;
         let mut out = Vec::new();
-        out.try_reserve_exact(len)
+        out.try_reserve_exact(out_len)
             .map_err(|e| at!(PngError::OutOfMemory(e.to_string())))?;
-        let max = if sample_bytes == 1 { 255 } else { 65535 };
-        for y in 0..pixels.rows() {
-            stop.check().map_err(|e| at!(PngError::from(e)))?;
-            for p in pixels.row(y).chunks_exact(channels * sample_bytes) {
-                let sample = |c: usize| {
-                    if sample_bytes == 1 {
-                        u16::from(p[c])
-                    } else {
-                        u16::from_ne_bytes([p[c * 2], p[c * 2 + 1]])
-                    }
-                };
-                let mut rgba = match desc.layout() {
-                    ChannelLayout::Gray => [sample(0), sample(0), sample(0), max],
-                    ChannelLayout::GrayAlpha => [sample(0), sample(0), sample(0), sample(1)],
-                    ChannelLayout::Rgb => [sample(0), sample(1), sample(2), max],
-                    ChannelLayout::Rgba => [sample(0), sample(1), sample(2), sample(3)],
-                    ChannelLayout::Bgra => [sample(2), sample(1), sample(0), sample(3)],
-                    _ => unreachable!("layout checked above"),
-                };
-                if desc.alpha() == Some(AlphaMode::Opaque) {
-                    rgba[3] = max;
-                }
-                for value in rgba {
-                    if sample_bytes == 1 {
-                        out.push(value as u8);
-                    } else {
-                        out.extend_from_slice(&value.to_be_bytes());
+        let size_err = |e: garb::SizeError| at!(PngError::InvalidInput(e.to_string()));
+        let mut all_opaque = true;
+        match (layout, want) {
+            // Layout-preserving paths copy.
+            (ChannelLayout::Rgb, FrameLayout::Rgb8) | (ChannelLayout::Rgba, FrameLayout::Rgba8)
+                if !opaque_alpha =>
+            {
+                for y in 0..h {
+                    stop.check().map_err(|e| at!(PngError::from(e)))?;
+                    let row = &pixels.row(y)[..in_row];
+                    out.extend_from_slice(row);
+                    if want == FrameLayout::Rgba8 && all_opaque {
+                        all_opaque = all_alpha_opaque(row);
                     }
                 }
             }
+            // Forced-opaque RGBA input is stored as written RGBA8: copy, then
+            // overwrite the alpha lane in one pass.
+            (ChannelLayout::Rgba, FrameLayout::Rgba8) => {
+                for y in 0..h {
+                    stop.check().map_err(|e| at!(PngError::from(e)))?;
+                    out.extend_from_slice(&pixels.row(y)[..in_row]);
+                }
+                garb::bytes::fill_alpha_rgba(&mut out).map_err(size_err)?;
+            }
+            // Swizzles and widening: reserve the whole frame, fill a row at a
+            // time through garb's SIMD helpers.
+            _ => {
+                out.resize(out_len, 0);
+                for y in 0..h_us {
+                    stop.check().map_err(|e| at!(PngError::from(e)))?;
+                    let row = &pixels.row(y as u32)[..in_row];
+                    let dst = &mut out[y * out_row..(y + 1) * out_row];
+                    match (layout, want) {
+                        (ChannelLayout::Rgba, FrameLayout::Rgb8) => {
+                            garb::bytes::rgba_to_rgb(row, dst).map_err(size_err)?;
+                        }
+                        (ChannelLayout::Bgra, FrameLayout::Rgb8) => {
+                            garb::bytes::bgra_to_rgb(row, dst).map_err(size_err)?;
+                        }
+                        (ChannelLayout::Bgra, FrameLayout::Rgba8) => {
+                            garb::bytes::rgba_to_bgra(row, dst).map_err(size_err)?;
+                        }
+                        (ChannelLayout::Rgb, FrameLayout::Rgba8) => {
+                            garb::bytes::rgb_to_rgba(row, dst).map_err(size_err)?;
+                        }
+                        (ChannelLayout::Gray, FrameLayout::Rgba8) => {
+                            garb::bytes::gray_to_rgba(row, dst).map_err(size_err)?;
+                        }
+                        (ChannelLayout::GrayAlpha, FrameLayout::Rgba8) => {
+                            garb::bytes::gray_alpha_to_rgba(row, dst).map_err(size_err)?;
+                        }
+                        (ChannelLayout::Gray, FrameLayout::Rgb8) => {
+                            for (o, &g) in dst.as_chunks_mut::<3>().0.iter_mut().zip(row.iter()) {
+                                o.copy_from_slice(&[g, g, g]);
+                            }
+                        }
+                        (ChannelLayout::GrayAlpha, FrameLayout::Rgb8) => {
+                            for (o, ga) in dst
+                                .as_chunks_mut::<3>()
+                                .0
+                                .iter_mut()
+                                .zip(row.as_chunks::<2>().0.iter())
+                            {
+                                o.copy_from_slice(&[ga[0], ga[0], ga[0]]);
+                            }
+                        }
+                        // Remaining (Bgra, Rgb8)-shaped cases were rejected
+                        // by the descriptor check; only these pairs exist.
+                        _ => {
+                            return Err(at!(PngError::from(
+                                zencodec::UnsupportedOperation::PixelFormat
+                            )));
+                        }
+                    }
+                }
+                // A written alpha channel needs the forced-opaque lane and
+                // the opacity scan; an RGB write needs neither.
+                match (layout, want) {
+                    (ChannelLayout::Bgra | ChannelLayout::Rgba, FrameLayout::Rgba8) => {
+                        if opaque_alpha {
+                            garb::bytes::fill_alpha_rgba(&mut out).map_err(size_err)?;
+                        } else {
+                            all_opaque = all_alpha_opaque(&out);
+                        }
+                    }
+                    (ChannelLayout::GrayAlpha, FrameLayout::Rgba8) => {
+                        all_opaque = all_alpha_opaque(&out);
+                    }
+                    _ => {}
+                }
+            }
         }
-        Ok(out)
+        Ok((out, all_opaque))
     }
+
+    /// 16-bit input is packed as big-endian RGBA16 — the only layout 16-bit
+    /// APNG writes.
+    fn pack_rgba16(
+        pixels: &PixelSlice<'_>,
+        channels: usize,
+        npixels: usize,
+        stop: &dyn enough::Stop,
+    ) -> Result<(Vec<u8>, bool), At<PngError>> {
+        use zenpixels::{AlphaMode, ChannelLayout};
+        let desc = pixels.descriptor();
+        let len = npixels.checked_mul(8).ok_or_else(|| {
+            at!(PngError::OutOfMemory(
+                "APNG frame exceeds address space".into()
+            ))
+        })?;
+        let mut out = Vec::new();
+        out.try_reserve_exact(len)
+            .map_err(|e| at!(PngError::OutOfMemory(e.to_string())))?;
+        let mut all_opaque = true;
+        for y in 0..pixels.rows() {
+            stop.check().map_err(|e| at!(PngError::from(e)))?;
+            for p in pixels.row(y).chunks_exact(channels * 2) {
+                let sample = |c: usize| u16::from_ne_bytes([p[c * 2], p[c * 2 + 1]]);
+                let mut rgba = match desc.layout() {
+                    ChannelLayout::Gray => [sample(0), sample(0), sample(0), 65535],
+                    ChannelLayout::GrayAlpha => [sample(0), sample(0), sample(0), sample(1)],
+                    ChannelLayout::Rgb => [sample(0), sample(1), sample(2), 65535],
+                    ChannelLayout::Rgba => [sample(0), sample(1), sample(2), sample(3)],
+                    ChannelLayout::Bgra => [sample(2), sample(1), sample(0), sample(3)],
+                    _ => unreachable!("layout checked in pack_frame_to"),
+                };
+                if desc.alpha() == Some(AlphaMode::Opaque) {
+                    rgba[3] = 65535;
+                }
+                all_opaque &= rgba[3] == 65535;
+                for value in rgba {
+                    out.extend_from_slice(&value.to_be_bytes());
+                }
+            }
+        }
+        Ok((out, all_opaque))
+    }
+}
+
+/// AND-fold every RGBA8 pixel's alpha byte: the fold stays 0xFF only when
+/// every sample is 0xFF. Reads eight bytes at a time.
+fn all_alpha_opaque(rgba8: &[u8]) -> bool {
+    let (pairs, rem) = rgba8.as_chunks::<8>();
+    let mut acc = !0u64;
+    for pair in pairs {
+        acc &= u64::from_ne_bytes(*pair);
+    }
+    // The alpha lanes sit at bit 24 and bit 56 of the fold.
+    if acc & 0xFF00_0000_FF00_0000 != 0xFF00_0000_FF00_0000 {
+        return false;
+    }
+    rem.as_chunks::<4>().0.iter().all(|px| px[3] == 0xFF)
 }
 
 impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
@@ -2439,12 +2622,23 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
                 .check_memory(new_cumulative)
                 .map_err(|e| CodecError::of(at!(PngError::LimitExceeded(e))))?;
         }
-        let rgba = Self::pixels_to_rgba(&pixels, &cancel).map_err(CodecError::of)?;
+        let Some(transparent) = apng_descriptor(descriptor) else {
+            return Err(Self::reject(zencodec::UnsupportedOperation::PixelFormat));
+        };
+        let layout = if descriptor.channel_type() == zenpixels::ChannelType::U16 {
+            FrameLayout::Rgba16
+        } else if transparent {
+            FrameLayout::Rgba8
+        } else {
+            FrameLayout::Rgb8
+        };
+        let (packed, opaque) =
+            Self::pack_frame_to(&pixels, layout, &cancel).map_err(CodecError::of)?;
         self.frames
             .try_reserve(1)
             .map_err(|e| CodecError::of(at!(PngError::OutOfMemory(e.to_string()))))?;
         self.cumulative_pixel_bytes = new_cumulative;
-        self.transparent_input |= apng_descriptor(descriptor) != Some(false);
+        self.transparent_input |= transparent;
         if self.frame_descriptor.is_none() {
             self.capture_first_frame(&pixels);
         }
@@ -2453,7 +2647,9 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
             self.canvas_height = height;
         }
         self.frames.push(AccumulatedFrame {
-            pixels: rgba,
+            pixels: packed,
+            layout,
+            opaque,
             delay_num,
             delay_den,
         });
@@ -2585,61 +2781,111 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
 
 impl PngAnimationFrameEncoder {
     fn do_finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, At<PngError>> {
+        let Self {
+            mut frames,
+            canvas_width,
+            canvas_height,
+            config,
+            metadata,
+            loop_count,
+            limits,
+            stop: own_stop,
+            frame_descriptor,
+            policy,
+            transparent_input,
+            ..
+        } = self;
         let cancel = AnimationStops(
-            self.stop
+            own_stop
                 .as_ref()
                 .map_or(&enough::Unstoppable as &dyn enough::Stop, |s| s),
             stop.unwrap_or(&enough::Unstoppable),
         );
         enough::Stop::check(&cancel).map_err(|e| at!(PngError::from(e)))?;
 
-        if self.frames.is_empty() {
+        if frames.is_empty() {
             return Err(at!(PngError::InvalidState(
                 "APNG frame encoder: no frames pushed".into(),
             )));
         }
 
-        // Convert accumulated frames to ApngFrameInput
-        let inputs: Vec<crate::encode::ApngFrameInput<'_>> = self
-            .frames
+        let mut apng_config = crate::encode::ApngEncodeConfig {
+            encode: config,
+            num_plays: loop_count,
+        };
+        // Frames with no alpha channel are written as RGB: not a downcast.
+        apng_config.encode.downcast.rgba_to_rgb |= !transparent_input;
+
+        let deadline = default_deadline();
+
+        let metadata = apply_encode_policy(metadata.as_ref(), policy.as_ref(), Some(4))?;
+        let bit_depth =
+            if frame_descriptor.is_some_and(|d| d.channel_type() == zenpixels::ChannelType::U16) {
+                16
+            } else {
+                8
+            };
+        // The written layout: RGB when every frame is opaque and the
+        // reduction is allowed, RGBA otherwise; always RGBA16 at 16 bits.
+        // Frames stored otherwise are normalized here, once each.
+        let opaque = bit_depth == 8
+            && apng_config.encode.downcast.rgba_to_rgb
+            && frames.iter().all(|f| f.opaque);
+        let (want, bpp): (FrameLayout, usize) = if bit_depth == 16 {
+            (FrameLayout::Rgba16, 8)
+        } else if opaque {
+            (FrameLayout::Rgb8, 3)
+        } else {
+            (FrameLayout::Rgba8, 4)
+        };
+        let expected = canvas_width as usize * canvas_height as usize * bpp;
+        for f in &mut frames {
+            f.pixels = match (f.layout, want) {
+                (FrameLayout::Rgba8, FrameLayout::Rgb8) => {
+                    let mut rgb = alloc::vec![0u8; f.pixels.len() / 4 * 3];
+                    garb::bytes::rgba_to_rgb(&f.pixels, &mut rgb)
+                        .map_err(|e| at!(PngError::InvalidInput(e.to_string())))?;
+                    rgb
+                }
+                (FrameLayout::Rgb8, FrameLayout::Rgba8) => {
+                    let mut rgba = alloc::vec![0u8; f.pixels.len() / 3 * 4];
+                    garb::bytes::rgb_to_rgba(&f.pixels, &mut rgba)
+                        .map_err(|e| at!(PngError::InvalidInput(e.to_string())))?;
+                    rgba
+                }
+                _ => continue,
+            };
+        }
+        let inputs: Vec<crate::encode::ApngFrameInput<'_>> = frames
             .iter()
             .map(|f| crate::encode::ApngFrameInput {
-                pixels: &f.pixels,
+                pixels: &f.pixels[..expected],
                 delay_num: f.delay_num,
                 delay_den: f.delay_den,
             })
             .collect();
 
-        let mut apng_config = crate::encode::ApngEncodeConfig {
-            encode: self.config.clone(),
-            num_plays: self.loop_count,
-        };
-        // Frames with no alpha channel are written as RGB: not a downcast.
-        apng_config.encode.downcast.rgba_to_rgb |= !self.transparent_input;
-
-        let deadline = default_deadline();
-
-        let metadata = apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref(), Some(4))?;
-        let bit_depth = if self
-            .frame_descriptor
-            .is_some_and(|d| d.channel_type() == zenpixels::ChannelType::U16)
-        {
-            16
-        } else {
-            8
-        };
-        let data = crate::encode::encode_apng_depth(
+        let write_meta = crate::encode::apng_write_meta(&apng_config.encode, metadata.as_ref());
+        let data = crate::encoder::apng::encode_apng_packed_depth(
             &inputs,
-            self.canvas_width,
-            self.canvas_height,
+            canvas_width,
+            canvas_height,
             bit_depth,
-            &apng_config,
-            metadata.as_ref(),
+            opaque,
+            &write_meta,
+            apng_config.num_plays,
+            apng_config.encode.compression.effort(),
+            apng_config.encode.preserve_transparent_rgb,
+            if apng_config.encode.parallel && apng_config.encode.max_threads != 1 {
+                apng_config.encode.max_threads
+            } else {
+                1
+            },
             &cancel,
             &deadline,
         )?;
 
-        if let Some(limits) = &self.limits {
+        if let Some(limits) = &limits {
             limits
                 .check_output_size(data.len() as u64)
                 .map_err(|e| at!(PngError::LimitExceeded(e)))?;

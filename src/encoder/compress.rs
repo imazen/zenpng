@@ -14,6 +14,7 @@ use whereat::at;
 use super::filter::{
     HEURISTIC_STRATEGIES, HeuristicScratch, NONE_PAETH_MINSUM_STRATEGIES, PAETH_MINSUM_STRATEGIES,
     Strategy, filter_image, filter_image_from_precomputed, precompute_all_filters,
+    precompute_all_filters_into,
 };
 use super::{PhaseStat, PhaseStats};
 
@@ -1130,13 +1131,13 @@ fn debug_check_roundtrip(compressed: &[u8], filtered: &[u8]) {
     let _ = (compressed, filtered);
 }
 
-/// Try compressing `filtered` data with all `compressors`, updating `best_compressed`
+/// Try compressing `filtered` data with all `compressors`, updating `best`
 /// if a smaller result is found.
 pub(crate) fn try_compress(
     filtered: &[u8],
     compressors: &mut [Compressor],
     compress_buf: &mut [u8],
-    best_compressed: &mut Option<Vec<u8>>,
+    best: &mut BestSink,
     cancel: &dyn Stop,
 ) -> crate::error::Result<usize> {
     let mut best_for_stream = usize::MAX;
@@ -1161,11 +1162,9 @@ pub(crate) fn try_compress(
 
         best_for_stream = best_for_stream.min(compressed_len);
 
-        let dominated = best_compressed
-            .as_ref()
-            .is_some_and(|b| compressed_len >= b.len());
+        let dominated = best.len().is_some_and(|b| compressed_len >= b);
         if !dominated {
-            *best_compressed = Some(compress_buf[..compressed_len].to_vec());
+            best.set(compressed_len, &compress_buf[..compressed_len]);
         }
     }
     Ok(best_for_stream)
@@ -1173,7 +1172,7 @@ pub(crate) fn try_compress(
 
 /// Compress `filtered` data at the given effort, then follow zenflate's
 /// monotonicity fallback chain (trying each previous strategy boundary's
-/// max effort). Updates `best_compressed` if a smaller result is found.
+/// max effort). Updates `state.best` if a smaller result is found.
 ///
 /// `done` caches the sizes of levels already compressed for this same
 /// `filtered` input: refine tiers such as `[20, 22]` share their fallback
@@ -1182,7 +1181,7 @@ fn try_compress_with_fallbacks(
     filtered: &[u8],
     effort: Zl,
     compress_buf: &mut [u8],
-    best_compressed: &mut Option<Vec<u8>>,
+    best: &mut BestSink,
     done: &mut Vec<(CompressionLevel, usize)>,
     fallbacks: bool,
     cancel: &dyn Stop,
@@ -1198,7 +1197,7 @@ fn try_compress_with_fallbacks(
                     filtered,
                     core::slice::from_mut(&mut compressor),
                     compress_buf,
-                    best_compressed,
+                    best,
                     cancel,
                 );
                 give_compressor(level, compressor);
@@ -1987,7 +1986,7 @@ fn resolve_threads(max_threads: usize) -> usize {
 /// Run `f` on every item on at most [`resolve_threads`]`(max_threads)`
 /// threads (and at most one per item), pulling items from a shared queue;
 /// results in item order. One thread, or wasm32: in order on this thread.
-fn par_map<T: Sync, R: Send>(
+pub(crate) fn par_map<T: Sync, R: Send>(
     items: &[T],
     max_threads: usize,
     f: impl Fn(&T) -> R + Sync,
@@ -2346,9 +2345,44 @@ fn debug_check_roundtrip_len(zlib: &[u8], len: usize) {
 /// plus the running best result, so each phase helper takes a single `&mut self`
 /// reference instead of a long argument list. Phase helpers stay free functions
 /// taking `&mut CompressState` for testability and to keep call sites readable.
+/// Running "smallest compressed result" sink. Byte mode keeps the winning
+/// bytes for the caller; size mode (`size_only`) records only the length —
+/// for trial compressions whose output is discarded anyway.
+pub(crate) struct BestSink {
+    bytes: Option<Vec<u8>>,
+    len: Option<usize>,
+    size_only: bool,
+}
+
+impl BestSink {
+    fn len(&self) -> Option<usize> {
+        self.len
+    }
+    /// Record `src[..len]` as a candidate; callers have already compared len.
+    fn set(&mut self, len: usize, src: &[u8]) {
+        self.len = Some(len);
+        if !self.size_only {
+            match self.bytes.as_mut() {
+                Some(b) => {
+                    b.clear();
+                    b.extend_from_slice(src);
+                }
+                None => self.bytes = Some(src.to_vec()),
+            }
+        }
+    }
+    /// Same as [`set`](Self::set) for an owned candidate (parallel paths).
+    fn set_vec(&mut self, v: Vec<u8>) {
+        self.len = Some(v.len());
+        if !self.size_only {
+            self.bytes = Some(v);
+        }
+    }
+}
+
 struct CompressState {
     /// Current best compressed output across all phases attempted so far.
-    best_compressed: Option<Vec<u8>>,
+    best: BestSink,
     /// Scratch buffer reused for filtered row data in the serial paths.
     filtered: Vec<u8>,
     /// Scratch buffer reused for zlib output in the serial paths.
@@ -2357,16 +2391,116 @@ struct CompressState {
     filtered_size: usize,
 }
 
+// Reusable scratch for `CompressState`, a few pairs per thread. `filtered`
+// is `clear()`ed before every use and `compress_buf` is an output buffer
+// written before it is ever read, so recycled contents need no scrubbing —
+// only the first `compress_buf` pays the `vec![0; bound]` memset.
+std::thread_local! {
+    static SCRATCH_BUFS: core::cell::RefCell<Vec<Vec<u8>>> =
+        const { core::cell::RefCell::new(Vec::new()) };
+}
+
+fn take_scratch(filtered_size: usize, compress_bound: usize) -> (Vec<u8>, Vec<u8>) {
+    let (filtered, compress_buf) = SCRATCH_BUFS.with(|s| {
+        let mut s = s.borrow_mut();
+        (
+            s.iter()
+                .position(|v| v.capacity() >= filtered_size)
+                .map(|i| s.swap_remove(i)),
+            s.iter()
+                .position(|v| v.len() >= compress_bound)
+                .map(|i| s.swap_remove(i)),
+        )
+    });
+    let mut filtered = filtered.unwrap_or_else(|| Vec::with_capacity(filtered_size));
+    filtered.clear();
+    (
+        filtered,
+        compress_buf.unwrap_or_else(|| vec![0u8; compress_bound]),
+    )
+}
+
 impl CompressState {
-    fn new(filtered_size: usize) -> Self {
+    fn new(filtered_size: usize, size_only: bool) -> Self {
         let compress_bound = Compressor::zlib_compress_bound(filtered_size);
+        let (filtered, compress_buf) = take_scratch(filtered_size, compress_bound);
         Self {
-            best_compressed: None,
-            filtered: Vec::with_capacity(filtered_size),
-            compress_buf: vec![0u8; compress_bound],
+            best: BestSink {
+                bytes: None,
+                len: None,
+                size_only,
+            },
+            filtered,
+            compress_buf,
             filtered_size,
         }
     }
+}
+
+/// Take a pooled buffer with at least `size` capacity for filtered row data.
+fn take_scratch_filtered(size: usize) -> Vec<u8> {
+    let v = SCRATCH_BUFS.with(|s| {
+        let mut s = s.borrow_mut();
+        s.iter()
+            .position(|v| v.capacity() >= size)
+            .map(|i| s.swap_remove(i))
+    });
+    let mut v = v.unwrap_or_else(|| Vec::with_capacity(size));
+    v.clear();
+    v
+}
+
+/// Return a filtered-data buffer to the per-thread pool.
+fn give_scratch_buf(buf: Vec<u8>) {
+    if buf.capacity() == 0 {
+        return;
+    }
+    SCRATCH_BUFS.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.len() < 4 {
+            s.push(buf);
+        }
+    });
+}
+
+/// Return `state`'s scratch buffers to the per-thread pool.
+fn give_scratch(state: &mut CompressState) {
+    SCRATCH_BUFS.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.len() < 4 {
+            s.push(core::mem::take(&mut state.filtered));
+            s.push(core::mem::take(&mut state.compress_buf));
+        }
+    });
+}
+
+std::thread_local! {
+    // `precompute_all_filters` buffers (5×image, written before read). Kept
+    // separate from SCRATCH_BUFS so a `filtered` take can't steal the big
+    // buffer and force the next precompute to reallocate.
+    static PRECOMP_BUFS: core::cell::RefCell<Vec<Vec<u8>>> =
+        const { core::cell::RefCell::new(Vec::new()) };
+}
+
+/// Take a pooled precompute buffer with at least `size` capacity. Its length
+/// is adjusted by the caller (`resize` only touches the growth tail).
+fn take_precompute(size: usize) -> Vec<u8> {
+    PRECOMP_BUFS.with(|s| {
+        s.borrow_mut()
+            .pop()
+            .filter(|b| b.capacity() >= size)
+            .unwrap_or_default()
+    })
+}
+
+/// Return a precompute buffer to the per-thread pool.
+fn give_precompute(buf: Vec<u8>) {
+    PRECOMP_BUFS.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.len() < 3 {
+            s.push(buf);
+        }
+    });
 }
 
 /// Output of Phase 1 screening — one (compressed_len, filtered_bytes) per
@@ -2474,8 +2608,95 @@ pub(crate) fn compress_filtered(
     format: RowFormat,
     effort: u32,
     opts: super::CompressOptions<'_>,
-    mut stats: Option<&mut PhaseStats>,
+    stats: Option<&mut PhaseStats>,
 ) -> crate::error::Result<Vec<u8>> {
+    compress_filtered_t(
+        packed_rows,
+        row_bytes,
+        height,
+        format,
+        effort,
+        opts,
+        stats,
+        None,
+    )
+}
+
+/// `compress_filtered` with a caller-known answer for the transparent-RGB
+/// normalization pass: `Some(true)` skips the scan and zeroes RGB under
+/// alpha-0 pixels, `Some(false)` skips both — correct when the input is known
+/// opaque *or* already normalized (alpha-0 pixels with RGB already zero).
+/// `None` scans as usual.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compress_filtered_t(
+    packed_rows: &[u8],
+    row_bytes: usize,
+    height: usize,
+    format: RowFormat,
+    effort: u32,
+    opts: super::CompressOptions<'_>,
+    stats: Option<&mut PhaseStats>,
+    transparent_hint: Option<bool>,
+) -> crate::error::Result<Vec<u8>> {
+    let (_len, bytes) = compress_filtered_core(
+        packed_rows,
+        row_bytes,
+        height,
+        format,
+        effort,
+        opts,
+        stats,
+        transparent_hint,
+        false,
+    )?;
+    // Byte mode always keeps the winner; `None` would mean screening ran
+    // zero strategies, which `compress_filtered_core` already rejects.
+    bytes.ok_or_else(|| {
+        at!(PngError::Internal(
+            zencodec::InternalKind::Bug,
+            "no filter strategies tried".to_string()
+        ))
+    })
+}
+
+/// `compress_filtered_t` when only the compressed *length* is needed (APNG
+/// trial compressions): skips retaining the winning bytes entirely.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compress_filtered_size(
+    packed_rows: &[u8],
+    row_bytes: usize,
+    height: usize,
+    format: RowFormat,
+    effort: u32,
+    opts: super::CompressOptions<'_>,
+    transparent_hint: Option<bool>,
+) -> crate::error::Result<usize> {
+    let (len, _bytes) = compress_filtered_core(
+        packed_rows,
+        row_bytes,
+        height,
+        format,
+        effort,
+        opts,
+        None,
+        transparent_hint,
+        true,
+    )?;
+    Ok(len)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compress_filtered_core(
+    packed_rows: &[u8],
+    row_bytes: usize,
+    height: usize,
+    format: RowFormat,
+    effort: u32,
+    opts: super::CompressOptions<'_>,
+    mut stats: Option<&mut PhaseStats>,
+    transparent_hint: Option<bool>,
+    size_only: bool,
+) -> crate::error::Result<(usize, Option<Vec<u8>>)> {
     let bpp = format.bpp;
     let params = EffortParams::from_effort_and_bpp(effort, bpp);
     let filtered_size = (row_bytes + 1) * height;
@@ -2517,7 +2738,8 @@ pub(crate) fn compress_filtered(
             height,
             filtered_size,
             stats.as_deref_mut(),
-        );
+        )
+        .map(|z| (z.len(), Some(z)));
     }
 
     // Zero RGB of fully-transparent RGBA8 pixels — invisible noise defeats
@@ -2525,14 +2747,15 @@ pub(crate) fn compress_filtered(
     // the declared layout, NOT on `bpp == 4`: GA16 rows are also 4 bytes
     // per pixel and must pass through untouched.
     let owned_rows;
-    let packed_rows =
-        if format.rgba8 && !opts.preserve_transparent_rgb && has_any_transparent_pixel(packed_rows)
-        {
-            owned_rows = zero_transparent_rgba8(packed_rows);
-            &owned_rows
-        } else {
-            packed_rows
-        };
+    let packed_rows = if format.rgba8
+        && !opts.preserve_transparent_rgb
+        && transparent_hint.unwrap_or_else(|| has_any_transparent_pixel(packed_rows))
+    {
+        owned_rows = zero_transparent_rgba8(packed_rows);
+        &owned_rows
+    } else {
+        packed_rows
+    };
 
     if let Some(s) = &mut stats {
         s.raw_size = filtered_size;
@@ -2555,18 +2778,21 @@ pub(crate) fn compress_filtered(
     {
         let z = z.into_zlib();
         debug_check_roundtrip_len(&z, height * (row_bytes + 1));
-        return Ok(z);
+        return Ok((z.len(), Some(z)));
     }
 
-    let mut state = CompressState::new(filtered_size);
+    let mut state = CompressState::new(filtered_size, size_only);
     let strategies = params.strategies;
     let screen_effort = params.screen_effort;
 
     // Precompute the 5 PNG filter variants once when multiple strategies share
     // them. Caps at 64 MiB to bound memory; falls back to per-strategy filtering.
+    // The buffer is pooled: it is write-first, so recycled contents are safe.
     let precompute_size = 5 * height * row_bytes;
-    let precomputed = if strategies.len() > 1 && precompute_size <= 64 * 1024 * 1024 {
-        Some(precompute_all_filters(packed_rows, row_bytes, height, bpp))
+    let mut precomputed = if strategies.len() > 1 && precompute_size <= 64 * 1024 * 1024 {
+        let mut buf = take_precompute(precompute_size);
+        precompute_all_filters_into(&mut buf, packed_rows, row_bytes, height, bpp);
+        Some(buf)
     } else {
         None
     };
@@ -2609,7 +2835,7 @@ pub(crate) fn compress_filtered(
                 filtered,
                 core::slice::from_mut(&mut c),
                 &mut state.compress_buf,
-                &mut state.best_compressed,
+                &mut state.best,
                 opts.cancel,
             );
             give_compressor(fb, c);
@@ -2621,14 +2847,25 @@ pub(crate) fn compress_filtered(
     // Early return: screen-only modes don't need refinement, or deadline hit.
     if params.screen_is_final || opts.deadline.should_stop() {
         // `strategies` is always a non-empty compile-time-fixed set, so ending
-        // up with no `best_compressed` is a broken invariant in our own
+        // up with no `state.best` is a broken invariant in our own
         // screening loop, not a caller-request fault.
-        return state.best_compressed.ok_or_else(|| {
-            at!(PngError::Internal(
-                zencodec::InternalKind::Bug,
-                "no filter strategies tried".to_string()
-            ))
-        });
+        if let Some(b) = precomputed.take() {
+            give_precompute(b);
+        }
+        give_scratch(&mut state);
+        for (_, filtered) in screen_results {
+            give_scratch_buf(filtered);
+        }
+        return state
+            .best
+            .len()
+            .map(|len| (len, state.best.bytes.take()))
+            .ok_or_else(|| {
+                at!(PngError::Internal(
+                    zencodec::InternalKind::Bug,
+                    "no filter strategies tried".to_string()
+                ))
+            });
     }
 
     let mut recompress_candidates: RecompressCandidates = Vec::new();
@@ -2664,12 +2901,23 @@ pub(crate) fn compress_filtered(
 
     // Same invariant as the early-return above: `strategies` is always
     // non-empty by construction.
-    state.best_compressed.ok_or_else(|| {
-        at!(PngError::Internal(
-            zencodec::InternalKind::Bug,
-            "no filter strategies tried".to_string()
-        ))
-    })
+    if let Some(b) = precomputed.take() {
+        give_precompute(b);
+    }
+    give_scratch(&mut state);
+    for (_, filtered) in screen_results {
+        give_scratch_buf(filtered);
+    }
+    state
+        .best
+        .len()
+        .map(|len| (len, state.best.bytes.take()))
+        .ok_or_else(|| {
+            at!(PngError::Internal(
+                zencodec::InternalKind::Bug,
+                "no filter strategies tried".to_string()
+            ))
+        })
 }
 
 /// Phase 0 — effort=0 store-only fast path.
@@ -2718,7 +2966,7 @@ fn is_filter_variance_low(screen_results: &ScreenResults) -> bool {
 /// Phase 1 — Screen: apply each filter strategy and compress at `screen_effort`.
 ///
 /// Returns `(screen_size, filtered_bytes)` per surviving strategy, sorted
-/// ascending by size. Updates `state.best_compressed` if any strategy
+/// ascending by size. Updates `state.best` if any strategy
 /// produces a smaller output than the running best.
 #[allow(clippy::too_many_arguments)]
 fn run_phase1_screen(
@@ -2776,7 +3024,7 @@ fn run_phase1_screen(
         s.phases.push(PhaseStat {
             name: alloc::format!("Screen ({tried}×E{screen_effort})"),
             duration_ns: t.elapsed().as_nanos() as u64,
-            best_size: state.best_compressed.as_ref().map_or(0, |b| b.len()),
+            best_size: state.best.len().unwrap_or(0),
             evaluations: tried as u32,
         });
     }
@@ -2802,8 +3050,9 @@ fn screen_parallel(
     let filtered_size = state.filtered_size;
     let compress_bound = state.compress_buf.len();
     let cancel = opts.cancel;
+    let size_only = state.best.size_only;
     #[allow(clippy::type_complexity)]
-    let par_results: Vec<Option<(usize, Vec<u8>, Vec<u8>)>> =
+    let par_results: Vec<Option<(usize, Vec<u8>, Option<Vec<u8>>)>> =
         par_map(strategies, opts.max_threads, |strategy| {
             let mut t_filtered = Vec::with_capacity(filtered_size);
             let mut t_compressor = Compressor::new(screen_effort.level());
@@ -2840,17 +3089,18 @@ fn screen_parallel(
             Some((
                 compressed_len,
                 t_filtered,
-                t_compress_buf[..compressed_len].to_vec(),
+                (!size_only).then(|| t_compress_buf[..compressed_len].to_vec()),
             ))
         });
 
     for (compressed_len, filtered_data, compressed_data) in par_results.into_iter().flatten() {
-        let dominated = state
-            .best_compressed
-            .as_ref()
-            .is_some_and(|b| compressed_len >= b.len());
+        let dominated = state.best.len().is_some_and(|b| compressed_len >= b);
         if !dominated {
-            state.best_compressed = Some(compressed_data);
+            match compressed_data {
+                Some(v) => state.best.set_vec(v),
+                // size_only mode: no bytes produced, record length only.
+                None => state.best.set(compressed_len, &[]),
+            }
         }
         screen_results.push((compressed_len, filtered_data));
     }
@@ -2929,12 +3179,11 @@ fn screen_serial(
         };
 
         debug_check_roundtrip(&state.compress_buf[..compressed_len], &state.filtered);
-        let dominated = state
-            .best_compressed
-            .as_ref()
-            .is_some_and(|b| compressed_len >= b.len());
+        let dominated = state.best.len().is_some_and(|b| compressed_len >= b);
         if !dominated {
-            state.best_compressed = Some(state.compress_buf[..compressed_len].to_vec());
+            state
+                .best
+                .set(compressed_len, &state.compress_buf[..compressed_len]);
         }
         let idx = screen_results.len();
         let worst = kept
@@ -2944,13 +3193,23 @@ fn screen_serial(
             .map(|(slot, &k)| (slot, k));
         let data = if kept.len() < keep {
             kept.push(idx);
-            core::mem::replace(&mut state.filtered, spare.take().unwrap_or_default())
+            core::mem::replace(
+                &mut state.filtered,
+                spare
+                    .take()
+                    .unwrap_or_else(|| take_scratch_filtered(state.filtered_size)),
+            )
         } else if let Some((slot, w)) = worst
             && compressed_len < screen_results[w].0
         {
             spare = Some(core::mem::take(&mut screen_results[w].1));
             kept[slot] = idx;
-            core::mem::replace(&mut state.filtered, spare.take().unwrap_or_default())
+            core::mem::replace(
+                &mut state.filtered,
+                spare
+                    .take()
+                    .unwrap_or_else(|| take_scratch_filtered(state.filtered_size)),
+            )
         } else {
             Vec::new()
         };
@@ -3015,7 +3274,7 @@ fn run_phase2_refine(
         s.phases.push(PhaseStat {
             name: alloc::format!("Refine ({top_n}×{tiers_str})"),
             duration_ns: t.elapsed().as_nanos() as u64,
-            best_size: state.best_compressed.as_ref().map_or(0, |b| b.len()),
+            best_size: state.best.len().unwrap_or(0),
             evaluations: (top_n * refine_tiers.len()) as u32,
         });
     }
@@ -3035,16 +3294,26 @@ fn refine_parallel(
 ) {
     let compress_bound = state.compress_buf.len();
     let cancel = opts.cancel;
-    let refine_results: Vec<Option<(usize, Vec<u8>)>> = par_map(
+    let size_only = state.best.size_only;
+    let refine_results: Vec<Option<(usize, Option<Vec<u8>>)>> = par_map(
         &screen_results[..top_n],
         opts.max_threads,
         |(_, filtered_data)| {
             {
                 let mut t_compress_buf = vec![0u8; compress_bound];
                 let mut t_best: Option<Vec<u8>> = None;
+                let mut t_best_len = usize::MAX;
 
                 // Tiers share fallback levels; compress each level once.
+                // Seeding the screen level skips its duplicate compress; the
+                // screen already pushed those bytes to `state.best`, so
+                // this candidate's merge result is unchanged. Recompress
+                // sizing tags the per-candidate best, which a seeded level
+                // could be — keep exact accounting there instead.
                 let mut done: Vec<CompressionLevel> = Vec::new();
+                if !params.use_recompress {
+                    done.push(params.screen_effort.level());
+                }
                 for &tier_level in refine_tiers {
                     let mut level = tier_level.level();
                     loop {
@@ -3061,9 +3330,11 @@ fn refine_parallel(
                             compressor.zlib_compress(filtered_data, &mut t_compress_buf, cancel)
                         {
                             debug_check_roundtrip(&t_compress_buf[..len], filtered_data);
-                            let dominated = t_best.as_ref().is_some_and(|b| len >= b.len());
-                            if !dominated {
-                                t_best = Some(t_compress_buf[..len].to_vec());
+                            if len < t_best_len {
+                                t_best_len = len;
+                                if !size_only {
+                                    t_best = Some(t_compress_buf[..len].to_vec());
+                                }
                             }
                         }
                         match level.monotonicity_fallback().filter(|_| params.fallbacks) {
@@ -3072,19 +3343,20 @@ fn refine_parallel(
                         }
                     }
                 }
-                t_best.map(|b| (b.len(), b))
+                (t_best_len < usize::MAX).then_some((t_best_len, t_best))
             }
         },
     );
 
     for (idx, result) in refine_results.into_iter().enumerate() {
         if let Some((size, compressed_data)) = result {
-            let dominated = state
-                .best_compressed
-                .as_ref()
-                .is_some_and(|b| size >= b.len());
+            let dominated = state.best.len().is_some_and(|b| size >= b);
             if !dominated {
-                state.best_compressed = Some(compressed_data);
+                match compressed_data {
+                    Some(v) => state.best.set_vec(v),
+                    // size_only mode: no bytes produced, record length only.
+                    None => state.best.set(size, &[]),
+                }
             }
             if params.use_recompress {
                 recompress_candidates.push((size, screen_results[idx].1.clone()));
@@ -3104,7 +3376,15 @@ fn refine_serial(
     recompress_candidates: &mut RecompressCandidates,
     opts: &super::CompressOptions<'_>,
 ) -> crate::error::Result<()> {
-    let mut done: Vec<Vec<(CompressionLevel, usize)>> = vec![Vec::new(); top_n];
+    // Seed each candidate's `done` with its screen result: when the screen
+    // effort appears in a fallback chain (e.g. png(10) inside png(24)'s
+    // chain), that level's size and bytes are already known — the screen
+    // pushed them to `state.best` — so the duplicate compress is pure
+    // waste.
+    let mut done: Vec<Vec<(CompressionLevel, usize)>> = screen_results[..top_n]
+        .iter()
+        .map(|(size, _)| vec![(params.screen_effort.level(), *size)])
+        .collect();
     for &tier_level in refine_tiers {
         if opts.deadline.should_stop() {
             break;
@@ -3115,7 +3395,7 @@ fn refine_serial(
                 filtered_data,
                 tier_level,
                 &mut state.compress_buf,
-                &mut state.best_compressed,
+                &mut state.best,
                 done,
                 params.fallbacks,
                 opts.cancel,
@@ -3242,7 +3522,7 @@ fn run_phase3_bruteforce(
         s.phases.push(PhaseStat {
             name: alloc::format!("BruteForce ({configs_desc})"),
             duration_ns: t.elapsed().as_nanos() as u64,
-            best_size: state.best_compressed.as_ref().map_or(0, |b| b.len()),
+            best_size: state.best.len().unwrap_or(0),
             evaluations: brute_evals,
         });
     }
@@ -3315,7 +3595,7 @@ fn run_one_brute_variant(
         &state.filtered,
         params.zenflate_effort,
         &mut state.compress_buf,
-        &mut state.best_compressed,
+        &mut state.best,
         &mut Vec::new(),
         params.fallbacks,
         opts.cancel,
@@ -3384,7 +3664,7 @@ fn run_phase4_recompress(
         s.phases.push(PhaseStat {
             name: label,
             duration_ns: t.elapsed().as_nanos() as u64,
-            best_size: state.best_compressed.as_ref().map_or(0, |b| b.len()),
+            best_size: state.best.len().unwrap_or(0),
             evaluations: n_candidates as u32,
         });
     }
@@ -3410,12 +3690,9 @@ fn run_phase4_lean(
             }
             let zopfli_result =
                 compress_with_zopfli_n(filtered_data, iterations.max(1), opts.cancel)?;
-            let dominated = state
-                .best_compressed
-                .as_ref()
-                .is_some_and(|b| zopfli_result.len() >= b.len());
+            let dominated = state.best.len().is_some_and(|b| zopfli_result.len() >= b);
             if !dominated {
-                state.best_compressed = Some(zopfli_result);
+                state.best.set_vec(zopfli_result);
             }
         }
     }
@@ -3426,11 +3703,11 @@ fn run_phase4_lean(
                 recompress_candidates,
                 fo_effort,
                 opts.cancel,
-                &mut state.best_compressed,
+                state.best.len(),
                 opts.max_threads,
             )?;
             if let Some(b) = fo_best {
-                state.best_compressed = Some(b);
+                state.best.set_vec(b);
             }
         }
     }
@@ -3439,7 +3716,7 @@ fn run_phase4_lean(
 
 /// Normal recompression tier: zenflate NearOptimal + optional FullOptimal
 /// (effort 31+) + optional zenzop (with `zopfli` feature). Each step honors
-/// the deadline and updates `best_compressed` only when smaller.
+/// the deadline and updates `state.best` only when smaller.
 fn run_phase4_normal(
     state: &mut CompressState,
     recompress_candidates: &RecompressCandidates,
@@ -3450,11 +3727,11 @@ fn run_phase4_normal(
     let zenflate_best = zenflate_recompress(
         recompress_candidates,
         opts.cancel,
-        &mut state.best_compressed,
+        state.best.len(),
         opts.max_threads,
     )?;
     if let Some(b) = zenflate_best {
-        state.best_compressed = Some(b);
+        state.best.set_vec(b);
     }
 
     // zenflate FullOptimal — effort 31+, iterative forward DP.
@@ -3465,11 +3742,11 @@ fn run_phase4_normal(
             recompress_candidates,
             fo_effort,
             opts.cancel,
-            &mut state.best_compressed,
+            state.best.len(),
             opts.max_threads,
         )?;
         if let Some(b) = fo_best {
-            state.best_compressed = Some(b);
+            state.best.set_vec(b);
         }
     }
 
@@ -3481,11 +3758,11 @@ fn run_phase4_normal(
                 opts.cancel,
                 opts.deadline,
                 opts.remaining_ns,
-                &mut state.best_compressed,
+                state.best.len(),
                 opts.max_threads,
             )?;
             if let Some(b) = zopfli_best {
-                state.best_compressed = Some(b);
+                state.best.set_vec(b);
             }
         }
     }
@@ -3701,7 +3978,7 @@ fn recompress_one(data: &[u8], cancel: &dyn Stop) -> crate::error::Result<Vec<u8
 fn zenflate_recompress(
     candidates: &[(usize, Vec<u8>)],
     cancel: &dyn Stop,
-    current_best: &mut Option<Vec<u8>>,
+    current_best_len: Option<usize>,
     max_threads: usize,
 ) -> crate::error::Result<Option<Vec<u8>>> {
     let mut best: Option<Vec<u8>> = None;
@@ -3723,9 +4000,7 @@ fn zenflate_recompress(
     for result in results {
         let compressed = result?;
         let dominated = best.as_ref().is_some_and(|b| compressed.len() >= b.len())
-            || current_best
-                .as_ref()
-                .is_some_and(|b| compressed.len() >= b.len());
+            || current_best_len.is_some_and(|b| compressed.len() >= b);
         if !dominated {
             best = Some(compressed);
         }
@@ -3769,7 +4044,7 @@ fn zenflate_full_optimal_recompress(
     candidates: &[(usize, Vec<u8>)],
     effort: u32,
     cancel: &dyn Stop,
-    current_best: &mut Option<Vec<u8>>,
+    current_best_len: Option<usize>,
     max_threads: usize,
 ) -> crate::error::Result<Option<Vec<u8>>> {
     let mut best: Option<Vec<u8>> = None;
@@ -3791,9 +4066,7 @@ fn zenflate_full_optimal_recompress(
     for result in results {
         let compressed = result?;
         let dominated = best.as_ref().is_some_and(|b| compressed.len() >= b.len())
-            || current_best
-                .as_ref()
-                .is_some_and(|b| compressed.len() >= b.len());
+            || current_best_len.is_some_and(|b| compressed.len() >= b);
         if !dominated {
             best = Some(compressed);
         }
@@ -3815,7 +4088,7 @@ fn zopfli_adaptive(
     cancel: &dyn Stop,
     deadline: &dyn Stop,
     remaining_ns: Option<&dyn Fn() -> Option<u64>>,
-    current_best: &mut Option<Vec<u8>>,
+    current_best_len: Option<usize>,
     max_threads: usize,
 ) -> crate::error::Result<Option<Vec<u8>>> {
     use std::time::Instant;
@@ -3827,9 +4100,7 @@ fn zopfli_adaptive(
     let mut best: Option<Vec<u8>> = None;
     let mut update_best = |compressed: Vec<u8>| {
         let dominated = best.as_ref().is_some_and(|b| compressed.len() >= b.len())
-            || current_best
-                .as_ref()
-                .is_some_and(|b| compressed.len() >= b.len());
+            || current_best_len.is_some_and(|b| compressed.len() >= b);
         if !dominated {
             best = Some(compressed);
         }
@@ -4228,7 +4499,11 @@ mod tests {
         let mut compressors = [Compressor::new(CompressionLevel::new(1))];
         let bound = Compressor::zlib_compress_bound(data.len());
         let mut compress_buf = vec![0u8; bound];
-        let mut best = None;
+        let mut best = BestSink {
+            bytes: None,
+            len: None,
+            size_only: false,
+        };
 
         let size = try_compress(
             &data,
@@ -4240,10 +4515,10 @@ mod tests {
         .unwrap();
 
         assert!(size < data.len());
-        assert!(best.is_some());
+        assert!(best.bytes.is_some());
 
         // Verify decompression
-        let compressed = best.unwrap();
+        let compressed = best.bytes.unwrap();
         let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&compressed).unwrap();
         assert_eq!(decompressed, data);
     }
@@ -4657,10 +4932,8 @@ mod zopfli_tests {
         let candidates = vec![(compressed_size, data.clone())];
         let cancel = enough::Unstoppable;
         let deadline = enough::Unstoppable;
-        let mut current_best = None;
 
-        let result =
-            zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best, 1).unwrap();
+        let result = zopfli_adaptive(&candidates, &cancel, &deadline, None, None, 1).unwrap();
 
         assert!(result.is_some(), "should find a result");
         verify_zlib(result.as_ref().unwrap(), &data);
@@ -4681,14 +4954,13 @@ mod zopfli_tests {
         let deadline = CallCountDeadline::new(10);
         let remaining = CallCountRemainingNs::new(10);
         let remaining_fn = remaining.as_fn();
-        let mut current_best = None;
 
         let result = zopfli_adaptive(
             &candidates,
             &cancel,
             &deadline,
             Some(&remaining_fn),
-            &mut current_best,
+            None,
             1,
         )
         .unwrap();
@@ -4709,9 +4981,8 @@ mod zopfli_tests {
         // Cancel fires after 2 checks — should abort during calibration.
         let cancel = CallCountCancel::new(2);
         let deadline = enough::Unstoppable;
-        let mut current_best = None;
 
-        let result = zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best, 1)
+        let result = zopfli_adaptive(&candidates, &cancel, &deadline, None, None, 1)
             .map_err(|e| e.decompose().0);
         assert!(
             matches!(
@@ -4747,10 +5018,16 @@ mod zopfli_tests {
         // Test with no deadline (unlimited)
         let cancel = enough::Unstoppable;
         let deadline = enough::Unstoppable;
-        let mut current_best = Some(zenflate_result.clone());
 
-        let result =
-            zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best, 1).unwrap();
+        let result = zopfli_adaptive(
+            &candidates,
+            &cancel,
+            &deadline,
+            None,
+            Some(zenflate_size),
+            1,
+        )
+        .unwrap();
 
         if let Some(ref better) = result {
             assert!(
@@ -4795,10 +5072,16 @@ mod zopfli_tests {
 
         let cancel = enough::Unstoppable;
         let deadline = enough::Unstoppable;
-        let mut current_best = Some(zenflate_best.clone());
 
-        let result =
-            zopfli_adaptive(&candidates, &cancel, &deadline, None, &mut current_best, 1).unwrap();
+        let result = zopfli_adaptive(
+            &candidates,
+            &cancel,
+            &deadline,
+            None,
+            Some(zenflate_best_size),
+            1,
+        )
+        .unwrap();
 
         if let Some(ref better) = result {
             assert!(

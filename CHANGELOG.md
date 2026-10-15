@@ -1032,6 +1032,18 @@ All notable changes to zenpng are documented here.
   +33% (3088 → 4117 MB/s), Sub bpp=3 +20% (2716 → 3258 MB/s). Decode output is
   byte-identical (verified by the `simd::sub` tier-permutation tests on aarch64).
   Benchmark: `benchmarks/zenpng_arm_sub_unfilter_2026-05-29.{tsv,meta}`.
+- APNG encode is faster at every effort for RGB8 input and at efforts 0-7 for
+  RGBA8. Pushed frames stay in their own layout (RGB8 is no longer converted
+  through a canvas-sized RGBA8 buffer), the RGBA8 eligibility scan emits the
+  OVER subframe as a byproduct, the winning lookahead's subframes feed the next
+  frame's own evaluation, thread-local pools cover the canvas/scratch buffers,
+  and trial compressions run a size-only path that never materializes their
+  bytes. 320x240x8-frame photo, sequential: rgb8 −40% to −92% by effort
+  (default −8%), rgba8 −20% to −91% (default e13 +55% vs the pre-streaming
+  tree is structural — it emitted RGB output for opaque RGBA input, and the
+  byte-identical RGBA output costs ~4/3 the deflate). Byte-identical output,
+  verified by `tests/apng_byte_identity.rs`.
+  Benchmark: `benchmarks/apng_2026-10-15.md`.
 
 ## [0.1.4] - 2026-04-17
 

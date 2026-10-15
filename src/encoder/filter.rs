@@ -744,7 +744,22 @@ pub(crate) fn precompute_all_filters(
     height: usize,
     bpp: usize,
 ) -> Vec<u8> {
-    let mut buf = vec![0u8; 5 * height * row_bytes];
+    let mut buf = Vec::new();
+    precompute_all_filters_into(&mut buf, packed_rows, row_bytes, height, bpp);
+    buf
+}
+
+/// `precompute_all_filters` writing into a caller-provided buffer. Every byte
+/// of `buf` is overwritten by `apply_filter`, so recycled scratch needs no
+/// scrubbing — `resize` only touches the growth tail.
+pub(crate) fn precompute_all_filters_into(
+    buf: &mut Vec<u8>,
+    packed_rows: &[u8],
+    row_bytes: usize,
+    height: usize,
+    bpp: usize,
+) {
+    buf.resize(5 * height * row_bytes, 0);
     let mut prev_row = vec![0u8; row_bytes];
 
     for y in 0..height {
@@ -755,7 +770,6 @@ pub(crate) fn precompute_all_filters(
         }
         prev_row.copy_from_slice(row);
     }
-    buf
 }
 
 /// Index into a precomputed filter buffer.
@@ -1044,13 +1058,29 @@ impl HeuristicScratch {
     /// Create a scratch that works for all heuristic types.
     ///
     /// Used when screening multiple strategies with shared precomputed
-    /// filter data — one scratch serves all adaptive heuristics.
+    /// filter data — one scratch serves all adaptive heuristics. The bigram
+    /// tables (~264KB zeroed) are allocated lazily: MinSum and Entropy never
+    /// touch them, so a PAETH_MINSUM screen pays nothing here.
     pub(crate) fn new_universal() -> Self {
         Self {
-            bigram_seen: vec![0u64; 1024],
-            bigram_counts: vec![0u32; 65536],
-            nonzero_keys: Vec::with_capacity(8192),
-            touched_words: Vec::with_capacity(1024),
+            bigram_seen: Vec::new(),
+            bigram_counts: Vec::new(),
+            nonzero_keys: Vec::new(),
+            touched_words: Vec::new(),
+        }
+    }
+
+    fn ensure_bigrams(&mut self) {
+        if self.bigram_seen.len() < 1024 {
+            self.bigram_seen.resize(1024, 0);
+            self.touched_words = Vec::with_capacity(1024);
+        }
+    }
+
+    fn ensure_bigent(&mut self) {
+        if self.bigram_counts.len() < 65536 {
+            self.bigram_counts.resize(65536, 0);
+            self.nonzero_keys = Vec::with_capacity(8192);
         }
     }
 }
@@ -1099,6 +1129,7 @@ fn score_candidates<'a>(
             best
         }
         AdaptiveHeuristic::Bigrams => {
+            scratch.ensure_bigrams();
             let mut best = 0u8;
             let mut best_score = usize::MAX;
             for f in 0..5u8 {
@@ -1115,6 +1146,7 @@ fn score_candidates<'a>(
             best
         }
         AdaptiveHeuristic::BigEnt => {
+            scratch.ensure_bigent();
             let mut best = 0u8;
             let mut best_score = f64::MAX;
             for f in 0..5u8 {
@@ -1192,6 +1224,8 @@ fn paeth_predictor(a: u8, b: u8, c: u8) -> u8 {
 
 // ---- Heuristic scoring ----
 
+#[autoversion]
+#[cfg_attr(target_arch = "x86", allow(unused_imports))]
 fn sav_score(data: &[u8]) -> u64 {
     data.iter()
         .map(|&b| if b > 128 { 256 - b as u64 } else { b as u64 })
@@ -1951,7 +1985,11 @@ mod tests {
 
     #[test]
     fn scratch_universal() {
-        let s = HeuristicScratch::new_universal();
+        // Universal scratches allocate the bigram tables lazily: scoring that
+        // needs them calls the ensure_* hooks, which provision on first use.
+        let mut s = HeuristicScratch::new_universal();
+        s.ensure_bigrams();
+        s.ensure_bigent();
         assert_eq!(s.bigram_seen.len(), 1024);
         assert_eq!(s.bigram_counts.len(), 65536);
     }

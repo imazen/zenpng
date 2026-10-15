@@ -442,14 +442,8 @@ pub(crate) fn reduce_16_to_8(be_bytes: &[u8]) -> Vec<u8> {
 ///
 /// Used in both opaque-only and tRNS paths, so alpha is intentionally discarded.
 pub(crate) fn rgba8_to_rgb8(rgba: &[u8]) -> Vec<u8> {
-    let npixels = rgba.len() / 4;
-    let mut rgb = Vec::with_capacity(npixels * 3);
-    for i in 0..npixels {
-        let off = i * 4;
-        rgb.push(rgba[off]);
-        rgb.push(rgba[off + 1]);
-        rgb.push(rgba[off + 2]);
-    }
+    let mut rgb = alloc::vec![0u8; rgba.len() / 4 * 3];
+    garb::bytes::rgba_to_rgb(rgba, &mut rgb).expect("exact-fit buffers cannot fail");
     rgb
 }
 

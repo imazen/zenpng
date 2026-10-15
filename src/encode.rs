@@ -1224,6 +1224,11 @@ pub(crate) fn encode_apng_depth(
         effort,
         config.encode.preserve_transparent_rgb,
         config.encode.downcast.rgba_to_rgb,
+        if config.encode.parallel && config.encode.max_threads != 1 {
+            config.encode.max_threads
+        } else {
+            1
+        },
         cancel,
         deadline,
     )

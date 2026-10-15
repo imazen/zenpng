@@ -2,6 +2,7 @@
 
 use alloc::vec::Vec;
 
+use archmage::autoversion;
 use enough::Stop;
 
 use crate::chunk::PNG_SIGNATURE;
@@ -15,7 +16,7 @@ use crate::error::PngError;
 use whereat::at;
 
 use super::CompressOptions;
-use super::compress::{RowFormat, compress_filtered};
+use super::compress::{RowFormat, compress_filtered, compress_filtered_size, compress_filtered_t};
 
 // APNG dispose/blend operation constants
 const DISPOSE_NONE: u8 = 0;
@@ -27,6 +28,7 @@ const BLEND_OVER: u8 = 1;
 // ── Delta region computation ────────────────────────────────────────
 
 /// Bounding box of pixels that differ between two frames.
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct DeltaRegion {
     x: u32,
     y: u32,
@@ -46,22 +48,26 @@ fn compute_delta_region(
 ) -> Option<DeltaRegion> {
     let w = w as usize;
     let h = h as usize;
+    let row_bytes = w * bpp;
     let mut min_x = w;
     let mut max_x = 0usize;
     let mut min_y = h;
     let mut max_y = 0usize;
 
     for y in 0..h {
-        let row_start = y * w * bpp;
-        for x in 0..w {
-            let off = row_start + x * bpp;
-            if prev[off..off + bpp] != curr[off..off + bpp] {
-                min_x = min_x.min(x);
-                max_x = max_x.max(x);
-                min_y = min_y.min(y);
-                max_y = max_y.max(y);
-            }
+        let a = &prev[y * row_bytes..(y + 1) * row_bytes];
+        let b = &curr[y * row_bytes..(y + 1) * row_bytes];
+        if a == b {
+            continue;
         }
+        min_y = min_y.min(y);
+        max_y = y;
+        // The pixel holding a row's first/last differing byte is the row's
+        // first/last differing pixel.
+        let first = first_differing_byte(a, b) / bpp;
+        let last = last_differing_byte(a, b) / bpp;
+        min_x = min_x.min(first);
+        max_x = max_x.max(last);
     }
 
     if min_x > max_x || min_y > max_y {
@@ -76,20 +82,65 @@ fn compute_delta_region(
     })
 }
 
+/// Index of the first byte where equal-length `a` and `b` differ.
+/// Callers guarantee at least one differs.
+fn first_differing_byte(a: &[u8], b: &[u8]) -> usize {
+    debug_assert!(a != b);
+    let mut i = 0;
+    while i + 8 <= a.len() {
+        if a[i..i + 8] != b[i..i + 8] {
+            break;
+        }
+        i += 8;
+    }
+    while a[i] == b[i] {
+        i += 1;
+    }
+    i
+}
+
+/// Index of the last byte where equal-length `a` and `b` differ.
+/// Callers guarantee at least one differs.
+fn last_differing_byte(a: &[u8], b: &[u8]) -> usize {
+    debug_assert!(a != b);
+    let mut i = a.len();
+    while i >= 8 {
+        if a[i - 8..i] != b[i - 8..i] {
+            break;
+        }
+        i -= 8;
+    }
+    while a[i - 1] == b[i - 1] {
+        i -= 1;
+    }
+    i - 1
+}
+
 /// Extract a rectangular subregion from a canvas-sized buffer.
 fn extract_subframe(pixels: &[u8], canvas_w: u32, region: &DeltaRegion, bpp: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    extract_subframe_into(&mut out, pixels, canvas_w, region, bpp);
+    out
+}
+
+fn extract_subframe_into(
+    out: &mut Vec<u8>,
+    pixels: &[u8],
+    canvas_w: u32,
+    region: &DeltaRegion,
+    bpp: usize,
+) {
     let canvas_w = canvas_w as usize;
     let rw = region.width as usize;
     let rh = region.height as usize;
     let rx = region.x as usize;
     let ry = region.y as usize;
 
-    let mut out = Vec::with_capacity(rw * rh * bpp);
+    out.clear();
     for y in ry..ry + rh {
         let row_start = (y * canvas_w + rx) * bpp;
         out.extend_from_slice(&pixels[row_start..row_start + rw * bpp]);
     }
-    out
 }
 
 // ── 6-way dispose/blend optimization ─────────────────────────────────
@@ -101,6 +152,11 @@ struct OptimizedFrame {
     region: DeltaRegion,
     /// Pre-filtered subframe data (raw pixels, not yet PNG-compressed).
     subframe: Vec<u8>,
+    /// Caller-known answer to "does `subframe` hold alpha-0 pixels whose RGB
+    /// still needs normalizing": OVER subframes are built already normalized
+    /// and opaque SOURCE subframes hold none at all, so both pass
+    /// `Some(false)`. `None` = let the compressor scan and decide.
+    has_transparent: Option<bool>,
 }
 
 /// Trial-compress a subframe at effort 2, return compressed size.
@@ -112,6 +168,7 @@ fn trial_compress_size(
     row_bytes: usize,
     height: usize,
     bpp: usize,
+    transparent_hint: Option<bool>,
     cancel: &dyn Stop,
 ) -> crate::error::Result<usize> {
     let opts = CompressOptions {
@@ -123,121 +180,82 @@ fn trial_compress_size(
         max_threads: 0,
         decode_segments: 0,
     };
-    let compressed = compress_filtered(
+    compress_filtered_size(
         subframe,
         row_bytes,
         height,
         RowFormat::truecolor8(bpp),
         2,
         opts,
-        None,
-    )?;
-    Ok(compressed.len())
+        transparent_hint,
+    )
 }
 
-/// Check if BLEND_OP_OVER can correctly represent all changed pixels in a region.
+/// OVER blend eligibility, as [`region_pixel_scan_into`] computes it: for a changed
+/// pixel, writing the target value via OVER only produces the correct result
+/// when target alpha == 255 (OVER with opaque source replaces entirely) or
+/// canvas alpha == 0 (OVER onto transparent canvas = direct placement).
+/// For RGB (bpp=3): never eligible — OVER requires alpha to be useful.
 ///
-/// OVER alpha-composites the subframe onto the canvas. For a changed pixel, writing
-/// the target value via OVER only produces the correct result when:
-/// - target alpha == 255 (OVER with opaque source replaces entirely), OR
-/// - canvas alpha == 0 (OVER onto transparent canvas = direct placement)
-///
-/// For RGB (bpp=3): always returns false — OVER requires alpha to be useful.
-fn can_use_over_truecolor(
-    target: &[u8],
-    canvas: &[u8],
-    canvas_w: usize,
-    region: &DeltaRegion,
-    bpp: usize,
-) -> bool {
-    // OVER blend requires alpha channel
-    if bpp != 4 {
-        return false;
-    }
-
-    let rx = region.x as usize;
-    let ry = region.y as usize;
-    let rw = region.width as usize;
-    let rh = region.height as usize;
-
-    for dy in 0..rh {
-        let y = ry + dy;
-        for dx in 0..rw {
-            let x = rx + dx;
-            let off = (y * canvas_w + x) * 4;
-            let target_px = &target[off..off + 4];
-            let canvas_px = &canvas[off..off + 4];
-
-            if target_px != canvas_px {
-                // Changed pixel: check if OVER can reproduce it
-                if target_px[3] < 255 && canvas_px[3] > 0 {
-                    return false;
-                }
-            }
-        }
-    }
-    true
-}
-
-/// Build an OVER subframe for truecolor RGBA8 with dirty transparency.
+/// Build an OVER subframe for truecolor RGBA8.
 ///
 /// For BLEND_OP_OVER, unchanged pixels MUST have alpha=0 (transparent) so that
 /// alpha compositing produces a no-op. Changed pixels use their actual values.
 ///
-/// **Dirty transparency optimization:** for unchanged pixels, instead of always
-/// using `[0,0,0,0]`, we copy RGB from the pixel directly above (row dy-1).
-/// This creates zero residuals for the Up filter (the most common winner for
-/// animation frames with static backgrounds). First-row unchanged pixels use
-/// `[0,0,0,0]` since there's no row above.
+/// Only called from [`optimize_apng_truecolor`], which runs exclusively when
+/// `preserve_transparent_rgb` is false, so every consumer of the result
+/// normalizes alpha-0 RGB to zero before compression — unchanged pixels are
+/// emitted as `[0,0,0,0]` directly.
 ///
-/// Caller must verify `can_use_over_truecolor()` first.
-fn build_over_subframe(
+/// Writes into `out` (cleared and re-zeroed first).
+///
+/// Caller must verify OVER eligibility via [`region_pixel_scan_into`] first.
+#[autoversion]
+fn build_over_subframe_into(
+    out: &mut Vec<u8>,
     target: &[u8],
     canvas: &[u8],
     canvas_w: usize,
     region: &DeltaRegion,
     bpp: usize,
-) -> Vec<u8> {
+) {
     let rw = region.width as usize;
     let rh = region.height as usize;
     let rx = region.x as usize;
     let ry = region.y as usize;
 
     let row_stride = rw * bpp;
-    let mut result = Vec::with_capacity(rh * row_stride);
+    // Unchanged pixels are `[0,0,0,0]`, which the zeroed buffer already holds;
+    // only changed runs get written.
+    out.clear();
+    out.resize(rh * row_stride, 0);
+    let result = out.as_mut_slice();
 
     for dy in 0..rh {
-        let y = ry + dy;
-        for dx in 0..rw {
-            let x = rx + dx;
-            let off = (y * canvas_w + x) * bpp;
+        let row = ((ry + dy) * canvas_w + rx) * bpp;
+        let trow = &target[row..row + row_stride];
+        let crow = &canvas[row..row + row_stride];
+        let orow = &mut result[dy * row_stride..(dy + 1) * row_stride];
 
-            let target_px = &target[off..off + bpp];
-            let canvas_px = &canvas[off..off + bpp];
-
-            if target_px == canvas_px {
-                // Unchanged pixel: alpha must be 0 for OVER no-op.
-                // Use dirty transparency: copy RGB from row above to minimize
-                // Up filter residuals (3 out of 4 bytes become zero residuals).
-                if dy > 0 && bpp == 4 {
-                    let above_off = result.len() - row_stride;
-                    let ar = result[above_off];
-                    let ag = result[above_off + 1];
-                    let ab = result[above_off + 2];
-                    result.push(ar);
-                    result.push(ag);
-                    result.push(ab);
-                    result.push(0); // alpha = 0
-                } else {
-                    result.extend_from_slice(&[0u8; 4][..bpp]);
+        // Walk changed/unchanged runs so changed pixels copy in bulk and
+        // unchanged runs skip with no writes at all.
+        let mut dx = 0usize;
+        while dx < rw {
+            let i = dx * bpp;
+            let changed = trow[i..i + bpp] != crow[i..i + bpp];
+            let start = i;
+            loop {
+                dx += 1;
+                let j = dx * bpp;
+                if dx >= rw || (trow[j..j + bpp] != crow[j..j + bpp]) != changed {
+                    break;
                 }
-            } else {
-                result.extend_from_slice(target_px);
+            }
+            if changed {
+                orow[start..dx * bpp].copy_from_slice(&trow[start..dx * bpp]);
             }
         }
     }
-
-    result
 }
 
 /// Check if BLEND_OP_OVER can correctly represent all changed pixels for indexed color.
@@ -363,23 +381,36 @@ fn apply_dispose_in_place(
 }
 
 /// Save a rectangular region from the canvas (for DISPOSE_PREV).
+#[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
 fn save_region(canvas: &[u8], canvas_w: usize, region: &DeltaRegion, bpp: usize) -> Vec<u8> {
+    let mut saved = Vec::new();
+    save_region_into(&mut saved, canvas, canvas_w, region, bpp);
+    saved
+}
+
+fn save_region_into(
+    out: &mut Vec<u8>,
+    canvas: &[u8],
+    canvas_w: usize,
+    region: &DeltaRegion,
+    bpp: usize,
+) {
     let rx = region.x as usize;
     let ry = region.y as usize;
     let rw = region.width as usize;
     let rh = region.height as usize;
 
-    let mut saved = Vec::with_capacity(rw * rh * bpp);
+    out.clear();
     for dy in 0..rh {
         let y = ry + dy;
         let start = (y * canvas_w + rx) * bpp;
-        saved.extend_from_slice(&canvas[start..start + rw * bpp]);
+        out.extend_from_slice(&canvas[start..start + rw * bpp]);
     }
-    saved
 }
 
 /// Copy a canvas and apply a dispose operation to the copy.
 /// Returns the modified copy (lookahead canvas).
+#[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
 fn apply_dispose_copy(
     canvas: &[u8],
     canvas_w: usize,
@@ -453,6 +484,435 @@ fn minimal_subframe(target: &[u8], bpp: usize) -> (DeltaRegion, Vec<u8>) {
 
 // ── Truecolor APNG optimization ──────────────────────────────────────
 
+/// One frame's evaluation against a particular canvas: the delta region, the
+/// pixel-scan flags used by blend selection, and any trial sizes already
+/// computed. Sizes stay `usize::MAX` until a trial compression runs, so an
+/// evaluation carried over from a lookahead can skip every trial its owner
+/// never needed.
+struct FrameEval {
+    /// Differing-pixel bounding box; `None` when target equals the canvas.
+    region: Option<DeltaRegion>,
+    /// Every pixel inside `region` differs between target and canvas. When
+    /// true, the OVER subframe is byte-for-byte the SOURCE subframe (no
+    /// unchanged pixels to rewrite), so OVER can at best tie SOURCE and the
+    /// strict `<` comparison always keeps SOURCE: neither trial matters.
+    all_changed: bool,
+    /// OVER can reproduce every changed pixel (see `can_use_over_truecolor`).
+    /// Always `false` for bpp != 4.
+    can_use_over: bool,
+    /// Every target pixel inside `region` has alpha 255 — a blit leaves no
+    /// transparent pixel to zero. Only set for bpp == 4 scans.
+    all_target_opaque: bool,
+    /// Trial-compressed size of the SOURCE subframe; `usize::MAX` if untried.
+    source_size: usize,
+    /// Trial-compressed size of the OVER subframe; `usize::MAX` if untried.
+    over_size: usize,
+    /// The SOURCE subframe itself when a lookahead trial produced it —
+    /// carried so the winning frame skips re-extracting the same bytes.
+    source_sub: Option<Vec<u8>>,
+    /// The OVER-layout subframe the pixel scan emitted (changed pixels get
+    /// target bytes, unchanged get zero) — a valid OVER candidate iff
+    /// `!all_changed && can_use_over`, and byte-equal to the SOURCE subframe
+    /// when `all_changed`. Always `None` for bpp != 4 or identical frames.
+    over_sub: Option<Vec<u8>>,
+}
+
+/// Alpha byte's position inside a pixel word (RGBA8, native-endian read).
+#[cfg(target_endian = "little")]
+const ALPHA_MASK: u32 = 0xFF00_0000;
+/// Alpha byte's position inside a pixel word (RGBA8, native-endian read).
+#[cfg(target_endian = "big")]
+const ALPHA_MASK: u32 = 0x0000_00FF;
+
+// A few image-sized scratch buffers per thread. The APNG optimizer copies the
+// canvas for each dispose evaluation and builds an OVER subframe per trial;
+// pooling those saves a fresh ~canvas-sized allocation (and its page faults)
+// per reuse. Contents are never trusted — every take is overwritten before
+// reading.
+std::thread_local! {
+    static APNG_BUFS: core::cell::RefCell<Vec<Vec<u8>>> =
+        const { core::cell::RefCell::new(Vec::new()) };
+}
+
+fn apng_take(size: usize) -> Vec<u8> {
+    APNG_BUFS.with(|s| {
+        s.borrow_mut()
+            .pop()
+            .filter(|b| b.capacity() >= size)
+            .unwrap_or_else(|| Vec::with_capacity(size))
+    })
+}
+
+fn apng_give(buf: Vec<u8>) {
+    if buf.capacity() == 0 {
+        return;
+    }
+    APNG_BUFS.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.len() < 6 {
+            s.push(buf);
+        }
+    });
+}
+
+/// Scan the pixels inside `region` for RGBA8 (`bpp` must be 4) while writing
+/// the OVER-layout subframe into `out`: changed pixels get their target
+/// bytes, unchanged pixels get `[0,0,0,0]` — exactly what
+/// [`build_over_subframe_into`] produces, emitted in the same pass that
+/// computes the flags so the region is walked once instead of twice.
+///
+/// When `all_changed` the output is byte-equal to the SOURCE subframe
+/// ([`extract_subframe`] of `target` over `region`): every pixel copied, no
+/// zeros. When `!can_use_over` the bytes are not a usable OVER candidate —
+/// but still source-equal when `all_changed`.
+///
+/// Returns `(all_changed, can_use_over, all_target_opaque)`:
+/// - `all_changed`: every pixel inside the region differs between `target`
+///   and `canvas`. When true, the OVER subframe is byte-for-byte the SOURCE
+///   subframe (no unchanged pixels to rewrite), so OVER can at best tie.
+/// - `can_use_over`: the OVER eligibility rule — false once a changed pixel
+///   has target alpha < 255 over a nonzero canvas alpha.
+/// - `all_target_opaque`: every changed-region target pixel has alpha 255,
+///   meaning a blit of this region leaves nothing for
+///   `zero_transparent_rgb_region` to do.
+/// Written so wide-vector tiers see whole-word compares; `bpp != 4` callers
+/// skip the scan entirely.
+#[autoversion]
+fn region_pixel_scan_into(
+    out: &mut Vec<u8>,
+    target: &[u8],
+    canvas: &[u8],
+    canvas_w: usize,
+    region: &DeltaRegion,
+) -> (bool, bool, bool) {
+    let rx = region.x as usize;
+    let ry = region.y as usize;
+    let rw = region.width as usize;
+    let rh = region.height as usize;
+    let mut all_changed = true;
+    let mut can_use_over = true;
+    let mut all_target_opaque = true;
+    let total = rh * rw * 4;
+    if out.len() != total {
+        out.clear();
+        out.resize(total, 0);
+    }
+    let result = out.as_mut_slice();
+    for dy in 0..rh {
+        let row = ((ry + dy) * canvas_w + rx) * 4;
+        let t = &target[row..row + rw * 4];
+        let c = &canvas[row..row + rw * 4];
+        let o = &mut result[dy * rw * 4..(dy + 1) * rw * 4];
+        let (t4, _) = t.as_chunks::<4>();
+        let (c4, _) = c.as_chunks::<4>();
+        let (o4, _) = o.as_chunks_mut::<4>();
+        for ((tp, cp), op) in t4.iter().zip(c4).zip(o4) {
+            let t32 = u32::from_ne_bytes(*tp);
+            let c32 = u32::from_ne_bytes(*cp);
+            let ta = t32 & ALPHA_MASK;
+            if ta != ALPHA_MASK {
+                all_target_opaque = false;
+            }
+            if t32 == c32 {
+                all_changed = false;
+            } else if ta != ALPHA_MASK && c32 & ALPHA_MASK != 0 {
+                can_use_over = false;
+            }
+            *op = if t32 == c32 { [0; 4] } else { *tp };
+        }
+    }
+    (all_changed, can_use_over, all_target_opaque)
+}
+
+/// Evaluate `target` against `canvas`: delta region plus the pixel-scan flags
+/// for RGBA input, and the OVER-layout subframe the scan writes as a
+/// byproduct. No trial compressions run here.
+fn eval_frame(canvas: &[u8], target: &[u8], canvas_w: u32, canvas_h: u32, bpp: usize) -> FrameEval {
+    let region = compute_delta_region(canvas, target, canvas_w, canvas_h, bpp);
+    let mut over_sub = None;
+    let (all_changed, can_use_over, all_target_opaque) = match (&region, bpp) {
+        (Some(r), 4) => {
+            let mut buf = apng_take(r.width as usize * r.height as usize * 4);
+            let flags = region_pixel_scan_into(&mut buf, target, canvas, canvas_w as usize, r);
+            over_sub = Some(buf);
+            flags
+        }
+        _ => (false, false, false),
+    };
+    FrameEval {
+        region,
+        all_changed,
+        can_use_over,
+        all_target_opaque,
+        source_size: usize::MAX,
+        over_size: usize::MAX,
+        source_sub: None,
+        over_sub,
+    }
+}
+
+/// Evaluate the next frame under each post-dispose canvas and return the
+/// winning dispose op. The winner's eval is stored in `carried`: it was
+/// computed against the canvas that applying this dispose produces, so the
+/// next iteration's own evaluation is already done.
+///
+/// Trial compressions only run where the decision can depend on their exact
+/// sizes. `dispose_ops` is evaluated in order and the first candidate wins
+/// ties, matching the previous `total < best_total` scan.
+#[allow(clippy::too_many_arguments)]
+fn eval_lookaheads(
+    canvas: &[u8],
+    pre_composite: &[u8],
+    region: &DeltaRegion,
+    next_target: &[u8],
+    canvas_w: u32,
+    canvas_h: u32,
+    bpp: usize,
+    dispose_ops: &[u8],
+    max_threads: usize,
+    carried: &mut Option<FrameEval>,
+    cancel: &dyn Stop,
+) -> crate::error::Result<u8> {
+    let w = canvas_w as usize;
+    let npx = w * canvas_h as usize;
+
+    // Phase 1 — one eval per dispose op. DISPOSE_NONE leaves the canvas alone:
+    // evaluate against it directly instead of copying. Other ops copy the
+    // canvas and apply their dispose; each eval's scan also emits the
+    // OVER-layout subframe, so the canvas copies are only needed until the
+    // evals finish. Evals are pure functions of the inputs, so `par_map` may
+    // run them on the caller's thread budget; order is preserved either way.
+    let parts: Vec<(Vec<u8>, FrameEval)> =
+        super::compress::par_map(dispose_ops, max_threads, |&d| {
+            let mut buf = Vec::new();
+            let e = if d == DISPOSE_NONE {
+                eval_frame(canvas, next_target, canvas_w, canvas_h, bpp)
+            } else {
+                buf = apng_take(npx * bpp);
+                buf.clear();
+                buf.extend_from_slice(canvas);
+                apply_dispose_in_place(&mut buf, w, region, d, bpp, Some(pre_composite));
+                eval_frame(&buf, next_target, canvas_w, canvas_h, bpp)
+            };
+            (buf, e)
+        });
+    let (canvases, mut evals): (Vec<Vec<u8>>, Vec<FrameEval>) = parts.into_iter().unzip();
+    debug_assert_eq!(evals.len(), dispose_ops.len());
+    // The dispose canvases only fed the phase-1 evals — the OVER subframes
+    // the scans produced carry all the state the trials need.
+    for c in canvases {
+        apng_give(c);
+    }
+
+    // Fast path: every dispose leaves the next frame with the same region and
+    // every eval is either identical to the canvas (size 20) or decided by
+    // its SOURCE size alone — the all-changed case, where OVER can only tie,
+    // or no usable OVER at all. All next_sizes are then equal, so the first
+    // op wins and no trial compression is needed at all.
+    let same_region = evals.iter().all(|e| e.region == evals[0].region);
+    if same_region
+        && evals
+            .iter()
+            .all(|e| e.region.is_none() || e.all_changed || !e.can_use_over)
+    {
+        let win = evals.swap_remove(0);
+        for e in &mut evals {
+            if let Some(b) = e.source_sub.take() {
+                apng_give(b);
+            }
+            if let Some(b) = e.over_sub.take() {
+                apng_give(b);
+            }
+        }
+        *carried = Some(win);
+        return Ok(dispose_ops[0]);
+    }
+
+    // Phase 2 — trials. SOURCE subframes depend only on (next_target, region),
+    // so equal regions share one trial; OVER trials run per eligible eval,
+    // on the OVER-layout subframe the eval's scan already wrote. A SOURCE
+    // trial can borrow any `all_changed` eval's scan buffer for the same
+    // region — with every pixel changed it holds exactly `extract_subframe`'s
+    // output — so extraction only runs when no eval can donate.
+    // One flat job list so `par_map` spawns its workers once.
+    let mut uniq: Vec<(DeltaRegion, Option<bool>, Option<usize>)> = Vec::new();
+    for (idx, e) in evals.iter().enumerate() {
+        if let Some(r) = e.region {
+            match uniq.iter_mut().find(|(k, _, _)| *k == r) {
+                Some((_, _, donor)) => {
+                    if e.all_changed && donor.is_none() {
+                        *donor = Some(idx);
+                    }
+                }
+                None => {
+                    // `all_target_opaque` depends only on (next_target,
+                    // region), so every eval sharing the region has the
+                    // same flag.
+                    let hint = if e.all_target_opaque {
+                        Some(false)
+                    } else {
+                        None
+                    };
+                    let donor = e.all_changed.then_some(idx);
+                    uniq.push((r, hint, donor));
+                }
+            }
+        }
+    }
+    let mut jobs: Vec<Job> = Vec::new();
+    for (u, _) in uniq.iter().enumerate() {
+        jobs.push(Job::Source(u));
+    }
+    for (idx, e) in evals.iter().enumerate() {
+        if e.region.is_some() && !e.all_changed && e.can_use_over {
+            jobs.push(Job::Over(idx));
+        }
+    }
+    let mut job_sizes: Vec<crate::error::Result<(usize, Option<Vec<u8>>)>> =
+        super::compress::par_map(&jobs, max_threads, |job| match *job {
+            Job::Source(u) => {
+                let (r, hint, donor) = uniq[u];
+                if let Some(d) = donor {
+                    // The donor's scan buffer is byte-identical to the
+                    // SOURCE extract (every pixel differed). It stays on the
+                    // eval — the merge moves it off if the donor wins.
+                    let sub = evals[d].over_sub.as_deref().expect("rgba4 scans write");
+                    trial_compress_size(
+                        sub,
+                        r.width as usize * bpp,
+                        r.height as usize,
+                        bpp,
+                        hint,
+                        cancel,
+                    )
+                    .map(|s| (s, None))
+                } else {
+                    let mut sub = apng_take(r.width as usize * r.height as usize * bpp);
+                    extract_subframe_into(&mut sub, next_target, canvas_w, &r, bpp);
+                    trial_compress_size(
+                        &sub,
+                        r.width as usize * bpp,
+                        r.height as usize,
+                        bpp,
+                        hint,
+                        cancel,
+                    )
+                    .map(|s| (s, Some(sub)))
+                }
+            }
+            Job::Over(idx) => {
+                // OVER subframes are built already normalized, so the
+                // compressor has no transparency work to do.
+                let r = evals[idx].region.expect("over jobs have a region");
+                let sub = evals[idx].over_sub.as_deref().expect("rgba4 scans write");
+                trial_compress_size(
+                    sub,
+                    r.width as usize * bpp,
+                    r.height as usize,
+                    bpp,
+                    Some(false),
+                    cancel,
+                )
+                .map(|s| (s, None))
+            }
+        });
+
+    // Merge in eval order: strict first-wins argmin over next_size. Subframes
+    // land on their eval so a carried winner skips re-extract/rebuild.
+    let mut resolved_src: Vec<Option<usize>> = (0..uniq.len()).map(|_| None).collect();
+    let mut uniq_subs: Vec<Option<Vec<u8>>> = (0..uniq.len()).map(|_| None).collect();
+    let mut best = 0usize;
+    let mut best_size = usize::MAX;
+    let job_pos = |j: &Job| jobs.iter().position(|k| k == j).expect("job exists");
+    for (idx, e) in evals.iter_mut().enumerate() {
+        let size = match e.region {
+            None => 20, // identical next frame: minimal subframe estimate
+            Some(r) => {
+                let u = uniq
+                    .iter()
+                    .position(|&(k, ..)| k == r)
+                    .expect("region registered");
+                let source_size = match resolved_src[u] {
+                    Some(s) => s,
+                    None => {
+                        let si = job_pos(&Job::Source(u));
+                        let (s, sub) =
+                            core::mem::replace(&mut job_sizes[si], Ok((usize::MAX, None)))?;
+                        resolved_src[u] = Some(s);
+                        uniq_subs[u] = sub;
+                        s
+                    }
+                };
+                e.source_size = source_size;
+                if e.all_changed || !e.can_use_over {
+                    source_size
+                } else {
+                    let oi = job_pos(&Job::Over(idx));
+                    let (over_size, _) =
+                        core::mem::replace(&mut job_sizes[oi], Ok((usize::MAX, None)))?;
+                    e.over_size = over_size;
+                    source_size.min(over_size)
+                }
+            }
+        };
+        if size < best_size {
+            best_size = size;
+            best = idx;
+        }
+    }
+    if let Some(r) = evals[best].region {
+        let u = uniq
+            .iter()
+            .position(|&(k, ..)| k == r)
+            .expect("region registered");
+        // The winner's SOURCE subframe: the extracted buffer when a job ran
+        // one, else the winner's own scan buffer when it is source-equal
+        // (`all_changed`), else the donor eval's — same bytes either way.
+        evals[best].source_sub = uniq_subs[u]
+            .take()
+            .or_else(|| {
+                evals[best]
+                    .all_changed
+                    .then(|| evals[best].over_sub.take())
+                    .flatten()
+            })
+            .or_else(|| {
+                uniq[u]
+                    .2
+                    .and_then(|d| (d != best).then(|| evals[d].over_sub.take()).flatten())
+            });
+    }
+    let win = evals.swap_remove(best);
+    // Recycle every buffer the decision is done with.
+    for s in uniq_subs.into_iter().flatten() {
+        apng_give(s);
+    }
+    for r in job_sizes {
+        if let Ok((_, Some(sub))) = r {
+            apng_give(sub);
+        }
+    }
+    for e in &mut evals {
+        if let Some(b) = e.source_sub.take() {
+            apng_give(b);
+        }
+        if let Some(b) = e.over_sub.take() {
+            apng_give(b);
+        }
+    }
+    *carried = Some(win);
+    Ok(dispose_ops[best])
+}
+
+/// One parallelizable lookahead trial job.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Job {
+    /// Trial-compress the SOURCE subframe for `uniq[index]`.
+    Source(usize),
+    /// Build + trial-compress the OVER subframe for eval `index`.
+    Over(usize),
+}
+
 /// Optimize APNG truecolor frames by evaluating all 6 dispose/blend combinations.
 ///
 /// Uses greedy 1-step lookahead: for each frame, picks the (dispose, blend) combo
@@ -466,6 +926,7 @@ fn optimize_apng_truecolor(
     canvas_w: u32,
     canvas_h: u32,
     bpp: usize,
+    max_threads: usize,
     cancel: &dyn Stop,
 ) -> crate::error::Result<Vec<OptimizedFrame>> {
     let w = canvas_w as usize;
@@ -474,6 +935,8 @@ fn optimize_apng_truecolor(
 
     let mut optimized = Vec::with_capacity(frames.len());
     let mut canvas = vec![0u8; npx * bpp]; // transparent initial canvas
+    // Lookahead evals that survive to become the next frame's own evaluation.
+    let mut carried: Option<FrameEval> = None;
 
     for i in 0..frames.len() {
         cancel.check().map_err(|e| at!(PngError::from(e)))?;
@@ -490,12 +953,6 @@ fn optimize_apng_truecolor(
                 height: canvas_h,
             };
 
-            // Frame 0: blend is always SOURCE (OVER on transparent canvas is equivalent
-            // but adds no compression benefit since all pixels are "changed")
-            // Trial-compress to get size for lookahead comparison
-            let row_bytes = w * bpp;
-            let best_blend_size = trial_compress_size(target, row_bytes, h, bpp, cancel)?;
-
             // Save pre-composite (entire canvas = all zeros for frame 0)
             let pre_composite = canvas.clone();
 
@@ -510,10 +967,6 @@ fn optimize_apng_truecolor(
             let best_dispose = if frames.len() == 1 {
                 DISPOSE_NONE
             } else {
-                let next_target = frame_data[1];
-                let mut best_dispose = DISPOSE_NONE;
-                let mut best_total = usize::MAX;
-
                 // DISPOSE_BG clears to fully transparent black per APNG spec.
                 // DISPOSE_PREV on frame 0 restores the initial transparent canvas.
                 // For RGB (bpp=3) there's no alpha channel, so either operation
@@ -524,27 +977,19 @@ fn optimize_apng_truecolor(
                 } else {
                     &[DISPOSE_NONE]
                 };
-                for &d in dispose_ops {
-                    let lookahead_canvas =
-                        apply_dispose_copy(&canvas, w, &full_region, d, bpp, Some(&pre_composite));
-
-                    let next_size = lookahead_next_frame_size(
-                        &lookahead_canvas,
-                        next_target,
-                        canvas_w,
-                        canvas_h,
-                        w,
-                        bpp,
-                        cancel,
-                    )?;
-
-                    let total = best_blend_size + next_size;
-                    if total < best_total {
-                        best_total = total;
-                        best_dispose = d;
-                    }
-                }
-                best_dispose
+                eval_lookaheads(
+                    &canvas,
+                    &pre_composite,
+                    &full_region,
+                    frame_data[1],
+                    canvas_w,
+                    canvas_h,
+                    bpp,
+                    dispose_ops,
+                    max_threads,
+                    &mut carried,
+                    cancel,
+                )?
             };
 
             // Apply chosen dispose
@@ -556,20 +1001,32 @@ fn optimize_apng_truecolor(
                 bpp,
                 Some(&pre_composite),
             );
+            apng_give(pre_composite);
 
             optimized.push(OptimizedFrame {
                 dispose_op: best_dispose,
                 blend_op: BLEND_SOURCE,
                 region: full_region,
                 subframe: Vec::new(), // frame 0 uses frame_data directly
+                has_transparent: None,
             });
             continue;
         }
 
-        // Frames 1+: compute delta region
-        let source_region = compute_delta_region(&canvas, target, canvas_w, canvas_h, bpp);
+        // Frames 1+: the winning lookahead already evaluated this frame
+        // against the canvas that dispose choice produced.
+        let eval = match carried.take() {
+            Some(e) => e,
+            None => eval_frame(&canvas, target, canvas_w, canvas_h, bpp),
+        };
 
-        if source_region.is_none() {
+        let Some(source_region) = eval.region else {
+            if let Some(b) = eval.source_sub {
+                apng_give(b);
+            }
+            if let Some(b) = eval.over_sub {
+                apng_give(b);
+            }
             // Identical frame: minimal 1×1, no optimization needed
             let (region, sub) = minimal_subframe(target, bpp);
             optimized.push(OptimizedFrame {
@@ -577,44 +1034,96 @@ fn optimize_apng_truecolor(
                 blend_op: BLEND_SOURCE,
                 region,
                 subframe: sub,
+                has_transparent: None,
             });
             // Canvas unchanged
             continue;
-        }
+        };
 
-        let source_region = source_region.unwrap();
-
-        // Build SOURCE subframe
-        let source_sub = extract_subframe(target, canvas_w, &source_region, bpp);
-
-        // Trial compress SOURCE
+        // Build SOURCE subframe (needed as output data either way) — reuse
+        // the lookahead's trial subframe when it carried one: same region and
+        // same target produce identical bytes. An `all_changed` scan buffer
+        // holds exactly those bytes too (no unchanged pixels were zeroed).
         let source_row_bytes = source_region.width as usize * bpp;
         let source_height = source_region.height as usize;
-        let source_size =
-            trial_compress_size(&source_sub, source_row_bytes, source_height, bpp, cancel)?;
-
-        // Try OVER only if all changed pixels can be correctly represented
-        let (best_blend, best_blend_size, best_sub) =
-            if can_use_over_truecolor(target, &canvas, w, &source_region, bpp) {
-                let over_sub = build_over_subframe(target, &canvas, w, &source_region, bpp);
-                let over_size =
-                    trial_compress_size(&over_sub, source_row_bytes, source_height, bpp, cancel)?;
-                if over_size < source_size {
-                    (BLEND_OVER, over_size, over_sub)
-                } else {
-                    (BLEND_SOURCE, source_size, source_sub)
+        let mut eval = eval;
+        let source_sub = match eval.source_sub.take() {
+            Some(s) => s,
+            None => match eval.over_sub.take() {
+                Some(s) if eval.all_changed => s,
+                s => {
+                    eval.over_sub = s;
+                    let mut b = apng_take(source_row_bytes * source_height);
+                    extract_subframe_into(&mut b, target, canvas_w, &source_region, bpp);
+                    b
                 }
+            },
+        };
+
+        // Blend choice. `all_changed` makes the OVER subframe identical to
+        // the SOURCE one, so OVER can only tie and always loses; a changed
+        // pixel OVER can't write rules it out directly. Either way SOURCE
+        // wins without a trial — and the old source trial only fed a
+        // loop-invariant sum, so skipping it changes no decision.
+        let (best_blend, best_sub) = if eval.all_changed || !eval.can_use_over {
+            if let Some(b) = eval.over_sub.take() {
+                apng_give(b);
+            }
+            (BLEND_SOURCE, source_sub)
+        } else {
+            let source_size = if eval.source_size == usize::MAX {
+                trial_compress_size(
+                    &source_sub,
+                    source_row_bytes,
+                    source_height,
+                    bpp,
+                    if eval.all_target_opaque {
+                        Some(false)
+                    } else {
+                        None
+                    },
+                    cancel,
+                )?
             } else {
-                (BLEND_SOURCE, source_size, source_sub)
+                eval.source_size
             };
+            let over_sub = match eval.over_sub {
+                Some(s) => s,
+                None => {
+                    let mut b = apng_take(source_row_bytes * source_height);
+                    build_over_subframe_into(&mut b, target, &canvas, w, &source_region, bpp);
+                    b
+                }
+            };
+            let over_size = if eval.over_size == usize::MAX {
+                trial_compress_size(
+                    &over_sub,
+                    source_row_bytes,
+                    source_height,
+                    bpp,
+                    Some(false),
+                    cancel,
+                )?
+            } else {
+                eval.over_size
+            };
+            if over_size < source_size {
+                apng_give(source_sub);
+                (BLEND_OVER, over_sub)
+            } else {
+                apng_give(over_sub);
+                (BLEND_SOURCE, source_sub)
+            }
+        };
 
         // Save pre-composite region (for DISPOSE_PREV)
-        let pre_composite = save_region(&canvas, w, &source_region, bpp);
+        let mut pre_composite = apng_take(source_row_bytes * source_height);
+        save_region_into(&mut pre_composite, &canvas, w, &source_region, bpp);
 
         // Composite frame onto canvas (blit target pixels into canvas)
         blit_region(&mut canvas, target, w, &source_region, bpp);
         // Zero RGB of alpha=0 pixels to match compress_filtered behavior (RGBA only)
-        if bpp == 4 {
+        if bpp == 4 && !eval.all_target_opaque {
             zero_transparent_rgb_region(&mut canvas, w, &source_region);
         }
 
@@ -622,36 +1131,24 @@ fn optimize_apng_truecolor(
         let best_dispose = if i == frames.len() - 1 {
             DISPOSE_NONE
         } else {
-            let next_target = frame_data[i + 1];
-            let mut best_dispose = DISPOSE_NONE;
-            let mut best_total = usize::MAX;
-
             let dispose_ops: &[u8] = if bpp == 4 {
                 &[DISPOSE_NONE, DISPOSE_BG, DISPOSE_PREV]
             } else {
                 &[DISPOSE_NONE, DISPOSE_PREV]
             };
-            for &d in dispose_ops {
-                let lookahead_canvas =
-                    apply_dispose_copy(&canvas, w, &source_region, d, bpp, Some(&pre_composite));
-
-                let next_size = lookahead_next_frame_size(
-                    &lookahead_canvas,
-                    next_target,
-                    canvas_w,
-                    canvas_h,
-                    w,
-                    bpp,
-                    cancel,
-                )?;
-
-                let total = best_blend_size + next_size;
-                if total < best_total {
-                    best_total = total;
-                    best_dispose = d;
-                }
-            }
-            best_dispose
+            eval_lookaheads(
+                &canvas,
+                &pre_composite,
+                &source_region,
+                frame_data[i + 1],
+                canvas_w,
+                canvas_h,
+                bpp,
+                dispose_ops,
+                max_threads,
+                &mut carried,
+                cancel,
+            )?
         };
 
         // Apply chosen dispose to canvas for next iteration
@@ -663,53 +1160,25 @@ fn optimize_apng_truecolor(
             bpp,
             Some(&pre_composite),
         );
+        apng_give(pre_composite);
 
         optimized.push(OptimizedFrame {
             dispose_op: best_dispose,
             blend_op: best_blend,
             region: source_region,
             subframe: best_sub,
+            // OVER subs are built already normalized; an opaque SOURCE sub
+            // holds no alpha-0 pixels. Either way the compressor's
+            // transparent-RGB pass has nothing to do.
+            has_transparent: if best_blend == BLEND_OVER || eval.all_target_opaque {
+                Some(false)
+            } else {
+                None
+            },
         });
     }
 
     Ok(optimized)
-}
-
-/// Compute the best trial-compressed size for the next frame against a given canvas.
-///
-/// Evaluates both SOURCE and OVER blend modes, returns the smaller size.
-fn lookahead_next_frame_size(
-    canvas: &[u8],
-    next_target: &[u8],
-    canvas_w: u32,
-    canvas_h: u32,
-    w: usize,
-    bpp: usize,
-    cancel: &dyn Stop,
-) -> crate::error::Result<usize> {
-    let next_region = compute_delta_region(canvas, next_target, canvas_w, canvas_h, bpp);
-
-    if next_region.is_none() {
-        // Identical: minimal frame, ~20 bytes compressed
-        return Ok(20);
-    }
-
-    let next_region = next_region.unwrap();
-    let row_bytes = next_region.width as usize * bpp;
-    let height = next_region.height as usize;
-
-    // SOURCE
-    let next_source = extract_subframe(next_target, canvas_w, &next_region, bpp);
-    let source_size = trial_compress_size(&next_source, row_bytes, height, bpp, cancel)?;
-
-    // OVER (only if safe)
-    if can_use_over_truecolor(next_target, canvas, w, &next_region, bpp) {
-        let next_over = build_over_subframe(next_target, canvas, w, &next_region, bpp);
-        let over_size = trial_compress_size(&next_over, row_bytes, height, bpp, cancel)?;
-        Ok(source_size.min(over_size))
-    } else {
-        Ok(source_size)
-    }
 }
 
 // ── Indexed APNG optimization ────────────────────────────────────────
@@ -752,7 +1221,7 @@ fn optimize_apng_indexed(
             };
 
             let row_bytes = w;
-            let best_blend_size = trial_compress_size(target, row_bytes, h, bpp, cancel)?;
+            let best_blend_size = trial_compress_size(target, row_bytes, h, bpp, None, cancel)?;
 
             let pre_composite = canvas.clone();
             canvas.copy_from_slice(&target[..npx]);
@@ -802,6 +1271,7 @@ fn optimize_apng_indexed(
                 blend_op: BLEND_SOURCE,
                 region: full_region,
                 subframe: Vec::new(),
+                has_transparent: None,
             });
             continue;
         }
@@ -821,6 +1291,7 @@ fn optimize_apng_indexed(
                 blend_op: BLEND_SOURCE,
                 region,
                 subframe: vec![target[0]],
+                has_transparent: None,
             });
             continue;
         }
@@ -830,14 +1301,15 @@ fn optimize_apng_indexed(
         let row_bytes = source_region.width as usize;
         let height = source_region.height as usize;
 
-        let source_size = trial_compress_size(&source_sub, row_bytes, height, bpp, cancel)?;
+        let source_size = trial_compress_size(&source_sub, row_bytes, height, bpp, None, cancel)?;
 
         // OVER only possible with a transparent palette entry AND safe pixels
         let (best_blend, best_blend_size, best_sub) = if let Some(tidx) = transparent_idx {
             if can_use_over_indexed(target, &canvas, w, &source_region, palette_rgba) {
                 let over_sub =
                     build_over_subframe_indexed(target, &canvas, w, &source_region, tidx);
-                let over_size = trial_compress_size(&over_sub, row_bytes, height, bpp, cancel)?;
+                let over_size =
+                    trial_compress_size(&over_sub, row_bytes, height, bpp, None, cancel)?;
                 if over_size < source_size {
                     (BLEND_OVER, over_size, over_sub)
                 } else {
@@ -908,6 +1380,7 @@ fn optimize_apng_indexed(
             blend_op: best_blend,
             region: source_region,
             subframe: best_sub,
+            has_transparent: None,
         });
     }
 
@@ -939,12 +1412,12 @@ fn lookahead_next_frame_size_indexed(
     let height = next_region.height as usize;
 
     let next_source = extract_subframe_indexed(next_target, canvas_w, &next_region);
-    let source_size = trial_compress_size(&next_source, row_bytes, height, bpp, cancel)?;
+    let source_size = trial_compress_size(&next_source, row_bytes, height, bpp, None, cancel)?;
 
     if let Some(tidx) = transparent_idx {
         if can_use_over_indexed(next_target, canvas, w, &next_region, palette_rgba) {
             let next_over = build_over_subframe_indexed(next_target, canvas, w, &next_region, tidx);
-            let over_size = trial_compress_size(&next_over, row_bytes, height, bpp, cancel)?;
+            let over_size = trial_compress_size(&next_over, row_bytes, height, bpp, None, cancel)?;
             Ok(source_size.min(over_size))
         } else {
             Ok(source_size)
@@ -1062,6 +1535,7 @@ pub(crate) fn encode_apng_truecolor(
         effort,
         false,
         true,
+        1,
         cancel,
         deadline,
     )
@@ -1080,56 +1554,107 @@ pub(crate) fn encode_apng_truecolor_depth(
     effort: u32,
     preserve_transparent_rgb: bool,
     allow_rgb: bool,
+    max_threads: usize,
+    cancel: &dyn Stop,
+    deadline: &dyn Stop,
+) -> crate::error::Result<Vec<u8>> {
+    let expected_rgba = canvas_width as usize * canvas_height as usize * usize::from(bit_depth) / 2;
+
+    // Detect all-opaque → use RGB (color_type=2, bpp=3, 25% raw savings)
+    let is_opaque = bit_depth == 8 && allow_rgb && all_frames_opaque(frames, expected_rgba);
+
+    // Frames already in the written layout; opaque RGBA input is reduced once.
+    let rgb_frames;
+    let packed: Vec<ApngFrameInput<'_>> = if is_opaque {
+        rgb_frames = frames
+            .iter()
+            .map(|f| crate::optimize::rgba8_to_rgb8(&f.pixels[..expected_rgba]))
+            .collect::<Vec<_>>();
+        frames
+            .iter()
+            .zip(&rgb_frames)
+            .map(|(f, rgb)| ApngFrameInput {
+                pixels: rgb,
+                delay_num: f.delay_num,
+                delay_den: f.delay_den,
+            })
+            .collect()
+    } else {
+        frames.to_vec()
+    };
+    encode_apng_packed_depth(
+        &packed,
+        canvas_width,
+        canvas_height,
+        bit_depth,
+        is_opaque,
+        write_meta,
+        num_plays,
+        effort,
+        preserve_transparent_rgb,
+        max_threads,
+        cancel,
+        deadline,
+    )
+}
+
+/// Encode canvas-sized frames already in the written sample layout: RGB8
+/// when `opaque` is set for 8-bit input, RGBA8 otherwise, big-endian RGBA16
+/// at 16 bits. `packed`'s `pixels` are the written-layout frame buffers.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_apng_packed_depth(
+    frames: &[ApngFrameInput<'_>],
+    canvas_width: u32,
+    canvas_height: u32,
+    bit_depth: u8,
+    opaque: bool,
+    write_meta: &PngWriteMetadata<'_>,
+    num_plays: u32,
+    effort: u32,
+    preserve_transparent_rgb: bool,
+    max_threads: usize,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> crate::error::Result<Vec<u8>> {
     let num_frames = u32::try_from(frames.len())
         .map_err(|_| at!(PngError::InvalidInput("too many APNG frames".into())))?;
-    let expected_rgba = canvas_width as usize * canvas_height as usize * usize::from(bit_depth) / 2;
-
-    // Detect all-opaque → use RGB (color_type=2, bpp=3, 25% raw savings)
-    let is_opaque = bit_depth == 8 && allow_rgb && all_frames_opaque(frames, expected_rgba);
     let (bpp, color_type): (usize, u8) = if bit_depth == 16 {
         (8, 6)
-    } else if is_opaque {
+    } else if opaque {
         (3, 2)
     } else {
         (4, 6)
     };
+    let expected = canvas_width as usize * canvas_height as usize * bpp;
 
     // Run optimizer when effort > 2 and >1 frame (otherwise trial = final, no benefit)
     let use_optimizer =
         apng_uses_optimizer(bit_depth, effort, preserve_transparent_rgb, frames.len());
     if !use_optimizer {
         // Frame by frame, each against the one before: the same writer
-        // streaming output uses, so both give the same bytes. Each frame is
-        // converted at most once and RGBA frames are borrowed.
+        // streaming output uses, so both give the same bytes. Frames are
+        // already in the written layout, so nothing converts or copies.
         let mut out = Vec::new();
         let mut writer = ApngStreamWriter::start(
             &mut out,
             canvas_width,
             canvas_height,
             bit_depth,
-            is_opaque,
+            opaque,
             write_meta,
             num_frames,
             num_plays,
             effort,
             preserve_transparent_rgb,
         )?;
-        let mut prev: Option<alloc::borrow::Cow<'_, [u8]>> = None;
+        let mut prev: Option<&[u8]> = None;
         for frame in frames {
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
-            let rgba = &frame.pixels[..expected_rgba];
-            let curr = if is_opaque {
-                alloc::borrow::Cow::Owned(crate::optimize::rgba8_to_rgb8(rgba))
-            } else {
-                alloc::borrow::Cow::Borrowed(rgba)
-            };
+            let curr = &frame.pixels[..expected];
             writer.write_frame(
                 &mut out,
-                &curr,
-                prev.as_deref(),
+                curr,
+                prev,
                 frame.delay_num,
                 frame.delay_den,
                 cancel,
@@ -1141,23 +1666,14 @@ pub(crate) fn encode_apng_truecolor_depth(
         return Ok(out);
     }
 
-    // Convert frames to RGB if opaque
-    let rgb_frames: Vec<Vec<u8>>;
-    let frame_data: Vec<&[u8]> = if is_opaque {
-        rgb_frames = frames
-            .iter()
-            .map(|f| crate::optimize::rgba8_to_rgb8(&f.pixels[..expected_rgba]))
-            .collect();
-        rgb_frames.iter().map(|v| v.as_slice()).collect()
-    } else {
-        frames.iter().map(|f| &f.pixels[..expected_rgba]).collect()
-    };
+    let frame_data: Vec<&[u8]> = frames.iter().map(|f| &f.pixels[..expected]).collect();
     let opt_frames = optimize_apng_truecolor(
         frames,
         &frame_data,
         canvas_width,
         canvas_height,
         bpp,
+        max_threads,
         cancel,
     )?;
 
@@ -1228,7 +1744,7 @@ pub(crate) fn encode_apng_truecolor_depth(
                 max_threads: 0,
                 decode_segments: 0,
             };
-            let compressed = compress_filtered(
+            let compressed = compress_filtered_t(
                 sub_data,
                 sub_row_bytes,
                 sub_height,
@@ -1236,6 +1752,7 @@ pub(crate) fn encode_apng_truecolor_depth(
                 effort,
                 opts,
                 None,
+                if i == 0 { None } else { opt.has_transparent },
             )?;
 
             if i == 0 {
@@ -1354,22 +1871,18 @@ impl ApngStreamWriter {
         })
     }
 
-    /// Write one canvas-sized frame (RGBA8, or big-endian RGBA16), keeping
-    /// a copy as the next frame's reference.
+    /// Write one canvas-sized frame already in the written sample layout
+    /// (RGB8 when the colour type is 2), keeping it as the next frame's
+    /// reference.
     pub(crate) fn push_frame(
         &mut self,
         out: &mut Vec<u8>,
-        rgba: &[u8],
+        curr: Vec<u8>,
         delay_num: u16,
         delay_den: u16,
         cancel: &dyn Stop,
         deadline: &dyn Stop,
     ) -> crate::error::Result<()> {
-        let curr = if self.color_type == 2 {
-            crate::optimize::rgba8_to_rgb8(rgba)
-        } else {
-            rgba.to_vec()
-        };
         let prev = self.prev.take();
         self.write_frame(
             out,
