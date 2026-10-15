@@ -1588,6 +1588,25 @@ pub(crate) struct StripStream {
     adler: u32,
     /// Worker threads compressing completed strips (multi-threaded encodes).
     pool: Option<StripPool>,
+    /// How strips are written: see [`StripFraming`].
+    framing: StripFraming,
+}
+
+/// Writes strip `k`'s compressed bytes, given the Adler-32 including them.
+type EmitStrip = dyn Fn(usize, &[u8], u32, &mut Vec<u8>);
+
+/// How [`StripStream`] writes the zlib stream.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StripFraming {
+    /// Bare zlib data, for one IDAT chunk whose length the caller patches
+    /// at the end (the one-shot layout). The caller writes the zlib header;
+    /// [`StripStream::finish`] appends the Adler-32 trailer.
+    Continuous,
+    /// Each strip as its own complete IDAT chunk, the first with the zlib
+    /// header and the last with the Adler-32 trailer, so every strip's bytes
+    /// are final the moment it is written (streaming output). Chunk
+    /// boundaries follow the strips, never the push or thread timing.
+    ChunkPerStrip,
 }
 
 /// Completed strips handed to worker threads; results come back in any
@@ -1631,6 +1650,7 @@ impl StripStream {
     /// strips (smaller images are one whole-image search either way).
     /// `threads` above 1 compresses strips on that many worker threads
     /// (output is the same); `cancel` reaches the workers.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         effort: u32,
         format: RowFormat,
@@ -1639,6 +1659,7 @@ impl StripStream {
         height: usize,
         threads: usize,
         cancel: Option<zencodec::StopToken>,
+        framing: StripFraming,
     ) -> Option<Self> {
         if effort == 0 {
             return None;
@@ -1653,9 +1674,21 @@ impl StripStream {
         }
         let header =
             zenflate::png::StripCompressor::new(params.screen_effort.level()).zlib_header();
-        let threads = strip_threads(bounds.len(), effort, threads);
-        let pool = (threads > 1 && !cfg!(target_arch = "wasm32"))
+        let mut threads = strip_threads(bounds.len(), effort, threads);
+        // Streaming output promises a lag below the height: the strips in
+        // flight plus the one filling must leave at least one row out.
+        let max_rows = bounds.iter().map(|&(a, b)| b - a).max().unwrap_or(0);
+        let in_flight_cap = ((height - 1) / max_rows.max(1)).saturating_sub(1);
+        if framing == StripFraming::ChunkPerStrip && in_flight_cap == 0 {
+            threads = 1;
+        }
+        let mut pool = (threads > 1 && !cfg!(target_arch = "wasm32"))
             .then(|| StripPool::new(threads, effort, format, row_bytes, cancel));
+        if framing == StripFraming::ChunkPerStrip
+            && let Some(p) = pool.as_mut()
+        {
+            p.max_in_flight = p.max_in_flight.min(in_flight_cap);
+        }
         Some(Self {
             worker: StripWorker::new(&params),
             rows: Vec::with_capacity((bounds[0].1 + 1) * row_bytes),
@@ -1667,7 +1700,50 @@ impl StripStream {
             next: 0,
             adler: 1,
             pool,
+            framing,
         })
+    }
+
+    /// The most rows pushed whose compressed bytes may not be written yet:
+    /// the strip being filled, plus, with worker threads, the strips in
+    /// flight.
+    pub(crate) fn lag_rows(&self) -> u32 {
+        let rows = self.bounds.iter().map(|&(a, b)| b - a).max().unwrap_or(0);
+        let strips = 1 + self.pool.as_ref().map_or(0, |p| p.max_in_flight);
+        (rows * strips).saturating_sub(1) as u32
+    }
+
+    /// Write strip `k`'s compressed bytes `z`; `adler` already includes it.
+    fn emit(
+        framing: StripFraming,
+        header: [u8; 2],
+        k: usize,
+        strips: usize,
+        z: &[u8],
+        adler: u32,
+        out: &mut Vec<u8>,
+    ) {
+        match framing {
+            StripFraming::Continuous => out.extend_from_slice(z),
+            StripFraming::ChunkPerStrip => {
+                let first: &[u8] = if k == 0 { &header } else { &[] };
+                let last = if k + 1 == strips {
+                    adler.to_be_bytes().to_vec()
+                } else {
+                    Vec::new()
+                };
+                let len = first.len() + z.len() + last.len();
+                out.reserve(len + 12);
+                out.extend_from_slice(&(len as u32).to_be_bytes());
+                let start = out.len();
+                out.extend_from_slice(b"IDAT");
+                out.extend_from_slice(first);
+                out.extend_from_slice(z);
+                out.extend_from_slice(&last);
+                let crc = zenflate::crc32(0, &out[start..]);
+                out.extend_from_slice(&crc.to_be_bytes());
+            }
+        }
     }
 
     /// The zlib stream header (first two IDAT bytes).
@@ -1706,6 +1782,7 @@ impl StripStream {
         let last = self.next + 1 == self.bounds.len();
         // The strip's last row is the next strip's row above.
         let keep = self.rows.len() - self.row_bytes;
+        let emit = self.emitter();
         if let Some(pool) = &mut self.pool {
             let mut next_rows = Vec::with_capacity(self.rows.capacity());
             next_rows.extend_from_slice(&self.rows[keep..]);
@@ -1716,7 +1793,14 @@ impl StripStream {
                 lead: a > 0,
                 last,
             });
-            pool.collect(false, &self.bounds, self.row_bytes, &mut self.adler, out)?;
+            pool.collect(
+                false,
+                &self.bounds,
+                self.row_bytes,
+                &mut self.adler,
+                &emit,
+                out,
+            )?;
         } else {
             let (z, adler) = self
                 .worker
@@ -1731,9 +1815,9 @@ impl StripStream {
                     cancel,
                 )
                 .map_err(strip_error)?;
-            out.extend_from_slice(&z);
             self.adler =
                 zenflate::adler32_combine(self.adler, adler, (b - a) * (self.row_bytes + 1));
+            emit(self.next, &z, self.adler, out);
             self.rows.drain(..keep);
         }
         self.next += 1;
@@ -1751,11 +1835,27 @@ impl StripStream {
                 self.bounds.last().map_or(0, |b| b.1)
             ))));
         }
+        let emit = self.emitter();
         if let Some(pool) = &mut self.pool {
-            pool.collect(true, &self.bounds, self.row_bytes, &mut self.adler, out)?;
+            pool.collect(
+                true,
+                &self.bounds,
+                self.row_bytes,
+                &mut self.adler,
+                &emit,
+                out,
+            )?;
         }
-        out.extend_from_slice(&self.adler.to_be_bytes());
+        if self.framing == StripFraming::Continuous {
+            out.extend_from_slice(&self.adler.to_be_bytes());
+        }
         Ok(())
+    }
+
+    /// [`emit`](Self::emit) with this stream's framing, header and strip count.
+    fn emitter(&self) -> impl Fn(usize, &[u8], u32, &mut Vec<u8>) + use<> {
+        let (framing, header, strips) = (self.framing, self.header, self.bounds.len());
+        move |k, z, adler, out| Self::emit(framing, header, k, strips, z, adler, out)
     }
 }
 
@@ -1826,6 +1926,7 @@ impl StripPool {
         bounds: &[(usize, usize)],
         row_bytes: usize,
         adler: &mut u32,
+        emit: &EmitStrip,
         out: &mut Vec<u8>,
     ) -> crate::error::Result<()> {
         if all {
@@ -1850,8 +1951,8 @@ impl StripPool {
             self.done.insert(k, r.map_err(strip_error)?);
             while let Some((z, a)) = self.done.remove(&self.next_out) {
                 let (y0, y1) = bounds[self.next_out];
-                out.extend_from_slice(&z);
                 *adler = zenflate::adler32_combine(*adler, a, (y1 - y0) * (row_bytes + 1));
+                emit(self.next_out, &z, *adler, out);
                 self.next_out += 1;
                 self.in_flight -= 1;
             }
