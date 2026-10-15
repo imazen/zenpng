@@ -18,7 +18,7 @@ include = [
 ]
 
 [dependencies]
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "4c031d808087d055f65a3670e68812f8b654a244", default-features = false, features = ["rewrite"], optional = true }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "5c812bd97efd894b106cf7e2c7afed377a39873e", default-features = false, features = ["rewrite"], optional = true }
 thiserror = { version = "2.0", default-features = false }
 rgb = { version = "0.8", default-features = false, features = ["as-bytes"] }
 imgref = "1.12"
@@ -179,8 +179,8 @@ required-features = ["_dev"]
 
 [patch.crates-io]
 # Coordinated exact animation timing series; one source for shared types.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "4c031d808087d055f65a3670e68812f8b654a244" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "4c031d808087d055f65a3670e68812f8b654a244" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "5c812bd97efd894b106cf7e2c7afed377a39873e" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "5c812bd97efd894b106cf7e2c7afed377a39873e" }
 zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "789d69dbc314e748676b7f2f19542c17473ba40b" }
 zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "789d69dbc314e748676b7f2f19542c17473ba40b" }
 # Retain main's strip-compression API source.

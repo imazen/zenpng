@@ -1061,6 +1061,7 @@ pub(crate) fn encode_apng_truecolor(
         num_plays,
         effort,
         false,
+        true,
         cancel,
         deadline,
     )
@@ -1078,6 +1079,7 @@ pub(crate) fn encode_apng_truecolor_depth(
     num_plays: u32,
     effort: u32,
     preserve_transparent_rgb: bool,
+    allow_rgb: bool,
     cancel: &dyn Stop,
     deadline: &dyn Stop,
 ) -> crate::error::Result<Vec<u8>> {
@@ -1086,7 +1088,7 @@ pub(crate) fn encode_apng_truecolor_depth(
     let expected_rgba = canvas_width as usize * canvas_height as usize * usize::from(bit_depth) / 2;
 
     // Detect all-opaque → use RGB (color_type=2, bpp=3, 25% raw savings)
-    let is_opaque = bit_depth == 8 && all_frames_opaque(frames, expected_rgba);
+    let is_opaque = bit_depth == 8 && allow_rgb && all_frames_opaque(frames, expected_rgba);
     let (bpp, color_type): (usize, u8) = if bit_depth == 16 {
         (8, 6)
     } else if is_opaque {
@@ -1109,44 +1111,63 @@ pub(crate) fn encode_apng_truecolor_depth(
 
     // Run optimizer when effort > 2 and >1 frame (otherwise trial = final, no benefit)
     let use_optimizer =
-        !preserve_transparent_rgb && bit_depth == 8 && effort > 2 && frames.len() > 1;
-    let optimized = if use_optimizer {
-        Some(optimize_apng_truecolor(
-            frames,
-            &frame_data,
+        apng_uses_optimizer(bit_depth, effort, preserve_transparent_rgb, frames.len());
+    if !use_optimizer {
+        // Frame by frame, each against the one before: the same writer
+        // streaming output uses, so both give the same bytes.
+        let mut out = Vec::new();
+        let mut writer = ApngStreamWriter::start(
+            &mut out,
             canvas_width,
             canvas_height,
-            bpp,
-            cancel,
-        )?)
-    } else {
-        None
-    };
+            bit_depth,
+            is_opaque,
+            write_meta,
+            num_frames,
+            num_plays,
+            effort,
+            preserve_transparent_rgb,
+        )?;
+        for frame in frames {
+            cancel.check().map_err(|e| at!(PngError::from(e)))?;
+            writer.push_frame(
+                &mut out,
+                &frame.pixels[..expected_rgba],
+                frame.delay_num,
+                frame.delay_den,
+                cancel,
+                deadline,
+            )?;
+        }
+        writer.finish(&mut out, write_meta);
+        return Ok(out);
+    }
+    let opt_frames = optimize_apng_truecolor(
+        frames,
+        &frame_data,
+        canvas_width,
+        canvas_height,
+        bpp,
+        cancel,
+    )?;
 
     // Estimate output size
     let frame_size_est = canvas_width as usize * canvas_height as usize * bpp;
     let est = 8 + 25 + 20 + 38 + frame_size_est + metadata_size_estimate(write_meta);
     let mut out = Vec::with_capacity(est);
     let mut seq = SeqCounter::new();
+    write_apng_head(
+        &mut out,
+        canvas_width,
+        canvas_height,
+        bit_depth,
+        color_type,
+        write_meta,
+        num_frames,
+        num_plays,
+    )?;
 
-    // PNG signature
-    out.extend_from_slice(&PNG_SIGNATURE);
-
-    // IHDR: canvas dimensions, detected color type
-    let mut ihdr = [0u8; 13];
-    ihdr[0..4].copy_from_slice(&canvas_width.to_be_bytes());
-    ihdr[4..8].copy_from_slice(&canvas_height.to_be_bytes());
-    ihdr[8] = bit_depth;
-    ihdr[9] = color_type;
-    write_chunk(&mut out, b"IHDR", &ihdr);
-
-    // Metadata chunks (before IDAT)
-    write_all_metadata(&mut out, write_meta)?;
-
-    // acTL
-    write_actl(&mut out, num_frames, num_plays);
-
-    if let Some(ref opt_frames) = optimized {
+    {
         // ── Optimized path: use per-frame dispose/blend from optimizer ──
         for (i, opt) in opt_frames.iter().enumerate() {
             cancel.check().map_err(|e| at!(PngError::from(e)))?;
@@ -1214,104 +1235,6 @@ pub(crate) fn encode_apng_truecolor_depth(
                 write_fdat(&mut out, fdat_seq, &compressed);
             }
         }
-    } else {
-        // ── Unoptimized path: hardcoded NONE/SOURCE (effort ≤ 2 or single frame) ──
-
-        // Frame 0: fcTL + IDAT (full canvas)
-        let frame0 = &frames[0];
-        write_fctl(
-            &mut out,
-            seq.next(),
-            canvas_width,
-            canvas_height,
-            0,
-            0,
-            frame0.delay_num,
-            frame0.delay_den,
-            DISPOSE_NONE,
-            BLEND_SOURCE,
-        );
-
-        let row_bytes = canvas_width as usize * bpp;
-        let height = canvas_height as usize;
-        let opts = CompressOptions {
-            preserve_transparent_rgb,
-            parallel: false,
-            cancel,
-            deadline,
-            remaining_ns: None,
-            max_threads: 0,
-            decode_segments: 0,
-        };
-        let compressed0 = compress_filtered(
-            frame_data[0],
-            row_bytes,
-            height,
-            RowFormat::from_png(color_type, bit_depth),
-            effort,
-            opts,
-            None,
-        )?;
-        write_chunk(&mut out, b"IDAT", &compressed0);
-
-        // Frames 1+: fcTL + fdAT with delta regions
-        for i in 1..frames.len() {
-            cancel.check().map_err(|e| at!(PngError::from(e)))?;
-
-            let prev = frame_data[i - 1];
-            let curr = frame_data[i];
-            let frame = &frames[i];
-
-            let (region, subframe) =
-                match compute_delta_region(prev, curr, canvas_width, canvas_height, bpp) {
-                    Some(region) => {
-                        let sub = extract_subframe(curr, canvas_width, &region, bpp);
-                        (region, sub)
-                    }
-                    None => {
-                        let (region, sub) = minimal_subframe(curr, bpp);
-                        (region, sub)
-                    }
-                };
-
-            let fctl_seq = seq.next();
-            write_fctl(
-                &mut out,
-                fctl_seq,
-                region.width,
-                region.height,
-                region.x,
-                region.y,
-                frame.delay_num,
-                frame.delay_den,
-                DISPOSE_NONE,
-                BLEND_SOURCE,
-            );
-
-            let sub_row_bytes = region.width as usize * bpp;
-            let sub_height = region.height as usize;
-            let opts = CompressOptions {
-                preserve_transparent_rgb,
-                parallel: false,
-                cancel,
-                deadline,
-                remaining_ns: None,
-                max_threads: 0,
-                decode_segments: 0,
-            };
-            let compressed = compress_filtered(
-                &subframe,
-                sub_row_bytes,
-                sub_height,
-                RowFormat::from_png(color_type, bit_depth),
-                effort,
-                opts,
-                None,
-            )?;
-
-            let fdat_seq = seq.next();
-            write_fdat(&mut out, fdat_seq, &compressed);
-        }
     }
 
     // IEND
@@ -1319,6 +1242,194 @@ pub(crate) fn encode_apng_truecolor_depth(
     write_chunk(&mut out, b"IEND", &[]);
 
     Ok(out)
+}
+
+/// Whether the truecolor APNG encoder runs its cross-frame optimizer, which
+/// needs every frame before it writes one.
+pub(crate) fn apng_uses_optimizer(
+    bit_depth: u8,
+    effort: u32,
+    preserve_transparent_rgb: bool,
+    frames: usize,
+) -> bool {
+    !preserve_transparent_rgb && bit_depth == 8 && effort > 2 && frames > 1
+}
+
+/// Signature, IHDR, metadata and acTL: everything before the first frame.
+#[allow(clippy::too_many_arguments)]
+fn write_apng_head(
+    out: &mut Vec<u8>,
+    canvas_width: u32,
+    canvas_height: u32,
+    bit_depth: u8,
+    color_type: u8,
+    write_meta: &PngWriteMetadata<'_>,
+    num_frames: u32,
+    num_plays: u32,
+) -> crate::error::Result<()> {
+    out.extend_from_slice(&PNG_SIGNATURE);
+    let mut ihdr = [0u8; 13];
+    ihdr[0..4].copy_from_slice(&canvas_width.to_be_bytes());
+    ihdr[4..8].copy_from_slice(&canvas_height.to_be_bytes());
+    ihdr[8] = bit_depth;
+    ihdr[9] = color_type;
+    write_chunk(out, b"IHDR", &ihdr);
+    write_all_metadata(out, write_meta)?;
+    write_actl(out, num_frames, num_plays);
+    Ok(())
+}
+
+/// Writes a truecolor APNG one frame at a time: frame 0 whole, each later
+/// frame as the region that differs from the one before (dispose NONE,
+/// blend SOURCE). Every frame's bytes are final when it is pushed, so
+/// streaming output hands them out at once; the one-shot encoder uses the
+/// same writer whenever the optimizer is off.
+pub(crate) struct ApngStreamWriter {
+    canvas_width: u32,
+    canvas_height: u32,
+    bit_depth: u8,
+    color_type: u8,
+    /// Bytes per pixel as written: 3 for RGB8, 4 for RGBA8, 8 for RGBA16.
+    bpp: usize,
+    effort: u32,
+    preserve_transparent_rgb: bool,
+    seq: SeqCounter,
+    /// The previous frame as written (RGB8 when `color_type` is 2).
+    prev: Option<Vec<u8>>,
+}
+
+impl ApngStreamWriter {
+    /// Write everything before the first frame. `opaque` selects RGB8 for
+    /// 8-bit input: every frame must then be opaque RGBA8.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start(
+        out: &mut Vec<u8>,
+        canvas_width: u32,
+        canvas_height: u32,
+        bit_depth: u8,
+        opaque: bool,
+        write_meta: &PngWriteMetadata<'_>,
+        num_frames: u32,
+        num_plays: u32,
+        effort: u32,
+        preserve_transparent_rgb: bool,
+    ) -> crate::error::Result<Self> {
+        let (bpp, color_type) = if bit_depth == 16 {
+            (8, 6)
+        } else if opaque {
+            (3, 2)
+        } else {
+            (4, 6)
+        };
+        write_apng_head(
+            out,
+            canvas_width,
+            canvas_height,
+            bit_depth,
+            color_type,
+            write_meta,
+            num_frames,
+            num_plays,
+        )?;
+        Ok(Self {
+            canvas_width,
+            canvas_height,
+            bit_depth,
+            color_type,
+            bpp,
+            effort,
+            preserve_transparent_rgb,
+            seq: SeqCounter::new(),
+            prev: None,
+        })
+    }
+
+    /// Write one canvas-sized frame (RGBA8, or big-endian RGBA16).
+    pub(crate) fn push_frame(
+        &mut self,
+        out: &mut Vec<u8>,
+        rgba: &[u8],
+        delay_num: u16,
+        delay_den: u16,
+        cancel: &dyn Stop,
+        deadline: &dyn Stop,
+    ) -> crate::error::Result<()> {
+        let curr = if self.color_type == 2 {
+            crate::optimize::rgba8_to_rgb8(rgba)
+        } else {
+            rgba.to_vec()
+        };
+        let (region, subframe) = match &self.prev {
+            None => (
+                DeltaRegion {
+                    x: 0,
+                    y: 0,
+                    width: self.canvas_width,
+                    height: self.canvas_height,
+                },
+                None,
+            ),
+            Some(prev) => match compute_delta_region(
+                prev,
+                &curr,
+                self.canvas_width,
+                self.canvas_height,
+                self.bpp,
+            ) {
+                Some(region) => {
+                    let sub = extract_subframe(&curr, self.canvas_width, &region, self.bpp);
+                    (region, Some(sub))
+                }
+                None => {
+                    let (region, sub) = minimal_subframe(&curr, self.bpp);
+                    (region, Some(sub))
+                }
+            },
+        };
+        write_fctl(
+            out,
+            self.seq.next(),
+            region.width,
+            region.height,
+            region.x,
+            region.y,
+            delay_num,
+            delay_den,
+            DISPOSE_NONE,
+            BLEND_SOURCE,
+        );
+        let opts = CompressOptions {
+            preserve_transparent_rgb: self.preserve_transparent_rgb,
+            parallel: false,
+            cancel,
+            deadline,
+            remaining_ns: None,
+            max_threads: 0,
+            decode_segments: 0,
+        };
+        let compressed = compress_filtered(
+            subframe.as_deref().unwrap_or(&curr),
+            region.width as usize * self.bpp,
+            region.height as usize,
+            RowFormat::from_png(self.color_type, self.bit_depth),
+            self.effort,
+            opts,
+            None,
+        )?;
+        if self.prev.is_none() {
+            write_chunk(out, b"IDAT", &compressed);
+        } else {
+            write_fdat(out, self.seq.next(), &compressed);
+        }
+        self.prev = Some(curr);
+        Ok(())
+    }
+
+    /// Write what follows the last frame.
+    pub(crate) fn finish(self, out: &mut Vec<u8>, write_meta: &PngWriteMetadata<'_>) {
+        write_tail_ancillary(out, write_meta);
+        write_chunk(out, b"IEND", &[]);
+    }
 }
 
 // ── Indexed delta region helpers ─────────────────────────────────────
