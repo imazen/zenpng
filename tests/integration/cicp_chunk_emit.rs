@@ -111,3 +111,44 @@ fn a_linear_cicp_on_f32_input_is_written_as_srgb() {
         );
     }
 }
+
+/// IHDR colour type (byte 9 of the IHDR payload): 0 grey, 2 RGB.
+fn colour_type(png: &[u8]) -> u8 {
+    find_chunk(png, b"IHDR").expect("IHDR")[9]
+}
+
+/// An RGB ICC profile can't describe a greyscale PNG, so grey-valued RGB
+/// pixels written with one stay RGB and keep the profile.
+#[test]
+fn grey_pixels_with_an_rgb_icc_stay_rgb() {
+    let (w, h) = (4u32, 4u32);
+    let bytes: Vec<u8> = (0..w * h).flat_map(|i| [(i * 9) as u8; 3]).collect();
+    let slice =
+        || PixelSlice::new(&bytes, w, h, (w * 3) as usize, PixelDescriptor::RGB8_SRGB).unwrap();
+    let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4.to_vec();
+    assert_eq!(&icc[16..20], b"RGB ");
+
+    let plain = PngEncoderConfig::new()
+        .job()
+        .encoder()
+        .unwrap()
+        .encode(slice())
+        .unwrap();
+    assert_eq!(colour_type(plain.data()), 0, "no profile: reduced to grey");
+
+    let with_icc = PngEncoderConfig::new()
+        .job()
+        .with_metadata_policy(
+            zencodec::Metadata::none().with_icc(icc),
+            zencodec::MetadataPolicy::PreserveExact,
+        )
+        .encoder()
+        .unwrap()
+        .encode(slice())
+        .unwrap();
+    assert_eq!(colour_type(with_icc.data()), 2, "RGB profile: stays RGB");
+    assert!(
+        find_chunk(with_icc.data(), b"iCCP").is_some(),
+        "profile kept"
+    );
+}

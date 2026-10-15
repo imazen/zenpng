@@ -717,6 +717,24 @@ pub(crate) fn png_write_meta<'a>(
     Ok(write_meta)
 }
 
+/// An RGB ICC profile can't describe a greyscale PNG (iCCP must match the
+/// colour type; readers reject or ignore the pair), so the grey reductions
+/// are off when one will be written.
+fn downcast_for_icc(dc: &DowncastFlags, meta: &PngWriteMetadata<'_>) -> DowncastFlags {
+    let rgb_icc = meta
+        .generic
+        .and_then(|m| m.icc_profile.as_deref())
+        .is_some_and(|icc| {
+            zenpixels::icc::profile_color_space(icc) == Some(zenpixels::ColorModel::Rgb)
+        });
+    let mut out = *dc;
+    if rgb_icc {
+        out.rgb_to_gray = false;
+        out.sub_byte_gray = false;
+    }
+    out
+}
+
 /// Low-level encode: raw bytes to PNG with metadata and config applied.
 ///
 /// Automatically optimizes color type and bit depth for smallest output:
@@ -798,7 +816,7 @@ pub(crate) fn encode_raw(
     };
 
     // Auto-optimize color type and bit depth (gated on downcast flags).
-    let dc = &config.downcast;
+    let dc = &downcast_for_icc(&config.downcast, &write_meta);
     let optimization = match (color_type, bit_depth) {
         (ColorType::Rgba, BitDepth::Eight) => crate::optimize::optimize_rgba8(bytes, w, h, dc),
         (ColorType::Rgb, BitDepth::Eight) => crate::optimize::optimize_rgb8(bytes, w, h, dc),
@@ -955,9 +973,10 @@ fn encode_raw_with_stats(
     };
 
     // Determine optimal encoding (same logic as encode_raw)
+    let downcast = downcast_for_icc(&config.downcast, &write_meta);
     let (eff_bytes, eff_ct, eff_bd, eff_trns) = match (color_type, bit_depth) {
         (ColorType::Rgba, BitDepth::Eight) => {
-            match crate::optimize::optimize_rgba8(bytes, w, h, &config.downcast) {
+            match crate::optimize::optimize_rgba8(bytes, w, h, &downcast) {
                 crate::optimize::OptimalEncoding::Truecolor {
                     bytes: ob,
                     color_type: ct,
@@ -982,7 +1001,7 @@ fn encode_raw_with_stats(
             }
         }
         (ColorType::Rgb, BitDepth::Eight) => {
-            match crate::optimize::optimize_rgb8(bytes, w, h, &config.downcast) {
+            match crate::optimize::optimize_rgb8(bytes, w, h, &downcast) {
                 crate::optimize::OptimalEncoding::Truecolor {
                     bytes: ob,
                     color_type: ct,
@@ -998,13 +1017,8 @@ fn encode_raw_with_stats(
             }
         }
         (_, BitDepth::Sixteen) => {
-            match crate::optimize::optimize_16bit(
-                bytes,
-                w,
-                h,
-                color_type.to_png_byte(),
-                &config.downcast,
-            ) {
+            match crate::optimize::optimize_16bit(bytes, w, h, color_type.to_png_byte(), &downcast)
+            {
                 crate::optimize::OptimalEncoding::Truecolor {
                     bytes: ob,
                     color_type: ct,

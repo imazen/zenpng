@@ -45,6 +45,7 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- Grey-valued RGB pixels written with an RGB ICC profile were reduced to a greyscale PNG that still carried the RGB iCCP, which the PNG spec forbids and readers reject or ignore. The grey reductions are now off when an RGB profile will be written. Test: `grey_pixels_with_an_rgb_icc_stay_rgb`.
 - f32 input is stored as 8-bit sRGB, but a caller's cICP calling it linear (transfer 8) was written unchanged, so readers decoded the sRGB samples as linear. The transfer now moves to sRGB (13), primaries kept, on the one-shot and streaming paths. Test: `a_linear_cicp_on_f32_input_is_written_as_srgb`.
 
 - APNG output changed in 8a9cd28 for RGBA frames whose fully transparent
