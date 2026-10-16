@@ -8,6 +8,12 @@ use archmage::prelude::*;
 use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_paeth(row: &mut [u8], prev: &[u8], bpp: usize) {
+    // A single RGBA pixel has no left or upper-left neighbor. The scalar
+    // path is cheaper than dispatching to a SIMD tier for four bytes.
+    if bpp == 4 && row.len() == 4 {
+        unfilter_paeth_scalar_any(row, prev, bpp);
+        return;
+    }
     // bpp=3 has no SIMD kernel: the const-generic fixed kernel measured as
     // fast or faster everywhere (2026-10-06, 1920 px: x86 5.35 vs 5.42 us
     // for SSE4.2, Neoverse-N1 13.2 vs 14.4 us for NEON; wasm 1.4 vs

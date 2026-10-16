@@ -12,6 +12,11 @@ use safe_unaligned_simd::wasm32::v128_load32_zero;
 use safe_unaligned_simd::x86_64::{_mm_loadu_si32, _mm_storeu_si32};
 
 pub(crate) fn unfilter_sub(row: &mut [u8], bpp: usize) {
+    // The first pixel has no left neighbor. Avoid tier dispatch for a row
+    // containing only that pixel (or a partial pixel).
+    if row.len() <= bpp {
+        return;
+    }
     // bpp=3 has no SIMD kernel: the const-generic fixed kernel measured
     // faster everywhere (2026-10-06, 1920 px: x86 0.64 vs 0.68 us for SSE2,
     // Neoverse-N1 2.08 vs 2.63 us for NEON; wasm 6.2 vs 5.1 GB/s for
