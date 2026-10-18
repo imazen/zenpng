@@ -151,7 +151,7 @@ shared-contract-check:
 
 # Use the resolved Cargo.lock for profiling and input-generation binaries.
 coz-build:
-    cargo build --release --locked --example coz_harness --example gen_bench_inputs
+    CARGO_PROFILE_RELEASE_DEBUG=1 cargo build --release --locked --example coz_harness --example gen_bench_inputs
 
 [positional-arguments]
 coz-run *args:
