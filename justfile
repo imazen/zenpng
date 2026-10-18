@@ -148,3 +148,15 @@ shared-contract-check:
     cargo clippy -p zenpng --no-default-features --features inventory,metadata-rewrite --test shared_contracts -- -D warnings
     just metadata-rewrite-check
     cargo test -p zenpng --no-default-features --test integration animation_timing
+
+# Use the resolved Cargo.lock for profiling and input-generation binaries.
+coz-build:
+    cargo build --release --locked --example coz_harness --example gen_bench_inputs
+
+[positional-arguments]
+coz-run *args:
+    target/release/examples/coz_harness "$@"
+
+[positional-arguments]
+coz-generate-inputs *args:
+    target/release/examples/gen_bench_inputs "$@"

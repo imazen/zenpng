@@ -64,10 +64,18 @@ zencodec-testkit = ">=0.1.0, <0.3.0"
 codec-corpus = "1.0.2"
 libdeflater = "1.25"
 zenbench = "0.1.8"
+# Bench-input generation only (examples/gen_bench_inputs.rs).
+zenresize = "0.3.1"
 # Pareto-bench competitors (benches/pareto.rs only).
 zune-png = "0.5.2"
 zune-core = "0.5.3"
 lodepng = "3.12.2"
+
+# Causal-profiler progress points, used only by examples/coz_harness.rs. coz
+# resolves its counters only on Linux, and 0.1.3 does not compile for Windows
+# (unconditional libc sigaltstack/mmap), so the harness gates its calls too.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+coz = "0.1.3"
 
 [profile.test]
 opt-level = 2

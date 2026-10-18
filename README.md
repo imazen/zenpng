@@ -613,3 +613,5 @@ Pass it to `EncodeConfig::with_mastering_display_raw` (or the codec configuratio
 for output without a float roundtrip. Raw data overrides the floating-point view;
 setting the typed value clears the raw override. PNG requires accompanying cICP,
 so no mDCV is emitted without it.
+
+Development tools: [profiling and strict format checks](docs/development-profiling.md).

@@ -13,6 +13,8 @@ All notable changes to zenpng are documented here.
 
 ### Added
 
+- Development-only PNG profiling and input generation with full output hashes and strict independent shape, depth and byte-order checks. Coz counters and their dependency are Linux-only; the ordinary workload remains portable.
+
 - Inventory: a `zTXt` part's detail quotes its inflated text, and an `iTXt` the decoder
   never reads has its compressed text inflated and quoted, up to 4 KiB each with the rest
   counted. Compressed text is then as visible to an audit as `tEXt` is in the file's
