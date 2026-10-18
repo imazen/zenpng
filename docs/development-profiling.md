@@ -26,6 +26,16 @@ just coz-run encode --st 7 100 ~/tmp/NEW_INPUTS
 just coz-run decode --st 100 ~/tmp/NEW_INPUTS
 ```
 
+On Linux, collect a causal profile by launching the built workload through Coz:
+
+```sh
+coz run --output ~/tmp/NEW_encode.jsonl --- target/release/examples/coz_harness encode --st 7 100 ~/tmp/NEW_INPUTS
+```
+
+Use a new profile path for each attempt. `just coz-run` executes the workload;
+the Coz runtime supplies the profiler. The progress points are `encode_unit`
+and `decode_unit`, each incremented after a complete operation.
+
 For an external zenbench comparison, `pair enc EFFORT ITERS NEW_RESULT INPUTS`
 and `pair dec ITERS NEW_RESULT INPUTS` print total `elapsed_ms`. Timers include
 the codec call, allocation and output destruction. Full-output checksums, input
