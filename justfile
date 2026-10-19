@@ -166,3 +166,9 @@ contract-pin-check:
     cargo fmt -p zenpng
     just shared-contract-check
     cargo check --manifest-path fuzz/Cargo.toml --bin inventory
+
+# Check compatibility after admitting the current archmage/magetypes beta.
+beta-cohort-check:
+    cargo fmt --check
+    cargo clippy --locked --workspace --lib -- -D warnings
+    cargo test --locked --workspace --lib --no-fail-fast
