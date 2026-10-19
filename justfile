@@ -160,3 +160,9 @@ coz-run *args:
 [positional-arguments]
 coz-generate-inputs *args:
     target/release/examples/gen_bench_inputs "$@"
+
+# Shared policy/inventory, rewrite behavior and standalone inventory compilation.
+contract-pin-check:
+    cargo fmt -p zenpng
+    just shared-contract-check
+    cargo check --manifest-path fuzz/Cargo.toml --bin inventory

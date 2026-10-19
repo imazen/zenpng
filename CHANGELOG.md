@@ -4,6 +4,10 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Dependency integration
+
+- Use zencodec/zenmeta/testkit `d327434b` in the library and standalone fuzz graph so metadata rewriting and inventory share the streaming consumer contract. Shared contracts, metadata rewriting on both pointer widths, animation timing and inventory fuzz compilation pass (`just contract-pin-check`).
+
 ### Changed
 
 - ARM64 Sub and Paeth unfiltering skip SIMD dispatch for one-pixel RGBA rows;
