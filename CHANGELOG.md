@@ -4,6 +4,10 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### Dependency compatibility
+
+- Admit archmage/magetypes 0.9.31-beta.1 alongside compatible stable versions. Formatting, strict library lint and library tests pass (`b552c155`).
+
 ### Dependency integration
 
 - Use zencodec/zenmeta/testkit `d327434b` in the library and standalone fuzz graph so metadata rewriting and inventory share the streaming consumer contract. Shared contracts, metadata rewriting on both pointer widths, animation timing and inventory fuzz compilation pass (`just contract-pin-check`).
