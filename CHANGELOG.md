@@ -21,6 +21,11 @@ All notable changes to zenpng are documented here.
 
 ### Added
 
+- Checked verbatim color policy on encode jobs, preserving supplied ICC authority
+  through still, row and APNG paths. Other explicit policy fields currently
+  refuse without mutating the job. Independent PNG inspection checks carrier
+  selection and exact samples (`just checked-policy-check`).
+
 - Development-only PNG profiling and input generation with full output hashes and strict independent shape, depth and byte-order checks. Coz counters and their dependency are Linux-only; the ordinary workload remains portable.
 
 - Inventory: a `zTXt` part's detail quotes its inflated text, and an `iTXt` the decoder

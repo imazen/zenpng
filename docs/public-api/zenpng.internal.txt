@@ -13,35 +13,32 @@
 #   pub types (struct/enum/trait/alias)         6
 #   pub consts/statics                          1
 #   free functions                             20
-#   inherent methods                           37
+#   inherent methods                           31
 #   struct fields                              16
 #   trait roster entries (type × trait)        40
 #   auto-trait-complete types                   3
 #
 # per-module pub lines:
-#   (root)                           40
+#   (root)                           37
 #   __bench_scan                     31
-#   detect                            3
+#   detect                            1
 #   internal_params                   6
-#   sweep                             2
+#   sweep                             1
 
-## items (81 lines)
+## items (75 lines)
 
 #[non_exhaustive] pub struct InternalParams [also: internal_params]
 pub const fn __bench_scan::FusedRequest::all() -> Self
-pub fn AncillaryPosition::assert_fields_are_eq(&self)
 pub fn ApngFrameInfo::assert_fields_are_eq(&self)
 pub fn Compression::assert_fields_are_eq(&self)
 pub fn DowncastFlags::assert_fields_are_eq(&self)
 pub fn EncodeConfig::with_internal_params(self, internal_params::InternalParams) -> Self
-pub fn Filter::assert_fields_are_eq(&self)
 pub fn OwnedAncillaryChunk::assert_fields_are_eq(&self)
-pub fn PhaseStat::clone(&self) -> PhaseStat
+pub fn PhaseStat::clone(&self) -> Self
 pub fn PhaseStat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn PhaseStats::clone(&self) -> PhaseStats
-pub fn PhaseStats::default() -> PhaseStats
+pub fn PhaseStats::clone(&self) -> Self
+pub fn PhaseStats::default() -> Self
 pub fn PhaseStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn PhysUnit::assert_fields_are_eq(&self)
 pub fn PngBackground::assert_fields_are_eq(&self)
 pub fn PngChromaticities::assert_fields_are_eq(&self)
 pub fn PngTime::assert_fields_are_eq(&self)
@@ -49,14 +46,14 @@ pub fn PngWarning::assert_fields_are_eq(&self)
 pub fn SignificantBits::assert_fields_are_eq(&self)
 pub fn TextChunk::assert_fields_are_eq(&self)
 pub fn __bench_scan::FusedRequest::assert_fields_are_eq(&self)
-pub fn __bench_scan::FusedRequest::clone(&self) -> __bench_scan::FusedRequest
-pub fn __bench_scan::FusedRequest::default() -> __bench_scan::FusedRequest
-pub fn __bench_scan::FusedRequest::eq(&self, &__bench_scan::FusedRequest) -> bool
+pub fn __bench_scan::FusedRequest::clone(&self) -> Self
+pub fn __bench_scan::FusedRequest::default() -> Self
+pub fn __bench_scan::FusedRequest::eq(&self, &Self) -> bool
 pub fn __bench_scan::FusedRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn __bench_scan::FusedResult::assert_fields_are_eq(&self)
-pub fn __bench_scan::FusedResult::clone(&self) -> __bench_scan::FusedResult
-pub fn __bench_scan::FusedResult::default() -> __bench_scan::FusedResult
-pub fn __bench_scan::FusedResult::eq(&self, &__bench_scan::FusedResult) -> bool
+pub fn __bench_scan::FusedResult::clone(&self) -> Self
+pub fn __bench_scan::FusedResult::default() -> Self
+pub fn __bench_scan::FusedResult::eq(&self, &Self) -> bool
 pub fn __bench_scan::FusedResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn __bench_scan::alpha_is_binary_rgba8(&[u8]) -> bool
 pub fn __bench_scan::bit_replication_lossless_be16(&[u8]) -> bool
@@ -76,15 +73,12 @@ pub fn __idot_stats() -> (usize, usize)
 pub fn __pipeline_runs() -> usize
 pub fn __set_idot_min_bytes(usize)
 pub fn __set_pipeline_min_bytes(usize)
-pub fn detect::ColorType::assert_fields_are_eq(&self)
-pub fn detect::ProbeError::assert_fields_are_eq(&self)
 pub fn detect::Recommendation::assert_fields_are_eq(&self)
 pub fn encode_rgb8_with_stats(imgref::ImgRef<'_, rgb::formats::rgb::Rgb<u8>>, core::option::Option<&zencodec::metadata::Metadata>, &EncodeConfig, &dyn enough::Stop, &dyn enough::Stop) -> core::result::Result<(alloc::vec::Vec<u8>, PhaseStats), whereat::at::At<PngError>>
 pub fn encode_rgba8_with_stats(imgref::ImgRef<'_, rgb::formats::rgba::Rgba<u8>>, core::option::Option<&zencodec::metadata::Metadata>, &EncodeConfig, &dyn enough::Stop, &dyn enough::Stop) -> core::result::Result<(alloc::vec::Vec<u8>, PhaseStats), whereat::at::At<PngError>>
-pub fn internal_params::InternalParams::clone(&self) -> internal_params::InternalParams
-pub fn internal_params::InternalParams::default() -> internal_params::InternalParams
+pub fn internal_params::InternalParams::clone(&self) -> Self
+pub fn internal_params::InternalParams::default() -> Self
 pub fn internal_params::InternalParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn sweep::QuantBackend::assert_fields_are_eq(&self)
 pub fn sweep::QuantizeSpec::assert_fields_are_eq(&self)
 pub mod __bench_scan
 pub mod internal_params

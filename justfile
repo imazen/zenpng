@@ -172,3 +172,18 @@ beta-cohort-check:
     cargo fmt --check
     cargo clippy --locked --workspace --lib -- -D warnings
     cargo test --locked --workspace --lib --no-fail-fast
+
+# Qualified color policy and existing exact sample/carrier regressions.
+checked-policy-check:
+    cargo fmt -p zenpng --check
+    cargo test --locked --no-default-features --test integration checked_policy::
+    cargo test --locked --no-default-features --test integration exact_transcode::
+    cargo clippy --locked --no-default-features --lib --test integration -- -D warnings
+    cargo check --locked --manifest-path fuzz/Cargo.toml --bins
+    just api-doc
+
+# Resolve both published-source graphs before the checked-policy gate.
+checked-policy-integration:
+    cargo update -p zencodec -p zencodec-testkit -p zenmeta -p zenpixels -p zenpixels-convert
+    cargo update --manifest-path fuzz/Cargo.toml -p zencodec -p zenpixels -p zenpixels-convert
+    just checked-policy-check

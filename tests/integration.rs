@@ -43,3 +43,6 @@ mod mastering_raw;
 
 #[path = "integration/exact_transcode.rs"]
 mod exact_transcode;
+
+#[path = "integration/checked_policy.rs"]
+mod checked_policy;

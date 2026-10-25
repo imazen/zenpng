@@ -770,6 +770,24 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         self
     }
 
+    fn try_set_policy(
+        &mut self,
+        policy: zencodec::encode::EncodePolicy,
+    ) -> Result<(), zencodec::UnsupportedOperation> {
+        use zencodec::{ColorEmitPolicy, encode::EncodePolicy};
+        if policy == EncodePolicy::none() {
+            return Ok(());
+        }
+        // The checked route currently qualifies exact supplied color carriers.
+        // Other fields retain their legacy setter until their effects are
+        // qualified across the still, row and animation paths.
+        if policy != EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim) {
+            return Err(zencodec::UnsupportedOperation::EncodePolicy);
+        }
+        self.policy = Some(policy);
+        Ok(())
+    }
+
     fn with_canvas_size(mut self, width: u32, height: u32) -> Self {
         self.canvas_width = width;
         self.canvas_height = height;
