@@ -110,7 +110,7 @@ pub(super) fn start(
             }
             let data = input.as_slice();
             check_progressive_policy(data, job.policy.as_ref())?;
-            let full = job.probe(data)?;
+            let mut full = job.probe(data)?;
             let output = job.output_info(data)?;
             let output_bytes = u64::from(output.width)
                 .checked_mul(u64::from(output.height))
@@ -119,7 +119,7 @@ pub(super) fn start(
             limits
                 .check_output_size(output_bytes)
                 .map_err(|e| at!(PngError::LimitExceeded(e)))?;
-            let unavailable = inspect_color(data, &full, job.policy.as_ref(), &check_stop)?;
+            let unavailable = inspect_color(data, &mut full, job.policy.as_ref(), &check_stop)?;
             let interlaced = full.is_progressive;
             ctx.set_info(full);
             ctx.set_output_descriptor(output.native_format);
@@ -171,7 +171,7 @@ pub(super) fn start(
 
 fn inspect_color(
     data: &[u8],
-    full: &ImageInfo,
+    full: &mut ImageInfo,
     policy: Option<&zencodec::decode::DecodePolicy>,
     stop: &impl Fn() -> Result<(), At<PngError>>,
 ) -> Result<Option<InterpretationUnavailable>, At<PngError>> {
@@ -179,6 +179,7 @@ fn inspect_color(
     let (mut idat, mut ended, mut icc, mut cicp, mut srgb, mut legacy) =
         (false, false, false, false, false, false);
     let mut reason = None;
+    let mut seen_color = 0u8;
     // Inspect physical carriers, including ones the lenient native probe skips.
     let mut chunks = crate::chunk::ChunkIter::new_with_config(data, true);
     while let Some(chunk) = chunks.next() {
@@ -189,6 +190,20 @@ fn inspect_color(
             b"iCCP" | b"cICP" | b"sRGB" | b"gAMA" | b"cHRM" | b"mDCV" | b"cLLI"
         );
         if color {
+            let (bit, size) = match &chunk.chunk_type {
+                b"iCCP" => (1, None),
+                b"cICP" => (2, Some(4)),
+                b"sRGB" => (4, Some(1)),
+                b"gAMA" => (8, Some(4)),
+                b"cHRM" => (16, Some(32)),
+                b"mDCV" => (32, Some(24)),
+                b"cLLI" => (64, Some(8)),
+                _ => unreachable!(),
+            };
+            if seen_color & bit != 0 || size.is_some_and(|len| chunk.data.len() != len) {
+                reason.get_or_insert(Why::IncompleteColorMetadata);
+            }
+            seen_color |= bit;
             let end = chunks.pos();
             let stored = u32::from_be_bytes(data[end - 4..end].try_into().unwrap());
             let actual = zenflate::crc32(zenflate::crc32(0, &chunk.chunk_type), chunk.data);
@@ -234,13 +249,32 @@ fn inspect_color(
                 srgb = true;
             }
             b"gAMA" | b"cHRM" => legacy = true,
-            _ => {}
+            b"gmAP" | b"gdAT" | b"gMAP" | b"gDAT" => {
+                full.supplements.gain_map = true;
+                reason.get_or_insert(Why::UnqualifiedOutput);
+            }
+            b"IHDR" | b"PLTE" | b"tRNS" | b"sBIT" | b"bKGD" | b"hIST" | b"pHYs" | b"sPLT"
+            | b"tIME" | b"eXIf" | b"tEXt" | b"zTXt" | b"iTXt" | b"acTL" | b"fcTL" | b"fdAT"
+            | b"iDOT" | b"mDCV" | b"cLLI" => {}
+            _ => {
+                // The still-image operation cannot prove an unknown extension
+                // contains no reconstruction or auxiliary image data.
+                full.supplements.auxiliary = true;
+                reason.get_or_insert(Why::UnqualifiedOutput);
+            }
         }
     }
     if !ended || !idat {
         return Err(at!(PngError::Truncated(
             "controlled PNG needs complete IDAT and IEND".into()
         )));
+    }
+    if chunks.pos() != data.len() {
+        full.supplements.auxiliary = true;
+        reason.get_or_insert(Why::UnqualifiedOutput);
+    }
+    if !full.supplements.gain_map && !full.supplements.auxiliary {
+        full.gain_map = zencodec::GainMapPresence::Absent;
     }
     if icc && policy.is_some_and(|p| p.allow_icc == Some(false)) {
         reason.get_or_insert(Why::ForbiddenColorMetadata);

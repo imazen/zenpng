@@ -54,3 +54,23 @@ The separate fuzz graph and API snapshot gate also pass (`just
 controlled-integration`, rc=0, 4 s, peak RSS 0.30 GiB, minimum available
 17356 MiB, peak load 0.32). No binary fixtures or generated image outputs
 were added; the tests author metadata mutations in memory.
+
+## Gain-map discovery scope
+
+Final discovery marks gain maps absent only after scanning an entire PNG
+datastream with a recognized chunk vocabulary and no trailing bytes. Android's
+`gmAP`/`gdAT` and proposed `gMAP`/`gDAT` carriers refuse this primary-only route;
+the nested image is not silently discarded. Unknown chunks also refuse because
+this route cannot establish whether an extension carries reconstruction data.
+That limitation can be replaced by an explicit scoped discovery/disclosure
+choice once such an executing adapter exists. Ordinary native decode behavior
+is unchanged.
+
+Source checked 2026-10-25: [Android HDR screenshots](https://source.android.com/docs/core/graphics/hdr-screenshots)
+documents the nested PNG and ISO metadata layout; the [PNG gain-map proposal](https://github.com/w3c/png/issues/380)
+uses the public chunk spellings. Tests cover each carrier before/after IDAT,
+unknown ancillary/critical extensions and trailing data.
+
+Discovery qualification: `just controlled-check` passes with gain-map/extension
+controls and malformed or duplicate legacy/HDR carriers (2026-10-25, rc=0,
+2 s; run-heavy peak RSS 0.35 GiB, minimum available 17285 MiB, peak load 0.57).

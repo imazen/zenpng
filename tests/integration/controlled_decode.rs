@@ -613,3 +613,39 @@ fn native_hdr_and_icc_keep_exact_samples_and_reported_interpretation() {
     );
     assert_eq!(sink.calls.get(), 0);
 }
+
+#[test]
+fn auxiliary_and_unknown_chunks_cannot_be_mistaken_for_absent_gain_maps() {
+    let bytes = fixture("rgb8_n2");
+    for tag in [b"gmAP", b"gdAT", b"gMAP", b"gDAT", b"vpAg", b"CgBI"] {
+        for late in [false, true] {
+            unavailable(
+                &insert(bytes.clone(), tag, &[], late),
+                InterpretationUnavailable::UnqualifiedOutput,
+            );
+        }
+    }
+    let mut trailing = bytes;
+    trailing.extend_from_slice(b"uninspected suffix");
+    unavailable(&trailing, InterpretationUnavailable::UnqualifiedOutput);
+}
+
+#[test]
+fn malformed_hdr_and_duplicate_legacy_carriers_are_unavailable() {
+    let bytes = fixture("rgb8_n2");
+    for tag in [b"gAMA", b"cHRM", b"mDCV", b"cLLI"] {
+        unavailable(
+            &insert(bytes.clone(), tag, &[], false),
+            InterpretationUnavailable::IncompleteColorMetadata,
+        );
+    }
+    unavailable(
+        &insert(
+            insert(bytes, b"gAMA", &45455u32.to_be_bytes(), false),
+            b"gAMA",
+            &45455u32.to_be_bytes(),
+            false,
+        ),
+        InterpretationUnavailable::IncompleteColorMetadata,
+    );
+}

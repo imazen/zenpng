@@ -538,3 +538,11 @@ removes the carrier. Verified with image-png pixel decoding and packet presence.
 
 The native unsupported-operation variant did not expose its shared cause through
 `Error::source`. `exact_timing_refusal_survives_erasure` now tests this contract.
+
+## Known Bugs: controlled PNG discovery (2026-10-25)
+
+The first controlled adapter left gain-map presence unknown and the checked
+transcoder correctly refused ordinary PNG input. Controlled final discovery now
+scans recognized PNG chunks before marking absence. Gain-map carriers, unknown
+extensions and trailing bytes refuse; no auxiliary image is silently discarded.
+Scope and primary-source references are in docs/controlled-decoding.md.
