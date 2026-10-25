@@ -374,7 +374,7 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.1.27"
-source = "git+https://github.com/imazen/zencodec?rev=78fe667c0532c87c0401a5fd28b03ebace713844#78fe667c0532c87c0401a5fd28b03ebace713844"
+source = "git+https://github.com/imazen/zencodec?rev=939d5628b5abfd7e55f5e926278cfe38678c9a38#939d5628b5abfd7e55f5e926278cfe38678c9a38"
 dependencies = [
  "almost-enough",
  "enough",

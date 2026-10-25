@@ -84,3 +84,10 @@ and independent sample equality; no pixels are transformed by this correction.
 
 GrayAlpha16 qualification: `just controlled-check` passes (2026-10-25, rc=0,
 3 s; run-heavy peak RSS 0.31 GiB, minimum available 17340 MiB, peak load 0.42).
+
+The coroutine dependency at zencodec `939d5628` honors a sink's admitted row
+capacity by splitting delivery of larger native batches. This does not shrink
+the held native batch or inflate workspace. Native integration, no-default
+checks, fuzz compilation and API snapshots pass after that update (`just
+controlled-build controlled-integration`, rc=0, 24 s; run-heavy peak RSS
+0.62 GiB, minimum available 15087 MiB, peak load 2.42).
