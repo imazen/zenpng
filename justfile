@@ -208,3 +208,9 @@ controlled-integration:
     cargo update --manifest-path fuzz/Cargo.toml -p zenpng
     cargo check --locked --manifest-path fuzz/Cargo.toml --bins
     just api-doc
+
+# Required pHYs density through generic, dynamic, registered, row and APNG paths.
+resolution-check:
+    cargo test --locked --no-default-features --test required_resolution
+    cargo test --locked --test required_resolution
+    cargo clippy --locked --no-default-features --lib --test required_resolution -- -D warnings

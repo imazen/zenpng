@@ -791,6 +791,27 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         Ok(())
     }
 
+    fn try_set_resolution(
+        &mut self,
+        resolution: zencodec::Resolution,
+    ) -> Result<(), zencodec::ResolutionError> {
+        use zencodec::ResolutionUnit;
+        let (unit, native) = match resolution.unit {
+            ResolutionUnit::Unknown => (ResolutionUnit::Unknown, crate::PhysUnit::Unknown),
+            ResolutionUnit::Inch | ResolutionUnit::Centimeter | ResolutionUnit::Meter => {
+                (ResolutionUnit::Meter, crate::PhysUnit::Meter)
+            }
+            _ => return Err(zencodec::ResolutionError::Unsupported),
+        };
+        // pHYs uses PNG four-byte unsigned integers, limited by the format to
+        // 2^31 - 1. Compute both fields before mutating the reusable job.
+        let (x, y) = resolution.try_integer_density(unit, i32::MAX as u32)?;
+        self.config.config.pixels_per_unit_x = Some(x);
+        self.config.config.pixels_per_unit_y = Some(y);
+        self.config.config.phys_unit = Some(native);
+        Ok(())
+    }
+
     fn with_canvas_size(mut self, width: u32, height: u32) -> Self {
         self.canvas_width = width;
         self.canvas_height = height;

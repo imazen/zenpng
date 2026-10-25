@@ -21,6 +21,11 @@ All notable changes to zenpng are documented here.
 
 ### Added
 
+- Checked required pHYs density through generic, erased and registered jobs,
+  including row encoding and APNG. Exact physical-unit conversion and reduced
+  unknown-unit aspect refuse rounding, invalid values and 31-bit carrier overflow.
+  [Contract and verification](docs/required-resolution.md).
+
 - Optional controlled PNG decoding suspends before native reconstruction, checks
   recognized color carriers and exposes final late EXIF before adoption. Native
   row/Adam7 output is qualified against an independent decoder. Whole compressed

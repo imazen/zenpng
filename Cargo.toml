@@ -18,8 +18,8 @@ include = [
 ]
 
 [dependencies]
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "939d5628b5abfd7e55f5e926278cfe38678c9a38", optional = true }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "939d5628b5abfd7e55f5e926278cfe38678c9a38", default-features = false, features = ["rewrite"], optional = true }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "008b93c31c57578874cc7518a32f996454dd6694", optional = true }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "008b93c31c57578874cc7518a32f996454dd6694", default-features = false, features = ["rewrite"], optional = true }
 thiserror = { version = "2.0", default-features = false }
 rgb = { version = "0.8", default-features = false, features = ["as-bytes"] }
 imgref = "1.12"
@@ -48,7 +48,7 @@ almost-enough = { version = "0.4.2", features = ["std"] }
 rustix = { version = "1.1.5", default-features = false, features = ["std", "thread"] }
 
 [dev-dependencies]
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "939d5628b5abfd7e55f5e926278cfe38678c9a38", features = ["std"] }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "008b93c31c57578874cc7518a32f996454dd6694", features = ["std"] }
 png = "0.18"
 # image-rs/image-png main, for benches/vs_png.rs (pinned commit; 2026-10-05).
 png_main = { package = "png", git = "https://github.com/image-rs/image-png", rev = "b2f10c6a7e3127d4aaf231f3eae731a33e6eb0bc" }
@@ -191,8 +191,8 @@ required-features = ["_dev"]
 
 [patch.crates-io]
 # Coordinated exact animation timing series; one source for shared types.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "939d5628b5abfd7e55f5e926278cfe38678c9a38" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "939d5628b5abfd7e55f5e926278cfe38678c9a38" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "008b93c31c57578874cc7518a32f996454dd6694" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "008b93c31c57578874cc7518a32f996454dd6694" }
 zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "f8596aae7a16aec7875b6fe2ef39b501c11a0e82" }
 zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "f8596aae7a16aec7875b6fe2ef39b501c11a0e82" }
 # Retain main's strip-compression API source.
