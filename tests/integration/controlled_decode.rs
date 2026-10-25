@@ -649,3 +649,37 @@ fn malformed_hdr_and_duplicate_legacy_carriers_are_unavailable() {
         InterpretationUnavailable::IncompleteColorMetadata,
     );
 }
+
+#[test]
+fn gray_alpha_sixteen_reports_the_same_default_transfer_as_other_png_layouts() {
+    use zencodec::decode::StreamingDecode;
+    for bytes in [
+        fixture("ga16_n2"),
+        insert(fixture("gray16_n2"), b"tRNS", &[0, 1], false),
+    ] {
+        let descriptor = PixelDescriptor::GRAYA16_SRGB;
+        let config = PngDecoderConfig::new();
+        assert_eq!(
+            config
+                .clone()
+                .job()
+                .output_info(&bytes)
+                .unwrap()
+                .native_format,
+            descriptor
+        );
+        let image = config.clone().decode(&bytes).unwrap();
+        assert_eq!(image.pixels().descriptor(), descriptor);
+        assert_eq!(
+            image.pixels().contiguous_bytes().as_ref(),
+            independent(&bytes)
+        );
+        let mut stream = config
+            .job()
+            .streaming_decoder(bytes.as_slice().into(), &[])
+            .unwrap();
+        while let Some((_, rows)) = stream.next_batch().unwrap() {
+            assert_eq!(rows.descriptor(), descriptor);
+        }
+    }
+}

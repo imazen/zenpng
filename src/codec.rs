@@ -17,7 +17,7 @@ use zencodec::decode::{AnimationFrame, DecodeCapabilities, DecodeOutput, OutputI
 use zencodec::encode::{EncodeCapabilities, EncodeOutput};
 use zencodec::{CodecError, ImageFormat, ImageInfo, Metadata, ResourceLimits};
 use zenpixels::{
-    AlphaMode, ColorPrimaries, Pixel, PixelDescriptor, PixelSlice, PixelSliceMut, TransferFunction,
+    AlphaMode, ColorPrimaries, PixelDescriptor, PixelSlice, PixelSliceMut, TransferFunction,
 };
 
 use crate::decode::PngDecodeConfig;
@@ -3462,7 +3462,7 @@ impl PngDecoder<'_> {
 fn native_output_descriptor(color_type: u8, bit_depth: u8, has_trns: bool) -> PixelDescriptor {
     match (color_type, bit_depth, has_trns) {
         (0, 16, false) => PixelDescriptor::GRAY16_SRGB,
-        (0, 16, true) => GrayAlpha16::DESCRIPTOR, // GRAYA16
+        (0, 16, true) => PixelDescriptor::GRAYA16_SRGB,
         (0, _, false) => PixelDescriptor::GRAY8_SRGB,
         (0, _, true) => PixelDescriptor::RGBA8_SRGB,
         (2, 16, false) => PixelDescriptor::RGB16_SRGB,
@@ -3471,7 +3471,7 @@ fn native_output_descriptor(color_type: u8, bit_depth: u8, has_trns: bool) -> Pi
         (2, 8, true) => PixelDescriptor::RGBA8_SRGB,
         (3, _, true) => PixelDescriptor::RGBA8_SRGB,
         (3, _, false) => PixelDescriptor::RGB8_SRGB,
-        (4, 16, _) => GrayAlpha16::DESCRIPTOR, // GRAYA16
+        (4, 16, _) => PixelDescriptor::GRAYA16_SRGB,
         (4, 8, _) => PixelDescriptor::RGBA8_SRGB,
         (6, 16, _) => PixelDescriptor::RGBA16_SRGB,
         (6, 8, _) => PixelDescriptor::RGBA8_SRGB,
@@ -4235,7 +4235,8 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
 // ── Pixel format negotiation ─────────────────────────────────────────
 
 use rgb::{Gray, Rgb, Rgba};
-use zenpixels::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer};
+use zenpixels::GrayAlpha16;
+use zenpixels::{ChannelLayout, ChannelType, PixelBuffer};
 use zenpixels_convert::{PixelBufferConvertExt as _, PixelBufferConvertTypedExt as _};
 
 /// Negotiate output format from the caller's preference list and convert.

@@ -74,3 +74,13 @@ unknown ancillary/critical extensions and trailing data.
 Discovery qualification: `just controlled-check` passes with gain-map/extension
 controls and malformed or duplicate legacy/HDR carriers (2026-10-25, rc=0,
 2 s; run-heavy peak RSS 0.35 GiB, minimum available 17285 MiB, peak load 0.57).
+
+End-to-end integration exposed a GrayAlpha16 descriptor inconsistency: the
+ordinary adapter used the element type's unknown transfer rather than the same
+sRGB assumption as other untagged integer PNG layouts. Gray16+tRNS and gray-alpha16
+now report GRAYA16_SRGB in probe-output, one-shot and row paths. Explicit cICP
+still overrides that assumption. The regression test checks native descriptors
+and independent sample equality; no pixels are transformed by this correction.
+
+GrayAlpha16 qualification: `just controlled-check` passes (2026-10-25, rc=0,
+3 s; run-heavy peak RSS 0.31 GiB, minimum available 17340 MiB, peak load 0.42).

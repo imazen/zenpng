@@ -76,6 +76,9 @@ All notable changes to zenpng are documented here.
   declared frame count binds either way (`tests/animation_streaming.rs`).
 
 ### Fixed
+- Untagged GrayAlpha16 and gray16+tRNS output now report the same sRGB transfer
+  assumption as other integer PNG layouts. Probe-output, one-shot and row
+  descriptors agree; independently decoded sample bytes remain exact.
 - `EncodeConfig::with_text` wrote the text's UTF-8 bytes into `tEXt`, which holds Latin-1, so a non-ASCII character read back as two wrong ones. Text that fits Latin-1 is now encoded as Latin-1; text with a character outside it is written as an uncompressed `iTXt` (UTF-8). Test `tests/text_chunks.rs`.
 
 - Grey-valued RGB pixels written with an RGB ICC profile were reduced to a greyscale PNG that still carried the RGB iCCP, which the PNG spec forbids and readers reject or ignore. The grey reductions are now off when an RGB profile will be written. Test: `grey_pixels_with_an_rgb_icc_stay_rgb`.

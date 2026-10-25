@@ -546,3 +546,11 @@ transcoder correctly refused ordinary PNG input. Controlled final discovery now
 scans recognized PNG chunks before marking absence. Gain-map carriers, unknown
 extensions and trailing bytes refuse; no auxiliary image is silently discarded.
 Scope and primary-source references are in docs/controlled-decoding.md.
+
+## Known Bugs: GrayAlpha16 transfer (2026-10-25)
+
+Fixed on the checked API review branch: both gray16+tRNS and gray-alpha16 used
+the pixel element type's Unknown-transfer descriptor while other untagged PNG
+integer layouts use the adapter's sRGB assumption. Native output_info, one-shot,
+row and controlled paths now agree on GRAYA16_SRGB. Explicit cICP enrichment
+still overrides it. Exact sample comparisons against image-png remain unchanged.
