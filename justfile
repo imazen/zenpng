@@ -187,3 +187,24 @@ checked-policy-integration:
     cargo update -p zencodec -p zencodec-testkit -p zenmeta -p zenpixels -p zenpixels-convert
     cargo update --manifest-path fuzz/Cargo.toml -p zencodec -p zenpixels -p zenpixels-convert
     just checked-policy-check
+
+# Controlled PNG starts native reconstruction only after required adoption.
+controlled-build:
+    cargo update -p zenpng
+    cargo check --features controlled-decode --lib --locked
+
+controlled-check:
+    cargo fmt -p zenpng --check
+    cargo test --locked --features controlled-decode --test integration
+    cargo clippy --locked --no-default-features --features controlled-decode --lib --test integration -- -D warnings
+    cargo check --locked --no-default-features --features controlled-decode --lib
+
+controlled-sync destination:
+    rsync -a --exclude='.git/' --exclude='.jj/' --exclude='.workongoing' --exclude='target/' --exclude='Cargo.lock' ./ {{destination}}/
+
+# Resolve the optional coroutine in the separate fuzz graph and snapshot API.
+controlled-integration:
+    just controlled-check
+    cargo update --manifest-path fuzz/Cargo.toml -p zenpng
+    cargo check --locked --manifest-path fuzz/Cargo.toml --bins
+    just api-doc

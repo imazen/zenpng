@@ -1,5 +1,5 @@
 # zenpng public API — additions from non-default features
-# features: avx512,cms,imagequant,inventory,joint,metadata-rewrite,quantette,quantize,unchecked,zencodec,zopfli
+# features: avx512,cms,controlled-decode,imagequant,inventory,joint,metadata-rewrite,quantette,quantize,unchecked,zencodec,zopfli
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -12,16 +12,16 @@
 #   pub modules                                 1
 #   pub types (struct/enum/trait/alias)         2
 #   free functions                              1
-#   inherent methods                            9
+#   inherent methods                           10
 #   struct fields                               8
 #   trait roster entries (type × trait)         8
 #   auto-trait-complete types                   2
 #
 # per-module pub lines:
-#   (root)                           20
+#   (root)                           21
 #   metadata                          1
 
-## items (21 lines)
+## items (22 lines)
 
 pub mod metadata
 pub fn metadata::rewrite<'a>(&zencodec::metadata_rewrite::Request<'a>) -> core::result::Result<zencodec::metadata_rewrite::Plan<'a>, zencodec::metadata_rewrite::Error>
@@ -34,6 +34,7 @@ pub fn ImagequantQuantizer::with_dithering(self, f32) -> Self
 pub fn ImagequantQuantizer::with_max_colors(self, u16) -> Self
 pub fn ImagequantQuantizer::with_max_quality(self, u8) -> Self
 pub fn ImagequantQuantizer::with_speed(self, i32) -> Self
+pub fn PngDecodeJob::dyn_controlled_decoder(self, &[zenpixels::descriptor::PixelDescriptor], zencodec::storage::StorageBudget) -> core::result::Result<alloc::boxed::Box<zencodec::traits::control::DynControlledDecoder>, zencodec::traits::BoxedError>
 pub fn PngDecodeJob::inventory(&self, &[u8]) -> core::result::Result<zencodec::inventory::Inventory, whereat::at::At<zencodec::error::CodecError>>
 pub struct QuantetteQuantizer
 pub QuantetteQuantizer::dithering: bool

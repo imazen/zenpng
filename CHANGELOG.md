@@ -21,6 +21,11 @@ All notable changes to zenpng are documented here.
 
 ### Added
 
+- Optional controlled PNG decoding suspends before native reconstruction, checks
+  recognized color carriers and exposes final late EXIF before adoption. Native
+  row/Adam7 output is qualified against an independent decoder. Whole compressed
+  input is retained; see `docs/controlled-decoding.md` for storage and sequence limits.
+
 - Checked verbatim color policy on encode jobs, preserving supplied ICC authority
   through still, row and APNG paths. Other explicit policy fields currently
   refuse without mutating the job. Independent PNG inspection checks carrier

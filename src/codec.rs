@@ -6,6 +6,9 @@
 
 extern crate std;
 
+#[cfg(feature = "controlled-decode")]
+mod controlled;
+
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
@@ -3287,6 +3290,18 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
         preferred: &[PixelDescriptor],
     ) -> Result<OutputInfo, At<CodecError>> {
         push_decoder_native(self, data, sink, preferred)
+    }
+
+    #[cfg(feature = "controlled-decode")]
+    fn dyn_controlled_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+        storage: zencodec::storage::StorageBudget,
+    ) -> Result<
+        alloc::boxed::Box<zencodec::decode::DynControlledDecoder>,
+        zencodec::decode::BoxedError,
+    > {
+        controlled::start(self, preferred, storage)
     }
 
     /// Incremental (sans-I/O) decode: the header is reported as soon as it
