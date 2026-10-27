@@ -13,7 +13,7 @@ zencodec `Encoder::push_rows` + `finish` picks a mode on the first push:
 
 | Mode | When | Streams? | Memory |
 |---|---|---|---|
-| Stored (`TrueStreaming`) | effort 0, canvas height set | yes: stored DEFLATE rows appended as they arrive | output (≈ raw size) |
+| Stored (`TrueStreaming`) | effort 0, canvas height set | yes: stored DEFLATE rows appended as they arrive | output (≈ raw size); after `begin`, the output not yet taken ([ENCODE_PLANNING.md](ENCODE_PLANNING.md)) |
 | Strips | effort 1-15, canvas height set, **every downcast off**, near-lossless 0, no `iDOT` segments, image ≥ 2 strips (≥ ~1 MiB of filtered rows) | yes: each ~512 KiB strip is screened, refined and compressed when its last row arrives; with `parallel`, on a worker pool (≤ 2 strips per thread in flight) | one strip of rows + output (+ in-flight strips when parallel) |
 | Pre-filtered | effort 1, canvas height set, strips not applicable | filter pass only; compresses in `finish()` | filtered image |
 | Buffered | everything else: effort ≥ 16, no canvas height, downcasts on (the default), near-lossless, `iDOT`, small images | no: rows are copied, `finish()` runs the one-shot encoder | raw image copy + one-shot working set |

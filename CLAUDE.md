@@ -569,3 +569,6 @@ shares `prepare_rows` with `begin_declared`; `tests/row_planning.rs` compares th
 effort/geometry/colour/access/threading/downcast cells. Strip streaming needs
 `DowncastFlags::none()` (downcast analysis is whole-image), so default configs stream only
 at effort 0. Strip lag depends on the resolved worker count (host-dependent timing).
+Planning measured with heaptrack (`docs/ENCODE_PLANNING.md`): no planned peak above the
+prepared jobs', no strip workers. The same probe found effort-0 `begin` reserving the whole
+stored file (12.6 MB at 2048x2048 RGB8) although its bytes stream; it now reserves the header.

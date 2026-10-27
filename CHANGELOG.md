@@ -25,6 +25,10 @@ All notable changes to zenpng are documented here.
   `begin` and first-row encodes; `tests/source_color_binding.rs` reproduced 4 of
   5 cases with image-png before the fix. The descriptor-derived cICP is still
   written without a companion iCCP.
+- Effort-0 row encodes reserved the whole stored file at `begin` (12.6 MB for
+  a 2048x2048 RGB8 image) although their bytes are handed out as written. They
+  now reserve the header; rows pushed without `begin` still reserve the file
+  `finish` returns. Output bytes are unchanged.
 
 ### Added
 
@@ -33,6 +37,10 @@ All notable changes to zenpng are documented here.
   allocating rows or starting strip workers (`StripStream::plan`). The
   constructed mode is checked against the plan before any byte is handed out.
   Strip timing depends on the resolved worker count. `PngEncodeJob` is `Clone`.
+  `docs/ENCODE_PLANNING.md` records the row modes and a heaptrack probe
+  (`examples/encode_planning_probe.rs`): no planned peak exceeded the prepared
+  jobs'; after `begin` of one 2048x2048 job the whole-process peak was
+  84,057 B stored and 30.9 MB with parallel strips.
 
 ### Dependency compatibility
 
