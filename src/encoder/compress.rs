@@ -1643,6 +1643,40 @@ fn strip_error(e: zenflate::CompressionError) -> whereat::At<PngError> {
     }
 }
 
+/// What [`StripStream::new`] decides before it allocates or spawns.
+pub(crate) struct StripPlan {
+    bounds: Vec<(usize, usize)>,
+    threads: usize,
+    /// The pool's in-flight cap, used only when [`pooled`](Self::pooled).
+    pool_in_flight: usize,
+}
+
+impl StripPlan {
+    /// Whether the strips run on a worker pool.
+    fn pooled(&self) -> bool {
+        self.threads > 1 && !cfg!(target_arch = "wasm32")
+    }
+
+    /// The output lag the planned stream reports.
+    pub(crate) fn lag_rows(&self) -> u32 {
+        lag_rows(
+            &self.bounds,
+            if self.pooled() {
+                self.pool_in_flight
+            } else {
+                0
+            },
+        )
+    }
+}
+
+/// The most rows pushed whose compressed bytes may not be written yet: the
+/// strip being filled, plus the strips in flight.
+fn lag_rows(bounds: &[(usize, usize)], in_flight: usize) -> u32 {
+    let rows = bounds.iter().map(|&(a, b)| b - a).max().unwrap_or(0);
+    (rows * (1 + in_flight)).saturating_sub(1) as u32
+}
+
 impl StripStream {
     /// `None` unless `effort` is one [`compress_strips`] runs
     /// ([`EffortParams::strips_apply`]) and the image spans at least two
@@ -1660,34 +1694,17 @@ impl StripStream {
         cancel: Option<zencodec::StopToken>,
         framing: StripFraming,
     ) -> Option<Self> {
-        if effort == 0 {
-            return None;
-        }
+        let plan = Self::plan(effort, format, row_bytes, height, threads, framing)?;
         let params = EffortParams::from_effort_and_bpp(effort, format.bpp);
-        if !params.strips_apply() {
-            return None;
-        }
-        let (bounds, _) = strip_bounds(row_bytes + 1, height, &[]);
-        if bounds.len() < 2 {
-            return None;
-        }
         let header =
             zenflate::png::StripCompressor::new(params.screen_effort.level()).zlib_header();
-        let mut threads = strip_threads(bounds.len(), effort, threads);
-        // Streaming output promises a lag below the height: the strips in
-        // flight plus the one filling must leave at least one row out.
-        let max_rows = bounds.iter().map(|&(a, b)| b - a).max().unwrap_or(0);
-        let in_flight_cap = ((height - 1) / max_rows.max(1)).saturating_sub(1);
-        if framing == StripFraming::ChunkPerStrip && in_flight_cap == 0 {
-            threads = 1;
+        let mut pool = plan
+            .pooled()
+            .then(|| StripPool::new(plan.threads, effort, format, row_bytes, cancel));
+        if let Some(p) = pool.as_mut() {
+            p.max_in_flight = plan.pool_in_flight;
         }
-        let mut pool = (threads > 1 && !cfg!(target_arch = "wasm32"))
-            .then(|| StripPool::new(threads, effort, format, row_bytes, cancel));
-        if framing == StripFraming::ChunkPerStrip
-            && let Some(p) = pool.as_mut()
-        {
-            p.max_in_flight = p.max_in_flight.min(in_flight_cap);
-        }
+        let bounds = plan.bounds;
         Some(Self {
             worker: StripWorker::new(&params),
             rows: Vec::with_capacity((bounds[0].1 + 1) * row_bytes),
@@ -1703,13 +1720,55 @@ impl StripStream {
         })
     }
 
+    /// The strips, worker threads and in-flight cap [`new`](Self::new)
+    /// would use, without allocating rows or starting workers: `None` when
+    /// `new` would return `None`.
+    pub(crate) fn plan(
+        effort: u32,
+        format: RowFormat,
+        row_bytes: usize,
+        height: usize,
+        threads: usize,
+        framing: StripFraming,
+    ) -> Option<StripPlan> {
+        if effort == 0 {
+            return None;
+        }
+        let params = EffortParams::from_effort_and_bpp(effort, format.bpp);
+        if !params.strips_apply() {
+            return None;
+        }
+        let (bounds, _) = strip_bounds(row_bytes + 1, height, &[]);
+        if bounds.len() < 2 {
+            return None;
+        }
+        let mut threads = strip_threads(bounds.len(), effort, threads);
+        // Streaming output promises a lag below the height: the strips in
+        // flight plus the one filling must leave at least one row out.
+        let max_rows = bounds.iter().map(|&(a, b)| b - a).max().unwrap_or(0);
+        let in_flight_cap = ((height - 1) / max_rows.max(1)).saturating_sub(1);
+        if framing == StripFraming::ChunkPerStrip && in_flight_cap == 0 {
+            threads = 1;
+        }
+        let mut pool_in_flight = 2 * threads;
+        if framing == StripFraming::ChunkPerStrip {
+            pool_in_flight = pool_in_flight.min(in_flight_cap);
+        }
+        Some(StripPlan {
+            bounds,
+            threads,
+            pool_in_flight,
+        })
+    }
+
     /// The most rows pushed whose compressed bytes may not be written yet:
     /// the strip being filled, plus, with worker threads, the strips in
     /// flight.
     pub(crate) fn lag_rows(&self) -> u32 {
-        let rows = self.bounds.iter().map(|&(a, b)| b - a).max().unwrap_or(0);
-        let strips = 1 + self.pool.as_ref().map_or(0, |p| p.max_in_flight);
-        (rows * strips).saturating_sub(1) as u32
+        lag_rows(
+            &self.bounds,
+            self.pool.as_ref().map_or(0, |p| p.max_in_flight),
+        )
     }
 
     /// Write strip `k`'s compressed bytes `z`; `adler` already includes it.
