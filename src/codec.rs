@@ -2120,6 +2120,9 @@ impl PngEncoder {
         let bpp = channels * depth_bytes;
         if effort == 0 && self.canvas_height > 0 {
             // True streaming: write PNG header and IDAT incrementally.
+            // `begin` streams the output (one chunk per strip for strip
+            // modes); rows pushed without it produce the file at `finish`.
+            let streams_output = framing == crate::encoder::compress::StripFraming::ChunkPerStrip;
             self.streaming = Some(StreamingMode::TrueStreaming(TrueStreamingState::new(
                 self.canvas_width,
                 self.canvas_height,
@@ -2129,6 +2132,7 @@ impl PngEncoder {
                 self.metadata.as_ref(),
                 self.policy.as_ref(),
                 &self.config.config,
+                streams_output,
             )?));
         } else if let Some(state) =
             self.strip_streaming_state(color_type, bit_depth, row_bytes, bpp, framing)?
@@ -5193,7 +5197,9 @@ fn append_png_rows(
 
 impl TrueStreamingState {
     /// Initialize true streaming state: write PNG signature, IHDR, and metadata,
-    /// then start the IDAT chunk with a zlib header.
+    /// then start the IDAT chunk with a zlib header. With `streams_output`
+    /// (after `begin`) bytes are handed out as they are written, so only the
+    /// header is reserved; otherwise the whole file is, as `finish` returns it.
     #[allow(clippy::too_many_arguments)]
     fn new(
         width: u32,
@@ -5204,6 +5210,7 @@ impl TrueStreamingState {
         metadata: Option<&Metadata>,
         policy: Option<&zencodec::encode::EncodePolicy>,
         config: &EncodeConfig,
+        streams_output: bool,
     ) -> Result<Self, At<PngError>> {
         use crate::chunk::{PNG_SIGNATURE, write::write_chunk};
         use crate::encoder::{metadata_size_estimate, write_all_metadata};
@@ -5231,7 +5238,13 @@ impl TrueStreamingState {
         let effective_meta = apply_encode_policy(metadata, policy, Some(color_type.channels()))?;
         let write_meta = crate::encode::png_write_meta(effective_meta.as_ref(), config)?;
 
-        let est = 8 + 25 + (12 + idat_data_len) + 12 + metadata_size_estimate(&write_meta);
+        // Signature, IHDR, metadata, IDAT length and type, zlib header.
+        let header = 8 + 25 + metadata_size_estimate(&write_meta) + 8 + 2;
+        let est = if streams_output {
+            header
+        } else {
+            8 + 25 + (12 + idat_data_len) + 12 + metadata_size_estimate(&write_meta)
+        };
         let mut output = Vec::with_capacity(est);
 
         // PNG signature
