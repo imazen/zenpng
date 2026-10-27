@@ -1,6 +1,6 @@
 #![cfg(feature = "metadata-rewrite")]
 // Reused unchanged expectations from zencodecs at aa21cba0.
-use zencodec::metadata_rewrite::{Action, Error, Request as ScrubRequest};
+use zencodec::metadata_rewrite::{Action, Error, RewriteRequest as ScrubRequest};
 trait PlanRequest<'a> {
     fn plan(&self) -> Result<zencodec::metadata_rewrite::Plan<'a>, Error>;
 }
@@ -211,7 +211,8 @@ fn timeout_survives_each_crc_and_container_poll() {
         polls: AtomicUsize::new(0),
         at: usize::MAX,
     };
-    zenpng::metadata::rewrite(&ScrubRequest::new(&input).with_stop(&count)).unwrap();
+    let pulse = zencodec::how_far::StopOnly::borrowed(&count);
+    zenpng::metadata::rewrite(&ScrubRequest::new(&input).with_pulse(&pulse)).unwrap();
     for at in 0..count.polls.load(Ordering::Relaxed) {
         let deadline = Deadline {
             polls: AtomicUsize::new(0),
@@ -219,7 +220,10 @@ fn timeout_survives_each_crc_and_container_poll() {
         };
         assert!(
             matches!(
-                zenpng::metadata::rewrite(&ScrubRequest::new(&input).with_stop(&deadline)),
+                zenpng::metadata::rewrite(
+                    &ScrubRequest::new(&input)
+                        .with_pulse(&zencodec::how_far::StopOnly::borrowed(&deadline))
+                ),
                 Err(Error::Stopped(enough::StopReason::TimedOut))
             ),
             "poll {at}"

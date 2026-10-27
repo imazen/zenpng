@@ -314,7 +314,6 @@ fn refusal_and_callback_unwind_release_input_without_sink_effects() {
 
 #[test]
 fn late_orientation_is_final_before_native_decode_and_resume_is_mandatory() {
-    use enough::Unstoppable;
     use zencodec::decode::BoundaryAction;
     use zencodec_io::{ControlledEvent, ControlledStepper, SliceCursor};
     let exif = [
@@ -333,7 +332,7 @@ fn late_orientation_is_final_before_native_decode_and_resume_is_mandatory() {
     for state in [InterpretationState::Provisional, InterpretationState::Final] {
         let boundary = loop {
             if let ControlledEvent::Suspended(b) = cursor
-                .next(&bytes, &mut stage, &Unstoppable)
+                .next(&bytes, &mut stage, &zencodec::NoPulse)
                 .unwrap()
                 .into_inner()
             {
@@ -345,7 +344,7 @@ fn late_orientation_is_final_before_native_decode_and_resume_is_mandatory() {
         let reads = cursor.stats().bytes_read;
         for _ in 0..3 {
             let ControlledEvent::Suspended(repeated) = cursor
-                .next(&bytes, &mut stage, &Unstoppable)
+                .next(&bytes, &mut stage, &zencodec::NoPulse)
                 .unwrap()
                 .into_inner()
             else {
@@ -368,11 +367,13 @@ fn late_orientation_is_final_before_native_decode_and_resume_is_mandatory() {
             );
             BoundaryAction::AdoptInterpretation
         };
-        stage.resume(boundary.id(), action, &Unstoppable).unwrap();
+        stage
+            .resume(boundary.id(), action, &zencodec::NoPulse)
+            .unwrap();
     }
     loop {
         if cursor
-            .next(&bytes, &mut stage, &Unstoppable)
+            .next(&bytes, &mut stage, &zencodec::NoPulse)
             .unwrap()
             .is_finished()
         {
@@ -455,24 +456,25 @@ fn cancellation_at_either_suspension_drops_native_input() {
         let mut stage = ControlledStepper::new(session, &mut sink);
         let mut cursor = SliceCursor::new(7);
         let cancel = Cancel(Arc::new(AtomicBool::new(false)));
+        let pulse = zencodec::how_far::StopOnly::borrowed(&cancel);
         let mut decisions = 0;
         loop {
             if let ControlledEvent::Suspended(b) = cursor
-                .next(&bytes, &mut stage, &cancel)
+                .next(&bytes, &mut stage, &pulse)
                 .unwrap()
                 .into_inner()
             {
                 decisions += 1;
                 if decisions == when {
                     cancel.0.store(true, Ordering::Relaxed);
-                    assert!(cursor.next(&bytes, &mut stage, &cancel).is_err());
+                    assert!(cursor.next(&bytes, &mut stage, &pulse).is_err());
                     break;
                 }
                 stage
                     .resume(
                         b.id(),
                         zencodec::decode::BoundaryAction::ContinueReading,
-                        &cancel,
+                        &pulse,
                     )
                     .unwrap();
             }
@@ -552,6 +554,7 @@ fn recognized_carriers_cannot_disappear_through_lenient_parsing() {
     );
 }
 #[test]
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn native_hdr_and_icc_keep_exact_samples_and_reported_interpretation() {
     use zencodec::decode::DecodePolicy;
     let profile = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;

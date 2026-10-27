@@ -739,7 +739,7 @@ impl zencodec::encode::EncoderConfig for PngEncoderConfig {
 /// Per-operation PNG encode job.
 pub struct PngEncodeJob {
     config: PngEncoderConfig,
-    stop: Option<zencodec::StopToken>,
+    stop: Option<zencodec::SharedPulse>,
     metadata: Option<Metadata>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::encode::EncodePolicy>,
@@ -753,7 +753,7 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
     type Enc = PngEncoder;
     type AnimationFrameEnc = PngAnimationFrameEncoder;
 
-    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
+    fn with_pulse(mut self, stop: zencodec::SharedPulse) -> Self {
         self.stop = Some(stop);
         self
     }
@@ -881,7 +881,7 @@ impl PngEncodeJob {
 /// Single-image PNG encoder.
 pub struct PngEncoder {
     config: PngEncoderConfig,
-    stop: Option<zencodec::StopToken>,
+    stop: Option<zencodec::SharedPulse>,
     metadata: Option<Metadata>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::encode::EncodePolicy>,
@@ -2338,7 +2338,7 @@ pub struct PngAnimationFrameEncoder {
     limits: Option<ResourceLimits>,
     /// Cumulative pixel data size across all accumulated frames.
     cumulative_pixel_bytes: u64,
-    stop: Option<zencodec::StopToken>,
+    stop: Option<zencodec::SharedPulse>,
     frame_descriptor: Option<PixelDescriptor>,
     frame_color: Option<alloc::sync::Arc<zenpixels::ColorContext>>,
     policy: Option<zencodec::encode::EncodePolicy>,
@@ -2825,12 +2825,12 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
         &mut self,
         pixels: PixelSlice<'_>,
         duration_ms: u32,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<(), At<CodecError>> {
         self.push_frame_exact(
             pixels,
             zencodec::animation::FrameDuration::from_millis(duration_ms),
-            stop,
+            pulse,
         )
     }
 
@@ -2838,8 +2838,9 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
         &mut self,
         pixels: PixelSlice<'_>,
         duration: zencodec::animation::FrameDuration,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<(), At<CodecError>> {
+        let stop = pulse.map(|p| p as &dyn enough::Stop);
         let delay_num = u16::try_from(duration.numerator())
             .map_err(|_| Self::reject(zencodec::UnsupportedOperation::AnimationTiming))?;
         let delay_den = u16::try_from(duration.denominator())
@@ -3065,7 +3066,8 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
         }
     }
 
-    fn finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, At<CodecError>> {
+    fn finish(self, pulse: Option<&dyn zencodec::Pulse>) -> Result<EncodeOutput, At<CodecError>> {
+        let stop = pulse.map(|p| p as &dyn enough::Stop);
         if self.streaming.is_some() {
             if let Some(stop) = stop {
                 enough::Stop::check(stop).map_err(|e| CodecError::of(at!(PngError::from(e))))?;
@@ -3405,7 +3407,7 @@ impl zencodec::decode::DecoderConfig for PngDecoderConfig {
 /// Per-operation PNG decode job.
 pub struct PngDecodeJob {
     config: PngDecoderConfig,
-    stop: Option<zencodec::StopToken>,
+    stop: Option<zencodec::SharedPulse>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::decode::DecodePolicy>,
     start_frame_index: u32,
@@ -3417,7 +3419,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
     type StreamDec = PngStreamingDecoder<'a>;
     type AnimationFrameDec = PngAnimationFrameDecoder;
 
-    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
+    fn with_pulse(mut self, stop: zencodec::SharedPulse) -> Self {
         self.stop = Some(stop);
         self
     }
@@ -3619,7 +3621,7 @@ impl PngDecodeJob {
 /// Single-image PNG decoder.
 pub struct PngDecoder<'a> {
     config: PngDecoderConfig,
-    stop: Option<zencodec::StopToken>,
+    stop: Option<zencodec::SharedPulse>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::decode::DecodePolicy>,
     data: Cow<'a, [u8]>,
@@ -4023,14 +4025,14 @@ pub struct PngStreamingDecoder<'a> {
     width: u32,
     height: u32,
     /// Cooperative cancellation token, checked per-row in `next_batch()`.
-    stop: Option<zencodec::StopToken>,
+    stop: Option<zencodec::SharedPulse>,
 }
 
 impl<'a> PngStreamingDecoder<'a> {
     fn new(
         data: Cow<'a, [u8]>,
         config: &PngDecoderConfig,
-        stop: Option<zencodec::StopToken>,
+        stop: Option<zencodec::SharedPulse>,
         limits: Option<&ResourceLimits>,
         policy: Option<&zencodec::decode::DecodePolicy>,
         _preferred: &[PixelDescriptor],
@@ -4284,7 +4286,7 @@ pub struct PngAnimationFrameDecoder {
     /// Internal canvas buffer holding the last rendered frame's pixels.
     canvas: Option<PixelBuffer>,
     /// Cooperative cancellation token from the decode job.
-    stop: Option<zencodec::StopToken>,
+    stop: Option<zencodec::SharedPulse>,
     /// First frame index to yield (skip earlier frames, but still decode them
     /// because APNG compositing depends on prior frames).
     start_frame_index: u32,
@@ -4300,7 +4302,7 @@ impl PngAnimationFrameDecoder {
     fn new(
         data: Cow<'_, [u8]>,
         limits: &ResourceLimits,
-        stop: Option<zencodec::StopToken>,
+        stop: Option<zencodec::SharedPulse>,
         policy: Option<&zencodec::decode::DecodePolicy>,
         preferred: &[PixelDescriptor],
         start_frame_index: u32,
@@ -4394,16 +4396,17 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
 
     fn render_next_frame_to_sink(
         &mut self,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
     ) -> Result<Option<OutputInfo>, At<CodecError>> {
-        zencodec::helpers::copy_frame_to_sink(self, stop, sink)
+        zencodec::helpers::copy_frame_to_sink(self, pulse, sink)
     }
 
     fn render_next_frame(
         &mut self,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<Option<AnimationFrame<'_>>, At<CodecError>> {
+        let stop = pulse.map(|p| p as &dyn enough::Stop);
         if self.failed {
             return Err(CodecError::of(at!(PngError::InvalidState(
                 "APNG decoder failed during a prior frame".into()
@@ -7948,8 +7951,9 @@ mod tests {
         }
 
         let config = PngEncoderConfig::new();
-        let stop = zencodec::StopToken::new(AlreadyCancelled);
-        let job = config.clone().job().with_stop(stop);
+        let stop =
+            zencodec::how_far::SharedPulse::new(zencodec::how_far::StopOnly::new(AlreadyCancelled));
+        let job = config.clone().job().with_pulse(stop);
         let encoder = job.encoder().unwrap();
 
         // Create a small 2x2 RGB8 image
@@ -8311,8 +8315,10 @@ mod tests {
     #[test]
     fn encode_job_with_stop() {
         let enc = PngEncoderConfig::new();
-        let stop = zencodec::StopToken::new(enough::Unstoppable);
-        let job = enc.job().with_stop(stop);
+        let stop = zencodec::how_far::SharedPulse::new(zencodec::how_far::StopOnly::new(
+            enough::Unstoppable,
+        ));
+        let job = enc.job().with_pulse(stop);
         let encoder = job.encoder().unwrap();
         let pixels = vec![Rgb { r: 0u8, g: 0, b: 0 }; 4];
         let img = Img::new(pixels, 2, 2);
@@ -10038,7 +10044,9 @@ mod tests {
             .unwrap();
 
         // finish() with a cancelled stop token should fail
-        let result = enc.finish(Some(&AlreadyCancelled));
+        let result = enc.finish(Some(&zencodec::how_far::StopOnly::borrowed(
+            &AlreadyCancelled,
+        )));
         assert!(result.is_err(), "finish with cancelled stop should fail");
         // Pattern B: `AnimationFrameEncoder::finish` returns the `At<CodecError>`
         // envelope, so the cancellation surfaces as the `Cancelled` category.
@@ -10570,7 +10578,9 @@ mod strip_stream_tests {
             cfg.config.max_threads = threads;
             let mut enc = cfg
                 .job()
-                .with_stop(zencodec::StopToken::new(AlreadyCancelled))
+                .with_pulse(zencodec::how_far::SharedPulse::new(
+                    zencodec::how_far::StopOnly::new(AlreadyCancelled),
+                ))
                 .with_canvas_size(w, h)
                 .encoder()
                 .unwrap();

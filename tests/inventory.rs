@@ -893,6 +893,7 @@ fn metadata_dispositions_match_decoded_image_info() {
     assert!(info.sequence.is_animation());
 }
 
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn run_with(bytes: &[u8], policy: zencodec::decode::DecodePolicy) -> Inventory {
     let inv = PngDecoderConfig::new()
         .job()
@@ -907,6 +908,7 @@ fn run_with(bytes: &[u8], policy: zencodec::decode::DecodePolicy) -> Inventory {
 /// inventory says Dropped and the decode agrees (no EXIF in `ImageInfo`), while the
 /// default policy still reads the chunk.
 #[test]
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn strict_policy_drops_bad_crc_ancillary_chunks() {
     use zencodec::decode::{Decode, DecodePolicy};
     let exif = chunk(b"eXIf", b"II*\0\x08\0\0\0\0\0");

@@ -66,6 +66,7 @@ fn itxt(keyword: &str, flag: u8, text: &[u8]) -> Vec<u8> {
     d
 }
 
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn inv_with(bytes: &[u8], policy: Option<DecodePolicy>) -> Inventory {
     let mut job = PngDecoderConfig::new().job();
     if let Some(p) = policy {
@@ -77,6 +78,7 @@ fn inv_with(bytes: &[u8], policy: Option<DecodePolicy>) -> Inventory {
     inv
 }
 
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn decode_with(
     bytes: &[u8],
     policy: Option<DecodePolicy>,

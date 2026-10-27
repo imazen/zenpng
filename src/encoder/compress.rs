@@ -1691,7 +1691,7 @@ impl StripStream {
         row_bytes: usize,
         height: usize,
         threads: usize,
-        cancel: Option<zencodec::StopToken>,
+        cancel: Option<zencodec::SharedPulse>,
         framing: StripFraming,
     ) -> Option<Self> {
         let plan = Self::plan(effort, format, row_bytes, height, threads, framing)?;
@@ -1923,7 +1923,7 @@ impl StripPool {
         effort: u32,
         format: RowFormat,
         row_bytes: usize,
-        cancel: Option<zencodec::StopToken>,
+        cancel: Option<zencodec::SharedPulse>,
     ) -> Self {
         use std::sync::{Arc, Mutex, mpsc};
         let (jobs, job_rx) = mpsc::channel::<StripJob>();

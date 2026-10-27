@@ -186,6 +186,7 @@ fn bad_adler_png() -> Vec<u8> {
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn strict_policy_verifies_adler_in_push_and_streaming() {
     use zencodec::decode::DecodePolicy;
     let data = bad_adler_png();
