@@ -4,6 +4,36 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+
+- The zencodec adapter implements zencodec's Pulse controls (review revision
+  `f73a7e0e`): jobs implement `with_pulse` and retain a `SharedPulse`, the
+  animation encoder and decoder take `Option<&dyn Pulse>`, and
+  `metadata::rewrite` takes `RewriteRequest`. It no longer builds against
+  released zencodec.
+- Encodes that wrote a relabelled file now refuse: job colour (metadata or a
+  native cICP) contradicting the pixels' explicit colour context, a metadata ICC
+  describing linear samples for f32 input, and f32 input whose context profile
+  cannot be identified. Limits and colour refusals surface at `begin`, not
+  `finish`.
+
+### Fixed
+
+- The adapter ignored the pixels' colour context, inferred cICP from the
+  descriptor only for one-shot encodes (`begin` + `push_rows` wrote Display P3
+  untagged), and gave f32 input no cICP. One binding now runs for one-shot,
+  `begin` and first-row encodes; `tests/source_color_binding.rs` reproduced 4 of
+  5 cases with image-png before the fix. The descriptor-derived cICP is still
+  written without a companion iCCP.
+
+### Added
+
+- Experimental `PngEncodeJob::plan_rows` / `PngEncoder::begin_declared`: the
+  row mode's output timing from the same preparation `begin` runs, without
+  allocating rows or starting strip workers (`StripStream::plan`). The
+  constructed mode is checked against the plan before any byte is handed out.
+  Strip timing depends on the resolved worker count. `PngEncodeJob` is `Clone`.
+
 ### Dependency compatibility
 
 - Admit archmage/magetypes 0.9.31-beta.1 alongside compatible stable versions. Formatting, strict library lint and library tests pass (`b552c155`).

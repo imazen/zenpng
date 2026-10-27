@@ -554,3 +554,18 @@ the pixel element type's Unknown-transfer descriptor while other untagged PNG
 integer layouts use the adapter's sRGB assumption. Native output_info, one-shot,
 row and controlled paths now agree on GRAYA16_SRGB. Explicit cICP enrichment
 still overrides it. Exact sample comparisons against image-png remain unchanged.
+
+## Known Bugs: zencodec colour binding and row planning (fixed on native-preflight, 2026-10-27)
+
+Reproduced on 7f13367f by `tests/source_color_binding.rs` (image-png reads cICP/iCCP and
+samples): the adapter ignored `PixelSlice::color_context()`, inferred cICP from the
+descriptor only in one-shot `encode_inner` (so `begin` + rows wrote Display P3 untagged),
+gave f32 input no cICP, and accepted metadata contradicting an explicit sRGB context.
+Now one `bind_color` runs for one-shot, `begin` and the first rows: context ICC → iCCP,
+context/descriptor code points → cICP (sRGB untagged), f32 → primaries + sRGB transfer.
+Job colour still labels pixels without an explicit context (pinned by
+`explicit_icc_is_not_overridden_by_descriptor_derived_cicp`). `PngEncodeJob::plan_rows`
+shares `prepare_rows` with `begin_declared`; `tests/row_planning.rs` compares them over 1,728
+effort/geometry/colour/access/threading/downcast cells. Strip streaming needs
+`DowncastFlags::none()` (downcast analysis is whole-image), so default configs stream only
+at effort 0. Strip lag depends on the resolved worker count (host-dependent timing).
