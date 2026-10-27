@@ -871,6 +871,7 @@ impl PngEncodeJob {
             declared: None,
             sent: 0,
             emitted: 0,
+            checked_context: None,
         }
     }
 }
@@ -898,6 +899,8 @@ pub struct PngEncoder {
     sent: usize,
     /// Bytes handed out and dropped from the buffer (for the output limit).
     emitted: u64,
+    /// The last row colour context found consistent with the written colour.
+    checked_context: Option<alloc::sync::Arc<zenpixels::ColorContext>>,
 }
 
 /// Streaming mode selection for push_rows/finish.
@@ -1104,6 +1107,80 @@ impl PngEncoder {
     }
 }
 
+/// What the stored samples mean, beyond the sRGB default.
+#[derive(Clone, Debug, PartialEq)]
+enum StoredColor {
+    /// The pixels assert nothing beyond the format default.
+    Default,
+    /// This profile describes the stored samples.
+    Icc(alloc::sync::Arc<[u8]>),
+    /// These code points describe the stored samples.
+    Cicp(zenpixels::Cicp),
+}
+
+impl StoredColor {
+    fn parts(&self) -> (Option<&[u8]>, Option<zenpixels::Cicp>) {
+        match self {
+            Self::Default => (None, None),
+            Self::Icc(icc) => (Some(icc), None),
+            Self::Cicp(cicp) => (None, Some(*cicp)),
+        }
+    }
+}
+
+/// `primaries` with the sRGB transfer: the 8-bit sRGB storage of linear
+/// samples in those primaries.
+fn srgb_encoded(primaries: ColorPrimaries, gray: bool) -> Result<StoredColor, At<PngError>> {
+    if gray {
+        return Ok(StoredColor::Default);
+    }
+    primaries
+        .to_cicp()
+        .map(|code| StoredColor::Cicp(zenpixels::Cicp::new(code, 13, 0, true)))
+        .ok_or_else(|| {
+            at!(PngError::InvalidInput(
+                "these primaries have no code point; attach their ICC profile to the pixels".into()
+            ))
+        })
+}
+
+/// sRGB/BT.709 code points: PNG leaves those untagged.
+fn is_default_cicp(cicp: zenpixels::Cicp, gray: bool) -> bool {
+    matches!(cicp.transfer_characteristics, 2 | 13)
+        && (gray || matches!(cicp.color_primaries, 1 | 2))
+}
+
+/// The primaries and transfer a description identifies; `None` for an
+/// unidentified profile or code points zenpixels cannot name. An empty
+/// description is the sRGB default.
+fn identify(
+    (icc, cicp): (Option<&[u8]>, Option<zenpixels::Cicp>),
+) -> Option<(ColorPrimaries, TransferFunction)> {
+    use zenpixels::ColorProfileSource;
+    match (icc, cicp) {
+        (Some(icc), _) => ColorProfileSource::Icc(icc).resolve(),
+        (None, Some(cicp)) => ColorProfileSource::Cicp(cicp).resolve(),
+        (None, None) => Some((ColorPrimaries::Bt709, TransferFunction::Srgb)),
+    }
+}
+
+/// Whether two descriptions mean the same: identical profile bytes or code
+/// points, or the same identified primaries and transfer (only the transfer
+/// for grayscale samples).
+fn same_meaning(
+    a: (Option<&[u8]>, Option<zenpixels::Cicp>),
+    b: (Option<&[u8]>, Option<zenpixels::Cicp>),
+    gray: bool,
+) -> bool {
+    if a.0.is_some() && a.0 == b.0 || a.0.is_none() && b.0.is_none() && a.1 == b.1 {
+        return true;
+    }
+    match (identify(a), identify(b)) {
+        (Some(a), Some(b)) => a.1 == b.1 && (gray || a.0 == b.0),
+        _ => false,
+    }
+}
+
 impl zencodec::encode::Encoder for PngEncoder {
     type Error = At<CodecError>;
 
@@ -1260,6 +1337,171 @@ impl PngEncoder {
         }
     }
 
+    /// What the stored samples mean: the rows' colour context (an ICC profile
+    /// is authoritative), then what the descriptor asserts beyond the sRGB
+    /// default. f32 input is stored as 8-bit sRGB, so its interpretation is
+    /// its primaries with the sRGB transfer, and an unidentified profile
+    /// cannot describe it.
+    fn stored_color(
+        desc: zenpixels::PixelDescriptor,
+        context: Option<&zenpixels::ColorContext>,
+    ) -> Result<StoredColor, At<PngError>> {
+        use zenpixels::{ColorModel, ColorProfileSource};
+        let gray = matches!(
+            desc.layout(),
+            zenpixels::ChannelLayout::Gray | zenpixels::ChannelLayout::GrayAlpha
+        );
+        let float = desc.channel_type() == zenpixels::ChannelType::F32;
+        let refuse = |reason: &str| Err(at!(PngError::InvalidInput(reason.into())));
+        if let Some(icc) = context.and_then(|c| c.icc.as_ref()) {
+            let channels = if gray {
+                ColorModel::Gray
+            } else {
+                ColorModel::Rgb
+            };
+            if zenpixels::icc::profile_color_space(icc) != Some(channels) {
+                return refuse("the pixels' ICC profile does not describe their channels");
+            }
+            let identified = ColorProfileSource::Icc(icc).resolve();
+            if let Some(cicp) = context.and_then(|c| c.cicp)
+                && (identified.is_none() || identified != ColorProfileSource::Cicp(cicp).resolve())
+            {
+                return refuse("the pixels' ICC profile and code points disagree");
+            }
+            if !float {
+                return Ok(StoredColor::Icc(alloc::sync::Arc::clone(icc)));
+            }
+            return match identified {
+                Some((primaries, TransferFunction::Linear)) => srgb_encoded(primaries, gray),
+                Some(_) => refuse("the pixels' ICC profile does not describe linear samples"),
+                None => refuse(
+                    "an unidentified ICC profile cannot describe the 8-bit sRGB samples \
+                     stored for f32 input",
+                ),
+            };
+        }
+        if let Some(cicp) = context.and_then(|c| c.cicp) {
+            if cicp.matrix_coefficients != 0 || !cicp.full_range {
+                return refuse("YCbCr or narrow-range code points do not describe RGB samples");
+            }
+            if !float {
+                return Ok(StoredColor::Cicp(cicp));
+            }
+            if cicp.transfer_characteristics != 8 {
+                return refuse("the pixels' code points do not describe linear samples");
+            }
+            return Ok(StoredColor::Cicp(zenpixels::Cicp::new(
+                cicp.color_primaries,
+                13,
+                0,
+                true,
+            )));
+        }
+        if float {
+            return match desc.primaries {
+                ColorPrimaries::Unknown | ColorPrimaries::Bt709 => Ok(StoredColor::Default),
+                _ if gray => Ok(StoredColor::Default),
+                primaries => srgb_encoded(primaries, gray),
+            };
+        }
+        Ok(Self::cicp_from_descriptor(desc).map_or(StoredColor::Default, StoredColor::Cicp))
+    }
+
+    /// The colour chunks this encode writes from, as (ICC, CICP): the job's
+    /// metadata ICC and the native cICP over the metadata's.
+    fn written_color(&self) -> (Option<&[u8]>, Option<zenpixels::Cicp>) {
+        let meta = self.metadata.as_ref();
+        (
+            meta.and_then(|m| m.icc_profile.as_deref()),
+            self.config.config.cicp.or(meta.and_then(|m| m.cicp)),
+        )
+    }
+
+    /// Bind the file's colour chunks to the stored samples before any chunk
+    /// is written.
+    ///
+    /// A job colour description (metadata ICC/CICP or a native cICP) labels
+    /// pixels without an explicit colour context, even when their descriptor
+    /// names other primaries (`explicit_icc_is_not_overridden_by_descriptor_derived_cicp`),
+    /// and must agree with an explicit context: a profile kept after a
+    /// conversion is a stale carrier. Without one, the stored samples' own
+    /// interpretation is written: a context ICC as iCCP, code points as cICP
+    /// (sRGB stays untagged), the same for one-shot and row encodes.
+    fn bind_color(
+        &mut self,
+        desc: zenpixels::PixelDescriptor,
+        context: Option<&zenpixels::ColorContext>,
+    ) -> Result<(), At<PngError>> {
+        let gray = matches!(
+            desc.layout(),
+            zenpixels::ChannelLayout::Gray | zenpixels::ChannelLayout::GrayAlpha
+        );
+        let stored = Self::stored_color(desc, context)?;
+        let written = self.written_color();
+        if written != (None, None) {
+            let explicit = context.is_some_and(|c| c.icc.is_some() || c.cicp.is_some());
+            if explicit && !same_meaning(written, stored.parts(), gray) {
+                return Err(at!(PngError::InvalidInput(
+                    "the job's colour description contradicts the pixels' current colour".into()
+                )));
+            }
+            if desc.channel_type() == zenpixels::ChannelType::F32
+                && let Some(icc) = written.0
+                && matches!(
+                    zenpixels::ColorProfileSource::Icc(icc).resolve(),
+                    Some((_, TransferFunction::Linear))
+                )
+            {
+                return Err(at!(PngError::InvalidInput(
+                    "the metadata ICC describes linear samples; f32 input is stored as \
+                     8-bit sRGB"
+                        .into()
+                )));
+            }
+            return Ok(());
+        }
+        match stored {
+            StoredColor::Default => {}
+            StoredColor::Icc(icc) => {
+                let meta = self.metadata.get_or_insert_with(Metadata::none);
+                meta.icc_profile = Some(icc);
+            }
+            StoredColor::Cicp(cicp) if is_default_cicp(cicp, gray) => {}
+            StoredColor::Cicp(cicp) => self.config.config.cicp = Some(cicp),
+        }
+        Ok(())
+    }
+
+    /// Rows after the header must mean what the header says. Rows without a
+    /// colour context assert nothing.
+    fn check_rows_color(&mut self, rows: &PixelSlice<'_>) -> Result<(), At<PngError>> {
+        let Some(context) = rows.color_context() else {
+            return Ok(());
+        };
+        if self
+            .checked_context
+            .as_ref()
+            .is_some_and(|checked| alloc::sync::Arc::ptr_eq(checked, context))
+        {
+            return Ok(());
+        }
+        let desc = rows.descriptor();
+        let gray = matches!(
+            desc.layout(),
+            zenpixels::ChannelLayout::Gray | zenpixels::ChannelLayout::GrayAlpha
+        );
+        let stored = Self::stored_color(desc, Some(context))?;
+        if stored != StoredColor::Default
+            && !same_meaning(self.written_color(), stored.parts(), gray)
+        {
+            return Err(at!(PngError::InvalidState(
+                "the rows' colour context differs from the colour written before them".into()
+            )));
+        }
+        self.checked_context = Some(alloc::sync::Arc::clone(context));
+        Ok(())
+    }
+
     fn encode_inner(mut self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<PngError>> {
         use linear_srgb::default::{linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice};
         use zenpixels::PixelFormat;
@@ -1273,16 +1515,8 @@ impl PngEncoder {
             ))));
         }
 
-        if self.config.config.cicp.is_none()
-            && self
-                .metadata
-                .as_ref()
-                .and_then(|m| m.icc_profile.as_ref())
-                .is_none()
-        {
-            self.config.config.cicp = Self::cicp_from_descriptor(pixels.descriptor());
-        }
         self.describe_stored_f32(pixels.descriptor());
+        self.bind_color(pixels.descriptor(), pixels.color_context().map(|c| &**c))?;
 
         let w = pixels.width();
         let h = pixels.rows();
@@ -1601,7 +1835,7 @@ impl PngEncoder {
         }
         self.canvas_width = width;
         self.canvas_height = height;
-        self.start_rows(descriptor, width, height, StripFraming::ChunkPerStrip)?;
+        self.start_rows(descriptor, None, width, height, StripFraming::ChunkPerStrip)?;
         self.declared = Some(descriptor);
         let timing = match self.streaming.as_mut() {
             Some(StreamingMode::TrueStreaming(st)) => {
@@ -1641,11 +1875,13 @@ impl PngEncoder {
     fn start_rows(
         &mut self,
         descriptor: zenpixels::PixelDescriptor,
+        context: Option<&zenpixels::ColorContext>,
         w: u32,
         h: u32,
         framing: crate::encoder::compress::StripFraming,
     ) -> Result<(), At<PngError>> {
         self.describe_stored_f32(descriptor);
+        self.bind_color(descriptor, context)?;
         let (color_type, bit_depth) = pixel_format_to_png(descriptor.pixel_format())
             .ok_or_else(|| at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat)))?;
 
@@ -1730,6 +1966,7 @@ impl PngEncoder {
         if self.streaming.is_none() {
             self.start_rows(
                 rows.descriptor(),
+                rows.color_context().map(|c| &**c),
                 w,
                 h,
                 crate::encoder::compress::StripFraming::Continuous,
@@ -1740,6 +1977,7 @@ impl PngEncoder {
                 "push_rows: pixel format differs from the one declared at begin".into()
             )));
         }
+        self.check_rows_color(&rows)?;
 
         // Width must be consistent across calls.
         if w != self.canvas_width && self.canvas_width > 0 {
