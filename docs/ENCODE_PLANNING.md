@@ -1,27 +1,34 @@
 # Effective-job planning (zencodec adapter)
 
-Experimental. The common zencodec planning hook is not settled, so these method
-names may change to match it.
+zencodec's shared hooks (ideal-api `f5a7fd46`, review API): `EncodeJob::plan_encode`
+and `Encoder::begin_declared`.
 
 ```rust
-use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-use zencodec::output_patch::OutputAccess;
+use zencodec::encode::{EncodeDeclaration, EncodeJob, Encoder, EncoderConfig};
 use zenpng::PngEncoderConfig;
 
 let job = PngEncoderConfig::new().job();
 // The colour the rows will carry, declared before any header byte exists.
-let context = pixels.color_context().map(|c| &**c);
-let timing = job.plan_rows(width, height, pixels.descriptor(), context, OutputAccess::Forward)?;
-// ... admit the plan; retain this exact job ...
+let mut declaration = EncodeDeclaration::new(width, height, pixels.descriptor());
+if let Some(context) = pixels.color_context() {
+    declaration = declaration.with_color(context);
+}
+let plan = job.plan_encode(&declaration)?;
+// ... admit the plan; retain this exact job and declaration ...
 let mut encoder = job.encoder()?;
-let started = encoder.begin_declared(width, height, pixels.descriptor(), context, OutputAccess::Forward)?;
-assert_eq!(started, timing); // begin_declared errors before handing out bytes if they differ
+let started = encoder.begin_declared(&declaration)?;
+plan.validate_started(&started)?; // before any row is pushed or byte sent
 ```
 
-`plan_rows` and `begin_declared` run one preparation (`prepare_rows`): the
+The plan is always one ordered row pass that emits in that pass
+(`InputRequirement::Rows`, `OutputPhase::FinalPass`); only the timing varies.
+Colour carriers are not reported yet (`carriers: None`: unknown, not absent).
+Planning errors are the job's own `At<CodecError>`, boxed.
+
+`plan_encode` and `begin_declared` run one preparation (`prepare_rows`): the
 canvas, colour binding, limits, metadata policy and chunk validation, and the
 row-mode decision. Planning allocates no rows and starts no strip workers.
-`begin` and `begin_output` are `begin_declared` without a context. PNG output is
+`begin` and `begin_output` are `begin_declared` without a colour context. PNG output is
 append-only, so seek-back access changes nothing. Input is one pass of rows in
 every mode; there is no Adam7 encode.
 
@@ -50,6 +57,9 @@ Downcast analysis is whole-image, so with default flags only effort 0 streams.
 RGB8 declaration, all jobs and encoders retained at once, dev profile, default
 features, on a 24-thread host. Results:
 [`benchmarks/encode_planning_alloc_2026-10-27.json`](../benchmarks/encode_planning_alloc_2026-10-27.json).
+These were measured with the inherent experimental `plan_rows` / `begin_declared`
+(the JSON records the probe revision). The probe now calls the shared hooks, which
+run the same preparation; the numbers were not re-measured after that port.
 
 | Mode | Jobs | Prepared | Planned | Begun | Threads after `begin` |
 |---|---:|---:|---:|---:|---:|

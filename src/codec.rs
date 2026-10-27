@@ -824,6 +824,36 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         self
     }
 
+    /// The plan [`Encoder::begin_declared`](zencodec::encode::Encoder::begin_declared)
+    /// returns for this job and declaration: one ordered row pass, with the
+    /// row mode's output timing.
+    ///
+    /// Runs the same validation, colour binding, limits, metadata policy and
+    /// row-mode decision as `begin_declared`, without allocating rows or
+    /// starting strip workers. Strip timing depends on the resolved worker
+    /// count, so it can differ between hosts; the bytes do not.
+    /// `declaration.color` is the current colour of the rows that will follow.
+    /// Retain this exact job: the plan describes it and nothing else. PNG
+    /// never patches earlier bytes, so the declared access does not change the
+    /// layout. Colour carriers are not reported yet (`carriers: None`,
+    /// unknown). Errors are the job's own `At<CodecError>`, boxed.
+    fn plan_encode(
+        &self,
+        declaration: &zencodec::encode::EncodeDeclaration<'_>,
+    ) -> Result<zencodec::encode::EncodePlan, zencodec::encode::BoxedError> {
+        self.clone()
+            .into_png_encoder()
+            .prepare_rows(
+                declaration.width,
+                declaration.height,
+                declaration.descriptor,
+                declaration.color,
+                declaration.access,
+            )
+            .map(zencodec::encode::EncodePlan::rows)
+            .map_err(|e| Box::new(CodecError::of(e)) as zencodec::encode::BoxedError)
+    }
+
     fn encoder(self) -> Result<PngEncoder, At<CodecError>> {
         Ok(self.into_png_encoder())
     }
@@ -854,30 +884,6 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
 }
 
 impl PngEncodeJob {
-    /// Experimental effective-job preflight: the output timing
-    /// [`PngEncoder::begin_declared`] would report for this declaration.
-    ///
-    /// Runs the same validation, colour binding, limits, metadata policy and
-    /// row-mode decision as `begin_declared`, without allocating rows or
-    /// starting strip workers. Strip timing depends on the resolved worker
-    /// count, so it can differ between hosts; the bytes do not. `context` is
-    /// the current colour of the rows that will follow. Retain this exact
-    /// job: the plan describes it and nothing else. PNG never patches earlier
-    /// bytes, so `access` does not change the layout.
-    pub fn plan_rows(
-        &self,
-        width: u32,
-        height: u32,
-        descriptor: zenpixels::PixelDescriptor,
-        context: Option<&zenpixels::ColorContext>,
-        access: zencodec::output_patch::OutputAccess,
-    ) -> Result<zencodec::encode::OutputTiming, At<CodecError>> {
-        self.clone()
-            .into_png_encoder()
-            .prepare_rows(width, height, descriptor, context, access)
-            .map_err(CodecError::of)
-    }
-
     /// Build the concrete [`PngEncoder`] (infallible). Shared by the
     /// [`EncodeJob::encoder`](zencodec::encode::EncodeJob::encoder) trait method
     /// (which returns the `At<CodecError>` envelope) and the codec's inherent
@@ -1187,29 +1193,6 @@ fn same_meaning(
     }
 }
 
-impl PngEncoder {
-    /// Declare the image and the current colour context of the rows that
-    /// will follow, then choose the row mode. Experimental.
-    ///
-    /// The same as [`Encoder::begin_output`](zencodec::encode::Encoder::begin_output),
-    /// with the rows' colour declared before the header is written: the
-    /// header's iCCP/cICP describe it, and rows pushed later must mean the
-    /// same thing. [`PngEncodeJob::plan_rows`] reports the timing this
-    /// returns for the same job and declaration; the constructed row mode is
-    /// checked against that plan before any byte is handed out.
-    pub fn begin_declared(
-        &mut self,
-        width: u32,
-        height: u32,
-        descriptor: zenpixels::PixelDescriptor,
-        context: Option<&zenpixels::ColorContext>,
-        access: zencodec::output_patch::OutputAccess,
-    ) -> Result<zencodec::encode::OutputTiming, At<CodecError>> {
-        self.begin_inner(width, height, descriptor, context, access)
-            .map_err(CodecError::of)
-    }
-}
-
 impl zencodec::encode::Encoder for PngEncoder {
     type Error = At<CodecError>;
 
@@ -1246,13 +1229,38 @@ impl zencodec::encode::Encoder for PngEncoder {
         height: u32,
         descriptor: zenpixels::PixelDescriptor,
     ) -> Result<zencodec::encode::OutputTiming, At<CodecError>> {
-        self.begin_declared(
+        self.begin_inner(
             width,
             height,
             descriptor,
             None,
             zencodec::output_patch::OutputAccess::Forward,
         )
+        .map_err(CodecError::of)
+    }
+
+    /// Declare the image and the current colour context of the rows that
+    /// will follow, then choose the row mode.
+    ///
+    /// The same as [`begin_output`](Self::begin_output), with the rows'
+    /// colour declared before the header is written: the header's iCCP/cICP
+    /// describe it, and rows pushed later must mean the same thing. Returns
+    /// the plan [`EncodeJob::plan_encode`](zencodec::encode::EncodeJob::plan_encode)
+    /// reports for the same job and declaration; the constructed row mode is
+    /// checked against that plan before any byte is handed out.
+    fn begin_declared(
+        &mut self,
+        declaration: &zencodec::encode::EncodeDeclaration<'_>,
+    ) -> Result<zencodec::encode::EncodePlan, At<CodecError>> {
+        self.begin_inner(
+            declaration.width,
+            declaration.height,
+            declaration.descriptor,
+            declaration.color,
+            declaration.access,
+        )
+        .map(zencodec::encode::EncodePlan::rows)
+        .map_err(CodecError::of)
     }
 
     /// PNG never patches earlier bytes: forward and seek-back destinations
@@ -1264,7 +1272,8 @@ impl zencodec::encode::Encoder for PngEncoder {
         descriptor: zenpixels::PixelDescriptor,
         access: zencodec::output_patch::OutputAccess,
     ) -> Result<zencodec::encode::OutputTiming, At<CodecError>> {
-        self.begin_declared(width, height, descriptor, None, access)
+        self.begin_inner(width, height, descriptor, None, access)
+            .map_err(CodecError::of)
     }
 
     fn pending_output(&self) -> &[u8] {

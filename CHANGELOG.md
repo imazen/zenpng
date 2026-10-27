@@ -32,7 +32,9 @@ All notable changes to zenpng are documented here.
 
 ### Added
 
-- Experimental `PngEncodeJob::plan_rows` / `PngEncoder::begin_declared`: the
+- Effective-job planning through zencodec's shared hooks (ideal-api `f5a7fd46`):
+  `EncodeJob::plan_encode` / `Encoder::begin_declared` return one `EncodePlan`
+  (one row pass, carriers unreported) holding the
   row mode's output timing from the same preparation `begin` runs, without
   allocating rows or starting strip workers (`StripStream::plan`). The
   constructed mode is checked against the plan before any byte is handed out.

@@ -564,7 +564,7 @@ gave f32 input no cICP, and accepted metadata contradicting an explicit sRGB con
 Now one `bind_color` runs for one-shot, `begin` and the first rows: context ICC → iCCP,
 context/descriptor code points → cICP (sRGB untagged), f32 → primaries + sRGB transfer.
 Job colour still labels pixels without an explicit context (pinned by
-`explicit_icc_is_not_overridden_by_descriptor_derived_cicp`). `PngEncodeJob::plan_rows`
+`explicit_icc_is_not_overridden_by_descriptor_derived_cicp`). zencodec's `plan_encode`
 shares `prepare_rows` with `begin_declared`; `tests/row_planning.rs` compares them over 1,728
 effort/geometry/colour/access/threading/downcast cells. Strip streaming needs
 `DowncastFlags::none()` (downcast analysis is whole-image), so default configs stream only
