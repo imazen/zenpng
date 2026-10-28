@@ -19,6 +19,15 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- Under `allow_icc: false` the APNG frame decoder still attached the source
+  ICC profile to every frame's colour context (the info was filtered, the
+  frames were not). Frames now take the profile from the filtered info.
+- `allow_truncated: false` was never read: a file cut after its pixel data
+  decoded in full and silently lost the chunks that followed (eXIf, iTXt XMP,
+  text), and the streaming, push, incremental and APNG routes started before
+  reaching a cut. With the policy, every route walks the chunk lengths first
+  and refuses input that ends before IEND with `PngError::Truncated` before
+  any decoder starts. Without it nothing changes.
 - A field-only orientation (`Metadata::orientation` with no EXIF blob: a
   caller-set field, or one from a format whose orientation is a container
   property) was dropped: eXIf was written only from `metadata.exif`. The
@@ -40,6 +49,15 @@ All notable changes to zenpng are documented here.
 
 ### Added
 
+- Checked decode policy: `PngDecodeJob::try_set_policy` admits `allow_icc`,
+  `allow_exif`, `allow_xmp` and `allow_truncated: false` and refuses every
+  other field (`allow_truncated: true`: PNG has no partial-image mode;
+  progressive, animation and strict until qualified per route), leaving the
+  job unchanged on refusal. The admitted fields hold on probe, one-shot,
+  streaming, push, incremental, APNG and controlled decodes without changing
+  pixels, descriptors or orientation; a forbidden ICC profile keeps the
+  controlled interpretation unavailable. `tests/integration/decode_policy.rs`
+  (failing first; a setter-only control fails exactly the three route tests).
 - Effective-job planning through zencodec's shared hooks (ideal-api `f5a7fd46`):
   `EncodeJob::plan_encode` / `Encoder::begin_declared` return one `EncodePlan`
   (one row pass, carriers unreported) holding the
