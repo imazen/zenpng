@@ -2679,6 +2679,34 @@ impl PngAnimationFrameEncoder {
         }
     }
 
+    /// The job's colour description must not contradict an explicit colour
+    /// context on the first frame, as the still encoders' colour binding
+    /// requires (`PngEncoder::bind_color`): a profile kept after a conversion
+    /// is a stale carrier. Runs before the first frame changes anything.
+    fn check_first_frame_color(&self, pixels: &PixelSlice<'_>) -> Result<(), At<PngError>> {
+        let Some(context) = pixels.color_context() else {
+            return Ok(());
+        };
+        let meta = self.metadata.as_ref();
+        let written = (
+            meta.and_then(|m| m.icc_profile.as_deref()),
+            self.config.cicp.or(meta.and_then(|m| m.cicp)),
+        );
+        let gray = matches!(
+            pixels.descriptor().layout(),
+            zenpixels::ChannelLayout::Gray | zenpixels::ChannelLayout::GrayAlpha
+        );
+        if written != (None, None)
+            && (context.icc.is_some() || context.cicp.is_some())
+            && !same_meaning(written, (context.icc.as_deref(), context.cicp), gray)
+        {
+            return Err(at!(PngError::InvalidInput(
+                "the job's colour description contradicts the frames' colour context".into()
+            )));
+        }
+        Ok(())
+    }
+
     /// Record what the first frame brings: its descriptor, and its colour
     /// context as ICC/CICP metadata when the job set none.
     fn capture_first_frame(&mut self, pixels: &PixelSlice<'_>) {
@@ -2743,6 +2771,7 @@ impl PngAnimationFrameEncoder {
         };
         let (curr, _opaque) = Self::pack_frame_to(pixels, want, cancel)?;
         if st.writer.is_none() {
+            self.check_first_frame_color(pixels)?;
             self.capture_first_frame(pixels);
             let metadata = apply_encode_policy(
                 self.metadata.as_ref(),
@@ -3120,6 +3149,10 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
                 || self.frame_color.as_ref() != pixels.color_context())
         {
             return Err(Self::reject(zencodec::UnsupportedOperation::PixelFormat));
+        }
+        if self.frame_descriptor.is_none() {
+            self.check_first_frame_color(&pixels)
+                .map_err(CodecError::of)?;
         }
         let canvas_unset = self.canvas_width == 0 && self.canvas_height == 0;
         if width == 0
