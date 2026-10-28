@@ -18,7 +18,10 @@ include = [
 ]
 
 [dependencies]
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc", default-features = false, features = ["rewrite"], optional = true }
+# The zencodec 0.2 family: version edges, resolved by each root's own
+# [patch.crates-io] (dependency patch tables do not propagate).
+zencodec-coroutine = { version = "0.1.0", optional = true }
+zenmeta = { version = "0.1.0", default-features = false, features = ["rewrite"], optional = true }
 thiserror = { version = "2.0", default-features = false }
 rgb = { version = "0.8", default-features = false, features = ["as-bytes"] }
 imgref = "1.12"
@@ -47,6 +50,7 @@ almost-enough = { version = "0.4.2", features = ["std"] }
 rustix = { version = "1.1.5", default-features = false, features = ["std", "thread"] }
 
 [dev-dependencies]
+zencodec-io = { version = "0.1.0", features = ["std"] }
 png = "0.18"
 # image-rs/image-png main, for benches/vs_png.rs (pinned commit; 2026-10-05).
 png_main = { package = "png", git = "https://github.com/image-rs/image-png", rev = "b2f10c6a7e3127d4aaf231f3eae731a33e6eb0bc" }
@@ -81,6 +85,7 @@ coz = "0.1.3"
 opt-level = 2
 
 [features]
+controlled-decode = ["dep:zencodec-coroutine"]
 metadata-rewrite = ["dep:zenmeta"]
 # Structural inspection and count-only DEFLATE scanning are opt-in.
 inventory = ["zenflate/scan"]
@@ -188,10 +193,18 @@ required-features = ["_dev"]
 
 [patch.crates-io]
 # Coordinated exact animation timing series; one source for shared types.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
+# The zencodec 0.2 family, all from one core revision (ideal-api a15c28fd):
+# the Pulse contract and the shared plan_encode / begin_declared hooks this
+# adapter implements. zencodec-io, zencodec-coroutine and zenmeta are not on
+# crates.io: these patches resolve them for local builds; releases stay gated
+# on publishing them.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "a15c28fdff95847e42dcb059f246a6defa0968cc" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "a15c28fdff95847e42dcb059f246a6defa0968cc" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "a15c28fdff95847e42dcb059f246a6defa0968cc" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "a15c28fdff95847e42dcb059f246a6defa0968cc" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "a15c28fdff95847e42dcb059f246a6defa0968cc" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "f8596aae7a16aec7875b6fe2ef39b501c11a0e82" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "f8596aae7a16aec7875b6fe2ef39b501c11a0e82" }
 # Retain main's strip-compression API source.
 zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a193e343018ae2cfb1a6c31edd" }
 

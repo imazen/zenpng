@@ -172,3 +172,45 @@ beta-cohort-check:
     cargo fmt --check
     cargo clippy --locked --workspace --lib -- -D warnings
     cargo test --locked --workspace --lib --no-fail-fast
+
+# Qualified color policy and existing exact sample/carrier regressions.
+checked-policy-check:
+    cargo fmt -p zenpng --check
+    cargo test --locked --no-default-features --test integration checked_policy::
+    cargo test --locked --no-default-features --test integration exact_transcode::
+    cargo clippy --locked --no-default-features --lib --test integration -- -D warnings
+    cargo check --locked --manifest-path fuzz/Cargo.toml --bins
+    just api-doc
+
+# Resolve both published-source graphs before the checked-policy gate.
+checked-policy-integration:
+    cargo update -p zencodec -p zencodec-testkit -p zenmeta -p zenpixels -p zenpixels-convert
+    cargo update --manifest-path fuzz/Cargo.toml -p zencodec -p zenpixels -p zenpixels-convert
+    just checked-policy-check
+
+# Controlled PNG starts native reconstruction only after required adoption.
+controlled-build:
+    cargo update -p zenpng
+    cargo check --features controlled-decode --lib --locked
+
+controlled-check:
+    cargo fmt -p zenpng --check
+    cargo test --locked --features controlled-decode --test integration
+    cargo clippy --locked --no-default-features --features controlled-decode --lib --test integration -- -D warnings
+    cargo check --locked --no-default-features --features controlled-decode --lib
+
+controlled-sync destination:
+    rsync -a --exclude='.git/' --exclude='.jj/' --exclude='.workongoing' --exclude='target/' --exclude='Cargo.lock' ./ {{destination}}/
+
+# Resolve the optional coroutine in the separate fuzz graph and snapshot API.
+controlled-integration:
+    just controlled-check
+    cargo update --manifest-path fuzz/Cargo.toml -p zenpng
+    cargo check --locked --manifest-path fuzz/Cargo.toml --bins
+    just api-doc
+
+# Required pHYs density through generic, dynamic, registered, row and APNG paths.
+resolution-check:
+    cargo test --locked --no-default-features --test required_resolution
+    cargo test --locked --test required_resolution
+    cargo clippy --locked --no-default-features --lib --test required_resolution -- -D warnings

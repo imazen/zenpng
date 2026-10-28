@@ -47,6 +47,9 @@ jobs:
       - name: Test (default)
         run: cargo test
 
+      - name: Controlled interpretation and checked policies
+        run: cargo test --features controlled-decode --test integration
+
       - name: Optional inventory and typed errors
         run: cargo test --features inventory --test inventory --test inventory_review --test inventory_review2 --test inventory_review3 --test inventory_review4 --test inventory_feature --test fuzz_regression
 
@@ -232,7 +235,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy (all features)
-        run: cargo clippy --all-targets --features "quantize,imagequant,quantette,joint,unchecked,zopfli" -- -D warnings
+        run: cargo clippy --all-targets --features "quantize,imagequant,quantette,joint,unchecked,zopfli,controlled-decode" -- -D warnings
 
       - name: Clippy (no default features)
         run: cargo clippy --all-targets --no-default-features -- -D warnings

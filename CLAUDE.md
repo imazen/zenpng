@@ -538,3 +538,60 @@ removes the carrier. Verified with image-png pixel decoding and packet presence.
 
 The native unsupported-operation variant did not expose its shared cause through
 `Error::source`. `exact_timing_refusal_survives_erasure` now tests this contract.
+
+## Known Bugs: controlled PNG discovery (2026-10-25)
+
+The first controlled adapter left gain-map presence unknown and the checked
+transcoder correctly refused ordinary PNG input. Controlled final discovery now
+scans recognized PNG chunks before marking absence. Gain-map carriers, unknown
+extensions and trailing bytes refuse; no auxiliary image is silently discarded.
+Scope and primary-source references are in docs/controlled-decoding.md.
+
+## Known Bugs: GrayAlpha16 transfer (2026-10-25)
+
+Fixed on the checked API review branch: both gray16+tRNS and gray-alpha16 used
+the pixel element type's Unknown-transfer descriptor while other untagged PNG
+integer layouts use the adapter's sRGB assumption. Native output_info, one-shot,
+row and controlled paths now agree on GRAYA16_SRGB. Explicit cICP enrichment
+still overrides it. Exact sample comparisons against image-png remain unchanged.
+
+## Known Bugs: zencodec colour binding and row planning (fixed on native-preflight, 2026-10-27)
+
+Reproduced on 7f13367f by `tests/source_color_binding.rs` (image-png reads cICP/iCCP and
+samples): the adapter ignored `PixelSlice::color_context()`, inferred cICP from the
+descriptor only in one-shot `encode_inner` (so `begin` + rows wrote Display P3 untagged),
+gave f32 input no cICP, and accepted metadata contradicting an explicit sRGB context.
+Now one `bind_color` runs for one-shot, `begin` and the first rows: context ICC → iCCP,
+context/descriptor code points → cICP (sRGB untagged), f32 → primaries + sRGB transfer.
+Job colour still labels pixels without an explicit context (pinned by
+`explicit_icc_is_not_overridden_by_descriptor_derived_cicp`). zencodec's `plan_encode`
+shares `prepare_rows` with `begin_declared`; `tests/row_planning.rs` compares them over 1,728
+effort/geometry/colour/access/threading/downcast cells. Strip streaming needs
+`DowncastFlags::none()` (downcast analysis is whole-image), so default configs stream only
+at effort 0. Strip lag depends on the resolved worker count (host-dependent timing).
+Planning measured with heaptrack (`docs/ENCODE_PLANNING.md`): no planned peak above the
+prepared jobs', no strip workers. The same probe found effort-0 `begin` reserving the whole
+stored file (12.6 MB at 2048x2048 RGB8) although its bytes stream; it now reserves the header.
+
+## Known Bugs: checked policy enforcement (fixed on native-preflight, 2026-10-28)
+
+Found while making the checked setters admit policy fields; each has a failing-first test.
+- `allow_icc: false` stripped the profile from the APNG info but the frame decoder still
+  attached it to every frame's colour context
+  (`decode_policy::metadata_gates_hold_for_apng_frames_and_their_colour_context`).
+- `allow_truncated` was never read: a file cut after its pixel data decoded in full and lost
+  the chunks after it (eXIf, iTXt XMP, text), and the streaming, push, incremental and APNG
+  routes started before reaching a cut. With `allow_truncated: false` every route walks the
+  chunk lengths first (`check_truncation_policy`) and refuses before any decoder starts
+  (`decode_policy::refusing_truncation_stops_every_route_before_any_effect`).
+- `embed_icc: false` wrote ICC-only Display P3, Rec. 2020 or unidentified-profile pixels
+  untagged (read back as sRGB). It now refuses unless a remaining cICP (native or plan) has
+  the same meaning (`encode_carrier_policy`).
+- A colour context profile is authoritative: under `embed_icc: false` it gets the same
+  refusal on every encoder, alone or repeated as job metadata (`encode_carrier_context`).
+  PNG has no best-effort exception for the legacy setter (zenjpeg keeps one for job
+  metadata); no established PNG test forbids ICC beside a profile zenpixels cannot identify.
+- The animation encoder took a first-frame colour context that contradicted the job colour
+  (a Rec. 2020 iCCP over Display P3 frames, or the context profile beside the job's sRGB
+  cICP), which the still encoders refuse. It now refuses too, before the frame changes
+  anything (`a_context_contradicting_the_job_colour_refuses_on_every_encoder`).

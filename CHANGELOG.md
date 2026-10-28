@@ -4,11 +4,100 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+
+- The zencodec adapter implements zencodec's Pulse controls (review revision
+  `f73a7e0e`): jobs implement `with_pulse` and retain a `SharedPulse`, the
+  animation encoder and decoder take `Option<&dyn Pulse>`, and
+  `metadata::rewrite` takes `RewriteRequest`. It no longer builds against
+  released zencodec.
+- Encodes that wrote a relabelled file now refuse: job colour (metadata or a
+  native cICP) contradicting the pixels' explicit colour context, a metadata ICC
+  describing linear samples for f32 input, and f32 input whose context profile
+  cannot be identified. Limits and colour refusals surface at `begin`, not
+  `finish`.
+
+### Changed
+
+- The zencodec 0.2 family enters through version edges (`zencodec-io`,
+  `zencodec-coroutine`, `zenmeta`; `zencodec` already did); direct git pins
+  made a consumer that repins core carry two families. The root and fuzz
+  manifests patch every family crate (and `zencodec-testkit`) to ideal-api
+  `a15c28fd`. zencodec-io, zencodec-coroutine and zenmeta are not on
+  crates.io, so releases stay gated on publishing them.
+
+### Fixed
+
+- `embed_icc: false` wrote pixels whose only colour carrier was the ICC
+  profile (Display P3, Rec. 2020, an unidentified profile) untagged, so they
+  read back as sRGB. It now refuses with `PolicyRejected(Encode)` unless a
+  remaining cICP (native builder or colour plan) has the same meaning
+  (`tests/integration/encode_carrier_policy.rs`).
+  A colour context profile gets the same refusal on every encoder, alone or
+  repeated as job metadata (`tests/integration/encode_carrier_context.rs`).
+- The animation encoder accepted a first-frame colour context that
+  contradicted the job's colour metadata (a Rec. 2020 iCCP over Display P3
+  frames); it now refuses, as the still encoders do.
+- Under `allow_icc: false` the APNG frame decoder still attached the source
+  ICC profile to every frame's colour context (the info was filtered, the
+  frames were not). Frames now take the profile from the filtered info.
+- `allow_truncated: false` was never read: a file cut after its pixel data
+  decoded in full and silently lost the chunks that followed (eXIf, iTXt XMP,
+  text), and the streaming, push, incremental and APNG routes started before
+  reaching a cut. With the policy, every route walks the chunk lengths first
+  and refuses input that ends before IEND with `PngError::Truncated` before
+  any decoder starts. Without it nothing changes.
+- A field-only orientation (`Metadata::orientation` with no EXIF blob: a
+  caller-set field, or one from a format whose orientation is a container
+  property) was dropped: eXIf was written only from `metadata.exif`. The
+  encoder now writes a minimal EXIF holding the tag, and a policy forbidding
+  EXIF refuses a non-identity orientation (`Policy(Encode)`) instead of
+  dropping it. `tests/orientation_carriage.rs` reads the tag back with the png
+  crate and a test-local TIFF reader.
+
+- The adapter ignored the pixels' colour context, inferred cICP from the
+  descriptor only for one-shot encodes (`begin` + `push_rows` wrote Display P3
+  untagged), and gave f32 input no cICP. One binding now runs for one-shot,
+  `begin` and first-row encodes; `tests/source_color_binding.rs` reproduced 4 of
+  5 cases with image-png before the fix. The descriptor-derived cICP is still
+  written without a companion iCCP.
+- Effort-0 row encodes reserved the whole stored file at `begin` (12.6 MB for
+  a 2048x2048 RGB8 image) although their bytes are handed out as written. They
+  now reserve the header; rows pushed without `begin` still reserve the file
+  `finish` returns. Output bytes are unchanged.
+
+### Added
+
+- Checked decode policy: `PngDecodeJob::try_set_policy` admits `allow_icc`,
+  `allow_exif`, `allow_xmp` and `allow_truncated: false` and refuses every
+  other field (`allow_truncated: true`: PNG has no partial-image mode;
+  progressive, animation and strict until qualified per route), leaving the
+  job unchanged on refusal. The admitted fields hold on probe, one-shot,
+  streaming, push, incremental, APNG and controlled decodes without changing
+  pixels, descriptors or orientation; a forbidden ICC profile keeps the
+  controlled interpretation unavailable. `tests/integration/decode_policy.rs`
+  (failing first; a setter-only control fails exactly the three route tests).
+- Effective-job planning through zencodec's shared hooks (ideal-api `f5a7fd46`):
+  `EncodeJob::plan_encode` / `Encoder::begin_declared` return one `EncodePlan`
+  (one row pass, carriers unreported) holding the
+  row mode's output timing from the same preparation `begin` runs, without
+  allocating rows or starting strip workers (`StripStream::plan`). The
+  constructed mode is checked against the plan before any byte is handed out.
+  Strip timing depends on the resolved worker count. `PngEncodeJob` is `Clone`.
+  `docs/ENCODE_PLANNING.md` records the row modes and a heaptrack probe
+  (`examples/encode_planning_probe.rs`): no planned peak exceeded the prepared
+  jobs'; after `begin` of one 2048x2048 job the whole-process peak was
+  84,057 B stored and 30.9 MB with parallel strips.
+
 ### Dependency compatibility
 
 - Admit archmage/magetypes 0.9.31-beta.1 alongside compatible stable versions. Formatting, strict library lint and library tests pass (`b552c155`).
 
 ### Dependency integration
+
+- Move the zencodec 0.2 pin to ideal-api `79676215` (after `f5a7fd46`): the
+  coroutine retained-batch delivery fix behind controlled decoding. No source
+  change; the fuzz lockfile follows.
 
 - Use zencodec/zenmeta/testkit `d327434b` in the library and standalone fuzz graph so metadata rewriting and inventory share the streaming consumer contract. Shared contracts, metadata rewriting on both pointer widths, animation timing and inventory fuzz compilation pass (`just contract-pin-check`).
 
@@ -20,6 +109,21 @@ All notable changes to zenpng are documented here.
 - zenpixels/zenpixels-convert pinned to main 1d3ddd21 (converged 0.2.17), from 789d69db on the unmerged PR #76 branch. HDR metadata types come from `zenpixels::hdr` instead of the root aliases 0.2.17 deprecates (same types; `with_content_light_level`'s signature is unchanged). `cicp_only_display_p3_synthesizes_icc` checks that the embedded profile describes Display P3 with the sRGB curve instead of pinning the curated `DISPLAY_P3_V4` bytes, which 0.2.17 replaces with the exact cicp-tagged profile (zenpixels#86/#87).
 
 ### Added
+
+- Checked required pHYs density through generic, erased and registered jobs,
+  including row encoding and APNG. Exact physical-unit conversion and reduced
+  unknown-unit aspect refuse rounding, invalid values and 31-bit carrier overflow.
+  [Contract and verification](docs/required-resolution.md).
+
+- Optional controlled PNG decoding suspends before native reconstruction, checks
+  recognized color carriers and exposes final late EXIF before adoption. Native
+  row/Adam7 output is qualified against an independent decoder. Whole compressed
+  input is retained; see `docs/controlled-decoding.md` for storage and sequence limits.
+
+- Checked verbatim color policy on encode jobs, preserving supplied ICC authority
+  through still, row and APNG paths. Other explicit policy fields currently
+  refuse without mutating the job. Independent PNG inspection checks carrier
+  selection and exact samples (`just checked-policy-check`).
 
 - Development-only PNG profiling and input generation with full output hashes and strict independent shape, depth and byte-order checks. Coz counters and their dependency are Linux-only; the ordinary workload remains portable.
 
@@ -66,6 +170,9 @@ All notable changes to zenpng are documented here.
   declared frame count binds either way (`tests/animation_streaming.rs`).
 
 ### Fixed
+- Untagged GrayAlpha16 and gray16+tRNS output now report the same sRGB transfer
+  assumption as other integer PNG layouts. Probe-output, one-shot and row
+  descriptors agree; independently decoded sample bytes remain exact.
 - `EncodeConfig::with_text` wrote the text's UTF-8 bytes into `tEXt`, which holds Latin-1, so a non-ASCII character read back as two wrong ones. Text that fits Latin-1 is now encoded as Latin-1; text with a character outside it is written as an uncompressed `iTXt` (UTF-8). Test `tests/text_chunks.rs`.
 
 - Grey-valued RGB pixels written with an RGB ICC profile were reduced to a greyscale PNG that still carried the RGB iCCP, which the PNG spec forbids and readers reject or ignore. The grey reductions are now off when an RGB profile will be written. Test: `grey_pixels_with_an_rgb_icc_stay_rgb`.

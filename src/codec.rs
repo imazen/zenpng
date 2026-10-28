@@ -6,6 +6,9 @@
 
 extern crate std;
 
+#[cfg(feature = "controlled-decode")]
+mod controlled;
+
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
@@ -14,7 +17,7 @@ use zencodec::decode::{AnimationFrame, DecodeCapabilities, DecodeOutput, OutputI
 use zencodec::encode::{EncodeCapabilities, EncodeOutput};
 use zencodec::{CodecError, ImageFormat, ImageInfo, Metadata, ResourceLimits};
 use zenpixels::{
-    AlphaMode, ColorPrimaries, Pixel, PixelDescriptor, PixelSlice, PixelSliceMut, TransferFunction,
+    AlphaMode, ColorPrimaries, PixelDescriptor, PixelSlice, PixelSliceMut, TransferFunction,
 };
 
 use crate::decode::PngDecodeConfig;
@@ -734,9 +737,10 @@ impl zencodec::encode::EncoderConfig for PngEncoderConfig {
 // ── PngEncodeJob ─────────────────────────────────────────────────────
 
 /// Per-operation PNG encode job.
+#[derive(Clone)]
 pub struct PngEncodeJob {
     config: PngEncoderConfig,
-    stop: Option<zencodec::StopToken>,
+    stop: Option<zencodec::SharedPulse>,
     metadata: Option<Metadata>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::encode::EncodePolicy>,
@@ -750,7 +754,7 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
     type Enc = PngEncoder;
     type AnimationFrameEnc = PngAnimationFrameEncoder;
 
-    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
+    fn with_pulse(mut self, stop: zencodec::SharedPulse) -> Self {
         self.stop = Some(stop);
         self
     }
@@ -770,6 +774,45 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         self
     }
 
+    fn try_set_policy(
+        &mut self,
+        policy: zencodec::encode::EncodePolicy,
+    ) -> Result<(), zencodec::UnsupportedOperation> {
+        use zencodec::{ColorEmitPolicy, encode::EncodePolicy};
+        if policy == EncodePolicy::none() {
+            return Ok(());
+        }
+        // The checked route currently qualifies exact supplied color carriers.
+        // Other fields retain their legacy setter until their effects are
+        // qualified across the still, row and animation paths.
+        if policy != EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim) {
+            return Err(zencodec::UnsupportedOperation::EncodePolicy);
+        }
+        self.policy = Some(policy);
+        Ok(())
+    }
+
+    fn try_set_resolution(
+        &mut self,
+        resolution: zencodec::Resolution,
+    ) -> Result<(), zencodec::ResolutionError> {
+        use zencodec::ResolutionUnit;
+        let (unit, native) = match resolution.unit {
+            ResolutionUnit::Unknown => (ResolutionUnit::Unknown, crate::PhysUnit::Unknown),
+            ResolutionUnit::Inch | ResolutionUnit::Centimeter | ResolutionUnit::Meter => {
+                (ResolutionUnit::Meter, crate::PhysUnit::Meter)
+            }
+            _ => return Err(zencodec::ResolutionError::Unsupported),
+        };
+        // pHYs uses PNG four-byte unsigned integers, limited by the format to
+        // 2^31 - 1. Compute both fields before mutating the reusable job.
+        let (x, y) = resolution.try_integer_density(unit, i32::MAX as u32)?;
+        self.config.config.pixels_per_unit_x = Some(x);
+        self.config.config.pixels_per_unit_y = Some(y);
+        self.config.config.phys_unit = Some(native);
+        Ok(())
+    }
+
     fn with_canvas_size(mut self, width: u32, height: u32) -> Self {
         self.canvas_width = width;
         self.canvas_height = height;
@@ -781,6 +824,36 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         self
     }
 
+    /// The plan [`Encoder::begin_declared`](zencodec::encode::Encoder::begin_declared)
+    /// returns for this job and declaration: one ordered row pass, with the
+    /// row mode's output timing.
+    ///
+    /// Runs the same validation, colour binding, limits, metadata policy and
+    /// row-mode decision as `begin_declared`, without allocating rows or
+    /// starting strip workers. Strip timing depends on the resolved worker
+    /// count, so it can differ between hosts; the bytes do not.
+    /// `declaration.color` is the current colour of the rows that will follow.
+    /// Retain this exact job: the plan describes it and nothing else. PNG
+    /// never patches earlier bytes, so the declared access does not change the
+    /// layout. Colour carriers are not reported yet (`carriers: None`,
+    /// unknown). Errors are the job's own `At<CodecError>`, boxed.
+    fn plan_encode(
+        &self,
+        declaration: &zencodec::encode::EncodeDeclaration<'_>,
+    ) -> Result<zencodec::encode::EncodePlan, zencodec::encode::BoxedError> {
+        self.clone()
+            .into_png_encoder()
+            .prepare_rows(
+                declaration.width,
+                declaration.height,
+                declaration.descriptor,
+                declaration.color,
+                declaration.access,
+            )
+            .map(zencodec::encode::EncodePlan::rows)
+            .map_err(|e| Box::new(CodecError::of(e)) as zencodec::encode::BoxedError)
+    }
+
     fn encoder(self) -> Result<PngEncoder, At<CodecError>> {
         Ok(self.into_png_encoder())
     }
@@ -789,9 +862,13 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         // Frame pixel format isn't known until frames are pushed; the color-emit
         // resolver still classifies gray/CMYK from the ICC color space, and
         // APNG frames are RGB/RGBA, so a `None` channel count is correct here.
-        let effective_meta =
-            apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref(), None)
-                .map_err(CodecError::of)?;
+        let effective_meta = apply_encode_policy(
+            self.metadata.as_ref(),
+            self.policy.as_ref(),
+            None,
+            self.config.config.cicp,
+        )
+        .map_err(CodecError::of)?;
         let mut config = self.config.config.clone();
         if let Some(ref limits) = self.limits {
             apply_threading(&mut config, limits.threading());
@@ -829,6 +906,7 @@ impl PngEncodeJob {
             declared: None,
             sent: 0,
             emitted: 0,
+            checked_context: None,
         }
     }
 }
@@ -838,7 +916,7 @@ impl PngEncodeJob {
 /// Single-image PNG encoder.
 pub struct PngEncoder {
     config: PngEncoderConfig,
-    stop: Option<zencodec::StopToken>,
+    stop: Option<zencodec::SharedPulse>,
     metadata: Option<Metadata>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::encode::EncodePolicy>,
@@ -856,6 +934,8 @@ pub struct PngEncoder {
     sent: usize,
     /// Bytes handed out and dropped from the buffer (for the output limit).
     emitted: u64,
+    /// The last row colour context found consistent with the written colour.
+    checked_context: Option<alloc::sync::Arc<zenpixels::ColorContext>>,
 }
 
 /// Streaming mode selection for push_rows/finish.
@@ -1010,36 +1090,17 @@ impl PngEncoder {
         // Pre-flight stop check
         cancel.check().map_err(|e| at!(PngError::from(e)))?;
         // Pre-flight limit checks
-        if let Some(ref limits) = self.limits {
-            limits
-                .check_dimensions(w, h)
-                .map_err(|e| at!(PngError::LimitExceeded(e)))?;
-            let channels: u64 = match color_type {
-                crate::encode::ColorType::Grayscale => 1,
-                crate::encode::ColorType::Rgb => 3,
-                crate::encode::ColorType::GrayscaleAlpha => 2,
-                crate::encode::ColorType::Rgba => 4,
-            };
-            let depth_bytes: u64 = match bit_depth {
-                crate::encode::BitDepth::Eight => 1,
-                crate::encode::BitDepth::Sixteen => 2,
-            };
-            let bpp = channels * depth_bytes;
-            // Honest pre-flight: gate on the calibrated peak-memory estimate
-            // (fixed overhead + input buffer + the effort-dependent encoder
-            // working set — 18..180 B/px per `heuristics::ENCODE_BPP_ANCHORS`),
-            // not just the `w*h*bpp` input buffer, which under-states the real
-            // peak by an order of magnitude at high effort. The estimate's
-            // `peak_memory_bytes` is the admission-gating field: a calibrated
-            // safe upper bound over the measured default (4-thread) peak.
-            // `None` (dimension overflow) can never fit a finite budget.
-            let effort = self.config.config.compression.effort();
-            let estimated_mem = crate::heuristics::estimate_encode(w, h, bpp as u8, effort)
-                .map_or(u64::MAX, |e| e.peak_memory_bytes);
-            limits
-                .check_memory(estimated_mem)
-                .map_err(|e| at!(PngError::LimitExceeded(e)))?;
-        }
+        let channels: u64 = match color_type {
+            crate::encode::ColorType::Grayscale => 1,
+            crate::encode::ColorType::Rgb => 3,
+            crate::encode::ColorType::GrayscaleAlpha => 2,
+            crate::encode::ColorType::Rgba => 4,
+        };
+        let depth_bytes: u64 = match bit_depth {
+            crate::encode::BitDepth::Eight => 1,
+            crate::encode::BitDepth::Sixteen => 2,
+        };
+        self.check_encode_limits(w, h, channels * depth_bytes)?;
         let config = self.config_with_threading();
         let deadline = default_deadline();
         // Apply encode policy to filter metadata and resolve color emission.
@@ -1047,6 +1108,7 @@ impl PngEncoder {
             self.metadata.as_ref(),
             self.policy.as_ref(),
             Some(color_type.channels()),
+            self.config.config.cicp,
         )?;
         let meta_ref = effective_meta.as_ref();
         let data = crate::encode::encode_raw(
@@ -1059,6 +1121,80 @@ impl PngEncoder {
                 .map_err(|e| at!(PngError::LimitExceeded(e)))?;
         }
         Ok(EncodeOutput::new(data, ImageFormat::Png))
+    }
+}
+
+/// What the stored samples mean, beyond the sRGB default.
+#[derive(Clone, Debug, PartialEq)]
+enum StoredColor {
+    /// The pixels assert nothing beyond the format default.
+    Default,
+    /// This profile describes the stored samples.
+    Icc(alloc::sync::Arc<[u8]>),
+    /// These code points describe the stored samples.
+    Cicp(zenpixels::Cicp),
+}
+
+impl StoredColor {
+    fn parts(&self) -> (Option<&[u8]>, Option<zenpixels::Cicp>) {
+        match self {
+            Self::Default => (None, None),
+            Self::Icc(icc) => (Some(icc), None),
+            Self::Cicp(cicp) => (None, Some(*cicp)),
+        }
+    }
+}
+
+/// `primaries` with the sRGB transfer: the 8-bit sRGB storage of linear
+/// samples in those primaries.
+fn srgb_encoded(primaries: ColorPrimaries, gray: bool) -> Result<StoredColor, At<PngError>> {
+    if gray {
+        return Ok(StoredColor::Default);
+    }
+    primaries
+        .to_cicp()
+        .map(|code| StoredColor::Cicp(zenpixels::Cicp::new(code, 13, 0, true)))
+        .ok_or_else(|| {
+            at!(PngError::InvalidInput(
+                "these primaries have no code point; attach their ICC profile to the pixels".into()
+            ))
+        })
+}
+
+/// sRGB/BT.709 code points: PNG leaves those untagged.
+fn is_default_cicp(cicp: zenpixels::Cicp, gray: bool) -> bool {
+    matches!(cicp.transfer_characteristics, 2 | 13)
+        && (gray || matches!(cicp.color_primaries, 1 | 2))
+}
+
+/// The primaries and transfer a description identifies; `None` for an
+/// unidentified profile or code points zenpixels cannot name. An empty
+/// description is the sRGB default.
+fn identify(
+    (icc, cicp): (Option<&[u8]>, Option<zenpixels::Cicp>),
+) -> Option<(ColorPrimaries, TransferFunction)> {
+    use zenpixels::ColorProfileSource;
+    match (icc, cicp) {
+        (Some(icc), _) => ColorProfileSource::Icc(icc).resolve(),
+        (None, Some(cicp)) => ColorProfileSource::Cicp(cicp).resolve(),
+        (None, None) => Some((ColorPrimaries::Bt709, TransferFunction::Srgb)),
+    }
+}
+
+/// Whether two descriptions mean the same: identical profile bytes or code
+/// points, or the same identified primaries and transfer (only the transfer
+/// for grayscale samples).
+fn same_meaning(
+    a: (Option<&[u8]>, Option<zenpixels::Cicp>),
+    b: (Option<&[u8]>, Option<zenpixels::Cicp>),
+    gray: bool,
+) -> bool {
+    if a.0.is_some() && a.0 == b.0 || a.0.is_none() && b.0.is_none() && a.1 == b.1 {
+        return true;
+    }
+    match (identify(a), identify(b)) {
+        (Some(a), Some(b)) => a.1 == b.1 && (gray || a.0 == b.0),
+        _ => false,
     }
 }
 
@@ -1098,7 +1234,50 @@ impl zencodec::encode::Encoder for PngEncoder {
         height: u32,
         descriptor: zenpixels::PixelDescriptor,
     ) -> Result<zencodec::encode::OutputTiming, At<CodecError>> {
-        self.begin_inner(width, height, descriptor)
+        self.begin_inner(
+            width,
+            height,
+            descriptor,
+            None,
+            zencodec::output_patch::OutputAccess::Forward,
+        )
+        .map_err(CodecError::of)
+    }
+
+    /// Declare the image and the current colour context of the rows that
+    /// will follow, then choose the row mode.
+    ///
+    /// The same as [`begin_output`](Self::begin_output), with the rows'
+    /// colour declared before the header is written: the header's iCCP/cICP
+    /// describe it, and rows pushed later must mean the same thing. Returns
+    /// the plan [`EncodeJob::plan_encode`](zencodec::encode::EncodeJob::plan_encode)
+    /// reports for the same job and declaration; the constructed row mode is
+    /// checked against that plan before any byte is handed out.
+    fn begin_declared(
+        &mut self,
+        declaration: &zencodec::encode::EncodeDeclaration<'_>,
+    ) -> Result<zencodec::encode::EncodePlan, At<CodecError>> {
+        self.begin_inner(
+            declaration.width,
+            declaration.height,
+            declaration.descriptor,
+            declaration.color,
+            declaration.access,
+        )
+        .map(zencodec::encode::EncodePlan::rows)
+        .map_err(CodecError::of)
+    }
+
+    /// PNG never patches earlier bytes: forward and seek-back destinations
+    /// get the same layout and timing as [`begin`](Self::begin).
+    fn begin_output(
+        &mut self,
+        width: u32,
+        height: u32,
+        descriptor: zenpixels::PixelDescriptor,
+        access: zencodec::output_patch::OutputAccess,
+    ) -> Result<zencodec::encode::OutputTiming, At<CodecError>> {
+        self.begin_inner(width, height, descriptor, None, access)
             .map_err(CodecError::of)
     }
 
@@ -1218,6 +1397,184 @@ impl PngEncoder {
         }
     }
 
+    /// What the stored samples mean: the rows' colour context (an ICC profile
+    /// is authoritative), then what the descriptor asserts beyond the sRGB
+    /// default. f32 input is stored as 8-bit sRGB, so its interpretation is
+    /// its primaries with the sRGB transfer, and an unidentified profile
+    /// cannot describe it.
+    fn stored_color(
+        desc: zenpixels::PixelDescriptor,
+        context: Option<&zenpixels::ColorContext>,
+    ) -> Result<StoredColor, At<PngError>> {
+        use zenpixels::{ColorModel, ColorProfileSource};
+        let gray = matches!(
+            desc.layout(),
+            zenpixels::ChannelLayout::Gray | zenpixels::ChannelLayout::GrayAlpha
+        );
+        let float = desc.channel_type() == zenpixels::ChannelType::F32;
+        // BT.709 is what every untagged buffer is labelled with, so only other
+        // primaries are an assertion. Grayscale has no primaries.
+        let asserted = match desc.primaries {
+            _ if gray => None,
+            ColorPrimaries::Unknown | ColorPrimaries::Bt709 => None,
+            primaries => Some(primaries),
+        };
+        let refuse = |reason: &str| Err(at!(PngError::InvalidInput(reason.into())));
+        if let Some(icc) = context.and_then(|c| c.icc.as_ref()) {
+            let channels = if gray {
+                ColorModel::Gray
+            } else {
+                ColorModel::Rgb
+            };
+            if zenpixels::icc::profile_color_space(icc) != Some(channels) {
+                return refuse("the pixels' ICC profile does not describe their channels");
+            }
+            let identified = ColorProfileSource::Icc(icc).resolve();
+            if let Some(cicp) = context.and_then(|c| c.cicp)
+                && (identified.is_none() || identified != ColorProfileSource::Cicp(cicp).resolve())
+            {
+                return refuse("the pixels' ICC profile and code points disagree");
+            }
+            if asserted.is_some() && identified.map(|(p, _)| p) != asserted {
+                return refuse("the descriptor's primaries contradict the pixels' ICC profile");
+            }
+            if !float {
+                return Ok(StoredColor::Icc(alloc::sync::Arc::clone(icc)));
+            }
+            return match identified {
+                Some((primaries, TransferFunction::Linear)) => srgb_encoded(primaries, gray),
+                Some(_) => refuse("the pixels' ICC profile does not describe linear samples"),
+                None => refuse(
+                    "an unidentified ICC profile cannot describe the 8-bit sRGB samples \
+                     stored for f32 input",
+                ),
+            };
+        }
+        if let Some(cicp) = context.and_then(|c| c.cicp) {
+            if cicp.matrix_coefficients != 0 || !cicp.full_range {
+                return refuse("YCbCr or narrow-range code points do not describe RGB samples");
+            }
+            if asserted.is_some() && ColorPrimaries::from_cicp(cicp.color_primaries) != asserted {
+                return refuse("the descriptor's primaries contradict the pixels' code points");
+            }
+            if !float {
+                return Ok(StoredColor::Cicp(cicp));
+            }
+            if cicp.transfer_characteristics != 8 {
+                return refuse("the pixels' code points do not describe linear samples");
+            }
+            return Ok(StoredColor::Cicp(zenpixels::Cicp::new(
+                cicp.color_primaries,
+                13,
+                0,
+                true,
+            )));
+        }
+        if float {
+            return match desc.primaries {
+                ColorPrimaries::Unknown | ColorPrimaries::Bt709 => Ok(StoredColor::Default),
+                _ if gray => Ok(StoredColor::Default),
+                primaries => srgb_encoded(primaries, gray),
+            };
+        }
+        Ok(Self::cicp_from_descriptor(desc).map_or(StoredColor::Default, StoredColor::Cicp))
+    }
+
+    /// The colour chunks this encode writes from, as (ICC, CICP): the job's
+    /// metadata ICC and the native cICP over the metadata's.
+    fn written_color(&self) -> (Option<&[u8]>, Option<zenpixels::Cicp>) {
+        let meta = self.metadata.as_ref();
+        (
+            meta.and_then(|m| m.icc_profile.as_deref()),
+            self.config.config.cicp.or(meta.and_then(|m| m.cicp)),
+        )
+    }
+
+    /// Bind the file's colour chunks to the stored samples before any chunk
+    /// is written.
+    ///
+    /// A job colour description (metadata ICC/CICP or a native cICP) labels
+    /// pixels without an explicit colour context, even when their descriptor
+    /// names other primaries (`explicit_icc_is_not_overridden_by_descriptor_derived_cicp`),
+    /// and must agree with an explicit context: a profile kept after a
+    /// conversion is a stale carrier. Without one, the stored samples' own
+    /// interpretation is written: a context ICC as iCCP, code points as cICP
+    /// (sRGB stays untagged), the same for one-shot and row encodes.
+    fn bind_color(
+        &mut self,
+        desc: zenpixels::PixelDescriptor,
+        context: Option<&zenpixels::ColorContext>,
+    ) -> Result<(), At<PngError>> {
+        let gray = matches!(
+            desc.layout(),
+            zenpixels::ChannelLayout::Gray | zenpixels::ChannelLayout::GrayAlpha
+        );
+        let stored = Self::stored_color(desc, context)?;
+        let written = self.written_color();
+        if written != (None, None) {
+            let explicit = context.is_some_and(|c| c.icc.is_some() || c.cicp.is_some());
+            if explicit && !same_meaning(written, stored.parts(), gray) {
+                return Err(at!(PngError::InvalidInput(
+                    "the job's colour description contradicts the pixels' current colour".into()
+                )));
+            }
+            if desc.channel_type() == zenpixels::ChannelType::F32
+                && let Some(icc) = written.0
+                && matches!(
+                    zenpixels::ColorProfileSource::Icc(icc).resolve(),
+                    Some((_, TransferFunction::Linear))
+                )
+            {
+                return Err(at!(PngError::InvalidInput(
+                    "the metadata ICC describes linear samples; f32 input is stored as \
+                     8-bit sRGB"
+                        .into()
+                )));
+            }
+            return Ok(());
+        }
+        match stored {
+            StoredColor::Default => {}
+            StoredColor::Icc(icc) => {
+                let meta = self.metadata.get_or_insert_with(Metadata::none);
+                meta.icc_profile = Some(icc);
+            }
+            StoredColor::Cicp(cicp) if is_default_cicp(cicp, gray) => {}
+            StoredColor::Cicp(cicp) => self.config.config.cicp = Some(cicp),
+        }
+        Ok(())
+    }
+
+    /// Rows after the header must mean what the header says. Rows without a
+    /// colour context assert nothing.
+    fn check_rows_color(&mut self, rows: &PixelSlice<'_>) -> Result<(), At<PngError>> {
+        let Some(context) = rows.color_context() else {
+            return Ok(());
+        };
+        if self
+            .checked_context
+            .as_ref()
+            .is_some_and(|checked| alloc::sync::Arc::ptr_eq(checked, context))
+        {
+            return Ok(());
+        }
+        let desc = rows.descriptor();
+        let gray = matches!(
+            desc.layout(),
+            zenpixels::ChannelLayout::Gray | zenpixels::ChannelLayout::GrayAlpha
+        );
+        let stored = Self::stored_color(desc, Some(context))?;
+        if stored != StoredColor::Default
+            && !same_meaning(self.written_color(), stored.parts(), gray)
+        {
+            return Err(at!(PngError::InvalidState(
+                "the rows' colour context differs from the colour written before them".into()
+            )));
+        }
+        self.checked_context = Some(alloc::sync::Arc::clone(context));
+        Ok(())
+    }
+
     fn encode_inner(mut self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<PngError>> {
         use linear_srgb::default::{linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice};
         use zenpixels::PixelFormat;
@@ -1231,16 +1588,8 @@ impl PngEncoder {
             ))));
         }
 
-        if self.config.config.cicp.is_none()
-            && self
-                .metadata
-                .as_ref()
-                .and_then(|m| m.icc_profile.as_ref())
-                .is_none()
-        {
-            self.config.config.cicp = Self::cicp_from_descriptor(pixels.descriptor());
-        }
         self.describe_stored_f32(pixels.descriptor());
+        self.bind_color(pixels.descriptor(), pixels.color_context().map(|c| &**c))?;
 
         let w = pixels.width();
         let h = pixels.rows();
@@ -1250,6 +1599,7 @@ impl PngEncoder {
             self.metadata.as_ref(),
             self.policy.as_ref(),
             Some(pixels.descriptor().channels() as u8),
+            self.config.config.cicp,
         )?;
         #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
         let meta_ref = effective_meta.as_ref();
@@ -1434,6 +1784,64 @@ impl PngEncoder {
 
     /// The strip-streaming state when this encode qualifies for it (see
     /// `StripStreamingState`), with the PNG header already written.
+    /// The row format strip streaming would compress, or `None` when this
+    /// configuration or canvas cannot stream in strips at all.
+    fn strip_format(
+        &self,
+        color_type: crate::encode::ColorType,
+        bit_depth: crate::encode::BitDepth,
+    ) -> Option<crate::encoder::RowFormat> {
+        let config = &self.config.config;
+        if self.canvas_height == 0
+            || config.downcast != crate::encode::DowncastFlags::none()
+            || config.near_lossless_bits != 0
+            || config.decode_segments != 0
+        {
+            return None;
+        }
+        let ihdr_depth: u8 = match bit_depth {
+            crate::encode::BitDepth::Eight => 8,
+            crate::encode::BitDepth::Sixteen => 16,
+        };
+        Some(crate::encoder::RowFormat::from_png(
+            color_type.to_png_byte(),
+            ihdr_depth,
+        ))
+    }
+
+    /// Strip workers as the one-shot path resolves them (limits' threading
+    /// policy over the config).
+    fn strip_threads(&self) -> usize {
+        let threaded = self.config_with_threading();
+        if threaded.parallel {
+            match threaded.max_threads {
+                0 => std::thread::available_parallelism().map_or(1, |t| t.get()),
+                t => t,
+            }
+        } else {
+            1
+        }
+    }
+
+    /// What `strip_streaming_state` would build, without building it.
+    fn strip_plan(
+        &self,
+        color_type: crate::encode::ColorType,
+        bit_depth: crate::encode::BitDepth,
+        row_bytes: usize,
+        framing: crate::encoder::compress::StripFraming,
+    ) -> Option<crate::encoder::compress::StripPlan> {
+        let format = self.strip_format(color_type, bit_depth)?;
+        crate::encoder::compress::StripStream::plan(
+            self.config.config.compression.effort(),
+            format,
+            row_bytes,
+            self.canvas_height as usize,
+            self.strip_threads(),
+            framing,
+        )
+    }
+
     fn strip_streaming_state(
         &self,
         color_type: crate::encode::ColorType,
@@ -1445,30 +1853,15 @@ impl PngEncoder {
         use crate::chunk::{PNG_SIGNATURE, write::write_chunk};
         let config = &self.config.config;
         let (w, h) = (self.canvas_width, self.canvas_height);
-        if h == 0
-            || config.downcast != crate::encode::DowncastFlags::none()
-            || config.near_lossless_bits != 0
-            || config.decode_segments != 0
-        {
+        let Some(format) = self.strip_format(color_type, bit_depth) else {
             return Ok(None);
-        }
+        };
+        debug_assert_eq!(format.bpp, bpp);
         let ihdr_depth: u8 = match bit_depth {
             crate::encode::BitDepth::Eight => 8,
             crate::encode::BitDepth::Sixteen => 16,
         };
-        let format = crate::encoder::RowFormat::from_png(color_type.to_png_byte(), ihdr_depth);
-        debug_assert_eq!(format.bpp, bpp);
-        // Threads as the one-shot path resolves them (limits' threading
-        // policy over the config).
-        let threaded = self.config_with_threading();
-        let threads = if threaded.parallel {
-            match threaded.max_threads {
-                0 => std::thread::available_parallelism().map_or(1, |t| t.get()),
-                t => t,
-            }
-        } else {
-            1
-        };
+        let threads = self.strip_threads();
         let Some(stream) = crate::encoder::compress::StripStream::new(
             config.compression.effort(),
             format,
@@ -1491,6 +1884,7 @@ impl PngEncoder {
             self.metadata.as_ref(),
             self.policy.as_ref(),
             Some(color_type.channels()),
+            self.config.config.cicp,
         )?;
         let write_meta = crate::encode::png_write_meta(effective_meta.as_ref(), config)?;
         let mut output = Vec::new();
@@ -1532,19 +1926,27 @@ impl PngEncoder {
         Ok(EncodeOutput::new(data, ImageFormat::Png))
     }
 
-    fn begin_inner(
+    /// Everything `begin_declared` decides before native startup: the
+    /// declaration's validity, the colour binding, limits, metadata policy and
+    /// the row mode's output timing. Leaves the encoder as it was on failure.
+    fn prepare_rows(
         &mut self,
         width: u32,
         height: u32,
         descriptor: zenpixels::PixelDescriptor,
+        context: Option<&zenpixels::ColorContext>,
+        access: zencodec::output_patch::OutputAccess,
     ) -> Result<zencodec::encode::OutputTiming, At<PngError>> {
-        use crate::encoder::compress::StripFraming;
-        use zencodec::encode::OutputTiming;
+        // PNG output is append-only: seek-back access permits nothing more.
+        let _ = access;
         if self.declared.is_some() {
             return Err(at!(PngError::InvalidState("begin called twice".into())));
         }
         if self.streaming.is_some() {
             return Err(at!(PngError::InvalidState("begin after push_rows".into())));
+        }
+        if let Some(ref stop) = self.stop {
+            enough::Stop::check(stop).map_err(|e| at!(PngError::from(e)))?;
         }
         if width == 0
             || height == 0
@@ -1557,23 +1959,128 @@ impl PngEncoder {
                 self.canvas_height
             ))));
         }
+        let saved = (
+            self.canvas_width,
+            self.canvas_height,
+            self.config.config.cicp,
+            self.metadata.clone(),
+        );
+        let planned = self.plan_declared(width, height, descriptor, context);
+        if planned.is_err() {
+            (
+                self.canvas_width,
+                self.canvas_height,
+                self.config.config.cicp,
+                self.metadata,
+            ) = saved;
+        }
+        planned
+    }
+
+    fn plan_declared(
+        &mut self,
+        width: u32,
+        height: u32,
+        descriptor: zenpixels::PixelDescriptor,
+        context: Option<&zenpixels::ColorContext>,
+    ) -> Result<zencodec::encode::OutputTiming, At<PngError>> {
+        use crate::encoder::compress::StripFraming;
+        use zencodec::encode::OutputTiming;
         self.canvas_width = width;
         self.canvas_height = height;
-        self.start_rows(descriptor, width, height, StripFraming::ChunkPerStrip)?;
-        self.declared = Some(descriptor);
-        let timing = match self.streaming.as_mut() {
-            Some(StreamingMode::TrueStreaming(st)) => {
-                st.stream_output();
-                OutputTiming::streaming(0)
+        self.describe_stored_f32(descriptor);
+        self.bind_color(descriptor, context)?;
+        let (color_type, bit_depth) = pixel_format_to_png(descriptor.pixel_format())
+            .ok_or_else(|| at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat)))?;
+        let bpp = usize::from(color_type.channels())
+            * match bit_depth {
+                crate::encode::BitDepth::Eight => 1,
+                crate::encode::BitDepth::Sixteen => 2,
+            };
+        self.check_encode_limits(width, height, bpp as u64)?;
+        // Colour and metadata refusals surface now, as a one-shot encode
+        // reports them, not at finish.
+        let effective_meta = apply_encode_policy(
+            self.metadata.as_ref(),
+            self.policy.as_ref(),
+            Some(color_type.channels()),
+            self.config.config.cicp,
+        )?;
+        crate::encode::png_write_meta(effective_meta.as_ref(), &self.config.config)?;
+        let row_bytes = width as usize * bpp;
+        Ok(if self.config.config.compression.effort() == 0 {
+            OutputTiming::streaming(0)
+        } else {
+            match self.strip_plan(
+                color_type,
+                bit_depth,
+                row_bytes,
+                StripFraming::ChunkPerStrip,
+            ) {
+                Some(plan) => OutputTiming::streaming(plan.lag_rows()),
+                None => OutputTiming::AT_FINISH,
             }
+        })
+    }
+
+    fn begin_inner(
+        &mut self,
+        width: u32,
+        height: u32,
+        descriptor: zenpixels::PixelDescriptor,
+        context: Option<&zenpixels::ColorContext>,
+        access: zencodec::output_patch::OutputAccess,
+    ) -> Result<zencodec::encode::OutputTiming, At<PngError>> {
+        use crate::encoder::compress::StripFraming;
+        use zencodec::encode::OutputTiming;
+        let planned = self.prepare_rows(width, height, descriptor, context, access)?;
+        self.start_rows(
+            descriptor,
+            context,
+            width,
+            height,
+            StripFraming::ChunkPerStrip,
+        )?;
+        self.declared = Some(descriptor);
+        let timing = match self.streaming.as_ref() {
+            Some(StreamingMode::TrueStreaming(_)) => OutputTiming::streaming(0),
             Some(StreamingMode::Strips(st)) if st.framing == StripFraming::ChunkPerStrip => {
                 OutputTiming::streaming(st.stream.lag_rows())
             }
             _ => OutputTiming::AT_FINISH,
         };
+        // The constructed row mode must be the planned one before any byte
+        // is handed out.
+        if timing != planned {
+            return Err(at!(PngError::Internal(
+                zencodec::InternalKind::Bug,
+                alloc::format!("the row encoder reports {timing:?} but was planned as {planned:?}"),
+            )));
+        }
+        if let Some(StreamingMode::TrueStreaming(st)) = self.streaming.as_mut() {
+            st.stream_output();
+        }
         self.stream_out = timing.streams();
         self.check_streamed_output(0)?;
         Ok(timing)
+    }
+
+    /// Dimension and calibrated peak-memory limits, as the one-shot encode
+    /// checks them (fixed overhead + input buffer + the effort-dependent
+    /// working set, `heuristics::ENCODE_BPP_ANCHORS`).
+    fn check_encode_limits(&self, w: u32, h: u32, bpp: u64) -> Result<(), At<PngError>> {
+        let Some(ref limits) = self.limits else {
+            return Ok(());
+        };
+        limits
+            .check_dimensions(w, h)
+            .map_err(|e| at!(PngError::LimitExceeded(e)))?;
+        let effort = self.config.config.compression.effort();
+        let estimated_mem = crate::heuristics::estimate_encode(w, h, bpp as u8, effort)
+            .map_or(u64::MAX, |e| e.peak_memory_bytes);
+        limits
+            .check_memory(estimated_mem)
+            .map_err(|e| at!(PngError::LimitExceeded(e)))
     }
 
     /// With streaming output, the output-size limit over everything written
@@ -1599,11 +2106,13 @@ impl PngEncoder {
     fn start_rows(
         &mut self,
         descriptor: zenpixels::PixelDescriptor,
+        context: Option<&zenpixels::ColorContext>,
         w: u32,
         h: u32,
         framing: crate::encoder::compress::StripFraming,
     ) -> Result<(), At<PngError>> {
         self.describe_stored_f32(descriptor);
+        self.bind_color(descriptor, context)?;
         let (color_type, bit_depth) = pixel_format_to_png(descriptor.pixel_format())
             .ok_or_else(|| at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat)))?;
 
@@ -1628,6 +2137,9 @@ impl PngEncoder {
         let bpp = channels * depth_bytes;
         if effort == 0 && self.canvas_height > 0 {
             // True streaming: write PNG header and IDAT incrementally.
+            // `begin` streams the output (one chunk per strip for strip
+            // modes); rows pushed without it produce the file at `finish`.
+            let streams_output = framing == crate::encoder::compress::StripFraming::ChunkPerStrip;
             self.streaming = Some(StreamingMode::TrueStreaming(TrueStreamingState::new(
                 self.canvas_width,
                 self.canvas_height,
@@ -1637,6 +2149,7 @@ impl PngEncoder {
                 self.metadata.as_ref(),
                 self.policy.as_ref(),
                 &self.config.config,
+                streams_output,
             )?));
         } else if let Some(state) =
             self.strip_streaming_state(color_type, bit_depth, row_bytes, bpp, framing)?
@@ -1688,6 +2201,7 @@ impl PngEncoder {
         if self.streaming.is_none() {
             self.start_rows(
                 rows.descriptor(),
+                rows.color_context().map(|c| &**c),
                 w,
                 h,
                 crate::encoder::compress::StripFraming::Continuous,
@@ -1698,6 +2212,7 @@ impl PngEncoder {
                 "push_rows: pixel format differs from the one declared at begin".into()
             )));
         }
+        self.check_rows_color(&rows)?;
 
         // Width must be consistent across calls.
         if w != self.canvas_width && self.canvas_width > 0 {
@@ -2058,7 +2573,7 @@ pub struct PngAnimationFrameEncoder {
     limits: Option<ResourceLimits>,
     /// Cumulative pixel data size across all accumulated frames.
     cumulative_pixel_bytes: u64,
-    stop: Option<zencodec::StopToken>,
+    stop: Option<zencodec::SharedPulse>,
     frame_descriptor: Option<PixelDescriptor>,
     frame_color: Option<alloc::sync::Arc<zenpixels::ColorContext>>,
     policy: Option<zencodec::encode::EncodePolicy>,
@@ -2164,6 +2679,34 @@ impl PngAnimationFrameEncoder {
         }
     }
 
+    /// The job's colour description must not contradict an explicit colour
+    /// context on the first frame, as the still encoders' colour binding
+    /// requires (`PngEncoder::bind_color`): a profile kept after a conversion
+    /// is a stale carrier. Runs before the first frame changes anything.
+    fn check_first_frame_color(&self, pixels: &PixelSlice<'_>) -> Result<(), At<PngError>> {
+        let Some(context) = pixels.color_context() else {
+            return Ok(());
+        };
+        let meta = self.metadata.as_ref();
+        let written = (
+            meta.and_then(|m| m.icc_profile.as_deref()),
+            self.config.cicp.or(meta.and_then(|m| m.cicp)),
+        );
+        let gray = matches!(
+            pixels.descriptor().layout(),
+            zenpixels::ChannelLayout::Gray | zenpixels::ChannelLayout::GrayAlpha
+        );
+        if written != (None, None)
+            && (context.icc.is_some() || context.cicp.is_some())
+            && !same_meaning(written, (context.icc.as_deref(), context.cicp), gray)
+        {
+            return Err(at!(PngError::InvalidInput(
+                "the job's colour description contradicts the frames' colour context".into()
+            )));
+        }
+        Ok(())
+    }
+
     /// Record what the first frame brings: its descriptor, and its colour
     /// context as ICC/CICP metadata when the job set none.
     fn capture_first_frame(&mut self, pixels: &PixelSlice<'_>) {
@@ -2228,9 +2771,14 @@ impl PngAnimationFrameEncoder {
         };
         let (curr, _opaque) = Self::pack_frame_to(pixels, want, cancel)?;
         if st.writer.is_none() {
+            self.check_first_frame_color(pixels)?;
             self.capture_first_frame(pixels);
-            let metadata =
-                apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref(), Some(4))?;
+            let metadata = apply_encode_policy(
+                self.metadata.as_ref(),
+                self.policy.as_ref(),
+                Some(4),
+                self.config.cicp,
+            )?;
             let (config, loop_count) = (&self.config, self.loop_count);
             let st = self.streaming.as_mut().expect("streaming");
             let write_meta = crate::encode::apng_write_meta(config, metadata.as_ref());
@@ -2545,12 +3093,12 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
         &mut self,
         pixels: PixelSlice<'_>,
         duration_ms: u32,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<(), At<CodecError>> {
         self.push_frame_exact(
             pixels,
             zencodec::animation::FrameDuration::from_millis(duration_ms),
-            stop,
+            pulse,
         )
     }
 
@@ -2558,8 +3106,9 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
         &mut self,
         pixels: PixelSlice<'_>,
         duration: zencodec::animation::FrameDuration,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<(), At<CodecError>> {
+        let stop = pulse.map(|p| p as &dyn enough::Stop);
         let delay_num = u16::try_from(duration.numerator())
             .map_err(|_| Self::reject(zencodec::UnsupportedOperation::AnimationTiming))?;
         let delay_den = u16::try_from(duration.denominator())
@@ -2600,6 +3149,10 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
                 || self.frame_color.as_ref() != pixels.color_context())
         {
             return Err(Self::reject(zencodec::UnsupportedOperation::PixelFormat));
+        }
+        if self.frame_descriptor.is_none() {
+            self.check_first_frame_color(&pixels)
+                .map_err(CodecError::of)?;
         }
         let canvas_unset = self.canvas_width == 0 && self.canvas_height == 0;
         if width == 0
@@ -2785,7 +3338,8 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
         }
     }
 
-    fn finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, At<CodecError>> {
+    fn finish(self, pulse: Option<&dyn zencodec::Pulse>) -> Result<EncodeOutput, At<CodecError>> {
+        let stop = pulse.map(|p| p as &dyn enough::Stop);
         if self.streaming.is_some() {
             if let Some(stop) = stop {
                 enough::Stop::check(stop).map_err(|e| CodecError::of(at!(PngError::from(e))))?;
@@ -2843,7 +3397,12 @@ impl PngAnimationFrameEncoder {
 
         let deadline = default_deadline();
 
-        let metadata = apply_encode_policy(metadata.as_ref(), policy.as_ref(), Some(4))?;
+        let metadata = apply_encode_policy(
+            metadata.as_ref(),
+            policy.as_ref(),
+            Some(4),
+            apng_config.encode.cicp,
+        )?;
         let bit_depth =
             if frame_descriptor.is_some_and(|d| d.channel_type() == zenpixels::ChannelType::U16) {
                 16
@@ -3125,7 +3684,7 @@ impl zencodec::decode::DecoderConfig for PngDecoderConfig {
 /// Per-operation PNG decode job.
 pub struct PngDecodeJob {
     config: PngDecoderConfig,
-    stop: Option<zencodec::StopToken>,
+    stop: Option<zencodec::SharedPulse>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::decode::DecodePolicy>,
     start_frame_index: u32,
@@ -3137,7 +3696,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
     type StreamDec = PngStreamingDecoder<'a>;
     type AnimationFrameDec = PngAnimationFrameDecoder;
 
-    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
+    fn with_pulse(mut self, stop: zencodec::SharedPulse) -> Self {
         self.stop = Some(stop);
         self
     }
@@ -3150,6 +3709,31 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
     fn with_policy(mut self, policy: zencodec::decode::DecodePolicy) -> Self {
         self.policy = Some(policy);
         self
+    }
+
+    /// Admits the metadata gates (`allow_icc`, `allow_exif`, `allow_xmp`) and
+    /// `allow_truncated: false`, and refuses every other field. Each admitted
+    /// field holds on every route this job creates: probe, one-shot, row
+    /// streaming, push, incremental, APNG frames and controlled
+    /// (`tests/integration/decode_policy.rs`). PNG has no partial-image mode,
+    /// so `allow_truncated: true` is refused.
+    fn try_set_policy(
+        &mut self,
+        policy: zencodec::decode::DecodePolicy,
+    ) -> Result<(), zencodec::UnsupportedOperation> {
+        let mut admitted = zencodec::decode::DecodePolicy::none();
+        admitted.allow_icc = policy.allow_icc;
+        admitted.allow_exif = policy.allow_exif;
+        admitted.allow_xmp = policy.allow_xmp;
+        if policy.allow_truncated == Some(false) {
+            admitted.allow_truncated = Some(false);
+        }
+        // Any other field, including one a later zencodec adds, differs.
+        if admitted != policy {
+            return Err(zencodec::UnsupportedOperation::DecodePolicy);
+        }
+        self.policy = Some(policy);
+        Ok(())
     }
 
     fn with_start_frame_index(mut self, index: u32) -> Self {
@@ -3271,6 +3855,18 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
         push_decoder_native(self, data, sink, preferred)
     }
 
+    #[cfg(feature = "controlled-decode")]
+    fn dyn_controlled_decoder(
+        self,
+        preferred: &[PixelDescriptor],
+        storage: zencodec::storage::StorageBudget,
+    ) -> Result<
+        alloc::boxed::Box<zencodec::decode::DynControlledDecoder>,
+        zencodec::decode::BoxedError,
+    > {
+        controlled::start(self, preferred, storage)
+    }
+
     /// Incremental (sans-I/O) decode: the header is reported as soon as it
     /// probes, and the image decodes through `push_decoder` once the whole
     /// file is offered (zenflate's inflate cannot yet resume between inputs).
@@ -3327,7 +3923,7 @@ impl PngDecodeJob {
 /// Single-image PNG decoder.
 pub struct PngDecoder<'a> {
     config: PngDecoderConfig,
-    stop: Option<zencodec::StopToken>,
+    stop: Option<zencodec::SharedPulse>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::decode::DecodePolicy>,
     data: Cow<'a, [u8]>,
@@ -3365,8 +3961,9 @@ impl PngDecoder<'_> {
             None => &enough::Unstoppable,
         };
         cancel.check().map_err(|e| at!(PngError::from(e)))?;
-        // Check progressive policy before decoding
+        // Check progressive and truncation policy before decoding
         check_progressive_policy(&self.data, self.policy.as_ref())?;
+        check_truncation_policy(&self.data, self.policy.as_ref())?;
         // Check input size limit
         let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
         effective_limits
@@ -3429,7 +4026,7 @@ impl PngDecoder<'_> {
 fn native_output_descriptor(color_type: u8, bit_depth: u8, has_trns: bool) -> PixelDescriptor {
     match (color_type, bit_depth, has_trns) {
         (0, 16, false) => PixelDescriptor::GRAY16_SRGB,
-        (0, 16, true) => GrayAlpha16::DESCRIPTOR, // GRAYA16
+        (0, 16, true) => PixelDescriptor::GRAYA16_SRGB,
         (0, _, false) => PixelDescriptor::GRAY8_SRGB,
         (0, _, true) => PixelDescriptor::RGBA8_SRGB,
         (2, 16, false) => PixelDescriptor::RGB16_SRGB,
@@ -3438,7 +4035,7 @@ fn native_output_descriptor(color_type: u8, bit_depth: u8, has_trns: bool) -> Pi
         (2, 8, true) => PixelDescriptor::RGBA8_SRGB,
         (3, _, true) => PixelDescriptor::RGBA8_SRGB,
         (3, _, false) => PixelDescriptor::RGB8_SRGB,
-        (4, 16, _) => GrayAlpha16::DESCRIPTOR, // GRAYA16
+        (4, 16, _) => PixelDescriptor::GRAYA16_SRGB,
         (4, 8, _) => PixelDescriptor::RGBA8_SRGB,
         (6, 16, _) => PixelDescriptor::RGBA16_SRGB,
         (6, 8, _) => PixelDescriptor::RGBA8_SRGB,
@@ -3482,8 +4079,9 @@ fn push_decoder_native<'a>(
     sink: &mut dyn zencodec::decode::DecodeRowSink,
     preferred: &[PixelDescriptor],
 ) -> Result<OutputInfo, At<CodecError>> {
-    // Check progressive policy before decoding
+    // Check progressive and truncation policy before decoding
     check_progressive_policy(&data, job.policy.as_ref()).map_err(CodecError::of)?;
+    check_truncation_policy(&data, job.policy.as_ref()).map_err(CodecError::of)?;
 
     // Check input size limit
     let effective_limits = job.limits.as_ref().unwrap_or(&job.config.limits);
@@ -3731,20 +4329,22 @@ pub struct PngStreamingDecoder<'a> {
     width: u32,
     height: u32,
     /// Cooperative cancellation token, checked per-row in `next_batch()`.
-    stop: Option<zencodec::StopToken>,
+    stop: Option<zencodec::SharedPulse>,
 }
 
 impl<'a> PngStreamingDecoder<'a> {
     fn new(
         data: Cow<'a, [u8]>,
         config: &PngDecoderConfig,
-        stop: Option<zencodec::StopToken>,
+        stop: Option<zencodec::SharedPulse>,
         limits: Option<&ResourceLimits>,
         policy: Option<&zencodec::decode::DecodePolicy>,
         _preferred: &[PixelDescriptor],
     ) -> Result<Self, At<PngError>> {
-        // Check progressive policy before the structural interlace rejection
+        // Check progressive and truncation policy before the structural
+        // interlace rejection
         check_progressive_policy(&data, policy)?;
+        check_truncation_policy(&data, policy)?;
 
         // Reject interlaced PNGs — Adam7 requires full-canvas buffering
         if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
@@ -3992,7 +4592,7 @@ pub struct PngAnimationFrameDecoder {
     /// Internal canvas buffer holding the last rendered frame's pixels.
     canvas: Option<PixelBuffer>,
     /// Cooperative cancellation token from the decode job.
-    stop: Option<zencodec::StopToken>,
+    stop: Option<zencodec::SharedPulse>,
     /// First frame index to yield (skip earlier frames, but still decode them
     /// because APNG compositing depends on prior frames).
     start_frame_index: u32,
@@ -4008,11 +4608,12 @@ impl PngAnimationFrameDecoder {
     fn new(
         data: Cow<'_, [u8]>,
         limits: &ResourceLimits,
-        stop: Option<zencodec::StopToken>,
+        stop: Option<zencodec::SharedPulse>,
         policy: Option<&zencodec::decode::DecodePolicy>,
         preferred: &[PixelDescriptor],
         start_frame_index: u32,
     ) -> Result<Self, At<PngError>> {
+        check_truncation_policy(&data, policy)?;
         let probe_info = crate::decode::probe(&data)?;
         limits
             .check_dimensions(probe_info.width, probe_info.height)
@@ -4040,12 +4641,12 @@ impl PngAnimationFrameDecoder {
             .map_err(|e| at!(PngError::LimitExceeded(e)))?;
         let compositor = crate::decoder::apng::ApngCompositor::new(decoder.ihdr(), &decode_config)?;
         let decoder_state = decoder.save_state();
-        let color_context = if probe_info.icc_profile.is_some() || probe_info.cicp.is_some() {
+        // The profile comes from the policy-filtered info: a forbidden ICC
+        // must not reach the frames through their colour context instead.
+        let icc = image_info.source_color.icc_profile.clone();
+        let color_context = if icc.is_some() || probe_info.cicp.is_some() {
             let mut context = zenpixels::ColorContext::default();
-            context.icc = probe_info
-                .icc_profile
-                .as_ref()
-                .map(|icc| alloc::sync::Arc::from(icc.as_slice()));
+            context.icc = icc;
             context.cicp = probe_info.cicp;
             Some(alloc::sync::Arc::new(context))
         } else {
@@ -4102,16 +4703,17 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
 
     fn render_next_frame_to_sink(
         &mut self,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
     ) -> Result<Option<OutputInfo>, At<CodecError>> {
-        zencodec::helpers::copy_frame_to_sink(self, stop, sink)
+        zencodec::helpers::copy_frame_to_sink(self, pulse, sink)
     }
 
     fn render_next_frame(
         &mut self,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<Option<AnimationFrame<'_>>, At<CodecError>> {
+        let stop = pulse.map(|p| p as &dyn enough::Stop);
         if self.failed {
             return Err(CodecError::of(at!(PngError::InvalidState(
                 "APNG decoder failed during a prior frame".into()
@@ -4202,7 +4804,8 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
 // ── Pixel format negotiation ─────────────────────────────────────────
 
 use rgb::{Gray, Rgb, Rgba};
-use zenpixels::{ChannelLayout, ChannelType, GrayAlpha16, PixelBuffer};
+use zenpixels::GrayAlpha16;
+use zenpixels::{ChannelLayout, ChannelType, PixelBuffer};
 use zenpixels_convert::{PixelBufferConvertExt as _, PixelBufferConvertTypedExt as _};
 
 /// Negotiate output format from the caller's preference list and convert.
@@ -4361,6 +4964,17 @@ fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
     zi
 }
 
+/// A minimal EXIF (TIFF) blob holding only `orientation`.
+fn orientation_exif(orientation: zencodec::Orientation) -> alloc::sync::Arc<[u8]> {
+    let mut exif = zencodec::exif::Exif::new(zencodec::exif::TextEncoding::Ascii);
+    exif.set_orientation(orientation);
+    // `zenmeta::exif::serialize` delegates to this compatibility writer; zenpng
+    // depends on zenmeta only with `metadata-rewrite`.
+    #[allow(deprecated)]
+    let tiff = exif.to_bytes();
+    tiff.into()
+}
+
 /// Apply encode policy to filter metadata fields and resolve color emission.
 ///
 /// Returns a new `Metadata` with fields stripped according to the coarse
@@ -4381,6 +4995,7 @@ fn apply_encode_policy(
     metadata: Option<&Metadata>,
     policy: Option<&zencodec::encode::EncodePolicy>,
     channel_count: Option<u8>,
+    native_cicp: Option<zencodec::Cicp>,
 ) -> Result<Option<Metadata>, At<PngError>> {
     let Some(meta) = metadata else {
         return Ok(None);
@@ -4400,6 +5015,20 @@ fn apply_encode_policy(
         if policy.embed_xmp == Some(false) {
             filtered.xmp = None;
         }
+    }
+
+    // PNG carries orientation only in eXIf. A field-only orientation (no EXIF
+    // blob: a caller-set field, or a format whose orientation is a container
+    // property) gets a minimal EXIF holding just the tag; a policy that forbids
+    // EXIF refuses instead of displaying the pixels re-oriented.
+    if filtered.orientation != zencodec::Orientation::Identity && filtered.exif.is_none() {
+        if policy.is_some_and(|p| p.embed_exif == Some(false)) {
+            return Err(at!(PngError::PolicyRejected(
+                zencodec::PolicyKind::Encode,
+                "the policy forbids EXIF, PNG's only carrier for this image's orientation".into(),
+            )));
+        }
+        filtered.exif = Some(orientation_exif(filtered.orientation));
     }
 
     // Resolve color emission (ICC vs cICP) under the color policy. Build a
@@ -4479,6 +5108,27 @@ fn apply_encode_policy(
         _ => {}
     }
 
+    // Forbidding the profile must not relabel the pixels: what the file still
+    // carries (a cICP from the metadata or the native builder, or nothing,
+    // which means sRGB) must say what the profile said. An unidentified
+    // profile cannot be shown equivalent to anything.
+    if !embed_icc && let Some(icc) = meta.icc_profile.as_deref() {
+        let gray = matches!(channel_count, Some(1 | 2));
+        let before = (Some(icc), native_cicp.or(meta.cicp));
+        let after = (
+            filtered.icc_profile.as_deref(),
+            native_cicp.or(filtered.cicp),
+        );
+        if !same_meaning(before, after, gray) {
+            return Err(at!(PngError::PolicyRejected(
+                zencodec::PolicyKind::Encode,
+                "the policy forbids the ICC profile, and no carrier left in the file \
+                 describes these pixels the same way"
+                    .into(),
+            )));
+        }
+    }
+
     Ok(Some(filtered))
 }
 
@@ -4541,6 +5191,46 @@ fn check_progressive_policy(
         )));
     }
     Ok(())
+}
+
+/// Refuse input that ends before IEND when the policy forbids truncated input.
+///
+/// PNG never returns a partial image, but a file cut after its pixel data
+/// still decodes and silently loses the chunks that followed it (eXIf, iTXt
+/// XMP and text may follow IDAT), and the row routes deliver rows before they
+/// reach a cut inside the image data. Walking the chunk lengths first (no
+/// decompression, no CRC) refuses all of these before any decoder starts.
+/// Input whose chunks are complete but whose image stream ends early still
+/// fails at the row where it ends, as it does without a policy.
+fn check_truncation_policy(
+    data: &[u8],
+    policy: Option<&zencodec::decode::DecodePolicy>,
+) -> Result<(), At<PngError>> {
+    if !policy.is_some_and(|p| p.allow_truncated == Some(false))
+        || !data.starts_with(&crate::chunk::PNG_SIGNATURE)
+    {
+        // Without the policy, or for input that is not PNG (the decoder
+        // reports that itself), there is nothing to check here.
+        return Ok(());
+    }
+    let mut pos = crate::chunk::PNG_SIGNATURE.len();
+    while let Some(header) = data.get(pos..pos + 8) {
+        let length = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as usize;
+        let Some(end) = pos.checked_add(12).and_then(|p| p.checked_add(length)) else {
+            break;
+        };
+        if end > data.len() {
+            break;
+        }
+        if header[4..8] == *b"IEND" {
+            return Ok(());
+        }
+        pos = end;
+    }
+    Err(at!(PngError::Truncated(alloc::format!(
+        "input ends at byte {} before IEND; the decode policy refuses truncated input",
+        data.len()
+    ))))
 }
 
 /// Get contiguous pixel bytes from a PixelSlice, borrowing when possible.
@@ -4683,7 +5373,9 @@ fn append_png_rows(
 
 impl TrueStreamingState {
     /// Initialize true streaming state: write PNG signature, IHDR, and metadata,
-    /// then start the IDAT chunk with a zlib header.
+    /// then start the IDAT chunk with a zlib header. With `streams_output`
+    /// (after `begin`) bytes are handed out as they are written, so only the
+    /// header is reserved; otherwise the whole file is, as `finish` returns it.
     #[allow(clippy::too_many_arguments)]
     fn new(
         width: u32,
@@ -4694,6 +5386,7 @@ impl TrueStreamingState {
         metadata: Option<&Metadata>,
         policy: Option<&zencodec::encode::EncodePolicy>,
         config: &EncodeConfig,
+        streams_output: bool,
     ) -> Result<Self, At<PngError>> {
         use crate::chunk::{PNG_SIGNATURE, write::write_chunk};
         use crate::encoder::{metadata_size_estimate, write_all_metadata};
@@ -4718,10 +5411,17 @@ impl TrueStreamingState {
         }
 
         // Build metadata
-        let effective_meta = apply_encode_policy(metadata, policy, Some(color_type.channels()))?;
+        let effective_meta =
+            apply_encode_policy(metadata, policy, Some(color_type.channels()), config.cicp)?;
         let write_meta = crate::encode::png_write_meta(effective_meta.as_ref(), config)?;
 
-        let est = 8 + 25 + (12 + idat_data_len) + 12 + metadata_size_estimate(&write_meta);
+        // Signature, IHDR, metadata, IDAT length and type, zlib header.
+        let header = 8 + 25 + metadata_size_estimate(&write_meta) + 8 + 2;
+        let est = if streams_output {
+            header
+        } else {
+            8 + 25 + (12 + idat_data_len) + 12 + metadata_size_estimate(&write_meta)
+        };
         let mut output = Vec::with_capacity(est);
 
         // PNG signature
@@ -4929,7 +5629,8 @@ impl PreFilteredState {
         use crate::chunk::{PNG_SIGNATURE, write::write_chunk};
         use crate::encoder::{metadata_size_estimate, write_all_metadata};
 
-        let effective_meta = apply_encode_policy(metadata, policy, Some(color_type.channels()))?;
+        let effective_meta =
+            apply_encode_policy(metadata, policy, Some(color_type.channels()), config.cicp)?;
         let write_meta = crate::encode::png_write_meta(effective_meta.as_ref(), config)?;
 
         // Build preamble: PNG signature + IHDR + metadata
@@ -7655,8 +8356,9 @@ mod tests {
         }
 
         let config = PngEncoderConfig::new();
-        let stop = zencodec::StopToken::new(AlreadyCancelled);
-        let job = config.clone().job().with_stop(stop);
+        let stop =
+            zencodec::how_far::SharedPulse::new(zencodec::how_far::StopOnly::new(AlreadyCancelled));
+        let job = config.clone().job().with_pulse(stop);
         let encoder = job.encoder().unwrap();
 
         // Create a small 2x2 RGB8 image
@@ -8018,8 +8720,10 @@ mod tests {
     #[test]
     fn encode_job_with_stop() {
         let enc = PngEncoderConfig::new();
-        let stop = zencodec::StopToken::new(enough::Unstoppable);
-        let job = enc.job().with_stop(stop);
+        let stop = zencodec::how_far::SharedPulse::new(zencodec::how_far::StopOnly::new(
+            enough::Unstoppable,
+        ));
+        let job = enc.job().with_pulse(stop);
         let encoder = job.encoder().unwrap();
         let pixels = vec![Rgb { r: 0u8, g: 0, b: 0 }; 4];
         let img = Img::new(pixels, 2, 2);
@@ -9745,7 +10449,9 @@ mod tests {
             .unwrap();
 
         // finish() with a cancelled stop token should fail
-        let result = enc.finish(Some(&AlreadyCancelled));
+        let result = enc.finish(Some(&zencodec::how_far::StopOnly::borrowed(
+            &AlreadyCancelled,
+        )));
         assert!(result.is_err(), "finish with cancelled stop should fail");
         // Pattern B: `AnimationFrameEncoder::finish` returns the `At<CodecError>`
         // envelope, so the cancellation surfaces as the `Cancelled` category.
@@ -10277,7 +10983,9 @@ mod strip_stream_tests {
             cfg.config.max_threads = threads;
             let mut enc = cfg
                 .job()
-                .with_stop(zencodec::StopToken::new(AlreadyCancelled))
+                .with_pulse(zencodec::how_far::SharedPulse::new(
+                    zencodec::how_far::StopOnly::new(AlreadyCancelled),
+                ))
                 .with_canvas_size(w, h)
                 .encoder()
                 .unwrap();

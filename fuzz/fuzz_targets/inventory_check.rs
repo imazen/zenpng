@@ -1,5 +1,6 @@
 use zencodec::decode::{DecodeJob, DecodePolicy, DecoderConfig};
 
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 pub fn check(input: &[u8]) {
     let (bits, data) = input.split_first().map_or((0, input), |(b, r)| (*b, r));
     let mut job = zenpng::PngDecoderConfig::new().job();

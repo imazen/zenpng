@@ -1,14 +1,16 @@
 //! Bounded PNG/APNG metadata rewriting without pixel decoding.
 // Container planner migrated from zencodecs at aa21cba0.
 use alloc::{borrow::Cow, vec::Vec};
-use zencodec::metadata_rewrite::{Action, Compression, Error, Request};
+use zencodec::metadata_rewrite::{Action, Compression, Error, RewriteRequest};
 use zenmeta::rewrite::{Context as ScrubRequest, PlanBuilder as Plan};
 
 /// Plan a metadata rewrite, retaining encoded samples and rendering metadata.
 ///
 /// Requires the default-off `metadata-rewrite` feature. Services for XMP editing
 /// and ICC normalization are supplied explicitly by the caller.
-pub fn rewrite<'a>(request: &Request<'a>) -> Result<zencodec::metadata_rewrite::Plan<'a>, Error> {
+pub fn rewrite<'a>(
+    request: &RewriteRequest<'a>,
+) -> Result<zencodec::metadata_rewrite::Plan<'a>, Error> {
     let context = ScrubRequest::new(request)?;
     if !request.input().starts_with(b"\x89PNG\r\n\x1a\n") {
         return Err(Error::Malformed("PNG signature"));
@@ -55,7 +57,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
         }
         let data = &req.input()[pos + 8..end - 4];
         let range = pos..end;
-        let crc = crc32(&req.input()[pos + 4..end - 4], req.stop())?;
+        let crc = crc32(&req.input()[pos + 4..end - 4], req.pulse())?;
         if crc != be32(&req.input()[end - 4..end])? {
             return Err(Error::Malformed("PNG CRC"));
         }
@@ -184,7 +186,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                     range,
                     "EXIF",
                     Action::Rewrite,
-                    Some(Cow::Owned(chunk(&kind, tiff, req.stop())?)),
+                    Some(Cow::Owned(chunk(&kind, tiff, req.pulse())?)),
                 )?;
             }
             b"iCCP" => {
@@ -209,7 +211,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                             Compression::Zlib,
                             &normalized,
                             req.max_metadata(),
-                            req.stop(),
+                            req.pulse(),
                         )?;
                         req.packet(compressed.len())?;
                         let body = [b"ICC\0\0".as_slice(), &compressed].concat();
@@ -218,7 +220,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                             range,
                             "ICC",
                             Action::Rewrite,
-                            Some(Cow::Owned(chunk(&kind, &body, req.stop())?)),
+                            Some(Cow::Owned(chunk(&kind, &body, req.pulse())?)),
                         )?;
                     } else {
                         let body = [b"ICC\0\0".as_slice(), &data[zero + 2..]].concat();
@@ -227,7 +229,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                             range,
                             "ICC (opaque, name normalized)",
                             Action::OpaqueIcc,
-                            Some(Cow::Owned(chunk(&kind, &body, req.stop())?)),
+                            Some(Cow::Owned(chunk(&kind, &body, req.pulse())?)),
                         )?;
                     }
                 } else {
@@ -239,7 +241,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                         range,
                         "ICC (opaque, name normalized)",
                         Action::OpaqueIcc,
-                        Some(Cow::Owned(chunk(&kind, &body, req.stop())?)),
+                        Some(Cow::Owned(chunk(&kind, &body, req.pulse())?)),
                     )?;
                 }
             }
@@ -263,7 +265,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                             range,
                             "XMP",
                             Action::Rewrite,
-                            Some(Cow::Owned(chunk(b"iTXt", &body, req.stop())?)),
+                            Some(Cow::Owned(chunk(b"iTXt", &body, req.pulse())?)),
                         )?;
                     } else {
                         out.remove(req, range, "XMP")?;
