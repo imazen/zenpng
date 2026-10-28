@@ -3661,6 +3661,31 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
         self
     }
 
+    /// Admits the metadata gates (`allow_icc`, `allow_exif`, `allow_xmp`) and
+    /// `allow_truncated: false`, and refuses every other field. Each admitted
+    /// field holds on every route this job creates: probe, one-shot, row
+    /// streaming, push, incremental, APNG frames and controlled
+    /// (`tests/integration/decode_policy.rs`). PNG has no partial-image mode,
+    /// so `allow_truncated: true` is refused.
+    fn try_set_policy(
+        &mut self,
+        policy: zencodec::decode::DecodePolicy,
+    ) -> Result<(), zencodec::UnsupportedOperation> {
+        let mut admitted = zencodec::decode::DecodePolicy::none();
+        admitted.allow_icc = policy.allow_icc;
+        admitted.allow_exif = policy.allow_exif;
+        admitted.allow_xmp = policy.allow_xmp;
+        if policy.allow_truncated == Some(false) {
+            admitted.allow_truncated = Some(false);
+        }
+        // Any other field, including one a later zencodec adds, differs.
+        if admitted != policy {
+            return Err(zencodec::UnsupportedOperation::DecodePolicy);
+        }
+        self.policy = Some(policy);
+        Ok(())
+    }
+
     fn with_start_frame_index(mut self, index: u32) -> Self {
         self.start_frame_index = index;
         self
@@ -3886,8 +3911,9 @@ impl PngDecoder<'_> {
             None => &enough::Unstoppable,
         };
         cancel.check().map_err(|e| at!(PngError::from(e)))?;
-        // Check progressive policy before decoding
+        // Check progressive and truncation policy before decoding
         check_progressive_policy(&self.data, self.policy.as_ref())?;
+        check_truncation_policy(&self.data, self.policy.as_ref())?;
         // Check input size limit
         let effective_limits = self.limits.as_ref().unwrap_or(&self.config.limits);
         effective_limits
@@ -4003,8 +4029,9 @@ fn push_decoder_native<'a>(
     sink: &mut dyn zencodec::decode::DecodeRowSink,
     preferred: &[PixelDescriptor],
 ) -> Result<OutputInfo, At<CodecError>> {
-    // Check progressive policy before decoding
+    // Check progressive and truncation policy before decoding
     check_progressive_policy(&data, job.policy.as_ref()).map_err(CodecError::of)?;
+    check_truncation_policy(&data, job.policy.as_ref()).map_err(CodecError::of)?;
 
     // Check input size limit
     let effective_limits = job.limits.as_ref().unwrap_or(&job.config.limits);
@@ -4264,8 +4291,10 @@ impl<'a> PngStreamingDecoder<'a> {
         policy: Option<&zencodec::decode::DecodePolicy>,
         _preferred: &[PixelDescriptor],
     ) -> Result<Self, At<PngError>> {
-        // Check progressive policy before the structural interlace rejection
+        // Check progressive and truncation policy before the structural
+        // interlace rejection
         check_progressive_policy(&data, policy)?;
+        check_truncation_policy(&data, policy)?;
 
         // Reject interlaced PNGs — Adam7 requires full-canvas buffering
         if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
@@ -4534,6 +4563,7 @@ impl PngAnimationFrameDecoder {
         preferred: &[PixelDescriptor],
         start_frame_index: u32,
     ) -> Result<Self, At<PngError>> {
+        check_truncation_policy(&data, policy)?;
         let probe_info = crate::decode::probe(&data)?;
         limits
             .check_dimensions(probe_info.width, probe_info.height)
@@ -4561,12 +4591,12 @@ impl PngAnimationFrameDecoder {
             .map_err(|e| at!(PngError::LimitExceeded(e)))?;
         let compositor = crate::decoder::apng::ApngCompositor::new(decoder.ihdr(), &decode_config)?;
         let decoder_state = decoder.save_state();
-        let color_context = if probe_info.icc_profile.is_some() || probe_info.cicp.is_some() {
+        // The profile comes from the policy-filtered info: a forbidden ICC
+        // must not reach the frames through their colour context instead.
+        let icc = image_info.source_color.icc_profile.clone();
+        let color_context = if icc.is_some() || probe_info.cicp.is_some() {
             let mut context = zenpixels::ColorContext::default();
-            context.icc = probe_info
-                .icc_profile
-                .as_ref()
-                .map(|icc| alloc::sync::Arc::from(icc.as_slice()));
+            context.icc = icc;
             context.cicp = probe_info.cicp;
             Some(alloc::sync::Arc::new(context))
         } else {
@@ -5089,6 +5119,46 @@ fn check_progressive_policy(
         )));
     }
     Ok(())
+}
+
+/// Refuse input that ends before IEND when the policy forbids truncated input.
+///
+/// PNG never returns a partial image, but a file cut after its pixel data
+/// still decodes and silently loses the chunks that followed it (eXIf, iTXt
+/// XMP and text may follow IDAT), and the row routes deliver rows before they
+/// reach a cut inside the image data. Walking the chunk lengths first (no
+/// decompression, no CRC) refuses all of these before any decoder starts.
+/// Input whose chunks are complete but whose image stream ends early still
+/// fails at the row where it ends, as it does without a policy.
+fn check_truncation_policy(
+    data: &[u8],
+    policy: Option<&zencodec::decode::DecodePolicy>,
+) -> Result<(), At<PngError>> {
+    if !policy.is_some_and(|p| p.allow_truncated == Some(false))
+        || !data.starts_with(&crate::chunk::PNG_SIGNATURE)
+    {
+        // Without the policy, or for input that is not PNG (the decoder
+        // reports that itself), there is nothing to check here.
+        return Ok(());
+    }
+    let mut pos = crate::chunk::PNG_SIGNATURE.len();
+    while let Some(header) = data.get(pos..pos + 8) {
+        let length = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as usize;
+        let Some(end) = pos.checked_add(12).and_then(|p| p.checked_add(length)) else {
+            break;
+        };
+        if end > data.len() {
+            break;
+        }
+        if header[4..8] == *b"IEND" {
+            return Ok(());
+        }
+        pos = end;
+    }
+    Err(at!(PngError::Truncated(alloc::format!(
+        "input ends at byte {} before IEND; the decode policy refuses truncated input",
+        data.len()
+    ))))
 }
 
 /// Get contiguous pixel bytes from a PixelSlice, borrowing when possible.

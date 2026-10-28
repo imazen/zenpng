@@ -110,6 +110,7 @@ pub(super) fn start(
             }
             let data = input.as_slice();
             check_progressive_policy(data, job.policy.as_ref())?;
+            check_truncation_policy(data, job.policy.as_ref())?;
             let mut full = job.probe(data)?;
             let output = job.output_info(data)?;
             let output_bytes = u64::from(output.width)
