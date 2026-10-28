@@ -862,9 +862,13 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         // Frame pixel format isn't known until frames are pushed; the color-emit
         // resolver still classifies gray/CMYK from the ICC color space, and
         // APNG frames are RGB/RGBA, so a `None` channel count is correct here.
-        let effective_meta =
-            apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref(), None)
-                .map_err(CodecError::of)?;
+        let effective_meta = apply_encode_policy(
+            self.metadata.as_ref(),
+            self.policy.as_ref(),
+            None,
+            self.config.config.cicp,
+        )
+        .map_err(CodecError::of)?;
         let mut config = self.config.config.clone();
         if let Some(ref limits) = self.limits {
             apply_threading(&mut config, limits.threading());
@@ -1104,6 +1108,7 @@ impl PngEncoder {
             self.metadata.as_ref(),
             self.policy.as_ref(),
             Some(color_type.channels()),
+            self.config.config.cicp,
         )?;
         let meta_ref = effective_meta.as_ref();
         let data = crate::encode::encode_raw(
@@ -1594,6 +1599,7 @@ impl PngEncoder {
             self.metadata.as_ref(),
             self.policy.as_ref(),
             Some(pixels.descriptor().channels() as u8),
+            self.config.config.cicp,
         )?;
         #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
         let meta_ref = effective_meta.as_ref();
@@ -1878,6 +1884,7 @@ impl PngEncoder {
             self.metadata.as_ref(),
             self.policy.as_ref(),
             Some(color_type.channels()),
+            self.config.config.cicp,
         )?;
         let write_meta = crate::encode::png_write_meta(effective_meta.as_ref(), config)?;
         let mut output = Vec::new();
@@ -1997,6 +2004,7 @@ impl PngEncoder {
             self.metadata.as_ref(),
             self.policy.as_ref(),
             Some(color_type.channels()),
+            self.config.config.cicp,
         )?;
         crate::encode::png_write_meta(effective_meta.as_ref(), &self.config.config)?;
         let row_bytes = width as usize * bpp;
@@ -2736,8 +2744,12 @@ impl PngAnimationFrameEncoder {
         let (curr, _opaque) = Self::pack_frame_to(pixels, want, cancel)?;
         if st.writer.is_none() {
             self.capture_first_frame(pixels);
-            let metadata =
-                apply_encode_policy(self.metadata.as_ref(), self.policy.as_ref(), Some(4))?;
+            let metadata = apply_encode_policy(
+                self.metadata.as_ref(),
+                self.policy.as_ref(),
+                Some(4),
+                self.config.cicp,
+            )?;
             let (config, loop_count) = (&self.config, self.loop_count);
             let st = self.streaming.as_mut().expect("streaming");
             let write_meta = crate::encode::apng_write_meta(config, metadata.as_ref());
@@ -3352,7 +3364,12 @@ impl PngAnimationFrameEncoder {
 
         let deadline = default_deadline();
 
-        let metadata = apply_encode_policy(metadata.as_ref(), policy.as_ref(), Some(4))?;
+        let metadata = apply_encode_policy(
+            metadata.as_ref(),
+            policy.as_ref(),
+            Some(4),
+            apng_config.encode.cicp,
+        )?;
         let bit_depth =
             if frame_descriptor.is_some_and(|d| d.channel_type() == zenpixels::ChannelType::U16) {
                 16
@@ -4945,6 +4962,7 @@ fn apply_encode_policy(
     metadata: Option<&Metadata>,
     policy: Option<&zencodec::encode::EncodePolicy>,
     channel_count: Option<u8>,
+    native_cicp: Option<zencodec::Cicp>,
 ) -> Result<Option<Metadata>, At<PngError>> {
     let Some(meta) = metadata else {
         return Ok(None);
@@ -5055,6 +5073,27 @@ fn apply_encode_policy(
         // `IccDisposition` is #[non_exhaustive]; a future variant defaults to the
         // conservative choice of preserving the source ICC unchanged.
         _ => {}
+    }
+
+    // Forbidding the profile must not relabel the pixels: what the file still
+    // carries (a cICP from the metadata or the native builder, or nothing,
+    // which means sRGB) must say what the profile said. An unidentified
+    // profile cannot be shown equivalent to anything.
+    if !embed_icc && let Some(icc) = meta.icc_profile.as_deref() {
+        let gray = matches!(channel_count, Some(1 | 2));
+        let before = (Some(icc), native_cicp.or(meta.cicp));
+        let after = (
+            filtered.icc_profile.as_deref(),
+            native_cicp.or(filtered.cicp),
+        );
+        if !same_meaning(before, after, gray) {
+            return Err(at!(PngError::PolicyRejected(
+                zencodec::PolicyKind::Encode,
+                "the policy forbids the ICC profile, and no carrier left in the file \
+                 describes these pixels the same way"
+                    .into(),
+            )));
+        }
     }
 
     Ok(Some(filtered))
@@ -5339,7 +5378,8 @@ impl TrueStreamingState {
         }
 
         // Build metadata
-        let effective_meta = apply_encode_policy(metadata, policy, Some(color_type.channels()))?;
+        let effective_meta =
+            apply_encode_policy(metadata, policy, Some(color_type.channels()), config.cicp)?;
         let write_meta = crate::encode::png_write_meta(effective_meta.as_ref(), config)?;
 
         // Signature, IHDR, metadata, IDAT length and type, zlib header.
@@ -5556,7 +5596,8 @@ impl PreFilteredState {
         use crate::chunk::{PNG_SIGNATURE, write::write_chunk};
         use crate::encoder::{metadata_size_estimate, write_all_metadata};
 
-        let effective_meta = apply_encode_policy(metadata, policy, Some(color_type.channels()))?;
+        let effective_meta =
+            apply_encode_policy(metadata, policy, Some(color_type.channels()), config.cicp)?;
         let write_meta = crate::encode::png_write_meta(effective_meta.as_ref(), config)?;
 
         // Build preamble: PNG signature + IHDR + metadata
