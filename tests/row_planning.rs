@@ -280,7 +280,7 @@ fn declared_colour_reaches_the_header_and_rows_match_one_shot_colour() {
 /// and writes nothing.
 #[test]
 fn zencodec_io_planned_row_adapter_writes_the_direct_row_file() {
-    use zencodec::operation::{Decision, PolicyResolver, Question};
+    use zencodec::operation::{BoundPolicy, Decision, PolicyResolver, PolicySet, Question};
     use zencodec::storage::StorageBudget;
     use zencodec_io::row_encode::{self, Options, Raster, Stage};
     use zenpng::DowncastFlags;
@@ -334,7 +334,9 @@ fn zencodec_io_planned_row_adapter_writes_the_direct_row_file() {
             config.clone().job(),
             Raster::new(pixels(&icc)),
             &mut written,
-            FirstSchedule,
+            // A callback struct goes inside a binding (zencodec a15c28fd);
+            // the default requirements are what Options supplied before.
+            BoundPolicy::new(PolicySet::new(), FirstSchedule),
             Options::new(storage.clone(), u64::MAX),
             &zencodec::NoPulse,
         )
@@ -356,7 +358,7 @@ fn zencodec_io_planned_row_adapter_writes_the_direct_row_file() {
             config.job(),
             Raster::new(pixels(&contradiction)),
             &mut refused,
-            FirstSchedule,
+            BoundPolicy::new(PolicySet::new(), FirstSchedule),
             Options::new(storage.clone(), u64::MAX),
             &zencodec::NoPulse,
         )

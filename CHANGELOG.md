@@ -17,6 +17,15 @@ All notable changes to zenpng are documented here.
   cannot be identified. Limits and colour refusals surface at `begin`, not
   `finish`.
 
+### Changed
+
+- The zencodec 0.2 family enters through version edges (`zencodec-io`,
+  `zencodec-coroutine`, `zenmeta`; `zencodec` already did); direct git pins
+  made a consumer that repins core carry two families. The root and fuzz
+  manifests patch every family crate (and `zencodec-testkit`) to ideal-api
+  `a15c28fd`. zencodec-io, zencodec-coroutine and zenmeta are not on
+  crates.io, so releases stay gated on publishing them.
+
 ### Fixed
 
 - Under `allow_icc: false` the APNG frame decoder still attached the source
