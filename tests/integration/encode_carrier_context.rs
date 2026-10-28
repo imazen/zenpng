@@ -13,7 +13,7 @@ use zencodec::encode::{
 };
 use zencodec::{At, CodecError, ErrorCategory, Metadata, MetadataPolicy, PolicyKind};
 use zenpixels::{Cicp, ColorContext, ColorModel, PixelDescriptor, PixelSlice};
-use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, REC2020_V4};
 use zenpng::{DowncastFlags, PngEncoderConfig};
 
 const W: u32 = 7;
@@ -202,5 +202,28 @@ fn a_context_cicp_carries_the_colour_when_the_profile_is_forbidden() {
         let file = encode(route, Metadata::none(), context, forbid())
             .unwrap_or_else(|error| panic!("{route:?}: {error}"));
         assert_eq!(chunks(&file), (None, Some((12, 13, 0, true))), "{route:?}");
+    }
+}
+
+/// A job colour description that contradicts an explicit context is a stale
+/// carrier (a profile kept after a conversion): every encoder refuses it, as
+/// the still encoders' colour binding does. Agreement keeps the job carrier.
+#[test]
+fn a_context_contradicting_the_job_colour_refuses_on_every_encoder() {
+    let p3 = || Some(Arc::new(ColorContext::from_icc(DISPLAY_P3_V4)));
+    for route in ROUTES {
+        for (what, meta) in [
+            ("a Rec. 2020 profile", Metadata::none().with_icc(REC2020_V4)),
+            ("sRGB code points", Metadata::none().with_cicp(Cicp::SRGB)),
+        ] {
+            assert!(
+                encode(route, meta, p3(), None).is_err(),
+                "{route:?}, {what}: wrote a carrier the context contradicts"
+            );
+        }
+        let agreeing = Metadata::none().with_icc(DISPLAY_P3_V4);
+        let file = encode(route, agreeing, p3(), None)
+            .unwrap_or_else(|error| panic!("{route:?}: {error}"));
+        assert_eq!(chunks(&file).0.as_deref(), Some(DISPLAY_P3_V4), "{route:?}");
     }
 }
