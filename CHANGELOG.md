@@ -19,6 +19,14 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- A field-only orientation (`Metadata::orientation` with no EXIF blob: a
+  caller-set field, or one from a format whose orientation is a container
+  property) was dropped: eXIf was written only from `metadata.exif`. The
+  encoder now writes a minimal EXIF holding the tag, and a policy forbidding
+  EXIF refuses a non-identity orientation (`Policy(Encode)`) instead of
+  dropping it. `tests/orientation_carriage.rs` reads the tag back with the png
+  crate and a test-local TIFF reader.
+
 - The adapter ignored the pixels' colour context, inferred cICP from the
   descriptor only for one-shot encodes (`begin` + `push_rows` wrote Display P3
   untagged), and gave f32 input no cICP. One binding now runs for one-shot,

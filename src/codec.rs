@@ -4884,6 +4884,17 @@ fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
     zi
 }
 
+/// A minimal EXIF (TIFF) blob holding only `orientation`.
+fn orientation_exif(orientation: zencodec::Orientation) -> alloc::sync::Arc<[u8]> {
+    let mut exif = zencodec::exif::Exif::new(zencodec::exif::TextEncoding::Ascii);
+    exif.set_orientation(orientation);
+    // `zenmeta::exif::serialize` delegates to this compatibility writer; zenpng
+    // depends on zenmeta only with `metadata-rewrite`.
+    #[allow(deprecated)]
+    let tiff = exif.to_bytes();
+    tiff.into()
+}
+
 /// Apply encode policy to filter metadata fields and resolve color emission.
 ///
 /// Returns a new `Metadata` with fields stripped according to the coarse
@@ -4923,6 +4934,20 @@ fn apply_encode_policy(
         if policy.embed_xmp == Some(false) {
             filtered.xmp = None;
         }
+    }
+
+    // PNG carries orientation only in eXIf. A field-only orientation (no EXIF
+    // blob: a caller-set field, or a format whose orientation is a container
+    // property) gets a minimal EXIF holding just the tag; a policy that forbids
+    // EXIF refuses instead of displaying the pixels re-oriented.
+    if filtered.orientation != zencodec::Orientation::Identity && filtered.exif.is_none() {
+        if policy.is_some_and(|p| p.embed_exif == Some(false)) {
+            return Err(at!(PngError::PolicyRejected(
+                zencodec::PolicyKind::Encode,
+                "the policy forbids EXIF, PNG's only carrier for this image's orientation".into(),
+            )));
+        }
+        filtered.exif = Some(orientation_exif(filtered.orientation));
     }
 
     // Resolve color emission (ICC vs cICP) under the color policy. Build a
