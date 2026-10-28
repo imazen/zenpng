@@ -33,6 +33,11 @@ All notable changes to zenpng are documented here.
   read back as sRGB. It now refuses with `PolicyRejected(Encode)` unless a
   remaining cICP (native builder or colour plan) has the same meaning
   (`tests/integration/encode_carrier_policy.rs`).
+  A colour context profile gets the same refusal on every encoder, alone or
+  repeated as job metadata (`tests/integration/encode_carrier_context.rs`).
+- The animation encoder accepted a first-frame colour context that
+  contradicted the job's colour metadata (a Rec. 2020 iCCP over Display P3
+  frames); it now refuses, as the still encoders do.
 - Under `allow_icc: false` the APNG frame decoder still attached the source
   ICC profile to every frame's colour context (the info was filtered, the
   frames were not). Frames now take the profile from the filtered info.

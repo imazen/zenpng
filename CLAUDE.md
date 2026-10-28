@@ -587,3 +587,11 @@ Found while making the checked setters admit policy fields; each has a failing-f
 - `embed_icc: false` wrote ICC-only Display P3, Rec. 2020 or unidentified-profile pixels
   untagged (read back as sRGB). It now refuses unless a remaining cICP (native or plan) has
   the same meaning (`encode_carrier_policy`).
+- A colour context profile is authoritative: under `embed_icc: false` it gets the same
+  refusal on every encoder, alone or repeated as job metadata (`encode_carrier_context`).
+  PNG has no best-effort exception for the legacy setter (zenjpeg keeps one for job
+  metadata); no established PNG test forbids ICC beside a profile zenpixels cannot identify.
+- The animation encoder took a first-frame colour context that contradicted the job colour
+  (a Rec. 2020 iCCP over Display P3 frames, or the context profile beside the job's sRGB
+  cICP), which the still encoders refuse. It now refuses too, before the frame changes
+  anything (`a_context_contradicting_the_job_colour_refuses_on_every_encoder`).
