@@ -90,7 +90,7 @@ fn rewrite_preserves_pixels_with_independent_png_reader() {
         (MetadataPolicy::PreserveExact, true),
     ] {
         tk::check_metadata_rewrite(
-            zencodec::metadata_rewrite::Request::new(bytes.data()).with_policy(policy),
+            zencodec::metadata_rewrite::RewriteRequest::new(bytes.data()).with_policy(policy),
             zenpng::metadata::rewrite,
             |out| {
                 let mut reader = png_main::Decoder::new(std::io::Cursor::new(out))

@@ -56,6 +56,7 @@ fn rgb_idat() -> Vec<u8> {
     chunk(b"IDAT", &zlib_stored(&[0, 1, 2, 3, 4, 5, 6]))
 }
 
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn inv_with(bytes: &[u8], policy: Option<DecodePolicy>) -> Inventory {
     let mut job = PngDecoderConfig::new().job();
     if let Some(p) = policy {
@@ -67,6 +68,7 @@ fn inv_with(bytes: &[u8], policy: Option<DecodePolicy>) -> Inventory {
     inv
 }
 
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn decode_with(
     bytes: &[u8],
     policy: Option<DecodePolicy>,

@@ -178,6 +178,7 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
     }
 }
 
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn push(png: &[u8], strict: bool) -> Result<Vec<u8>, String> {
     use zencodec::decode::{DecodeJob, DecodePolicy, DecoderConfig};
     let mut sink = CollectSink(Vec::new());
@@ -225,6 +226,7 @@ fn stream(png: &[u8], strict: bool) -> Result<Vec<u8>, String> {
 }
 
 /// `serial`: a sequential threading policy (no inflate thread).
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn stream_with(png: &[u8], strict: bool, serial: bool) -> Result<Vec<u8>, String> {
     use zencodec::decode::{DecodeJob, DecodePolicy, DecoderConfig, StreamingDecode};
     let mut job = zenpng::PngDecoderConfig::new()

@@ -308,6 +308,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "spin"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0134f9043ed38b087ac4f7d4af44c79e2c9e5094421fe3164f435ce585953b10"
+
+[[package]]
 name = "syn"
 version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -373,12 +379,13 @@ dependencies = [
 
 [[package]]
 name = "zencodec"
-version = "0.1.27"
-source = "git+https://github.com/imazen/zencodec?rev=008b93c31c57578874cc7518a32f996454dd6694#008b93c31c57578874cc7518a32f996454dd6694"
+version = "0.2.0"
+source = "git+https://github.com/imazen/zencodec?rev=a15c28fdff95847e42dcb059f246a6defa0968cc#a15c28fdff95847e42dcb059f246a6defa0968cc"
 dependencies = [
  "almost-enough",
  "enough",
  "how-far",
+ "spin",
  "whereat",
  "zenpixels",
 ]
@@ -471,3 +478,18 @@ dependencies = [
  "rgb",
  "thiserror",
 ]
+
+[[patch.unused]]
+name = "zencodec-coroutine"
+version = "0.1.0"
+source = "git+https://github.com/imazen/zencodec?rev=a15c28fdff95847e42dcb059f246a6defa0968cc#a15c28fdff95847e42dcb059f246a6defa0968cc"
+
+[[patch.unused]]
+name = "zencodec-io"
+version = "0.1.0"
+source = "git+https://github.com/imazen/zencodec?rev=a15c28fdff95847e42dcb059f246a6defa0968cc#a15c28fdff95847e42dcb059f246a6defa0968cc"
+
+[[patch.unused]]
+name = "zenmeta"
+version = "0.1.0"
+source = "git+https://github.com/imazen/zencodec?rev=a15c28fdff95847e42dcb059f246a6defa0968cc#a15c28fdff95847e42dcb059f246a6defa0968cc"

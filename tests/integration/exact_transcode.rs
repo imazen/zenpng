@@ -132,6 +132,7 @@ fn hidden_rgb_animation_uses_exact_source_deltas() {
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn explicit_icc_is_not_overridden_by_descriptor_derived_cicp() {
     let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     let meta = zencodec::Metadata::none().with_icc(icc);

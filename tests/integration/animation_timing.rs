@@ -136,7 +136,8 @@ fn animation_observes_job_and_call_cancellation_during_frame_copy_and_finish() {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
-    use zencodec::{CategorizedError, ErrorCategory, StopToken};
+    use zencodec::how_far::{SharedPulse, StopOnly};
+    use zencodec::{CategorizedError, ErrorCategory, Pulse};
     struct Counter(Arc<AtomicUsize>, usize);
     impl Stop for Counter {
         fn check(&self) -> Result<(), StopReason> {
@@ -151,16 +152,17 @@ fn animation_observes_job_and_call_cancellation_during_frame_copy_and_finish() {
     for job_token in [false, true] {
         let polls = Arc::new(AtomicUsize::new(0));
         let call = Counter(polls.clone(), 2);
+        let call = StopOnly::borrowed(&call);
         let mut job = PngEncoderConfig::new().job();
         if job_token {
-            job = job.with_stop(StopToken::new(Counter(polls.clone(), 2)));
+            job = job.with_pulse(SharedPulse::new(StopOnly::new(Counter(polls.clone(), 2))));
         }
         let mut enc = job.animation_frame_encoder().unwrap();
         let err = enc
             .push_frame(
                 pixels.as_slice(),
                 10,
-                (!job_token).then_some(&call as &dyn Stop),
+                (!job_token).then_some(&call as &dyn Pulse),
             )
             .unwrap_err();
         assert_eq!(
@@ -175,7 +177,7 @@ fn animation_observes_job_and_call_cancellation_during_frame_copy_and_finish() {
     let polls = Arc::new(AtomicUsize::new(0));
     let mut enc = PngEncoderConfig::new()
         .job()
-        .with_stop(StopToken::new(Counter(polls.clone(), 20)))
+        .with_pulse(SharedPulse::new(StopOnly::new(Counter(polls.clone(), 20))))
         .animation_frame_encoder()
         .unwrap();
     enc.push_frame(pixels.as_slice(), 10, None).unwrap();
