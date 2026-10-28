@@ -58,6 +58,10 @@ All notable changes to zenpng are documented here.
 
 ### Dependency integration
 
+- Move the zencodec 0.2 pin to ideal-api `79676215` (after `f5a7fd46`): the
+  coroutine retained-batch delivery fix behind controlled decoding. No source
+  change; the fuzz lockfile follows.
+
 - Use zencodec/zenmeta/testkit `d327434b` in the library and standalone fuzz graph so metadata rewriting and inventory share the streaming consumer contract. Shared contracts, metadata rewriting on both pointer widths, animation timing and inventory fuzz compilation pass (`just contract-pin-check`).
 
 ### Changed
