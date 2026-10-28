@@ -53,6 +53,9 @@ mod decode_policy;
 #[path = "integration/encode_carrier_policy.rs"]
 mod encode_carrier_policy;
 
+#[path = "integration/encode_carrier_context.rs"]
+mod encode_carrier_context;
+
 #[cfg(feature = "controlled-decode")]
 #[path = "integration/controlled_decode.rs"]
 mod controlled_decode;
