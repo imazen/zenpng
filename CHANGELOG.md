@@ -28,6 +28,11 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- `embed_icc: false` wrote pixels whose only colour carrier was the ICC
+  profile (Display P3, Rec. 2020, an unidentified profile) untagged, so they
+  read back as sRGB. It now refuses with `PolicyRejected(Encode)` unless a
+  remaining cICP (native builder or colour plan) has the same meaning
+  (`tests/integration/encode_carrier_policy.rs`).
 - Under `allow_icc: false` the APNG frame decoder still attached the source
   ICC profile to every frame's colour context (the info was filtered, the
   frames were not). Frames now take the profile from the filtered info.

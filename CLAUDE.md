@@ -572,3 +572,18 @@ at effort 0. Strip lag depends on the resolved worker count (host-dependent timi
 Planning measured with heaptrack (`docs/ENCODE_PLANNING.md`): no planned peak above the
 prepared jobs', no strip workers. The same probe found effort-0 `begin` reserving the whole
 stored file (12.6 MB at 2048x2048 RGB8) although its bytes stream; it now reserves the header.
+
+## Known Bugs: checked policy enforcement (fixed on native-preflight, 2026-10-28)
+
+Found while making the checked setters admit policy fields; each has a failing-first test.
+- `allow_icc: false` stripped the profile from the APNG info but the frame decoder still
+  attached it to every frame's colour context
+  (`decode_policy::metadata_gates_hold_for_apng_frames_and_their_colour_context`).
+- `allow_truncated` was never read: a file cut after its pixel data decoded in full and lost
+  the chunks after it (eXIf, iTXt XMP, text), and the streaming, push, incremental and APNG
+  routes started before reaching a cut. With `allow_truncated: false` every route walks the
+  chunk lengths first (`check_truncation_policy`) and refuses before any decoder starts
+  (`decode_policy::refusing_truncation_stops_every_route_before_any_effect`).
+- `embed_icc: false` wrote ICC-only Display P3, Rec. 2020 or unidentified-profile pixels
+  untagged (read back as sRGB). It now refuses unless a remaining cICP (native or plan) has
+  the same meaning (`encode_carrier_policy`).
