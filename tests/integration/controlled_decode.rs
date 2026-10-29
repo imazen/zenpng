@@ -331,10 +331,8 @@ fn late_orientation_is_final_before_native_decode_and_resume_is_mandatory() {
     let mut cursor = SliceCursor::new(7);
     for state in [InterpretationState::Provisional, InterpretationState::Final] {
         let boundary = loop {
-            if let ControlledEvent::Suspended(b) = cursor
-                .next(&bytes, &mut stage, &zencodec::NoPulse)
-                .unwrap()
-                .into_inner()
+            if let ControlledEvent::Suspended(b) =
+                cursor.next(&bytes, &mut stage, None).unwrap().into_inner()
             {
                 break b;
             }
@@ -343,10 +341,8 @@ fn late_orientation_is_final_before_native_decode_and_resume_is_mandatory() {
         assert_eq!(effects.get(), 0);
         let reads = cursor.stats().bytes_read;
         for _ in 0..3 {
-            let ControlledEvent::Suspended(repeated) = cursor
-                .next(&bytes, &mut stage, &zencodec::NoPulse)
-                .unwrap()
-                .into_inner()
+            let ControlledEvent::Suspended(repeated) =
+                cursor.next(&bytes, &mut stage, None).unwrap().into_inner()
             else {
                 panic!("a suspension progressed without its reply")
             };
@@ -367,16 +363,10 @@ fn late_orientation_is_final_before_native_decode_and_resume_is_mandatory() {
             );
             BoundaryAction::AdoptInterpretation
         };
-        stage
-            .resume(boundary.id(), action, &zencodec::NoPulse)
-            .unwrap();
+        stage.resume(boundary.id(), action, None).unwrap();
     }
     loop {
-        if cursor
-            .next(&bytes, &mut stage, &zencodec::NoPulse)
-            .unwrap()
-            .is_finished()
-        {
+        if cursor.next(&bytes, &mut stage, None).unwrap().is_finished() {
             break;
         }
     }
@@ -460,21 +450,21 @@ fn cancellation_at_either_suspension_drops_native_input() {
         let mut decisions = 0;
         loop {
             if let ControlledEvent::Suspended(b) = cursor
-                .next(&bytes, &mut stage, &pulse)
+                .next(&bytes, &mut stage, Some(&pulse))
                 .unwrap()
                 .into_inner()
             {
                 decisions += 1;
                 if decisions == when {
                     cancel.0.store(true, Ordering::Relaxed);
-                    assert!(cursor.next(&bytes, &mut stage, &pulse).is_err());
+                    assert!(cursor.next(&bytes, &mut stage, Some(&pulse)).is_err());
                     break;
                 }
                 stage
                     .resume(
                         b.id(),
                         zencodec::decode::BoundaryAction::ContinueReading,
-                        &pulse,
+                        Some(&pulse),
                     )
                     .unwrap();
             }

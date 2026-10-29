@@ -48,12 +48,12 @@ bench = false
 # This standalone workspace must use the same unreleased API sources as the root.
 [patch.crates-io]
 # The zencodec 0.2 family from the root's core revision; one source for shared types.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "a15c28fdff95847e42dcb059f246a6defa0968cc" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "a15c28fdff95847e42dcb059f246a6defa0968cc" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "a15c28fdff95847e42dcb059f246a6defa0968cc" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "a15c28fdff95847e42dcb059f246a6defa0968cc" }
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "f8596aae7a16aec7875b6fe2ef39b501c11a0e82" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "f8596aae7a16aec7875b6fe2ef39b501c11a0e82" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
 # Retain main's strip-compression API source.
 zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a193e343018ae2cfb1a6c31edd" }
 

@@ -212,7 +212,7 @@ fn timeout_survives_each_crc_and_container_poll() {
         at: usize::MAX,
     };
     let pulse = zencodec::how_far::StopOnly::borrowed(&count);
-    zenpng::metadata::rewrite(&ScrubRequest::new(&input).with_pulse(&pulse)).unwrap();
+    zenpng::metadata::rewrite(&ScrubRequest::new(&input).with_pulse(Some(&pulse))).unwrap();
     for at in 0..count.polls.load(Ordering::Relaxed) {
         let deadline = Deadline {
             polls: AtomicUsize::new(0),
@@ -222,7 +222,7 @@ fn timeout_survives_each_crc_and_container_poll() {
             matches!(
                 zenpng::metadata::rewrite(
                     &ScrubRequest::new(&input)
-                        .with_pulse(&zencodec::how_far::StopOnly::borrowed(&deadline))
+                        .with_pulse(Some(&zencodec::how_far::StopOnly::borrowed(&deadline)))
                 ),
                 Err(Error::Stopped(enough::StopReason::TimedOut))
             ),

@@ -285,14 +285,14 @@ fn zencodec_io_planned_row_adapter_writes_the_direct_row_file() {
     use zencodec_io::row_encode::{self, Options, Raster, Stage};
     use zenpng::DowncastFlags;
 
-    struct FirstSchedule;
-    impl PolicyResolver for FirstSchedule {
+    struct FirstRoute;
+    impl PolicyResolver for FirstRoute {
         type Error = std::convert::Infallible;
         fn resolve(
             &mut self,
             question: Question<'_>,
         ) -> Result<Decision, zencodec::At<Self::Error>> {
-            let Question::OutputSchedule { choices, .. } = question else {
+            let Question::EncodeRoute { choices, .. } = question else {
                 panic!("unexpected policy question")
             };
             Ok(Decision::Choose(choices.first().unwrap().id()))
@@ -336,9 +336,9 @@ fn zencodec_io_planned_row_adapter_writes_the_direct_row_file() {
             &mut written,
             // A callback struct goes inside a binding (zencodec a15c28fd);
             // the default requirements are what Options supplied before.
-            BoundPolicy::new(PolicySet::new(), FirstSchedule),
+            BoundPolicy::new(PolicySet::new(), FirstRoute),
             Options::new(storage.clone(), u64::MAX),
-            &zencodec::NoPulse,
+            None,
         )
         .unwrap_or_else(|e| panic!("{mode}: {e:?}"));
         assert_eq!(written, expected, "{mode}");
@@ -358,9 +358,9 @@ fn zencodec_io_planned_row_adapter_writes_the_direct_row_file() {
             config.job(),
             Raster::new(pixels(&contradiction)),
             &mut refused,
-            BoundPolicy::new(PolicySet::new(), FirstSchedule),
+            BoundPolicy::new(PolicySet::new(), FirstRoute),
             Options::new(storage.clone(), u64::MAX),
-            &zencodec::NoPulse,
+            None,
         )
         .expect_err(mode);
         assert_eq!(failure.error().stage, Stage::Prepare, "{mode}");

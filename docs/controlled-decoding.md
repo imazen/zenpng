@@ -91,3 +91,38 @@ the held native batch or inflate workspace. Native integration, no-default
 checks, fuzz compilation and API snapshots pass after that update (`just
 controlled-build controlled-integration`, rc=0, 24 s; run-heavy peak RSS
 0.62 GiB, minimum available 15087 MiB, peak load 2.42).
+
+
+## Optional shared controls (source migration, 2026-10-29)
+
+The shared incremental and controlled APIs accept `Option<&dyn Pulse>`.
+Passing `None` adds no per-call control; it does not disable the PNG job's
+retained control. PNG uses the shared coroutine implementation for these
+boundaries. Metadata rewrite forwards the original optional Pulse to application
+services, resolving it only for private CRC/chunk work.
+
+These source changes require the matching shared-core revision. Native tests,
+independent PNG readback and the portable dependency graph have not yet been
+qualified for this migration; previous required-reference receipts remain valid
+only for their recorded revisions.
+
+
+## Optional control qualification (2026-10-29)
+
+Source `4b75d4d5` was tested in an immutable export without parent workspace
+patches. Root and fuzz resolve one core family at `feb09f9f`, with paired pixels
+`283655c5`. The root has no committed lock baseline; its fresh resolved lock was
+retained. Fuzz resolution starts from its committed lock.
+
+The controlled integration suite (54 tests), metadata rewrite (8), row planning
+(7), and shared contracts (4) pass. Strict Clippy over all targets with
+`metadata-rewrite,controlled-decode,inventory`, the no-default library check,
+and compilation of all fuzz binaries pass. The run used a 3 GiB/2-job cap:
+`rc0 44s; peak-RSS 0.58GiB; min-avail 14538MiB; peak-load 1.47`.
+
+The original attempt retained an obsolete `OutputSchedule` callback pattern.
+The planned driver asks `EncodeRoute`; changing that pattern preserves every
+existing encoded-byte, profile, preparation-refusal and cleanup assertion.
+Earlier missing-Option compiler diagnostics and the failed callback run remain
+part of the qualification record. This is local native qualification; fresh
+platform CI is still required for publication.
