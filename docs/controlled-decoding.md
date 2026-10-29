@@ -91,3 +91,17 @@ the held native batch or inflate workspace. Native integration, no-default
 checks, fuzz compilation and API snapshots pass after that update (`just
 controlled-build controlled-integration`, rc=0, 24 s; run-heavy peak RSS
 0.62 GiB, minimum available 15087 MiB, peak load 2.42).
+
+
+## Optional shared controls (source migration, 2026-10-29)
+
+The shared incremental and controlled APIs accept `Option<&dyn Pulse>`.
+Passing `None` adds no per-call control; it does not disable the PNG job's
+retained control. PNG uses the shared coroutine implementation for these
+boundaries. Metadata rewrite forwards the original optional Pulse to application
+services, resolving it only for private CRC/chunk work.
+
+These source changes require the matching shared-core revision. Native tests,
+independent PNG readback and the portable dependency graph have not yet been
+qualified for this migration; previous required-reference receipts remain valid
+only for their recorded revisions.

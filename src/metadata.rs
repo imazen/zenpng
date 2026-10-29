@@ -21,6 +21,9 @@ pub fn rewrite<'a>(
 const XMP_KEY: &[u8] = b"XML:com.adobe.xmp";
 
 fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
+    // Resolve only for local CRC/chunk work. Services receive the original
+    // optional Pulse below, preserving absence and their retained controls.
+    let local_pulse = req.pulse().unwrap_or(&zencodec::NoPulse);
     let mut out = Plan::new();
     out.keep(req, 0..8, "PNG signature")?;
     let mut pos = 8;
@@ -57,7 +60,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
         }
         let data = &req.input()[pos + 8..end - 4];
         let range = pos..end;
-        let crc = crc32(&req.input()[pos + 4..end - 4], req.pulse())?;
+        let crc = crc32(&req.input()[pos + 4..end - 4], local_pulse)?;
         if crc != be32(&req.input()[end - 4..end])? {
             return Err(Error::Malformed("PNG CRC"));
         }
@@ -186,7 +189,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                     range,
                     "EXIF",
                     Action::Rewrite,
-                    Some(Cow::Owned(chunk(&kind, tiff, req.pulse())?)),
+                    Some(Cow::Owned(chunk(&kind, tiff, local_pulse)?)),
                 )?;
             }
             b"iCCP" => {
@@ -220,7 +223,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                             range,
                             "ICC",
                             Action::Rewrite,
-                            Some(Cow::Owned(chunk(&kind, &body, req.pulse())?)),
+                            Some(Cow::Owned(chunk(&kind, &body, local_pulse)?)),
                         )?;
                     } else {
                         let body = [b"ICC\0\0".as_slice(), &data[zero + 2..]].concat();
@@ -229,7 +232,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                             range,
                             "ICC (opaque, name normalized)",
                             Action::OpaqueIcc,
-                            Some(Cow::Owned(chunk(&kind, &body, req.pulse())?)),
+                            Some(Cow::Owned(chunk(&kind, &body, local_pulse)?)),
                         )?;
                     }
                 } else {
@@ -241,7 +244,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                         range,
                         "ICC (opaque, name normalized)",
                         Action::OpaqueIcc,
-                        Some(Cow::Owned(chunk(&kind, &body, req.pulse())?)),
+                        Some(Cow::Owned(chunk(&kind, &body, local_pulse)?)),
                     )?;
                 }
             }
@@ -265,7 +268,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                             range,
                             "XMP",
                             Action::Rewrite,
-                            Some(Cow::Owned(chunk(b"iTXt", &body, req.pulse())?)),
+                            Some(Cow::Owned(chunk(b"iTXt", &body, local_pulse)?)),
                         )?;
                     } else {
                         out.remove(req, range, "XMP")?;
