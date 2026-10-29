@@ -338,7 +338,7 @@ fn zencodec_io_planned_row_adapter_writes_the_direct_row_file() {
             // the default requirements are what Options supplied before.
             BoundPolicy::new(PolicySet::new(), FirstSchedule),
             Options::new(storage.clone(), u64::MAX),
-            &zencodec::NoPulse,
+            None,
         )
         .unwrap_or_else(|e| panic!("{mode}: {e:?}"));
         assert_eq!(written, expected, "{mode}");
@@ -360,7 +360,7 @@ fn zencodec_io_planned_row_adapter_writes_the_direct_row_file() {
             &mut refused,
             BoundPolicy::new(PolicySet::new(), FirstSchedule),
             Options::new(storage.clone(), u64::MAX),
-            &zencodec::NoPulse,
+            None,
         )
         .expect_err(mode);
         assert_eq!(failure.error().stage, Stage::Prepare, "{mode}");
