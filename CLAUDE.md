@@ -596,10 +596,13 @@ Found while making the checked setters admit policy fields; each has a failing-f
   cICP), which the still encoders refuse. It now refuses too, before the frame changes
   anything (`a_context_contradicting_the_job_colour_refuses_on_every_encoder`).
 
-## Known Bugs: checked metadata retention (source repair pending qualification)
+## Known Bugs: checked metadata retention (scoped qualification)
 
 Checked PNG metadata admission previously used the core default refusal; native
 HDR settings could override a supplied record, and the color resolver could
-drop or replace required carriers. The current source repair and regression
-controls are unbuilt. See `docs/checked-metadata-admission.md` for the exact
-contract, conservative refusals and qualification status.
+drop or replace required carriers. Focused metadata tests and selected native
+integration targets passed; the broad library run did not complete. See
+`docs/checked-metadata-admission.md` for the exact contract, conservative
+refusals and qualification limits. The standalone fuzz graph still selects
+older pixel and core revisions and fails dependency resolution; its repair and
+qualification are required before landing.

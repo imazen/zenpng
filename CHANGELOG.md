@@ -4,6 +4,8 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+- Admit checked PNG metadata retention through the zencodec job, carrying accepted fields through still, row and animation encodes and refusing unsupported or conflicting carriers (`59c377f3`). Qualification and remaining gaps: `docs/checked-metadata-admission.md`.
+
 - Follow the shared optional Pulse contract in metadata services and controlled/row-driver callers. `None` adds no call control; job cancellation and admission remain active. Pair all root/fuzz core patches at `feb09f9f` with pixels `283655c5`. Qualification is recorded in the controlled-decoding guide.
 
 ### QUEUED BREAKING CHANGES
