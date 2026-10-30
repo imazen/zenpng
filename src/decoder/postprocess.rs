@@ -432,7 +432,7 @@ fn packed_gray<const P: usize>(raw: &[u8], out: &mut [u8], width: usize, table: 
 
 /// Packed palette row (`P` indices per byte) → `C`-byte pixels (RGB or RGBA).
 // `as_chunks_mut::<{ P * C }>` would need generic const expressions.
-#[allow(clippy::chunks_exact_to_as_chunks)]
+#[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
 fn packed_palette<const P: usize, const C: usize>(
     raw: &[u8],
     out: &mut [u8],

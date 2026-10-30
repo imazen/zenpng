@@ -31,6 +31,7 @@ fn assert_carriers_and_pixels(bytes: &[u8], expected: &[u8]) {
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the published best-effort job setters.
 fn checked_verbatim_preserves_authority_for_still_rows_and_animation() {
     let row0 = [
         7, 19, 43, 255, 33, 22, 11, 0, 9, 8, 7, 255, 0xee, 0xee, 0xee, 0xee,
@@ -70,6 +71,7 @@ fn checked_verbatim_preserves_authority_for_still_rows_and_animation() {
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the published best-effort job setters.
 fn refused_checked_policy_does_not_replace_the_accepted_policy() {
     let policy = EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim);
     let mut job = config(1)

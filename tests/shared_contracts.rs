@@ -75,6 +75,7 @@ fn policy_and_inventory_contracts() {
 
 #[cfg(feature = "metadata-rewrite")]
 #[test]
+#[allow(deprecated)] // Exercises the published best-effort job setters.
 fn rewrite_preserves_pixels_with_independent_png_reader() {
     let img = tk::TestImage::rgb8_gradient(16, 16);
     let bytes = E::new()

@@ -198,8 +198,8 @@ impl PngEncoderConfig {
         self
     }
 
-    /// Set the content light level written to the PNG `cLLI` chunk
-    /// (emitted only alongside a [`with_cicp`](Self::with_cicp) signal).
+    /// Set the content light level written to the PNG `cLLI` chunk.
+    /// This carrier does not require a cICP chunk.
     #[must_use]
     pub fn with_content_light_level(
         mut self,
@@ -725,6 +725,7 @@ impl zencodec::encode::EncoderConfig for PngEncoderConfig {
             config: self,
             stop: None,
             metadata: None,
+            metadata_requirement: None,
             limits: None,
             policy: None,
             canvas_width: 0,
@@ -732,6 +733,81 @@ impl zencodec::encode::EncoderConfig for PngEncoderConfig {
             loop_count: None,
         }
     }
+}
+
+// Match the actual mDCV writer and reader, including their f32 rounding.
+fn mastering_is_exact(m: zenpixels::hdr::MasteringDisplay) -> bool {
+    fn exact(v: f32, scale: f32, limit: f64) -> bool {
+        if !v.is_finite() || v < 0.0 || f64::from(v / scale) > limit {
+            return false;
+        }
+        let encoded = (v / scale).round() as u32;
+        (encoded as f32 * scale).to_bits() == v.to_bits()
+    }
+    m.primaries_xy
+        .iter()
+        .flatten()
+        .chain(m.white_point_xy.iter())
+        .all(|&v| exact(v, 0.00002, f64::from(u16::MAX)))
+        && exact(m.max_luminance, 0.0001, f64::from(u32::MAX))
+        && exact(m.min_luminance, 0.0001, f64::from(u32::MAX))
+}
+
+fn retained_policy(
+    policy: Option<zencodec::encode::EncodePolicy>,
+    required: Option<&Metadata>,
+) -> Option<zencodec::encode::EncodePolicy> {
+    let Some(required) = required else {
+        return policy;
+    };
+    if required.icc_profile.is_none() && required.cicp.is_none() {
+        return policy;
+    }
+    let mut resolved = policy.unwrap_or_else(zencodec::encode::EncodePolicy::none);
+    if resolved.color.is_none() {
+        resolved.color = Some(zencodec::ColorEmitPolicy::Verbatim);
+    }
+    Some(resolved)
+}
+
+fn check_required_metadata(
+    required: &Metadata,
+    actual: Option<&Metadata>,
+    config: &EncodeConfig,
+) -> Result<(), At<PngError>> {
+    let Some(actual) = actual else {
+        return Err(at!(PngError::PolicyRejected(
+            zencodec::PolicyKind::Encode,
+            "checked metadata was replaced".into()
+        )));
+    };
+    let mismatch = (required.icc_profile.is_some() && required.icc_profile != actual.icc_profile)
+        || (required.exif.is_some() && required.exif != actual.exif)
+        || (required.xmp.is_some() && required.xmp != actual.xmp)
+        || (required.cicp.is_some() && required.cicp != actual.cicp)
+        || (required.content_light_level.is_some()
+            && required.content_light_level != actual.content_light_level)
+        || (required.mastering_display.is_some()
+            && required.mastering_display != actual.mastering_display)
+        || required.orientation != actual.orientation
+        || required.cicp.is_some_and(|c| {
+            c.matrix_coefficients != 0 || config.cicp.is_some_and(|native| native != c)
+        })
+        || required.content_light_level.is_some_and(|c| {
+            config.content_light_level_raw.is_some()
+                || config.content_light_level.is_some_and(|native| native != c)
+        })
+        || required.mastering_display.is_some_and(|m| {
+            config.mastering_display_raw.is_some()
+                || config.mastering_display.is_some_and(|native| native != m)
+        });
+    if mismatch {
+        return Err(at!(PngError::PolicyRejected(
+            zencodec::PolicyKind::Encode,
+            "configuration would discard or replace required metadata".into()
+        )));
+    }
+    Ok(())
 }
 
 // ── PngEncodeJob ─────────────────────────────────────────────────────
@@ -742,6 +818,7 @@ pub struct PngEncodeJob {
     config: PngEncoderConfig,
     stop: Option<zencodec::SharedPulse>,
     metadata: Option<Metadata>,
+    metadata_requirement: Option<Metadata>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::encode::EncodePolicy>,
     canvas_width: u32,
@@ -762,6 +839,70 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
     fn with_metadata(mut self, meta: Metadata) -> Self {
         self.metadata = Some(meta);
         self
+    }
+
+    fn try_set_metadata_policy(
+        &mut self,
+        meta: Metadata,
+        policy: zencodec::MetadataPolicy,
+    ) -> Result<(), zencodec::encode::BoxedError> {
+        #[allow(deprecated)]
+        let retained = meta.filtered(&policy);
+        let unsupported = || {
+            Box::new(zencodec::UnsupportedOperation::MetadataRetention)
+                as zencodec::encode::BoxedError
+        };
+        let fields = policy.fields();
+        let native = &self.config.config;
+        if (fields.hdr.discards()
+            && (native.content_light_level.is_some()
+                || native.content_light_level_raw.is_some()
+                || native.mastering_display.is_some()
+                || native.mastering_display_raw.is_some()))
+            || (fields.cicp.discards() && native.cicp.is_some())
+            || (fields.exif != zencodec::exif::ExifPolicy::DISCARD_ALL
+                && meta
+                    .exif
+                    .as_ref()
+                    .is_some_and(|exif| zencodec::exif::Exif::parse(exif).is_none()))
+            || retained.diffuse_white.is_some()
+            || retained
+                .icc_profile
+                .as_ref()
+                .is_some_and(|v| v.is_empty() || v.len() > 1024 * 1024)
+            || retained.xmp.as_ref().is_some_and(|v| {
+                v.is_empty()
+                    || v.len() > (u32::MAX as usize).saturating_sub(22)
+                    || v.contains(&0)
+                    || core::str::from_utf8(v).is_err()
+            })
+            || retained.exif.as_ref().is_some_and(|v| {
+                v.is_empty() || v.len() > u32::MAX as usize || v.starts_with(b"Exif\0\0")
+            })
+            || (policy == zencodec::MetadataPolicy::PreserveExact
+                && meta.exif.is_some()
+                && retained.exif.is_none())
+        {
+            return Err(unsupported());
+        }
+        if let Some(exif) = &retained.exif {
+            let parsed = zencodec::exif::Exif::parse(exif).ok_or_else(unsupported)?;
+            if retained.orientation != zencodec::Orientation::Identity
+                && parsed.orientation() != Some(retained.orientation)
+            {
+                return Err(unsupported());
+            }
+        }
+        if let Some(m) = retained.mastering_display
+            && (retained.cicp.is_none() || !mastering_is_exact(m))
+        {
+            return Err(unsupported());
+        }
+        check_required_metadata(&retained, Some(&retained), &self.config.config)
+            .map_err(|_| unsupported())?;
+        self.metadata = Some(retained.clone());
+        self.metadata_requirement = Some(retained);
+        Ok(())
     }
 
     fn with_limits(mut self, limits: ResourceLimits) -> Self {
@@ -841,6 +982,8 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         &self,
         declaration: &zencodec::encode::EncodeDeclaration<'_>,
     ) -> Result<zencodec::encode::EncodePlan, zencodec::encode::BoxedError> {
+        self.check_retained()
+            .map_err(|e| Box::new(CodecError::of(e)) as zencodec::encode::BoxedError)?;
         self.clone()
             .into_png_encoder()
             .prepare_rows(
@@ -855,6 +998,7 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
     }
 
     fn encoder(self) -> Result<PngEncoder, At<CodecError>> {
+        self.check_retained().map_err(CodecError::of)?;
         Ok(self.into_png_encoder())
     }
 
@@ -862,9 +1006,11 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         // Frame pixel format isn't known until frames are pushed; the color-emit
         // resolver still classifies gray/CMYK from the ICC color space, and
         // APNG frames are RGB/RGBA, so a `None` channel count is correct here.
+        self.check_retained().map_err(CodecError::of)?;
+        let policy = retained_policy(self.policy, self.metadata_requirement.as_ref());
         let effective_meta = apply_encode_policy(
             self.metadata.as_ref(),
-            self.policy.as_ref(),
+            policy.as_ref(),
             None,
             self.config.config.cicp,
         )
@@ -882,23 +1028,49 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         enc.loop_count = self.loop_count.unwrap_or(0);
         enc.limits = self.limits;
         enc.stop = self.stop;
-        enc.policy = self.policy;
+        enc.policy = policy;
+        enc.metadata_requirement = self.metadata_requirement;
         Ok(enc)
     }
 }
 
 impl PngEncodeJob {
+    fn check_retained(&self) -> Result<(), At<PngError>> {
+        if let Some(required) = &self.metadata_requirement {
+            // A later best-effort replacement must not reinsert fields the
+            // checked policy discarded. Pixel color binding happens later and
+            // may add format-required color signaling independently.
+            if self.metadata.as_ref() != Some(required) {
+                return Err(at!(PngError::PolicyRejected(
+                    zencodec::PolicyKind::Encode,
+                    "a later metadata setter conflicts with checked retention".into()
+                )));
+            }
+            check_required_metadata(required, self.metadata.as_ref(), &self.config.config)?;
+            let policy = retained_policy(self.policy, Some(required));
+            let effective = apply_encode_policy(
+                self.metadata.as_ref(),
+                policy.as_ref(),
+                None,
+                self.config.config.cicp,
+            )?;
+            check_required_metadata(required, effective.as_ref(), &self.config.config)?;
+        }
+        Ok(())
+    }
     /// Build the concrete [`PngEncoder`] (infallible). Shared by the
     /// [`EncodeJob::encoder`](zencodec::encode::EncodeJob::encoder) trait method
     /// (which returns the `At<CodecError>` envelope) and the codec's inherent
     /// `encode_*` convenience API (which returns the rich `At<PngError>`).
     fn into_png_encoder(self) -> PngEncoder {
+        let policy = retained_policy(self.policy, self.metadata_requirement.as_ref());
         PngEncoder {
             config: self.config,
             stop: self.stop,
             metadata: self.metadata,
+            metadata_requirement: self.metadata_requirement,
             limits: self.limits,
-            policy: self.policy,
+            policy,
             canvas_width: self.canvas_width,
             canvas_height: self.canvas_height,
             streaming: None,
@@ -918,6 +1090,7 @@ pub struct PngEncoder {
     config: PngEncoderConfig,
     stop: Option<zencodec::SharedPulse>,
     metadata: Option<Metadata>,
+    metadata_requirement: Option<Metadata>,
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::encode::EncodePolicy>,
     /// Canvas dimensions for push_rows mode (set via `with_canvas_size`).
@@ -1057,6 +1230,20 @@ struct PreFilteredState {
 }
 
 impl PngEncoder {
+    fn check_retained_color(&self, channels: Option<u8>) -> Result<(), At<PngError>> {
+        if let Some(required) = &self.metadata_requirement {
+            check_required_metadata(required, self.metadata.as_ref(), &self.config.config)?;
+            let effective = apply_encode_policy(
+                self.metadata.as_ref(),
+                self.policy.as_ref(),
+                channels,
+                self.config.config.cicp,
+            )?;
+            check_required_metadata(required, effective.as_ref(), &self.config.config)?;
+        }
+        Ok(())
+    }
+
     fn config_with_threading(&self) -> EncodeConfig {
         let mut config = self.config.config.clone();
         if let Some(ref limits) = self.limits {
@@ -1590,6 +1777,7 @@ impl PngEncoder {
 
         self.describe_stored_f32(pixels.descriptor());
         self.bind_color(pixels.descriptor(), pixels.color_context().map(|c| &**c))?;
+        self.check_retained_color(Some(pixels.descriptor().channels() as u8))?;
 
         let w = pixels.width();
         let h = pixels.rows();
@@ -1990,6 +2178,7 @@ impl PngEncoder {
         self.canvas_height = height;
         self.describe_stored_f32(descriptor);
         self.bind_color(descriptor, context)?;
+        self.check_retained_color(Some(descriptor.channels() as u8))?;
         let (color_type, bit_depth) = pixel_format_to_png(descriptor.pixel_format())
             .ok_or_else(|| at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat)))?;
         let bpp = usize::from(color_type.channels())
@@ -2113,6 +2302,7 @@ impl PngEncoder {
     ) -> Result<(), At<PngError>> {
         self.describe_stored_f32(descriptor);
         self.bind_color(descriptor, context)?;
+        self.check_retained_color(Some(descriptor.channels() as u8))?;
         let (color_type, bit_depth) = pixel_format_to_png(descriptor.pixel_format())
             .ok_or_else(|| at!(PngError::from(zencodec::UnsupportedOperation::PixelFormat)))?;
 
@@ -2561,6 +2751,7 @@ struct AccumulatedFrame {
 ///
 /// Accumulates canvas-sized RGBA8/16 frames, then encodes them all on [`finish()`](zencodec::encode::AnimationFrameEncoder::finish).
 pub struct PngAnimationFrameEncoder {
+    metadata_requirement: Option<Metadata>,
     frames: Vec<AccumulatedFrame>,
     canvas_width: u32,
     canvas_height: u32,
@@ -2659,6 +2850,7 @@ impl PngAnimationFrameEncoder {
         metadata: Option<Metadata>,
     ) -> Self {
         Self {
+            metadata_requirement: None,
             frames: Vec::new(),
             canvas_width,
             canvas_height,
@@ -2773,12 +2965,18 @@ impl PngAnimationFrameEncoder {
         if st.writer.is_none() {
             self.check_first_frame_color(pixels)?;
             self.capture_first_frame(pixels);
+            if let Some(required) = &self.metadata_requirement {
+                check_required_metadata(required, self.metadata.as_ref(), &self.config)?;
+            }
             let metadata = apply_encode_policy(
                 self.metadata.as_ref(),
                 self.policy.as_ref(),
                 Some(4),
                 self.config.cicp,
             )?;
+            if let Some(required) = &self.metadata_requirement {
+                check_required_metadata(required, metadata.as_ref(), &self.config)?;
+            }
             let (config, loop_count) = (&self.config, self.loop_count);
             let st = self.streaming.as_mut().expect("streaming");
             let write_meta = crate::encode::apng_write_meta(config, metadata.as_ref());
@@ -3362,6 +3560,7 @@ impl PngAnimationFrameEncoder {
     fn do_finish(self, stop: Option<&dyn enough::Stop>) -> Result<EncodeOutput, At<PngError>> {
         let Self {
             mut frames,
+            metadata_requirement,
             canvas_width,
             canvas_height,
             config,
@@ -3403,6 +3602,9 @@ impl PngAnimationFrameEncoder {
             Some(4),
             apng_config.encode.cicp,
         )?;
+        if let Some(required) = &metadata_requirement {
+            check_required_metadata(required, metadata.as_ref(), &apng_config.encode)?;
+        }
         let bit_depth =
             if frame_descriptor.is_some_and(|d| d.channel_type() == zenpixels::ChannelType::U16) {
                 16
@@ -5206,7 +5408,7 @@ fn check_truncation_policy(
     data: &[u8],
     policy: Option<&zencodec::decode::DecodePolicy>,
 ) -> Result<(), At<PngError>> {
-    if !policy.is_some_and(|p| p.allow_truncated == Some(false))
+    if policy.is_none_or(|p| p.allow_truncated != Some(false))
         || !data.starts_with(&crate::chunk::PNG_SIGNATURE)
     {
         // Without the policy, or for input that is not PNG (the decoder
@@ -8754,6 +8956,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // Exercises the published best-effort job setters.
     fn encode_job_with_metadata() {
         let enc = PngEncoderConfig::new();
         let meta = Metadata::default();
@@ -8786,6 +8989,7 @@ mod tests {
     /// the `SynthesizeFrom` → `synthesize_icc_for_cicp` lowering (the transfer-aware
     /// switch) through a real encode + decode roundtrip.
     #[test]
+    #[allow(deprecated)] // Exercises the published best-effort job setters.
     fn cicp_only_display_p3_synthesizes_icc() {
         let enc = PngEncoderConfig::new();
         let meta = Metadata::default().with_cicp(zenpixels::Cicp::DISPLAY_P3);
@@ -8846,6 +9050,7 @@ mod tests {
     /// sign-off.
     #[cfg(not(feature = "cms"))]
     #[test]
+    #[allow(deprecated)] // Exercises the published best-effort job setters.
     fn cicp_pq_without_cms_synthesizes_icc_from_bundle() {
         let enc = PngEncoderConfig::new();
         let meta = Metadata::default().with_cicp(zenpixels::Cicp::BT2100_PQ);
@@ -8891,6 +9096,7 @@ mod tests {
     /// (moxcms-generated) ICC and the encode succeeds with both carriers.
     #[cfg(feature = "cms")]
     #[test]
+    #[allow(deprecated)] // Exercises the published best-effort job setters.
     fn cicp_pq_with_cms_synthesizes_icc() {
         let enc = PngEncoderConfig::new();
         let meta = Metadata::default().with_cicp(zenpixels::Cicp::BT2100_PQ);

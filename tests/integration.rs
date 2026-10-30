@@ -59,3 +59,6 @@ mod encode_carrier_context;
 #[cfg(feature = "controlled-decode")]
 #[path = "integration/controlled_decode.rs"]
 mod controlled_decode;
+
+#[path = "integration/checked_metadata.rs"]
+mod checked_metadata;
