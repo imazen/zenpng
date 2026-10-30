@@ -64,6 +64,7 @@ fn with_cicp_and_cll_emit_chunks_through_trait_encode() {
 /// must leave with the sRGB transfer (keeping its primaries), whichever way
 /// it was given and whichever path encodes.
 #[test]
+#[allow(deprecated)] // Exercises the published best-effort job setters.
 fn a_linear_cicp_on_f32_input_is_written_as_srgb() {
     let (w, h) = (3u32, 2u32);
     let floats: Vec<f32> = (0..w * h * 3).map(|i| (i as f32) / 20.0).collect();
@@ -121,6 +122,7 @@ fn colour_type(png: &[u8]) -> u8 {
 /// An RGB ICC profile can't describe a greyscale PNG, so grey-valued RGB
 /// pixels written with one stay RGB and keep the profile.
 #[test]
+#[allow(deprecated)] // Exercises the published best-effort job setters.
 fn grey_pixels_with_an_rgb_icc_stay_rgb() {
     let (w, h) = (4u32, 4u32);
     let bytes: Vec<u8> = (0..w * h).flat_map(|i| [(i * 9) as u8; 3]).collect();

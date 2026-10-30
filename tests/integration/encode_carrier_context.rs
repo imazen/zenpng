@@ -44,6 +44,7 @@ const ROUTES: [Route; 3] = [Route::OneShot, Route::Rows, Route::Animation];
 
 /// `policy` goes through the legacy setter (the checked one does not admit
 /// `embed_icc` yet).
+#[allow(deprecated)] // Exercises the published best-effort job setters.
 fn encode(
     route: Route,
     meta: Metadata,

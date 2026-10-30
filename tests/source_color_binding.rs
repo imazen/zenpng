@@ -140,6 +140,7 @@ fn checked(pixels: PixelSlice<'_>) -> Result<Vec<u8>, String> {
         .map_err(|error| format!("{error:?}"))
 }
 
+#[allow(deprecated)] // Exercises the published best-effort job setters.
 fn with_metadata(meta: Metadata, pixels: PixelSlice<'_>) -> Result<Vec<u8>, String> {
     PngEncoderConfig::new()
         .job()

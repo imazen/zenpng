@@ -304,6 +304,7 @@ fn sixteen_bit_animation_preserves_all_sample_bits_and_color_signaling() {
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the published best-effort job setters.
 fn animation_inherits_frame_icc_and_enforces_decode_job_limits() {
     use std::sync::Arc;
     use zencodec::ResourceLimits;

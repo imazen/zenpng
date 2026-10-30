@@ -63,6 +63,7 @@ fn encode(route: Route, meta: Metadata, native: Option<Cicp>) -> Result<Vec<u8>,
     )
 }
 
+#[allow(deprecated)] // Exercises the published best-effort job setters.
 fn encode_with(
     route: Route,
     meta: Metadata,
