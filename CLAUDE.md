@@ -603,6 +603,6 @@ HDR settings could override a supplied record, and the color resolver could
 drop or replace required carriers. Focused metadata tests and selected native
 integration targets passed; the broad library run did not complete. See
 `docs/checked-metadata-admission.md` for the exact contract, conservative
-refusals and qualification limits. The standalone fuzz graph still selects
-older pixel and core revisions and fails dependency resolution; its repair and
-qualification are required before landing.
+refusals and qualification limits. The standalone fuzz graph is aligned with
+the tested core and pixel revisions; its five targets passed locked compilation
+on aarch64. This is not a fuzz execution.

@@ -55,7 +55,7 @@ remain unqualified. No release qualification or performance claim follows.
 The tested lock is a qualification artifact; it does not establish that an
 unlocked downstream graph selects identical package versions. The shared core
 and pixel family patches are review pins, and release still depends on the
-unpublished family crates. The standalone `fuzz/Cargo.toml` still patches
-older core and pixel revisions; `cargo metadata --locked` fails its zenpixels
-version selection against this source. That separate fuzz graph must be aligned
-and qualified before landing.
+unpublished family crates. The standalone fuzz graph is aligned with the tested
+core and pixel revisions. On aarch64 Linux, source `ee36012e` passed
+`cargo check --locked --all-targets` for its five fuzz targets. This verifies
+compilation; it does not claim a fuzz run or broader corpus coverage.
