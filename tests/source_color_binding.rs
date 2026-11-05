@@ -239,11 +239,12 @@ fn linear_input_writes_the_colour_of_the_stored_samples() {
     }
     // A profile describing the linear samples, supplied as metadata, would be
     // a stale carrier for the stored sRGB samples: refuse.
-    let linear_p3 =
-        match zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(Cicp::new(12, 8, 0, true)) {
-            zenpixels_convert::icc_profiles::SynthesizedIcc::Profile(bytes) => bytes.into_owned(),
-            other => panic!("icc-db must synthesize linear P3: {other:?}"),
-        };
+    let linear_p3 = match zenpixels_convert::icc_profiles::SynthesizedIcc::for_cicp(Cicp::new(
+        12, 8, 0, true,
+    )) {
+        zenpixels_convert::icc_profiles::SynthesizedIcc::Profile(bytes) => bytes.into_owned(),
+        other => panic!("icc-db must synthesize linear P3: {other:?}"),
+    };
     assert!(with_metadata(Metadata::none().with_icc(linear_p3), raster.slice(desc)).is_err());
 }
 

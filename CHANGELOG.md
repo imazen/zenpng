@@ -4,6 +4,12 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+- Gray and gray-alpha pixels with non-default CICP metadata now embed a GRAY-class ICC profile, lowered from zencodec's `IccDisposition::SynthesizeGrayFrom`. Such a file previously carried no color description, or for gray-alpha an RGB-class profile that PNG forbids. `embed_icc: false` refuses these images, since nothing else would describe them.
+
+- Palette PNGs report `channel_count` 3, or 4 with tRNS, instead of 1, which read as gray to the color resolver.
+
+- Move to zenpixels `fde59b96` (`Cicp::from_icc`, `ColorModel::from_icc`, `IccIdentification::from_icc`, `SynthesizedIcc::for_cicp`), and admit archmage and magetypes 0.9.31-beta.2, which it requires.
+
 - Byte and typed zero-only allocations share one allocator-zeroed success path, preserving existing allocation errors and infallible overflow behavior.
 
 - Admit checked PNG metadata retention through the zencodec job, carrying accepted fields through still, row and animation encodes and refusing unsupported or conflicting carriers (`59c377f3`). Qualification and remaining gaps: `docs/checked-metadata-admission.md`.

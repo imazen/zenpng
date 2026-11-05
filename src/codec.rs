@@ -19,6 +19,7 @@ use zencodec::{CodecError, ImageFormat, ImageInfo, Metadata, ResourceLimits};
 use zenpixels::{
     AlphaMode, ColorPrimaries, PixelDescriptor, PixelSlice, PixelSliceMut, TransferFunction,
 };
+use zenpixels_convert::icc_profiles::SynthesizedIcc;
 
 use crate::decode::PngDecodeConfig;
 use crate::encode::{DowncastFlags, EncodeConfig};
@@ -50,7 +51,7 @@ fn default_deadline() -> impl enough::Stop {
 // HDR / wide-gamut forms. PNG 3rd ed. signals colour with the `cICP` chunk, so
 // these need no new pixel machinery -- 16-bit RGB samples plus four bytes of
 // code points. Leaving them off the lists did not make them fail cleanly: the
-// encode negotiator (`adapt_for_encode_cow`) is documented as *permissive*, so
+// encode negotiator (`adapt_for_encode`) is documented as *permissive*, so
 // a PQ buffer whose primaries happened to match an entry was passed through
 // UNCONVERTED and written with no cICP -- PQ pixels in a file that claims sRGB,
 // silently, unless the caller thought to pass `with_cicp` by hand. A buffer
@@ -1613,7 +1614,7 @@ impl PngEncoder {
             } else {
                 ColorModel::Rgb
             };
-            if zenpixels::icc::profile_color_space(icc) != Some(channels) {
+            if zenpixels::ColorModel::from_icc(icc) != Some(channels) {
                 return refuse("the pixels' ICC profile does not describe their channels");
             }
             let identified = ColorProfileSource::Icc(icc).resolve();
@@ -5116,11 +5117,13 @@ fn convert_info(info: &crate::decode::PngInfo) -> ImageInfo {
     }
     zi = zi.with_sequence(info.sequence.clone());
     zi = zi.with_bit_depth(info.bit_depth);
-    // PNG color_type → channel count: 0=gray→1, 2=rgb→3, 3=indexed→1, 4=gray+alpha→2, 6=rgba→4
+    // PNG color_type → channel count: 0=gray→1, 2=rgb→3, 4=gray+alpha→2, 6=rgba→4.
+    // A palette holds RGB colors, with alpha from tRNS: reporting 1 would call it gray.
     let channel_count = match info.color_type {
         0 => 1,
         2 => 3,
-        3 => 1,
+        3 if info.has_alpha => 4,
+        3 => 3,
         4 => 2,
         6 => 4,
         _ => 1,
@@ -5186,9 +5189,9 @@ fn orientation_exif(orientation: zencodec::Orientation) -> alloc::sync::Arc<[u8]
 /// metadata was provided.
 ///
 /// `channel_count` is the channel count of the pixels being encoded (1 = gray,
-/// 3 = RGB, 4 = RGBA, etc.); it lets the resolver suppress cICP for grayscale
-/// where an RGB CICP would recolor the image. Pass `None` when the count is not
-/// yet known (the resolver still falls back to ICC color-space detection).
+/// 3 = RGB, 4 = RGBA, etc.); it selects the resolver's grayscale handling, which
+/// suppresses cICP and plans a GRAY-class profile. Pass `None` when the count is
+/// not yet known (the resolver still falls back to ICC color-space detection).
 ///
 /// Errors when the plan needs an ICC synthesized for the source CICP and this
 /// build can't produce one (see the `cms` feature): cICP is too new to be the
@@ -5257,6 +5260,11 @@ fn apply_encode_policy(
     }
 
     let plan = zencodec::resolve_color_emit(&src, &PNG_ENCODE_CAPS, color_policy);
+    let plan_wants_profile = matches!(
+        plan.icc,
+        zencodec::IccDisposition::SynthesizeFrom(_)
+            | zencodec::IccDisposition::SynthesizeGrayFrom(_)
+    );
 
     // Lower the plan: cICP carrier.
     filtered.cicp = plan.cicp;
@@ -5268,36 +5276,17 @@ fn apply_encode_policy(
         }
         zencodec::IccDisposition::SynthesizeFrom(cicp) => {
             filtered.icc_profile = if embed_icc {
-                // Transfer-aware lowering: `synthesize_icc_for_cicp` matches the TRC
-                // (a BT.2020-PQ source never gets the SDR-TRC Rec.2020 profile).
-                // `Profile` → own a copy; `NotNeeded` → nothing to embed.
-                //
-                // Every other outcome is an ERROR, not a silent skip: the plan
-                // asked for an ICC because PNG's cICP chunk (PNG 3.0, 2025) is
-                // too new to be the sole color carrier — most deployed decoders
-                // ignore it and would read the pixels as sRGB. Refusing beats
-                // misrepresenting the image. The `cms` feature (icc-db blob
-                // synthesis) covers the full ITU-T H.273 grid incl PQ/HLG,
-                // with no moxcms dependency.
-                use zenpixels_convert::icc_profiles::SynthesizedIcc;
-                match zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(cicp) {
-                    SynthesizedIcc::Profile(bytes) => Some(alloc::sync::Arc::from(bytes.as_ref())),
-                    SynthesizedIcc::NotNeeded => None,
-                    outcome => {
-                        // CMS is the caller's job: we won't perform this transform
-                        // ourselves, and are saying so instead of misrepresenting
-                        // the image — the caller must supply the ICC profile, drop
-                        // the CICP, or enable the `cms` feature.
-                        return Err(at!(PngError::CmsRequired(alloc::format!(
-                            "this image's color (CICP primaries {} / transfer {}) needs a \
-                             synthesized ICC profile this build can't produce ({outcome:?}); \
-                             enable zenpng's `cms` feature, supply an ICC profile in the \
-                             metadata, or drop the CICP",
-                            cicp.color_primaries,
-                            cicp.transfer_characteristics
-                        ))));
-                    }
-                }
+                synthesized_icc(cicp, SynthesizedIcc::for_cicp(cicp))?
+            } else {
+                None
+            };
+        }
+        // Gray pixels need a GRAY-class profile: PNG forbids an RGB one on color
+        // types 0 and 4, and the plan writes no cICP for them, so this profile
+        // is the file's only color description.
+        zencodec::IccDisposition::SynthesizeGrayFrom(cicp) => {
+            filtered.icc_profile = if embed_icc {
+                synthesized_icc(cicp, SynthesizedIcc::for_gray_cicp(cicp))?
             } else {
                 None
             };
@@ -5314,9 +5303,9 @@ fn apply_encode_policy(
     // carries (a cICP from the metadata or the native builder, or nothing,
     // which means sRGB) must say what the profile said. An unidentified
     // profile cannot be shown equivalent to anything.
-    if !embed_icc && let Some(icc) = meta.icc_profile.as_deref() {
+    if !embed_icc && (meta.icc_profile.is_some() || plan_wants_profile) {
         let gray = matches!(channel_count, Some(1 | 2));
-        let before = (Some(icc), native_cicp.or(meta.cicp));
+        let before = (meta.icc_profile.as_deref(), native_cicp.or(meta.cicp));
         let after = (
             filtered.icc_profile.as_deref(),
             native_cicp.or(filtered.cicp),
@@ -5332,6 +5321,35 @@ fn apply_encode_policy(
     }
 
     Ok(Some(filtered))
+}
+
+/// The bytes of a synthesis the color plan asked for.
+///
+/// `Profile` → own a copy; `NotNeeded` → nothing to embed. Every other outcome is
+/// an ERROR, not a silent skip: the plan asked for an ICC because PNG's cICP chunk
+/// (PNG 3.0, 2025) is too new to be the sole color carrier, or isn't being written
+/// at all. Decoders that see no profile read the pixels as sRGB. Refusing beats
+/// misrepresenting the image. The `cms` feature (icc-db blob synthesis) covers the
+/// full ITU-T H.273 grid incl PQ/HLG, with no moxcms dependency.
+fn synthesized_icc(
+    cicp: zencodec::Cicp,
+    outcome: SynthesizedIcc,
+) -> Result<Option<alloc::sync::Arc<[u8]>>, At<PngError>> {
+    match outcome {
+        SynthesizedIcc::Profile(bytes) => Ok(Some(alloc::sync::Arc::from(bytes.as_ref()))),
+        SynthesizedIcc::NotNeeded => Ok(None),
+        // CMS is the caller's job: we won't perform this transform ourselves, and
+        // are saying so instead of misrepresenting the image. The caller must
+        // supply the ICC profile, drop the CICP, or enable the `cms` feature.
+        outcome => Err(at!(PngError::CmsRequired(alloc::format!(
+            "this image's color (CICP primaries {} / transfer {}) needs a \
+             synthesized ICC profile this build can't produce ({outcome:?}); \
+             enable zenpng's `cms` feature, supply an ICC profile in the \
+             metadata, or drop the CICP",
+            cicp.color_primaries,
+            cicp.transfer_characteristics
+        )))),
+    }
 }
 
 /// Apply decode policy to control metadata extraction and strictness.
@@ -9026,7 +9044,8 @@ mod tests {
         // What the profile describes, not its bytes: zenpixels 0.2.17
         // synthesizes the exact, cicp-tagged profile rather than the curated
         // `DISPLAY_P3_V4`, whose colorants are truncated (zenpixels#86/#87).
-        let id = zenpixels::icc::identify_common(embedded).expect("a recognised profile");
+        let id =
+            zenpixels::icc::IccIdentification::from_icc(embedded).expect("a recognised profile");
         let cicp = id.to_cicp().expect("CICP for the profile");
         assert_eq!(
             (cicp.color_primaries, cicp.transfer_characteristics),

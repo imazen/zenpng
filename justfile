@@ -256,3 +256,9 @@ zeroed-alloc-check:
     cargo test --lib roundtrip
     cargo clippy --lib -- -D warnings
     cargo check --no-default-features
+
+# Gray CICP output read back by exiftool, pngcheck and libpng's pngfix.
+gray-icc-oracle dir:
+    cargo run --example gray_cicp_oracle -- "{{dir}}"
+    exiftool -s -FileName -ColorType -BitDepth -ProfileClass -ColorSpaceData -ProfileConnectionSpace -ProfileDescription -MediaWhitePoint -CICPTransferCharacteristics "{{dir}}"/*.png
+    for f in "{{dir}}"/*.png; do pngcheck -v "$f"; pngfix "$f"; done
