@@ -44,3 +44,13 @@ input values as its exact expected pixels. Receipt:
 under an 8 GiB hard cap. Preserved earlier runs exhausted a 6 GiB cap or hit
 the validation filesystem's documented ENOMEM read failure. No input was
 removed and no decoder, encoder or expectation was weakened.
+
+Final test/doctest census: 973 passed, zero failed, 17 existing ignores.
+The remaining suite contributed 971 passes; the static and APNG roundtrip
+partitions contributed one each. Final fixed-iteration roundtrip plus strict
+all-target/all-feature clippy: `rc=0 139s | peak-RSS 6.27GiB | min-avail 2078MiB | peak-load 3.11`.
+The standalone fuzz graph's five bins compile with its updated tracked lock:
+`rc=0 15s | peak-RSS 0.36GiB | min-avail 7934MiB | peak-load 2.83`.
+Raw failed attempts are retained. The remaining-suite log ends with the new
+iterator's clippy lint; the final focused/clippy log records that correction.
+All gates above are required; no failure was converted to a skip.

@@ -3291,7 +3291,13 @@ mod tests {
                 let redo_rgba = redo.pixels.to_rgba8();
                 let redo_img = redo_rgba.as_imgref();
                 assert_eq!(orig.len() / 4, redo_img.buf().len());
-                for (j, (o, r)) in orig.chunks_exact(4).zip(redo_img.buf().iter()).enumerate() {
+                for (j, (o, r)) in orig
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(redo_img.buf().iter())
+                    .enumerate()
+                {
                     let o = rgb::Rgba::new(o[0], o[1], o[2], o[3]);
                     if o.a == 0 && r.a == 0 {
                         continue; // both transparent — RGB may differ due to zeroing

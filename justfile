@@ -227,7 +227,7 @@ sibling-cohort-check: sibling-cohort-resolve
 # Disjoint remainder: the aggregate gate also requires the static corpus above.
 sibling-cohort-rest-check:
     RUST_TEST_THREADS=1 cargo test --all-features --locked -- --skip decoder::tests::corpus_comparison_vs_png_crate --skip encoder::apng::tests::corpus_apng_roundtrip
-    cargo clippy --all-targets --all-features --locked -- -D warnings
+    just sibling-clippy-check
 
 # Existing APNG corpus oracle, with bounded reference-frame retention.
 sibling-apng-reference-check:
@@ -245,3 +245,7 @@ sibling-apng-roundtrip-check:
 sibling-fuzz-check:
     cargo metadata --manifest-path fuzz/Cargo.toml --format-version 1 > /dev/null
     cargo check --manifest-path fuzz/Cargo.toml --locked --bins
+
+# Strict compile gate shared by the aggregate and focused maintenance checks.
+sibling-clippy-check:
+    cargo clippy --all-targets --all-features --locked -- -D warnings
