@@ -249,3 +249,10 @@ sibling-fuzz-check:
 # Strict compile gate shared by the aggregate and focused maintenance checks.
 sibling-clippy-check:
     cargo clippy --all-targets --all-features --locked -- -D warnings
+
+# Preserve zero-only allocation, overflow and decoder behavior.
+zeroed-alloc-check:
+    cargo test --lib alloc_util::
+    cargo test --lib roundtrip
+    cargo clippy --lib -- -D warnings
+    cargo check --no-default-features

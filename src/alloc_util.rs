@@ -3,12 +3,11 @@
 //! A PNG decode mixes two allocation regimes:
 //!
 //! * **Big, untrusted-sized buffers** (the full-image pixel buffer) default to
-//!   the *fallible* `try_reserve` path — a malicious IHDR can demand gigabytes,
-//!   so we want a graceful [`PngError::LimitExceeded`] rather than an abort.
-//! * **Small, bounded scratch** (one row of zeros, one raw-row copy) defaults
-//!   to the *infallible* `vec!` path — a single `calloc` is faster and the size
-//!   is bounded by the image width, not attacker-controlled in any unbounded
-//!   way.
+//!   returning an allocation error rather than aborting.
+//! * **Small, bounded scratch** defaults to infallible failure handling.
+//!
+//! Zero-only buffers share the allocator-zeroed success path. Policy controls
+//! failure handling and does not require a separate allocation primitive.
 //!
 //! [`AllocPreference`] is a **3-mode, per-site override** of that default:
 //! `Fallible` / `Infallible` force one path everywhere; `CodecDefault` (and any
@@ -18,7 +17,6 @@
 //!
 //! [`AllocPreference`]: zencodec::AllocPreference
 
-use alloc::vec;
 use alloc::vec::Vec;
 use whereat::{At, at};
 
@@ -120,48 +118,42 @@ pub(crate) fn resolve_fallible(
 /// `pref` is the caller's [`AllocPreference`](zencodec::AllocPreference);
 /// `site_default_fallible` is this site's default when `pref` is `CodecDefault`.
 ///
-/// * fallible → one zeroed allocation (`calloc`-style, via bytemuck's safe
-///   wrapper), returning [`PngError::OutOfMemory`] on allocation failure.
-/// * infallible → `vec![0u8; n]` (single `calloc`, aborts on OOM).
-///
-/// Both paths get their zeroes from the allocator, so large buffers come
-/// back as untouched zero pages: the page faults happen where the buffer is
-/// first written (in parallel, for the `iDOT` decoder) rather than in an
-/// up-front single-threaded fill. The old `try_reserve_exact` +
-/// `resize(n, 0)` path made a 20 MB RGBA8 parallel decode 10.1 ms instead of
-/// 8.4 ms (`docs/IDOT_PARALLEL_PNG.md`).
+/// Both modes request allocator-zeroed storage. Fallible sites return
+/// [`PngError::OutOfMemory`]; infallible sites use the allocator error handler
+/// or panic on capacity overflow. Existing parallel-decode measurements of the
+/// previous reserve/fill path are recorded in `docs/IDOT_PARALLEL_PNG.md`.
 pub(crate) fn alloc_zeroed(
     pref: zencodec::AllocPreference,
     site_default_fallible: bool,
     n: usize,
 ) -> Result<Vec<u8>, At<PngError>> {
-    if resolve_fallible(pref, site_default_fallible) {
-        bytemuck::allocation::try_zeroed_vec::<u8>(n).map_err(|()| {
-            at!(PngError::OutOfMemory(alloc::format!(
-                "out of memory allocating {n} bytes"
-            )))
-        })
-    } else {
-        Ok(vec![0u8; n])
-    }
+    bytemuck::allocation::try_zeroed_vec::<u8>(n).map_err(|()| {
+        if !resolve_fallible(pref, site_default_fallible) {
+            let layout = core::alloc::Layout::array::<u8>(n).expect("capacity overflow");
+            alloc::alloc::handle_alloc_error(layout);
+        }
+        at!(PngError::OutOfMemory(alloc::format!(
+            "out of memory allocating {n} bytes"
+        )))
+    })
 }
 
 /// [`alloc_zeroed`] for any zeroable element type (e.g. `u16` sample
 /// buffers, which then cast to 16-bit pixel types without copying).
-pub(crate) fn alloc_zeroed_typed<T: bytemuck::Zeroable + Clone>(
+pub(crate) fn alloc_zeroed_typed<T: bytemuck::Zeroable>(
     pref: zencodec::AllocPreference,
     site_default_fallible: bool,
     n: usize,
 ) -> Result<Vec<T>, At<PngError>> {
-    if resolve_fallible(pref, site_default_fallible) {
-        bytemuck::allocation::try_zeroed_vec::<T>(n).map_err(|()| {
-            at!(PngError::OutOfMemory(alloc::format!(
-                "out of memory allocating {n} elements"
-            )))
-        })
-    } else {
-        Ok(vec![T::zeroed(); n])
-    }
+    bytemuck::allocation::try_zeroed_vec::<T>(n).map_err(|()| {
+        if !resolve_fallible(pref, site_default_fallible) {
+            let layout = core::alloc::Layout::array::<T>(n).expect("capacity overflow");
+            alloc::alloc::handle_alloc_error(layout);
+        }
+        at!(PngError::OutOfMemory(alloc::format!(
+            "out of memory allocating {n} elements"
+        )))
+    })
 }
 
 /// Allocate an empty `Vec<u8>` with reserved capacity for `cap` bytes, honoring
@@ -199,6 +191,46 @@ mod tests {
     use zencodec::AllocPreference;
 
     // `CodecDefault` keeps each site's own default fallibility.
+
+    #[test]
+    fn zeroed_layouts_lengths_and_growth() {
+        for pref in [
+            AllocPreference::CodecDefault,
+            AllocPreference::Fallible,
+            AllocPreference::Infallible,
+        ] {
+            for site in [false, true] {
+                for n in [0, 1, 4095, 4096, 4097] {
+                    let mut bytes = alloc_zeroed(pref, site, n).unwrap();
+                    assert_eq!(bytes.len(), n);
+                    assert!(bytes.iter().all(|&v| v == 0));
+                    bytes.fill(0xAB);
+                    bytes.push(0xCD);
+                    assert!(bytes[..n].iter().all(|&v| v == 0xAB));
+                    let floats = alloc_zeroed_typed::<f32>(pref, site, n).unwrap();
+                    assert!(floats.iter().all(|v| v.to_bits() == 0));
+                }
+                let zst = alloc_zeroed_typed::<()>(pref, site, usize::MAX).unwrap();
+                assert_eq!(zst.len(), usize::MAX);
+                assert_eq!(zst.capacity(), usize::MAX);
+            }
+        }
+        let error =
+            alloc_zeroed_typed::<u16>(AllocPreference::Fallible, false, usize::MAX).unwrap_err();
+        assert!(matches!(error.error(), PngError::OutOfMemory(_)));
+    }
+
+    #[test]
+    #[should_panic(expected = "capacity overflow")]
+    fn infallible_zeroed_layout_overflow_panics() {
+        let _ = alloc_zeroed_typed::<u16>(AllocPreference::Infallible, true, usize::MAX);
+    }
+
+    #[test]
+    #[should_panic(expected = "capacity overflow")]
+    fn default_infallible_zeroed_layout_overflow_panics() {
+        let _ = alloc_zeroed(AllocPreference::CodecDefault, false, usize::MAX);
+    }
 
     #[test]
     fn codec_default_keeps_site_default_true() {
