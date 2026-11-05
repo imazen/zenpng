@@ -220,5 +220,18 @@ sibling-cohort-resolve:
     cargo metadata --format-version 1 > /dev/null
 
 sibling-cohort-check: sibling-cohort-resolve
-    RUST_TEST_THREADS=1 cargo test --all-features --locked
+    just sibling-png-reference-check
+    just sibling-cohort-rest-check
+
+# Disjoint remainder: the aggregate gate also requires the static corpus above.
+sibling-cohort-rest-check:
+    RUST_TEST_THREADS=1 cargo test --all-features --locked -- --skip decoder::tests::corpus_comparison_vs_png_crate
     cargo clippy --all-targets --all-features --locked -- -D warnings
+
+# Existing APNG corpus oracle, with bounded reference-frame retention.
+sibling-apng-reference-check:
+    RUST_TEST_THREADS=1 cargo test --all-features --locked --lib decoder::apng::tests::apng_corpus_frame_comparison -- --exact --nocapture
+
+# Large static corpus control; compares every existing file and byte assertion.
+sibling-png-reference-check:
+    RUST_TEST_THREADS=1 cargo test --all-features --locked --lib decoder::tests::corpus_comparison_vs_png_crate -- --exact --nocapture

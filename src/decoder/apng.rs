@@ -1196,20 +1196,21 @@ mod tests {
             let our_result =
                 crate::decode::decode_apng(&data, &PngDecodeConfig::none(), &Unstoppable);
             // Decode with reference (image-png crate)
-            let ref_frames = decode_apng_with_png_crate(&data);
+            let mut frame_match = true;
+            let ref_frames = visit_apng_with_png_crate(&data, |i, ref_frame| {
+                if let Ok(ours) = &our_result
+                    && ours
+                        .frames
+                        .get(i)
+                        .is_some_and(|frame| pixel_data_to_rgba8_bytes(&frame.pixels) != ref_frame)
+                {
+                    frame_match = false;
+                }
+            });
 
             match (our_result, ref_frames) {
-                (Ok(ours), Ok(refs)) => {
-                    let frame_count = ours.frames.len().min(refs.len());
-                    let mut frame_match = true;
-                    for (i, ref_frame) in refs.iter().enumerate().take(frame_count) {
-                        let our_bytes = pixel_data_to_rgba8_bytes(&ours.frames[i].pixels);
-                        if our_bytes != *ref_frame {
-                            frame_match = false;
-                            break;
-                        }
-                    }
-                    if frame_match && ours.frames.len() == refs.len() {
+                (Ok(ours), Ok(ref_count)) => {
+                    if frame_match && ours.frames.len() == ref_count {
                         tested += 1;
                     } else {
                         mismatches += 1;
@@ -1218,7 +1219,7 @@ mod tests {
                                 "  MISMATCH: {} (ours={} frames, ref={} frames)",
                                 filename,
                                 ours.frames.len(),
-                                refs.len()
+                                ref_count
                             );
                         }
                     }
@@ -1251,9 +1252,12 @@ mod tests {
 
     // ── Reference decoder helper ────────────────────────────────────
 
-    /// Decode all APNG frames using the reference `png` crate.
-    /// Returns RGBA8 bytes for each composed frame.
-    fn decode_apng_with_png_crate(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    /// Visit the same reference RGBA8 frames one at a time. The native result
+    /// already owns an animation; the oracle must not retain a second copy.
+    fn visit_apng_with_png_crate(
+        data: &[u8],
+        mut visit: impl FnMut(usize, Vec<u8>),
+    ) -> Result<usize, String> {
         use std::io::Cursor;
 
         let cursor = Cursor::new(data);
@@ -1264,7 +1268,7 @@ mod tests {
         let w = info.width as usize;
         let h = info.height as usize;
 
-        let mut frames = Vec::new();
+        let mut frames = 0;
 
         while let Some(buffer_size) = reader.output_buffer_size() {
             let mut buf = vec![0u8; buffer_size];
@@ -1304,10 +1308,11 @@ mod tests {
                 }
             };
 
-            frames.push(rgba_bytes);
+            visit(frames, rgba_bytes);
+            frames += 1;
         }
 
-        if frames.is_empty() {
+        if frames == 0 {
             return Err("no frames decoded".into());
         }
 
