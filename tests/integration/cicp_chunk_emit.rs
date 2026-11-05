@@ -155,3 +155,90 @@ fn grey_pixels_with_an_rgb_icc_stay_rgb() {
         "profile kept"
     );
 }
+
+/// Translucent HDR through the permissive encode negotiator that `zencodecs`
+/// uses: alpha, depth and color signal all survive, as an independent PNG
+/// decoder reads them (issue #53).
+#[test]
+fn translucent_hdr_keeps_alpha_through_negotiation() {
+    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, TransferFunction};
+
+    for (transfer, primaries, cicp) in [
+        (
+            TransferFunction::Pq,
+            ColorPrimaries::Bt2020,
+            [9u8, 16, 0, 1],
+        ),
+        (TransferFunction::Hlg, ColorPrimaries::Bt2020, [9, 18, 0, 1]),
+        (
+            TransferFunction::Pq,
+            ColorPrimaries::DisplayP3,
+            [12, 16, 0, 1],
+        ),
+        (
+            TransferFunction::Hlg,
+            ColorPrimaries::DisplayP3,
+            [12, 18, 0, 1],
+        ),
+    ] {
+        let descriptor = PixelDescriptor::new_full(
+            ChannelType::U16,
+            ChannelLayout::Rgba,
+            Some(AlphaMode::Straight),
+            transfer,
+            primaries,
+        );
+        let (w, h) = (5u32, 3u32);
+        let samples: Vec<u16> = (0..w * h)
+            .flat_map(|i| {
+                let v = i as u16;
+                [
+                    v * 1009,
+                    60000 - v * 701,
+                    v * 3,
+                    if i % 2 == 0 { 32768 } else { 1 + v },
+                ]
+            })
+            .collect();
+        let bytes: &[u8] = bytemuck::cast_slice(&samples);
+        let stride = w as usize * 8;
+        let supported = PngEncoderConfig::supported_descriptors();
+        let adapted = zenpixels_convert::adapt::adapt_for_encode_cow(
+            bytes, descriptor, w, h, stride, supported,
+        )
+        .unwrap();
+        let slice = adapted.as_slice();
+        assert_eq!(slice.descriptor(), descriptor, "{cicp:?}: negotiated away");
+
+        let out = PngEncoderConfig::new()
+            .with_compression(Compression::Fast)
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(slice)
+            .unwrap();
+        let png_bytes = out.data();
+        let ihdr = find_chunk(png_bytes, b"IHDR").unwrap();
+        assert_eq!(
+            (ihdr[8], ihdr[9]),
+            (16, 6),
+            "{cicp:?}: IHDR depth and color"
+        );
+        assert_eq!(find_chunk(png_bytes, b"cICP").unwrap(), &cicp[..]);
+
+        let mut reader = png::Decoder::new(std::io::Cursor::new(png_bytes))
+            .read_info()
+            .unwrap();
+        let mut decoded = vec![0u8; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut decoded).unwrap();
+        assert_eq!(info.color_type, png::ColorType::Rgba);
+        assert_eq!(info.bit_depth, png::BitDepth::Sixteen);
+        let read_back: Vec<u16> = decoded[..info.buffer_size()]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|b| u16::from_be_bytes(*b))
+            .collect();
+        assert_eq!(read_back, samples, "{cicp:?}: samples");
+    }
+}

@@ -4,6 +4,8 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+- Advertise RGBA forms of the PQ and HLG descriptors for BT.2100 and Display-P3. Negotiation took translucent HDR to the RGB form and discarded alpha, lossless or not (#53). Read back through the `png` crate.
+
 - Byte and typed zero-only allocations share one allocator-zeroed success path, preserving existing allocation errors and infallible overflow behavior.
 
 - Admit checked PNG metadata retention through the zencodec job, carrying accepted fields through still, row and animation encodes and refusing unsupported or conflicting carriers (`59c377f3`). Qualification and remaining gaps: `docs/checked-metadata-admission.md`.

@@ -74,6 +74,39 @@ const RGB16_P3_HLG: PixelDescriptor = PixelDescriptor::new_full(
     TransferFunction::Hlg,
     ColorPrimaries::DisplayP3,
 );
+/// BT.2100 PQ with alpha. PNG carries alpha alongside cICP; without these forms
+/// the negotiator picks the RGB form and alpha is discarded on the way in.
+const RGBA16_BT2100_PQ: PixelDescriptor = PixelDescriptor::new_full(
+    zenpixels::ChannelType::U16,
+    zenpixels::ChannelLayout::Rgba,
+    Some(AlphaMode::Straight),
+    TransferFunction::Pq,
+    ColorPrimaries::Bt2020,
+);
+/// BT.2100 HLG with alpha.
+const RGBA16_BT2100_HLG: PixelDescriptor = PixelDescriptor::new_full(
+    zenpixels::ChannelType::U16,
+    zenpixels::ChannelLayout::Rgba,
+    Some(AlphaMode::Straight),
+    TransferFunction::Hlg,
+    ColorPrimaries::Bt2020,
+);
+/// Display-P3 PQ with alpha.
+const RGBA16_P3_PQ: PixelDescriptor = PixelDescriptor::new_full(
+    zenpixels::ChannelType::U16,
+    zenpixels::ChannelLayout::Rgba,
+    Some(AlphaMode::Straight),
+    TransferFunction::Pq,
+    ColorPrimaries::DisplayP3,
+);
+/// Display-P3 HLG with alpha.
+const RGBA16_P3_HLG: PixelDescriptor = PixelDescriptor::new_full(
+    zenpixels::ChannelType::U16,
+    zenpixels::ChannelLayout::Rgba,
+    Some(AlphaMode::Straight),
+    TransferFunction::Hlg,
+    ColorPrimaries::DisplayP3,
+);
 /// Display-P3 sRGB-transfer, 8-bit — the macOS/iOS screenshot case `gamut.rs`
 /// already documents.
 const RGB8_P3: PixelDescriptor = PixelDescriptor::new_full(
@@ -110,6 +143,10 @@ static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGB16_BT2100_HLG,
     RGB16_P3_PQ,
     RGB16_P3_HLG,
+    RGBA16_BT2100_PQ,
+    RGBA16_BT2100_HLG,
+    RGBA16_P3_PQ,
+    RGBA16_P3_HLG,
     RGB8_P3,
     RGBA8_P3,
 ];
@@ -129,6 +166,10 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGB16_BT2100_HLG,
     RGB16_P3_PQ,
     RGB16_P3_HLG,
+    RGBA16_BT2100_PQ,
+    RGBA16_BT2100_HLG,
+    RGBA16_P3_PQ,
+    RGBA16_P3_HLG,
     RGB8_P3,
     RGBA8_P3,
 ];
@@ -6799,6 +6840,10 @@ mod tests {
             (PixelDescriptor::RGB16_BT2100_PQ, "BT.2100 PQ"),
             (RGB16_P3_PQ, "Display-P3 PQ"),
             (RGB8_P3, "Display-P3 sRGB 8-bit"),
+            (RGBA16_BT2100_PQ, "BT.2100 PQ with alpha"),
+            (RGBA16_BT2100_HLG, "BT.2100 HLG with alpha"),
+            (RGBA16_P3_PQ, "Display-P3 PQ with alpha"),
+            (RGBA16_P3_HLG, "Display-P3 HLG with alpha"),
         ] {
             assert!(
                 ENCODE_DESCRIPTORS.contains(&desc),
