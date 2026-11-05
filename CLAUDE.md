@@ -606,3 +606,25 @@ integration targets passed; the broad library run did not complete. See
 refusals and qualification limits. The standalone fuzz graph is aligned with
 the tested core and pixel revisions; its five targets passed locked compilation
 on aarch64. This is not a fuzz execution.
+
+## Known Bugs: APNG reference test scope and retention (2026-11-05)
+
+`apng_corpus_frame_comparison` compares image-png raw subframes against native
+composited frames. It reports mismatches rather than asserting compositing parity;
+its existing `tested >= 10` assertion is unchanged. Both the prior dependency cohort
+(core `61fb96f1`, pixels `f23ac753`) and the updated cohort (core `1816b4d0`,
+pixels `fa836abf`) reported 26 matches, 72 mismatches, three native decode errors
+and zero reference errors. This establishes the same observed outcomes, not APNG
+compositing correctness. A test-only visitor now releases each reference frame
+after comparison instead of retaining a second full animation.
+
+The static corpus oracle exceeded a 4 GiB cgroup cap. Its isolated 6 GiB run
+completed: 18,485 matches, 15 existing exclusions, two both-error inputs, zero
+failures; image-png's separate fixture directory was absent. Wrapper receipt:
+`rc=0 680s | peak-RSS 5.17GiB | min-avail 2677MiB | peak-load 5.98`.
+The APNG roundtrip also releases duplicate native input storage before encoding,
+retaining exact RGBA8 expectations and every existing pixel comparison. It passes
+under an 8 GiB cap: `rc=0 120s | peak-RSS 6.27GiB | min-avail 2294MiB | peak-load 2.87`.
+`sibling-cohort-check` runs both corpus tests and the disjoint remaining suite; the
+remaining-suite recipe alone is not the complete gate. Full logs are referenced
+from `benchmarks/sibling_cohort_2026-11-05.pointer.md`.

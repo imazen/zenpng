@@ -221,11 +221,12 @@ sibling-cohort-resolve:
 
 sibling-cohort-check: sibling-cohort-resolve
     just sibling-png-reference-check
+    just sibling-apng-roundtrip-check
     just sibling-cohort-rest-check
 
 # Disjoint remainder: the aggregate gate also requires the static corpus above.
 sibling-cohort-rest-check:
-    RUST_TEST_THREADS=1 cargo test --all-features --locked -- --skip decoder::tests::corpus_comparison_vs_png_crate
+    RUST_TEST_THREADS=1 cargo test --all-features --locked -- --skip decoder::tests::corpus_comparison_vs_png_crate --skip encoder::apng::tests::corpus_apng_roundtrip
     cargo clippy --all-targets --all-features --locked -- -D warnings
 
 # Existing APNG corpus oracle, with bounded reference-frame retention.
@@ -235,3 +236,12 @@ sibling-apng-reference-check:
 # Large static corpus control; compares every existing file and byte assertion.
 sibling-png-reference-check:
     RUST_TEST_THREADS=1 cargo test --all-features --locked --lib decoder::tests::corpus_comparison_vs_png_crate -- --exact --nocapture
+
+# Full original APNG roundtrip corpus, with released duplicate input storage.
+sibling-apng-roundtrip-check:
+    RUST_TEST_THREADS=1 cargo test --all-features --locked --lib encoder::apng::tests::corpus_apng_roundtrip -- --exact --nocapture
+
+# The fuzz workspace has its own patch table and tracked lockfile.
+sibling-fuzz-check:
+    cargo metadata --manifest-path fuzz/Cargo.toml --format-version 1 > /dev/null
+    cargo check --manifest-path fuzz/Cargo.toml --locked --bins

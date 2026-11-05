@@ -3246,13 +3246,20 @@ mod tests {
                 })
                 .collect();
 
+            let width = original.info.width;
+            let height = original.info.height;
+            let num_plays = original.num_plays;
+            let frame_count = original.frames.len();
+            // frame_data retains exactly the RGBA8 values compared below.
+            // Release the native animation before the encoder makes its work buffers.
+            drop(original);
             let write_meta = PngWriteMetadata::from_metadata(None);
             let encoded = match encode_apng_truecolor(
                 &inputs,
-                original.info.width,
-                original.info.height,
+                width,
+                height,
                 &write_meta,
-                original.num_plays,
+                num_plays,
                 6,
                 &enough::Unstoppable,
                 &enough::Unstoppable,
@@ -3274,29 +3281,24 @@ mod tests {
 
             assert_eq!(
                 redecoded.frames.len(),
-                original.frames.len(),
+                frame_count,
                 "frame count mismatch for {:?}",
                 path.file_name()
             );
 
             // Compare pixel data (transparent pixels may have zeroed RGB)
-            for (i, (orig, redo)) in original
-                .frames
-                .iter()
-                .zip(redecoded.frames.iter())
-                .enumerate()
-            {
-                let orig_buf: Vec<rgb::Rgba<u8>> =
-                    orig.pixels.to_rgba8().as_imgref().buf().to_vec();
-                let redo_buf: Vec<rgb::Rgba<u8>> =
-                    redo.pixels.to_rgba8().as_imgref().buf().to_vec();
-                for (j, (o, r)) in orig_buf.iter().zip(redo_buf.iter()).enumerate() {
+            for (i, (orig, redo)) in frame_data.iter().zip(redecoded.frames.iter()).enumerate() {
+                let redo_rgba = redo.pixels.to_rgba8();
+                let redo_img = redo_rgba.as_imgref();
+                assert_eq!(orig.len() / 4, redo_img.buf().len());
+                for (j, (o, r)) in orig.chunks_exact(4).zip(redo_img.buf().iter()).enumerate() {
+                    let o = rgb::Rgba::new(o[0], o[1], o[2], o[3]);
                     if o.a == 0 && r.a == 0 {
                         continue; // both transparent — RGB may differ due to zeroing
                     }
                     assert_eq!(
                         o,
-                        r,
+                        *r,
                         "pixel {j} mismatch frame {i} for {:?}",
                         path.file_name()
                     );

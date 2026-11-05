@@ -23,6 +23,11 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- Qualify the shared sibling dependency cohort: zencodec family `1816b4d0`
+  and zenpixels `fa836abf`. The APNG test oracle releases compared reference
+  frames individually; decoder and encoder algorithms are unchanged.
+  Evidence and oracle limitations: `benchmarks/sibling_cohort_2026-11-05.pointer.md`.
+
 - The zencodec 0.2 family enters through version edges (`zencodec-io`,
   `zencodec-coroutine`, `zenmeta`; `zencodec` already did); direct git pins
   made a consumer that repins core carry two families. The root and fuzz
