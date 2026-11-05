@@ -214,3 +214,11 @@ resolution-check:
     cargo test --locked --no-default-features --test required_resolution
     cargo test --locked --test required_resolution
     cargo clippy --locked --no-default-features --lib --test required_resolution -- -D warnings
+
+# Shared sibling cohort, with all existing PNG behavioral tests and compile targets.
+sibling-cohort-resolve:
+    cargo metadata --format-version 1 > /dev/null
+
+sibling-cohort-check: sibling-cohort-resolve
+    RUST_TEST_THREADS=1 cargo test --all-features --locked
+    cargo clippy --all-targets --all-features --locked -- -D warnings
