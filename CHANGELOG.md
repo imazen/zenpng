@@ -25,6 +25,8 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- Accept the archmage and magetypes 0.9.31 stable release.
+
 - Qualify the shared sibling dependency cohort: zencodec family `1816b4d0`
   and zenpixels `fa836abf`. The APNG test oracle releases compared reference
   frames individually; decoder and encoder algorithms are unchanged.
