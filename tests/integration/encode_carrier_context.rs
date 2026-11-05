@@ -13,11 +13,19 @@ use zencodec::encode::{
 };
 use zencodec::{At, CodecError, ErrorCategory, Metadata, MetadataPolicy, PolicyKind};
 use zenpixels::{Cicp, ColorContext, ColorModel, PixelDescriptor, PixelSlice};
-use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, REC2020_V4};
+use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, SynthesizedIcc};
 use zenpng::{DowncastFlags, PngEncoderConfig};
 
 const W: u32 = 7;
 const H: u32 = 5;
+
+/// A Rec. 2020 RGB profile.
+fn rec2020() -> Vec<u8> {
+    match SynthesizedIcc::for_cicp(Cicp::new(9, 1, 0, true)) {
+        SynthesizedIcc::Profile(bytes) => bytes.into_owned(),
+        other => panic!("icc-db must synthesize Rec. 2020: {other:?}"),
+    }
+}
 
 /// Opaque RGBA (the animation encoder's frame format; still encodes keep it
 /// with downcasting off).
@@ -150,7 +158,7 @@ fn context_profiles() -> Vec<(&'static str, Vec<u8>)> {
     let truncated = p3[..100].to_vec();
     // The header's colour-space field alone does not make a profile.
     assert_eq!(
-        zenpixels::icc::profile_color_space(&truncated),
+        zenpixels::ColorModel::from_icc(&truncated),
         Some(ColorModel::Rgb)
     );
     vec![
@@ -214,7 +222,7 @@ fn a_context_contradicting_the_job_colour_refuses_on_every_encoder() {
     let p3 = || Some(Arc::new(ColorContext::from_icc(DISPLAY_P3_V4)));
     for route in ROUTES {
         for (what, meta) in [
-            ("a Rec. 2020 profile", Metadata::none().with_icc(REC2020_V4)),
+            ("a Rec. 2020 profile", Metadata::none().with_icc(rec2020())),
             ("sRGB code points", Metadata::none().with_cicp(Cicp::SRGB)),
         ] {
             assert!(

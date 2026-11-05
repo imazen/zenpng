@@ -7,12 +7,20 @@ use std::io::Cursor;
 use zencodec::encode::{AnimationFrameEncoder, EncodeJob, EncodePolicy, Encoder, EncoderConfig};
 use zencodec::{At, Cicp, CodecError, ErrorCategory, Metadata, MetadataPolicy, PolicyKind};
 use zenpixels::{PixelDescriptor, PixelSlice};
-use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, REC2020_V4};
+use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, SynthesizedIcc};
 use zenpng::{DowncastFlags, PngEncoderConfig};
 
 const W: u32 = 7;
 const H: u32 = 5;
 const P3_CICP: Cicp = Cicp::new(12, 13, 0, true);
+
+/// A Rec. 2020 RGB profile.
+fn rec2020() -> Vec<u8> {
+    match SynthesizedIcc::for_cicp(Cicp::new(9, 1, 0, true)) {
+        SynthesizedIcc::Profile(bytes) => bytes.into_owned(),
+        other => panic!("icc-db must synthesize Rec. 2020: {other:?}"),
+    }
+}
 
 /// Opaque RGBA (the animation encoder's frame format; still encodes keep it
 /// with downcasting off).
@@ -40,7 +48,7 @@ fn unidentified() -> Vec<u8> {
             .is_none()
     );
     assert_eq!(
-        zenpixels::icc::profile_color_space(&profile),
+        zenpixels::ColorModel::from_icc(&profile),
         Some(zenpixels::ColorModel::Rgb)
     );
     profile
@@ -132,7 +140,7 @@ fn a_forbidden_profile_with_no_equivalent_carrier_refuses() {
     for route in [Route::OneShot, Route::Rows, Route::Animation] {
         for (name, profile) in [
             ("Display P3", DISPLAY_P3_V4.to_vec()),
-            ("Rec. 2020", REC2020_V4.to_vec()),
+            ("Rec. 2020", rec2020()),
             ("unidentified", unidentified()),
         ] {
             let result = encode(route, Metadata::none().with_icc(profile), None);
