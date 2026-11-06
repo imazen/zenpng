@@ -489,6 +489,14 @@ use `/usr/bin/log`).
 
 ## Known Bugs
 
+- The canonical pixel cohort `fde59b96` makes the old ICC free helpers private.
+  PNG now uses `ColorModel::from_icc`, `IccIdentification::from_icc` in its
+  profile test, and `SynthesizedIcc::for_cicp`. The public methods delegate to
+  the same implementations. Test assertions and APNG goldens stay unchanged;
+  Rec.2020 metadata fixtures come through public synthesis. Qualification is
+  scoped in `docs/public-icc-facades.md`; the inherited root pins and the gray
+  API review graph remain separate from the canonical cohort overlay.
+
 - Native one-shot decode discarded sBIT when constructing shared decode details.
   The source claim now survives as the existing `SignificantBits` typed extension
   (`output.extras::<SignificantBits>()`). Coded depth stays unchanged, and the

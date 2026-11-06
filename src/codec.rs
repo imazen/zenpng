@@ -9087,7 +9087,8 @@ mod tests {
         // What the profile describes, not its bytes: zenpixels 0.2.17
         // synthesizes the exact, cicp-tagged profile rather than the curated
         // `DISPLAY_P3_V4`, whose colorants are truncated (zenpixels#86/#87).
-        let id = zenpixels::icc::identify_common(embedded).expect("a recognised profile");
+        let id =
+            zenpixels::icc::IccIdentification::from_icc(embedded).expect("a recognised profile");
         let cicp = id.to_cicp().expect("CICP for the profile");
         assert_eq!(
             (cicp.color_primaries, cicp.transfer_characteristics),

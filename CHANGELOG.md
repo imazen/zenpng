@@ -45,6 +45,8 @@ All notable changes to zenpng are documented here.
 
 ### Fixed
 
+- Use the public pixel ICC inspection and synthesis facades in the canonical pixel cohort. Color decisions, sample arithmetic and pixel goldens are unchanged; test profile factories use the same public surface.
+
 - `embed_icc: false` wrote pixels whose only colour carrier was the ICC
   profile (Display P3, Rec. 2020, an unidentified profile) untagged, so they
   read back as sRGB. It now refuses with `PolicyRejected(Encode)` unless a
