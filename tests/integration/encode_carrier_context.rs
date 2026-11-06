@@ -13,8 +13,16 @@ use zencodec::encode::{
 };
 use zencodec::{At, CodecError, ErrorCategory, Metadata, MetadataPolicy, PolicyKind};
 use zenpixels::{Cicp, ColorContext, ColorModel, PixelDescriptor, PixelSlice};
-use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, REC2020_V4};
+use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, SynthesizedIcc};
 use zenpng::{DowncastFlags, PngEncoderConfig};
+
+// Keep the Rec. 2020 / BT.709 refusal case through the public profile facade.
+fn rec2020_profile() -> Vec<u8> {
+    match SynthesizedIcc::for_cicp(Cicp::new(9, 1, 0, true)) {
+        SynthesizedIcc::Profile(bytes) => bytes.into_owned(),
+        other => panic!("the bundled Rec. 2020 profile is required: {other:?}"),
+    }
+}
 
 const W: u32 = 7;
 const H: u32 = 5;
@@ -150,7 +158,7 @@ fn context_profiles() -> Vec<(&'static str, Vec<u8>)> {
     let truncated = p3[..100].to_vec();
     // The header's colour-space field alone does not make a profile.
     assert_eq!(
-        zenpixels::icc::profile_color_space(&truncated),
+        zenpixels::ColorModel::from_icc(&truncated),
         Some(ColorModel::Rgb)
     );
     vec![
@@ -214,7 +222,10 @@ fn a_context_contradicting_the_job_colour_refuses_on_every_encoder() {
     let p3 = || Some(Arc::new(ColorContext::from_icc(DISPLAY_P3_V4)));
     for route in ROUTES {
         for (what, meta) in [
-            ("a Rec. 2020 profile", Metadata::none().with_icc(REC2020_V4)),
+            (
+                "a Rec. 2020 profile",
+                Metadata::none().with_icc(rec2020_profile()),
+            ),
             ("sRGB code points", Metadata::none().with_cicp(Cicp::SRGB)),
         ] {
             assert!(

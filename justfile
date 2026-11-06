@@ -260,3 +260,11 @@ zeroed-alloc-check:
 # Native sBIT claims and measured current-sample depth remain distinct.
 significant-bits-check:
     cargo test --locked --test significant_bits_details
+
+# Canonical pixel facades without selecting unrelated optional PNG backends.
+public-icc-facade-check:
+    cargo fmt -p zenpng --check
+    cargo fmt --manifest-path perf/public-facade-validation/Cargo.toml -p png-facade-validation --check
+    cargo test --manifest-path perf/public-facade-validation/Cargo.toml --locked
+    cargo clippy --manifest-path perf/public-facade-validation/Cargo.toml --locked -p zenpng --lib -- -D warnings
+    cargo clippy --manifest-path perf/public-facade-validation/Cargo.toml --locked --all-targets -- -D warnings
