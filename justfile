@@ -256,3 +256,7 @@ zeroed-alloc-check:
     cargo test --lib roundtrip
     cargo clippy --lib -- -D warnings
     cargo check --no-default-features
+
+# Native sBIT claims and measured current-sample depth remain distinct.
+significant-bits-check:
+    cargo test --locked --test significant_bits_details
