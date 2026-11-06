@@ -4,6 +4,9 @@ All notable changes to zenpng are documented here.
 
 ## [Unreleased]
 
+- Use the current pixel cohort’s associated ICC helpers and admit its published
+  SIMD beta.2. Verified in the grayscale embedded-depth consumer.
+
 - Retain native `sBIT` as a `SignificantBits` typed extension on one-shot decode output and measure current integer `ExactDepth` separately. The coded bit depth and pixel values remain unchanged; container claims do not certify their sample grid.
 
 - Advertise RGBA forms of the PQ and HLG descriptors for BT.2100 and Display-P3. Negotiation took translucent HDR to the RGB form and discarded alpha, lossless or not (#53). Read back through the `png` crate.
