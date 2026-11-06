@@ -1,0 +1,59 @@
+[package]
+name = "png-facade-validation"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+"tokio" = { version = "1.54.1", features = ["rt", "macros"] }
+"zenpng" = { path = "../..", default-features = false }
+"zencodec" = { version = ">=0.2.0, <0.4.0", features = ["std"] }
+"zencodec-io" = { version = "0.1.0", features = ["std", "tokio"] }
+"zencodec-testkit" = ">=0.2.0, <0.4.0"
+"zenpixels" = ">=0.3.1, <0.5.0"
+"zenpixels-convert" = { version = ">=0.3.1, <0.4.0", features = ["rgb", "imgref"] }
+"zenflate" = "0.4.0"
+"png" = "0.18.1"
+"sha2" = "0.11.1"
+
+[patch.crates-io]
+"zencodec" = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+"zencodec-io" = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+"zencodec-coroutine" = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+"zenmeta" = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+"zencodec-testkit" = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+"zenpixels" = { git = "https://github.com/imazen/zenpixels", rev = "fde59b96632557592cffa9b7301acd8db96ed078" }
+"zenpixels-convert" = { git = "https://github.com/imazen/zenpixels", rev = "fde59b96632557592cffa9b7301acd8db96ed078" }
+"garb" = { git = "https://github.com/imazen/garb", rev = "605276d717ea0b31a1cd2a36ae05301383c7b8b5" }
+"linear-srgb" = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
+"zenflate" = { git = "https://github.com/imazen/zenflate", rev = "17233d1edd6192df441413943dabc3afc5028c6d" }
+
+[[test]]
+name = "source_color_binding"
+path = "../../tests/source_color_binding.rs"
+
+[[test]]
+name = "encode_carrier_policy"
+path = "../../tests/integration/encode_carrier_policy.rs"
+
+[[test]]
+name = "encode_carrier_context"
+path = "../../tests/integration/encode_carrier_context.rs"
+
+[[test]]
+name = "significant_bits_details"
+path = "../../tests/significant_bits_details.rs"
+
+[[test]]
+name = "animation_color_negotiation"
+path = "../../tests/animation_color_negotiation.rs"
+
+[[test]]
+name = "row_planning"
+path = "../../tests/row_planning.rs"
+
+[[test]]
+name = "apng_byte_identity"
+path = "../../tests/apng_byte_identity.rs"
