@@ -728,7 +728,7 @@ fn downcast_for_icc(dc: &DowncastFlags, meta: &PngWriteMetadata<'_>) -> Downcast
         .generic
         .and_then(|m| m.icc_profile.as_deref())
         .is_some_and(|icc| {
-            zenpixels::icc::profile_color_space(icc) == Some(zenpixels::ColorModel::Rgb)
+            zenpixels::ColorModel::from_icc(icc) == Some(zenpixels::ColorModel::Rgb)
         });
     let mut out = *dc;
     if rgb_icc {

@@ -40,7 +40,7 @@ fn unidentified() -> Vec<u8> {
             .is_none()
     );
     assert_eq!(
-        zenpixels::icc::profile_color_space(&profile),
+        zenpixels::ColorModel::from_icc(&profile),
         Some(zenpixels::ColorModel::Rgb)
     );
     profile
