@@ -32,6 +32,9 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- Pin standalone codec/pixel operation dependencies to the verified saliency consumer cohort.
+  Full standalone resolution still needs other optional/dev crates to admit SIMD beta.2.
+
 - Accept the archmage and magetypes 0.9.31 stable release.
 
 - Qualify the shared sibling dependency cohort: zencodec family `1816b4d0`
