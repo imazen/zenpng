@@ -489,6 +489,14 @@ use `/usr/bin/log`).
 
 ## Known Bugs
 
+- Native one-shot decode discarded sBIT when constructing shared decode details.
+  The source claim now survives as the existing `SignificantBits` typed extension
+  (`output.extras::<SignificantBits>()`). Coded depth stays unchanged, and the
+  delivered integer grid is measured independently as `ExactDepth`; a claim
+  alone never establishes exactness. Eight 8-/16-bit gray/RGB/alpha combinations
+  exercise off-grid samples. Probe-only, push and animation detail transport are
+  outside this focused one-shot qualification. `just significant-bits-check`.
+
 - Fixed in metadata integration (2026-10-12): inventory compressed-stream
   cancellation re-queried the stop token and could lose a one-shot timeout.
   Preserve the first scanner cause; `every_stop_poll_retains_a_one_shot_timeout`

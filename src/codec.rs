@@ -4256,9 +4256,25 @@ impl PngDecoder<'_> {
         // conversion keeps the source's code-value encoding, so transfer and
         // primaries carry through to whatever layout the caller asked for.
         let enriched = enrich_descriptor_from_cicp(native, result.info.cicp);
-        let pixels = pixels.with_descriptor(enriched);
+        let mut pixels = pixels.with_descriptor(enriched);
+        // A source sBIT declaration is metadata, not proof that current values
+        // lie on that canonical grid. Measure the delivered integer samples.
+        if matches!(
+            pixels.descriptor().channel_type(),
+            ChannelType::U8 | ChannelType::U16
+        ) {
+            let exact = zenpixels::sample::ExactDepth::measure(&pixels.as_slice())
+                .map_err(|e| at!(PngError::InvalidBuffer(e.to_string())))?;
+            pixels
+                .set_exact_depth(Some(exact))
+                .map_err(|e| at!(PngError::InvalidBuffer(e.to_string())))?;
+        }
+        cancel.check().map_err(|e| at!(PngError::from(e)))?;
         let output = DecodeOutput::new(pixels, info).with_source_encoding_details(probe);
-        Ok(output)
+        Ok(match result.info.significant_bits {
+            Some(claim) => output.with_extras(claim),
+            None => output,
+        })
     }
 }
 
