@@ -26,9 +26,9 @@ publish = false
 "zencodec-testkit" = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
 "zenpixels" = { git = "https://github.com/imazen/zenpixels", rev = "fde59b96632557592cffa9b7301acd8db96ed078" }
 "zenpixels-convert" = { git = "https://github.com/imazen/zenpixels", rev = "fde59b96632557592cffa9b7301acd8db96ed078" }
-"garb" = { git = "https://github.com/imazen/garb", rev = "605276d717ea0b31a1cd2a36ae05301383c7b8b5" }
+"garb" = { git = "https://github.com/imazen/garb", rev = "8f9aa10d09f84bb0a1e3fdbd1773f610eec1b784" }
 "linear-srgb" = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
-"zenflate" = { git = "https://github.com/imazen/zenflate", rev = "17233d1edd6192df441413943dabc3afc5028c6d" }
+"zenflate" = { git = "https://github.com/imazen/zenflate", rev = "a2c7d540fc8f044f7c75398f1c49775560021862" }
 
 [[test]]
 name = "source_color_binding"
