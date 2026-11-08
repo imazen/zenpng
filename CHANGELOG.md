@@ -1,5 +1,14 @@
 # Changelog
 
+## ICC companion review candidate
+
+- Bind native CICP to a qualified RGB/GRAY ICC companion, preserving exact
+  strided samples across one-shot and row encoding. Retain targetless HLG as
+  native CICP, non-D65 gray whites and stale linear-metadata refusals.
+- Align the root, fuzz and facade harness core/pixel families with explicit
+  frozen numerical source patches; preserve the standalone lock identities.
+
+
 All notable changes to zenpng are documented here.
 
 ## [Unreleased]
