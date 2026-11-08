@@ -25,5 +25,17 @@
       "sha256": "c7f817148b23ecdab3a8a307a17f60b9b1f1409f761d126d54279402f4477d6f",
       "resource_summary": "run-heavy: done rc=0 235s | peak-RSS 0.45GiB | min-avail 26762MiB | peak-load 10.69"
     }
+  },
+  "icc_only_gray_control": {
+    "cases": 6,
+    "result": "exact ICC and pixels retained; no invented CICP; both context and metadata input",
+    "tests": 3,
+    "clippy": "pass",
+    "source_parent": "e50579b3f36d511597167aeeea6463dc59f0db91"
+  },
+  "platform_ci": {
+    "run": 42502942068,
+    "conclusion": "success",
+    "head": "e50579b3f36d511597167aeeea6463dc59f0db91"
   }
 }

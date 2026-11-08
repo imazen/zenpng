@@ -165,3 +165,43 @@ fn gray_srgb_transfer_keeps_non_d65_source_white() {
         assert_eq!(bytes, [0, 128, 255]);
     }
 }
+
+#[test]
+#[allow(deprecated)] // Covers the existing generic metadata setter as well as pixel context.
+fn icc_only_gray_does_not_invent_a_d65_cicp() {
+    for primaries in [4, 10, 11] {
+        let source = Cicp::new(primaries, 4, 0, true);
+        let SynthesizedIcc::Profile(expected) = SynthesizedIcc::for_gray_cicp(source) else {
+            panic!("source white needs a GRAY ICC");
+        };
+        for via_metadata in [false, true] {
+            let mut pixels =
+                PixelSlice::new(&[0u8, 128, 255], 3, 1, 3, PixelDescriptor::GRAY8_SRGB).unwrap();
+            let mut job = PngEncoderConfig::new()
+                .with_downcast(DowncastFlags::none())
+                .job();
+            if via_metadata {
+                job = job.with_metadata(zencodec::Metadata::none().with_icc(expected.to_vec()));
+            } else {
+                pixels =
+                    pixels.with_color_context(Arc::new(ColorContext::from_icc(expected.to_vec())));
+            }
+            let file = job.encoder().unwrap().encode(pixels).unwrap();
+            let mut reader = png::Decoder::new(Cursor::new(file.data()))
+                .read_info()
+                .unwrap();
+            assert_eq!(
+                reader.info().icc_profile.as_deref(),
+                Some(expected.as_ref())
+            );
+            assert!(
+                reader.info().coding_independent_code_points.is_none(),
+                "ICC-only white {primaries}, metadata {via_metadata} acquired {:?}",
+                reader.info().coding_independent_code_points
+            );
+            let mut bytes = [0u8; 3];
+            reader.next_frame(&mut bytes).unwrap();
+            assert_eq!(bytes, [0, 128, 255]);
+        }
+    }
+}

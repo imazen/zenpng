@@ -50,3 +50,13 @@ original assertion is unchanged. Automatic companions apply when the trait
 route derives color from the pixels' descriptor/context. The full integration
 suite now uses the public raw-row negotiation API instead of a private test
 helper; all 52 integration controls pass without changing their expectations.
+
+The full platform workflow passes on production source `e50579b3`:
+[run 42502942068](https://github.com/imazen/zenpng/actions/runs/42502942068).
+It covers Windows ARM, macOS ARM, Linux x64/ARM, i686, strict Clippy, MSRV,
+WASM and the ImageIO iDOT controls. A later test-only extension checks ICC-only
+C/E/DCI-white gamma-2.2 profiles through both pixel-context and metadata input:
+all six cases retain the exact ICC, invent no cICP, and preserve decoded samples.
+The complete companion target passes three tests; its strict Clippy passes
+(4 seconds / 0.21 GiB and 5 seconds / 0.31 GiB peak RSS respectively).
+The suspected invented-D65 carrier did not reproduce on the frozen cohort.
