@@ -1392,7 +1392,20 @@ fn srgb_encoded(primaries: ColorPrimaries, gray: bool) -> Result<StoredColor, At
 /// sRGB/BT.709 code points: PNG leaves those untagged.
 fn is_default_cicp(cicp: zenpixels::Cicp, gray: bool) -> bool {
     matches!(cicp.transfer_characteristics, 2 | 13)
-        && (gray || matches!(cicp.color_primaries, 1 | 2))
+        && (matches!(cicp.color_primaries, 1 | 2)
+            || gray && matches!(cicp.color_primaries, 5 | 6 | 7 | 9 | 12 | 22))
+}
+
+/// Byte equality with our canonical export is a proof for that exact companion,
+/// independent of metadata-only hash recognition of other ICC profiles.
+fn is_canonical_companion(icc: &[u8], cicp: zenpixels::Cicp, gray: bool) -> bool {
+    use zenpixels_convert::icc_profiles::SynthesizedIcc;
+    let profile = if gray {
+        SynthesizedIcc::for_gray_cicp(cicp)
+    } else {
+        SynthesizedIcc::for_cicp(cicp)
+    };
+    matches!(profile, SynthesizedIcc::Profile(bytes) if bytes.as_ref() == icc)
 }
 
 /// The primaries and transfer a description identifies; `None` for an
@@ -1419,6 +1432,14 @@ fn same_meaning(
 ) -> bool {
     if a.0.is_some() && a.0 == b.0 || a.0.is_none() && b.0.is_none() && a.1 == b.1 {
         return true;
+    }
+    for (with_icc, with_cicp) in [(a, b), (b, a)] {
+        if let (Some(icc), Some(cicp)) = (with_icc.0, with_cicp.1)
+            && with_cicp.0.is_none()
+            && is_canonical_companion(icc, cicp, gray)
+        {
+            return true;
+        }
     }
     match (identify(a), identify(b)) {
         (Some(a), Some(b)) => a.1 == b.1 && (gray || a.0 == b.0),
@@ -1657,8 +1678,14 @@ impl PngEncoder {
             if ColorModel::from_icc(icc) != Some(channels) {
                 return refuse("the pixels' ICC profile does not describe their channels");
             }
-            let identified = ColorProfileSource::Icc(icc).resolve();
+            let companion = context
+                .and_then(|c| c.cicp)
+                .filter(|&cicp| is_canonical_companion(icc, cicp, gray));
+            let identified = ColorProfileSource::Icc(icc)
+                .resolve()
+                .or_else(|| companion.and_then(|c| ColorProfileSource::Cicp(c).resolve()));
             if let Some(cicp) = context.and_then(|c| c.cicp)
+                && companion.is_none()
                 && (identified.is_none() || identified != ColorProfileSource::Cicp(cicp).resolve())
             {
                 return refuse("the pixels' ICC profile and code points disagree");
@@ -1759,6 +1786,7 @@ impl PngEncoder {
                         .into()
                 )));
             }
+            self.ensure_icc_companion(gray)?;
             return Ok(());
         }
         match stored {
@@ -1766,9 +1794,41 @@ impl PngEncoder {
             StoredColor::Icc(icc) => {
                 let meta = self.metadata.get_or_insert_with(Metadata::none);
                 meta.icc_profile = Some(icc);
+                self.config.config.cicp = context.and_then(|c| c.cicp);
             }
             StoredColor::Cicp(cicp) if is_default_cicp(cicp, gray) => {}
             StoredColor::Cicp(cicp) => self.config.config.cicp = Some(cicp),
+        }
+        self.ensure_icc_companion(gray)
+    }
+
+    fn ensure_icc_companion(&mut self, gray: bool) -> Result<(), At<PngError>> {
+        use zenpixels_convert::icc_profiles::SynthesizedIcc;
+        let (icc, cicp) = self.written_color();
+        let Some(cicp) = cicp.filter(|_| icc.is_none()) else {
+            return Ok(());
+        };
+        // HLG requires a rendering target for an ICC OOTF. Preserve native
+        // CICP rather than inventing viewing conditions.
+        if cicp.transfer_characteristics == 18 {
+            return Ok(());
+        }
+        let profile = if gray {
+            SynthesizedIcc::for_gray_cicp(cicp)
+        } else {
+            SynthesizedIcc::for_cicp(cicp)
+        };
+        match profile {
+            SynthesizedIcc::Profile(bytes) => {
+                self.metadata.get_or_insert_with(Metadata::none).icc_profile =
+                    Some(alloc::sync::Arc::from(bytes.as_ref()));
+            }
+            SynthesizedIcc::NotNeeded => {}
+            outcome => {
+                return Err(at!(PngError::CmsRequired(alloc::format!(
+                    "CICP needs an ICC compatibility companion unavailable in this build: {outcome:?}"
+                ))));
+            }
         }
         Ok(())
     }
@@ -5352,6 +5412,22 @@ fn apply_encode_policy(
                              metadata, or drop the CICP",
                             cicp.color_primaries,
                             cicp.transfer_characteristics
+                        ))));
+                    }
+                }
+            } else {
+                None
+            };
+        }
+        zencodec::IccDisposition::SynthesizeGrayFrom(cicp) => {
+            use zenpixels_convert::icc_profiles::SynthesizedIcc;
+            filtered.icc_profile = if embed_icc {
+                match SynthesizedIcc::for_gray_cicp(cicp) {
+                    SynthesizedIcc::Profile(bytes) => Some(alloc::sync::Arc::from(bytes.as_ref())),
+                    SynthesizedIcc::NotNeeded => None,
+                    outcome => {
+                        return Err(at!(PngError::CmsRequired(alloc::format!(
+                            "GRAY ICC synthesis unavailable: {outcome:?}"
                         ))));
                     }
                 }
