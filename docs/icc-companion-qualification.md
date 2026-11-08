@@ -44,3 +44,9 @@ from the root cohort. Cargo's unused optional core-family patch warnings do
 not indicate duplicate selected types; the resolved roots use one pixel family.
 The raw low-level API continues to write caller-selected metadata; the ICC
 companion behavior here applies to the pixel-context trait route.
+
+The explicit native cICP-only builder contract remains available and its
+original assertion is unchanged. Automatic companions apply when the trait
+route derives color from the pixels' descriptor/context. The full integration
+suite now uses the public raw-row negotiation API instead of a private test
+helper; all 52 integration controls pass without changing their expectations.

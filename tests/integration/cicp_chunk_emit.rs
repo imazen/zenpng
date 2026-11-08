@@ -203,8 +203,15 @@ fn translucent_hdr_keeps_alpha_through_negotiation() {
         let bytes: &[u8] = bytemuck::cast_slice(&samples);
         let stride = w as usize * 8;
         let supported = PngEncoderConfig::supported_descriptors();
-        let adapted = zenpixels_convert::adapt::adapt_for_encode_cow(
-            bytes, descriptor, w, h, stride, supported,
+        let adapted = zenpixels_convert::adapt::adapt_raw_rows_for_encode(
+            bytes,
+            descriptor,
+            w,
+            h,
+            stride,
+            supported,
+            &zenpixels_convert::ConvertOptions::permissive()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
         )
         .unwrap();
         let slice = adapted.as_slice();

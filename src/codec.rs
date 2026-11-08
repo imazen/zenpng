@@ -1792,7 +1792,9 @@ impl PngEncoder {
                         .into()
                 )));
             }
-            self.ensure_icc_companion(gray)?;
+            // Explicit job/builder carriers are caller-selected. The native
+            // CICP-only builder contract must remain available; companions
+            // below apply to color derived from the pixels themselves.
             return Ok(());
         }
         match stored {
