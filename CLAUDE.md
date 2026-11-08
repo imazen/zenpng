@@ -644,3 +644,14 @@ under an 8 GiB cap: `rc=0 120s | peak-RSS 6.27GiB | min-avail 2294MiB | peak-loa
 `sibling-cohort-check` runs both corpus tests and the disjoint remaining suite; the
 remaining-suite recipe alone is not the complete gate. Full logs are referenced
 from `benchmarks/sibling_cohort_2026-11-05.pointer.md`.
+
+## Known Bugs: native pixel-context ICC companions (2026-11-08, review fix)
+
+The trait encoder wrote descriptor/context CICP without an ICC compatibility
+companion. Its review descendant now writes canonical RGB/GRAY ICCs alongside
+permitted native cICP, preserving strided samples in one-shot and row modes.
+HLG remains native CICP without a target-dependent ICC. Non-D65 gray whites
+and the existing stale linear-metadata refusal remain enforced. See
+`docs/icc-companion-qualification.md` for exact pins, gates and reader limits.
+Low-level encoders still write caller-selected metadata; this qualification
+covers the pixel-context trait route.

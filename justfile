@@ -268,3 +268,9 @@ public-icc-facade-check:
     cargo test --manifest-path perf/public-facade-validation/Cargo.toml --locked
     cargo clippy --manifest-path perf/public-facade-validation/Cargo.toml --locked -p zenpng --lib -- -D warnings
     cargo clippy --manifest-path perf/public-facade-validation/Cargo.toml --locked --all-targets -- -D warnings
+
+# Exact current-color/carrier controls, including strided HDR and source whites.
+icc-companion-check:
+    cargo fmt -p zenpng --check
+    cargo test --locked --features cms --lib --test pq_icc_companion --test source_color_binding --test row_planning
+    cargo clippy --locked --features cms --lib --test pq_icc_companion --test source_color_binding --test row_planning -- -D warnings

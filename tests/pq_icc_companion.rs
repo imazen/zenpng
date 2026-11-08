@@ -127,3 +127,41 @@ fn native_hdr_carriers_preserve_strided_pixels_and_context_in_both_encoder_modes
         }
     }
 }
+
+#[test]
+fn gray_srgb_transfer_keeps_non_d65_source_white() {
+    for primaries in [4, 10, 11] {
+        let cicp = Cicp::new(primaries, 13, 0, true);
+        let SynthesizedIcc::Profile(expected) = SynthesizedIcc::for_gray_cicp(cicp) else {
+            panic!("source white needs a GRAY ICC");
+        };
+        let pixels = PixelSlice::new(&[0u8, 128, 255], 3, 1, 3, PixelDescriptor::GRAY8_SRGB)
+            .unwrap()
+            .with_color_context(Arc::new(ColorContext::from_cicp(cicp)));
+        let file = PngEncoderConfig::new()
+            .with_downcast(DowncastFlags::none())
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(pixels)
+            .unwrap();
+        let mut reader = png::Decoder::new(Cursor::new(file.data()))
+            .read_info()
+            .unwrap();
+        assert_eq!(
+            reader.info().icc_profile.as_deref(),
+            Some(expected.as_ref())
+        );
+        assert_eq!(
+            reader
+                .info()
+                .coding_independent_code_points
+                .unwrap()
+                .color_primaries,
+            primaries
+        );
+        let mut bytes = [0u8; 3];
+        reader.next_frame(&mut bytes).unwrap();
+        assert_eq!(bytes, [0, 128, 255]);
+    }
+}

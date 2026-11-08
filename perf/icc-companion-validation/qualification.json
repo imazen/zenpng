@@ -1,0 +1,29 @@
+{
+  "pixel_source": "3ceb0500059456aacc16c7aecb43b2d167ce1535",
+  "core_source": "db6ec36d0072988888f6175695bc33c840bbcc93",
+  "passed": {
+    "root_tests": 749,
+    "root_existing_ignored": 14,
+    "facade_controls": 23,
+    "fuzz_binaries_compiled": 5,
+    "strict_clippy": true
+  },
+  "receipts": {
+    "png-companion-exact-cohort3.log": {
+      "sha256": "58076dcbe6f70343121d53863b8d9a1922f109daa6142d391bc5ffcf1956ea2a",
+      "resource_summary": "run-heavy: done rc=0 158s | peak-RSS 0.83GiB | min-avail 26216MiB | peak-load 12.09"
+    },
+    "png-companion-clippy2.log": {
+      "sha256": "d0fb889b22fcfb214703c239307f227d8c978e1e5f0657687a416a503a62fb46",
+      "resource_summary": "run-heavy: done rc=0 7s | peak-RSS 0.31GiB | min-avail 27349MiB | peak-load 9.38"
+    },
+    "png-companion-fuzz-check2.log": {
+      "sha256": "b4d662cd2ca94ba3a3be01ff9922f020beb289ec06b508b2bf26c48ef7dc12ac",
+      "resource_summary": "run-heavy: done rc=0 94s | peak-RSS 0.35GiB | min-avail 26456MiB | peak-load 10.69"
+    },
+    "png-companion-facade-check.log": {
+      "sha256": "c7f817148b23ecdab3a8a307a17f60b9b1f1409f761d126d54279402f4477d6f",
+      "resource_summary": "run-heavy: done rc=0 235s | peak-RSS 0.45GiB | min-avail 26762MiB | peak-load 10.69"
+    }
+  }
+}

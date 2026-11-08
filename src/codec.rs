@@ -1776,7 +1776,13 @@ impl PngEncoder {
             if desc.channel_type() == zenpixels::ChannelType::F32
                 && let Some(icc) = written.0
                 && matches!(
-                    zenpixels::ColorProfileSource::Icc(icc).resolve(),
+                    zenpixels::ColorProfileSource::Icc(icc)
+                        .resolve()
+                        .or_else(|| {
+                            zenpixels::Cicp::from_icc(icc)
+                                .filter(|&c| is_canonical_companion(icc, c, gray))
+                                .and_then(|c| zenpixels::ColorProfileSource::Cicp(c).resolve())
+                        }),
                     Some((_, TransferFunction::Linear))
                 )
             {
