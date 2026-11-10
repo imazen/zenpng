@@ -24,7 +24,7 @@
 ## items (22 lines)
 
 pub mod metadata
-pub fn metadata::rewrite<'a>(&zencodec::metadata_rewrite::Request<'a>) -> core::result::Result<zencodec::metadata_rewrite::Plan<'a>, zencodec::metadata_rewrite::Error>
+pub fn metadata::rewrite<'a>(&zencodec::metadata_rewrite::RewriteRequest<'a>) -> core::result::Result<zencodec::metadata_rewrite::Plan<'a>, zencodec::metadata_rewrite::Error>
 pub struct ImagequantQuantizer
 pub ImagequantQuantizer::dithering: f32
 pub ImagequantQuantizer::max_colors: u16

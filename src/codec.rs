@@ -1654,7 +1654,7 @@ impl PngEncoder {
             } else {
                 ColorModel::Rgb
             };
-            if zenpixels::icc::profile_color_space(icc) != Some(channels) {
+            if zenpixels::ColorModel::from_icc(icc) != Some(channels) {
                 return refuse("the pixels' ICC profile does not describe their channels");
             }
             let identified = ColorProfileSource::Icc(icc).resolve();
@@ -5337,7 +5337,7 @@ fn apply_encode_policy(
                 // synthesis) covers the full ITU-T H.273 grid incl PQ/HLG,
                 // with no moxcms dependency.
                 use zenpixels_convert::icc_profiles::SynthesizedIcc;
-                match zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(cicp) {
+                match zenpixels_convert::icc_profiles::SynthesizedIcc::for_cicp(cicp) {
                     SynthesizedIcc::Profile(bytes) => Some(alloc::sync::Arc::from(bytes.as_ref())),
                     SynthesizedIcc::NotNeeded => None,
                     outcome => {
@@ -9087,7 +9087,8 @@ mod tests {
         // What the profile describes, not its bytes: zenpixels 0.2.17
         // synthesizes the exact, cicp-tagged profile rather than the curated
         // `DISPLAY_P3_V4`, whose colorants are truncated (zenpixels#86/#87).
-        let id = zenpixels::icc::identify_common(embedded).expect("a recognised profile");
+        let id =
+            zenpixels::icc::IccIdentification::from_icc(embedded).expect("a recognised profile");
         let cicp = id.to_cicp().expect("CICP for the profile");
         assert_eq!(
             (cicp.color_primaries, cicp.transfer_characteristics),

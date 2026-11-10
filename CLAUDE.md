@@ -636,3 +636,10 @@ under an 8 GiB cap: `rc=0 120s | peak-RSS 6.27GiB | min-avail 2294MiB | peak-loa
 `sibling-cohort-check` runs both corpus tests and the disjoint remaining suite; the
 remaining-suite recipe alone is not the complete gate. Full logs are referenced
 from `benchmarks/sibling_cohort_2026-11-05.pointer.md`.
+
+## Known Bugs — current pixel ICC helper visibility (2026-11-10)
+
+Current zenpixels exposes ICC classification and synthesis through associated
+methods. Three runtime calls and one test still used private free helpers.
+They now use the public facades, with current core/pixel pins in root and fuzz
+graphs. Existing ICC/codec assertions and profile semantics are preserved.

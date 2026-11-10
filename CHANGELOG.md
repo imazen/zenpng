@@ -29,6 +29,8 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- Use associated ICC helpers and current main codec/pixel sources; preserve color policy and pixel expectations.
+
 - Accept the archmage and magetypes 0.9.31 stable release.
 
 - Qualify the shared sibling dependency cohort: zencodec family `1816b4d0`

@@ -17,7 +17,7 @@
 #   inherent methods                           81
 #   struct fields                             167
 #   enum variants                              69
-#   trait roster entries (type × trait)       178
+#   trait roster entries (type × trait)       179
 #   auto-trait-complete types                  44
 #   auto-trait exceptions                       7
 #
@@ -470,7 +470,7 @@ PngDecodeJob: zencodec::traits::decoding::DecodeJob<'a>
 PngDecodeOutput: Debug
 PngDecoder<'_>: zencodec::traits::decoder::Decode
 PngDecoderConfig: Clone, Debug, Default, zencodec::traits::decoding::DecoderConfig
-PngEncodeJob: zencodec::traits::encoding::EncodeJob
+PngEncodeJob: Clone, zencodec::traits::encoding::EncodeJob
 PngEncoder: zencodec::traits::encoder::Encoder
 PngEncoderConfig: Clone, Debug, Default, zencodec::traits::encoding::EncoderConfig
 PngError: Debug, Display, Error, From<enough::reason::StopReason>, From<zencodec::capabilities::UnsupportedOperation>, From<zencodec::limits::LimitExceeded>, From<zenquant::error::QuantizeError>, zencodec::error::CategorizedError

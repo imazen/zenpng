@@ -260,3 +260,9 @@ zeroed-alloc-check:
 # Native sBIT claims and measured current-sample depth remain distinct.
 significant-bits-check:
     cargo test --locked --test significant_bits_details
+
+# Current codec/pixel main API compatibility, including existing ICC controls.
+current-icc-check:
+    cargo test --release --lib icc
+    cargo test --release --lib codec::tests
+    cargo clippy --release --lib -- -D warnings

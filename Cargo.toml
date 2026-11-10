@@ -198,13 +198,13 @@ required-features = ["_dev"]
 # adapter implements. zencodec-io, zencodec-coroutine and zenmeta are not on
 # crates.io: these patches resolve them for local builds; releases stay gated
 # on publishing them.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "fa836abf72afe9826e866dc25712b7c800323962" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "fa836abf72afe9826e866dc25712b7c800323962" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "3286169c7ef5b1e66ac841c3d8204eb54e390f8c" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "3286169c7ef5b1e66ac841c3d8204eb54e390f8c" }
 # Retain main's strip-compression API source.
-zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a193e343018ae2cfb1a6c31edd" }
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "6832cd2e0057e3a378fd6ec8f51922e6d39e23a1" }
 
