@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-enough = "0.4"
+enough = "0.4.5"
 zencodec = ">=0.2.0, <0.3.0"
 
 [dependencies.zenpng]
@@ -56,7 +56,7 @@ zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb
 zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "3286169c7ef5b1e66ac841c3d8204eb54e390f8c" }
 zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "3286169c7ef5b1e66ac841c3d8204eb54e390f8c" }
 # Retain main's strip-compression API source.
-zenflate = { git = "https://github.com/imazen/zenflate", rev = "1bc9a7afbf808ec9084006414bf6b80c6425b94d" }
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "f6c96cc68e6ce49473943dba1ff1159bfad7a74d" }
 
 
 [[bin]]

@@ -29,6 +29,8 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- Update dependency floors in `Cargo.toml`, `fuzz/Cargo.toml`, and `apidoc/Cargo.toml` (`zenflate` 0.4.1 / `f6c96cc6`, `zenzop` 0.4.2, `zenquant` 0.1.3, `archmage` 0.9.32, `magetypes` 0.9.32, `enough` 0.4.5, `almost-enough` 0.4.5, `whereat` 0.1.5, `linear-srgb` 0.6.12, `bytemuck` 1.25.2, `imgref` 1.12.3, `rgb` 0.8.53, `thiserror` 2.0.21, `zenbench` 0.1.11, `zenutils-apidoc` 0.1.1) and refresh `fuzz/Cargo.lock` and `apidoc/Cargo.lock`.
+
 - Update root and fuzz `zenflate` patch pin to `1bc9a7af`; configure `CROSS_CONTAINER_OPTS` for Rust 1.100 i686 CI and satisfy Rust 1.100 clippy lints in `src/encoder/compress.rs`.
 
 - Use associated ICC helpers and current main codec/pixel sources; preserve color policy and pixel expectations.
