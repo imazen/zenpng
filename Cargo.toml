@@ -206,5 +206,5 @@ zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb
 zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "3286169c7ef5b1e66ac841c3d8204eb54e390f8c" }
 zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "3286169c7ef5b1e66ac841c3d8204eb54e390f8c" }
 # Retain main's strip-compression API source.
-zenflate = { git = "https://github.com/imazen/zenflate", rev = "6832cd2e0057e3a378fd6ec8f51922e6d39e23a1" }
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "1bc9a7afbf808ec9084006414bf6b80c6425b94d" }
 
