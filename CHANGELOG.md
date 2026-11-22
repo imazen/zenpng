@@ -29,6 +29,8 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- Update root and fuzz `zenflate` patch pin to `1bc9a7af`; configure `CROSS_CONTAINER_OPTS` for Rust 1.100 i686 CI and satisfy Rust 1.100 clippy lints in `src/encoder/compress.rs`.
+
 - Use associated ICC helpers and current main codec/pixel sources; preserve color policy and pixel expectations.
 
 - Accept the archmage and magetypes 0.9.31 stable release.
@@ -46,6 +48,8 @@ All notable changes to zenpng are documented here.
   crates.io, so releases stay gated on publishing them.
 
 ### Fixed
+
+- Use `zenpixels::icc::IccIdentification::from_icc` in encode metadata/context identification (`identify`, `stored_color`, `bind_color`) so bundle-synthesized `MetadataOnly` profiles (such as linear P3 and Rec. 2020) are recognized consistently; align `PngAnimationFrameEncoder::capture_first_frame` with `PngEncoder::bind_color` by placing frame `ColorContext` CICP code points in `config.cicp` (keeping default sRGB untagged and letting BT.2100 HLG animation frames write `cICP` without forcing ICC synthesis); update integration tests to public `zenpixels` / `zenpixels-convert` ICC facades.
 
 - `embed_icc: false` wrote pixels whose only colour carrier was the ICC
   profile (Display P3, Rec. 2020, an unidentified profile) untagged, so they

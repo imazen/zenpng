@@ -1403,7 +1403,9 @@ fn identify(
 ) -> Option<(ColorPrimaries, TransferFunction)> {
     use zenpixels::ColorProfileSource;
     match (icc, cicp) {
-        (Some(icc), _) => ColorProfileSource::Icc(icc).resolve(),
+        (Some(icc), _) => {
+            zenpixels::icc::IccIdentification::from_icc(icc).map(|id| (id.primaries, id.transfer))
+        }
         (None, Some(cicp)) => ColorProfileSource::Cicp(cicp).resolve(),
         (None, None) => Some((ColorPrimaries::Bt709, TransferFunction::Srgb)),
     }
@@ -1657,7 +1659,8 @@ impl PngEncoder {
             if zenpixels::ColorModel::from_icc(icc) != Some(channels) {
                 return refuse("the pixels' ICC profile does not describe their channels");
             }
-            let identified = ColorProfileSource::Icc(icc).resolve();
+            let identified = zenpixels::icc::IccIdentification::from_icc(icc)
+                .map(|id| (id.primaries, id.transfer));
             if let Some(cicp) = context.and_then(|c| c.cicp)
                 && (identified.is_none() || identified != ColorProfileSource::Cicp(cicp).resolve())
             {
@@ -1749,8 +1752,8 @@ impl PngEncoder {
             if desc.channel_type() == zenpixels::ChannelType::F32
                 && let Some(icc) = written.0
                 && matches!(
-                    zenpixels::ColorProfileSource::Icc(icc).resolve(),
-                    Some((_, TransferFunction::Linear))
+                    zenpixels::icc::IccIdentification::from_icc(icc),
+                    Some(id) if id.transfer == TransferFunction::Linear
                 )
             {
                 return Err(at!(PngError::InvalidInput(
@@ -2941,29 +2944,31 @@ impl PngAnimationFrameEncoder {
     }
 
     /// Record what the first frame brings: its descriptor, and its colour
-    /// context as ICC/CICP metadata when the job set none.
+    /// context (ICC into metadata, code points into `config.cicp` like still
+    /// `bind_color`) when the job set none.
     fn capture_first_frame(&mut self, pixels: &PixelSlice<'_>) {
         let descriptor = pixels.descriptor();
         self.frame_color = pixels.color_context().cloned();
-        if let Some(context) = pixels.color_context() {
-            let mut metadata = self.metadata.clone().unwrap_or_else(Metadata::none);
-            if metadata.icc_profile.is_none() {
-                metadata.icc_profile = context.icc.clone();
-            }
-            if metadata.cicp.is_none() {
-                metadata.cicp = context.cicp;
-            }
-            self.metadata = Some(metadata);
-        }
-        if self.config.cicp.is_none()
-            && self.metadata.as_ref().and_then(|m| m.cicp).is_none()
-            && self
+        let has_job_color = self.config.cicp.is_some()
+            || self
                 .metadata
                 .as_ref()
-                .and_then(|m| m.icc_profile.as_ref())
-                .is_none()
-        {
-            self.config.cicp = zenpixels::Cicp::from_descriptor(&descriptor);
+                .is_some_and(|m| m.cicp.is_some() || m.icc_profile.is_some());
+        if !has_job_color {
+            if let Some(context) = pixels.color_context()
+                && (context.icc.is_some() || context.cicp.is_some())
+            {
+                if let Some(icc) = &context.icc {
+                    let metadata = self.metadata.get_or_insert_with(Metadata::none);
+                    metadata.icc_profile = Some(alloc::sync::Arc::clone(icc));
+                } else if let Some(cicp) = context.cicp
+                    && !is_default_cicp(cicp, false)
+                {
+                    self.config.cicp = Some(cicp);
+                }
+            } else {
+                self.config.cicp = zenpixels::Cicp::from_descriptor(&descriptor);
+            }
         }
         self.frame_descriptor = Some(descriptor);
     }

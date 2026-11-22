@@ -1295,9 +1295,10 @@ fn strip_bytes() -> usize {
 /// measurements).
 fn thread_rules() -> bool {
     #[cfg(feature = "_dev")]
-    if std::env::var("ZENPNG_THREAD_RULES").is_ok_and(|v| v == "off") {
-        return false;
+    {
+        !std::env::var("ZENPNG_THREAD_RULES").is_ok_and(|v| v == "off")
     }
+    #[cfg(not(feature = "_dev"))]
     true
 }
 
@@ -2146,14 +2147,16 @@ std::thread_local! {
 /// always chooses per strip: it can't see the strips still to come.
 fn strip_select_global() -> bool {
     #[cfg(test)]
-    if TEST_SELECT_PER_STRIP.with(|c| c.get()) {
-        return false;
-    }
+    let test_per_strip = TEST_SELECT_PER_STRIP.with(|c| c.get());
+    #[cfg(not(test))]
+    let test_per_strip = false;
+
     #[cfg(feature = "_dev")]
-    if std::env::var("ZENPNG_STRIP_SELECT").is_ok_and(|v| v == "strip") {
-        return false;
-    }
-    true
+    let dev_per_strip = std::env::var("ZENPNG_STRIP_SELECT").is_ok_and(|v| v == "strip");
+    #[cfg(not(feature = "_dev"))]
+    let dev_per_strip = false;
+
+    !(test_per_strip || dev_per_strip)
 }
 
 /// Strip encode for efforts made of screening and refine only (see

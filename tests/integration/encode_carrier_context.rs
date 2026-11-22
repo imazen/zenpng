@@ -13,7 +13,7 @@ use zencodec::encode::{
 };
 use zencodec::{At, CodecError, ErrorCategory, Metadata, MetadataPolicy, PolicyKind};
 use zenpixels::{Cicp, ColorContext, ColorModel, PixelDescriptor, PixelSlice};
-use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, REC2020_V4};
+use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, SynthesizedIcc};
 use zenpng::{DowncastFlags, PngEncoderConfig};
 
 const W: u32 = 7;
@@ -149,10 +149,7 @@ fn context_profiles() -> Vec<(&'static str, Vec<u8>)> {
     let p3 = DISPLAY_P3_V4;
     let truncated = p3[..100].to_vec();
     // The header's colour-space field alone does not make a profile.
-    assert_eq!(
-        zenpixels::icc::profile_color_space(&truncated),
-        Some(ColorModel::Rgb)
-    );
+    assert_eq!(ColorModel::from_icc(&truncated), Some(ColorModel::Rgb));
     vec![
         ("Display P3", p3.to_vec()),
         ("an unidentified profile", unidentified()),
@@ -209,12 +206,23 @@ fn a_context_cicp_carries_the_colour_when_the_profile_is_forbidden() {
 /// A job colour description that contradicts an explicit context is a stale
 /// carrier (a profile kept after a conversion): every encoder refuses it, as
 /// the still encoders' colour binding does. Agreement keeps the job carrier.
+fn rec2020_icc() -> Vec<u8> {
+    match SynthesizedIcc::for_cicp(Cicp::new(9, 1, 0, true)) {
+        SynthesizedIcc::Profile(bytes) => bytes.into_owned(),
+        other => panic!("BT.2020/BT.709 ICC must synthesize: {other:?}"),
+    }
+}
+
 #[test]
 fn a_context_contradicting_the_job_colour_refuses_on_every_encoder() {
     let p3 = || Some(Arc::new(ColorContext::from_icc(DISPLAY_P3_V4)));
+    let rec2020 = rec2020_icc();
     for route in ROUTES {
         for (what, meta) in [
-            ("a Rec. 2020 profile", Metadata::none().with_icc(REC2020_V4)),
+            (
+                "a Rec. 2020 profile",
+                Metadata::none().with_icc(rec2020.as_slice()),
+            ),
             ("sRGB code points", Metadata::none().with_cicp(Cicp::SRGB)),
         ] {
             assert!(
