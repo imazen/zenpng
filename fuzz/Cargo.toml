@@ -53,10 +53,10 @@ zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e74
 zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
 zenmeta = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
 zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "3286169c7ef5b1e66ac841c3d8204eb54e390f8c" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "3286169c7ef5b1e66ac841c3d8204eb54e390f8c" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "7badb1478ec27888a51a2f1a403630a1560aa7a1" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "7badb1478ec27888a51a2f1a403630a1560aa7a1" }
 # Retain main's strip-compression API source.
-zenflate = { git = "https://github.com/imazen/zenflate", rev = "f6c96cc68e6ce49473943dba1ff1159bfad7a74d" }
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "7270e38faca9cdbae793938fa229d40ac4fe4c39" }
 
 
 [[bin]]
