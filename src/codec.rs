@@ -4435,31 +4435,37 @@ fn push_decoder_native_noninterlaced<'a>(
     // this one unfilters and expands into the sink, as `decode()` does.
     let pipelined = crate::decoder::pipeline::worth_it(&ihdr, png_config.max_threads);
     if pipelined {
-        let expander = crate::decoder::postprocess::RowExpander::new(&ihdr, reader.ancillary())?;
-        let out_row_bytes = expander.out_row_bytes();
-        if out_row_bytes != w as usize * descriptor.bytes_per_pixel() {
-            return Err(at!(PngError::Internal(
-                zencodec::InternalKind::Bug,
-                alloc::format!(
-                    "expander row {out_row_bytes} B != descriptor row {} B",
-                    w as usize * descriptor.bytes_per_pixel()
-                )
-            )));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let expander =
+                crate::decoder::postprocess::RowExpander::new(&ihdr, reader.ancillary())?;
+            let out_row_bytes = expander.out_row_bytes();
+            if out_row_bytes != w as usize * descriptor.bytes_per_pixel() {
+                return Err(at!(PngError::Internal(
+                    zencodec::InternalKind::Bug,
+                    alloc::format!(
+                        "expander row {out_row_bytes} B != descriptor row {} B",
+                        w as usize * descriptor.bytes_per_pixel()
+                    )
+                )));
+            }
+            let mut dst = sink
+                .provide_next_buffer(0, h, w, descriptor)
+                .map_err(wrap_sink)?;
+            let bpp = reader.bpp();
+            let mut prev = alloc::vec![0u8; raw_row_bytes];
+            let mut cur = alloc::vec![0u8; raw_row_bytes];
+            reader = crate::decoder::pipeline::run(reader, h as usize, cancel, |y, f| {
+                cur.copy_from_slice(&f[1..]);
+                crate::decoder::row::unfilter_row(f[0], &mut cur, &prev, bpp)?;
+                expander.expand(&cur, &mut dst.row_mut(y as u32)[..out_row_bytes]);
+                core::mem::swap(&mut cur, &mut prev);
+                Ok(())
+            })?;
+            drop(dst);
         }
-        let mut dst = sink
-            .provide_next_buffer(0, h, w, descriptor)
-            .map_err(wrap_sink)?;
-        let bpp = reader.bpp();
-        let mut prev = alloc::vec![0u8; raw_row_bytes];
-        let mut cur = alloc::vec![0u8; raw_row_bytes];
-        reader = crate::decoder::pipeline::run(reader, h as usize, cancel, |y, f| {
-            cur.copy_from_slice(&f[1..]);
-            crate::decoder::row::unfilter_row(f[0], &mut cur, &prev, bpp)?;
-            expander.expand(&cur, &mut dst.row_mut(y as u32)[..out_row_bytes]);
-            core::mem::swap(&mut cur, &mut prev);
-            Ok(())
-        })?;
-        drop(dst);
+        #[cfg(target_arch = "wasm32")]
+        unreachable!("pipeline::worth_it is false on wasm32");
     } else if is_passthrough {
         // Request the full sink buffer up front so we can use split_at_mut
         // for zero-copy prev-row references during unfiltering.
@@ -4558,6 +4564,7 @@ enum StreamRows<'a> {
     Serial(Box<crate::decoder::row::RowDecoder<'a>>),
     /// Large image, threads allowed: a second thread inflates (the input is
     /// owned for it, copied if it was borrowed); rows are unfiltered here.
+    #[cfg(not(target_arch = "wasm32"))]
     Piped {
         piped: crate::decoder::pipeline::Piped,
         prev: Vec<u8>,
@@ -4647,9 +4654,13 @@ impl<'a> PngStreamingDecoder<'a> {
 
         // Large images with threads allowed inflate on a second thread, which
         // needs the input owned.
+        // `Piped::spawn` and its thread code are never instantiated on wasm32.
+        #[cfg(not(target_arch = "wasm32"))]
         let piped = data.len() >= 29
             && crate::chunk::ihdr::Ihdr::parse_fields(&data[16..29])
                 .is_ok_and(|i| crate::decoder::pipeline::worth_it(&i, png_config.max_threads));
+        #[cfg(target_arch = "wasm32")]
+        let piped = false;
         let (serial, owned) = if piped {
             let owned: crate::decoder::row::RowDecoder<'static> =
                 crate::decoder::row::RowDecoder::new(Cow::Owned(data.into_owned()), &png_config)?;
@@ -4686,11 +4697,12 @@ impl<'a> PngStreamingDecoder<'a> {
             (w as usize * descriptor.bytes_per_pixel()).max(expander.out_row_bytes());
         let batch_rows = (STREAM_BATCH_BYTES / out_row_bytes.max(1)).clamp(1, h.max(1) as usize);
 
-        let bpp = reader.bpp();
         let rows = match (serial, owned) {
             (Some(reader), _) => StreamRows::Serial(Box::new(reader)),
+            #[cfg(not(target_arch = "wasm32"))]
             (_, Some(reader)) => {
                 let raw = ihdr.raw_row_bytes()?;
+                let bpp = reader.bpp();
                 StreamRows::Piped {
                     piped: crate::decoder::pipeline::Piped::spawn(reader, h as usize),
                     prev: alloc::vec![0u8; raw],
@@ -4698,6 +4710,8 @@ impl<'a> PngStreamingDecoder<'a> {
                     bpp,
                 }
             }
+            #[cfg(target_arch = "wasm32")]
+            (_, Some(_)) => unreachable!("owned reader is never built on wasm32"),
             (None, None) => unreachable!("one reader is built"),
         };
 
@@ -4793,6 +4807,7 @@ impl PngStreamingDecoder<'_> {
                     reader.finish_stream()?;
                 }
             }
+            #[cfg(not(target_arch = "wasm32"))]
             StreamRows::Piped {
                 piped,
                 prev,

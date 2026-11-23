@@ -191,6 +191,10 @@ name = "scalar_vs_simd"
 harness = false
 required-features = ["_dev"]
 
+[[bench]]
+name = "stream_and_apng"
+harness = false
+
 [patch.crates-io]
 # Coordinated exact animation timing series; one source for shared types.
 # The zencodec 0.2 family, all from one core revision (ideal-api a15c28fd):

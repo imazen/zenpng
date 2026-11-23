@@ -19,18 +19,22 @@
 //! produce. Anything unexpected returns [`Outcome::Fallback`] and the caller
 //! runs the unchanged serial decoder.
 
+#[cfg(not(target_arch = "wasm32"))]
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
+#[cfg(not(target_arch = "wasm32"))]
 use enough::Stop;
 #[allow(unused_imports)]
 use whereat::at;
 
 use crate::chunk::ihdr::Ihdr;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::error::PngError;
 
 use super::postprocess::RowExpander;
-use super::row::{IdatSource, unfilter_row};
+#[cfg(not(target_arch = "wasm32"))]
+use super::row::{ChunkSource, unfilter_row};
 
 /// Upper bound on accepted segment counts. Apple writes 2; zenpng's encoder
 /// writes at most this many.
@@ -125,14 +129,15 @@ pub(crate) static STATS: [core::sync::atomic::AtomicUsize; 2] = [
     core::sync::atomic::AtomicUsize::new(0),
 ];
 
-#[cfg(feature = "_dev")]
+#[cfg(all(feature = "_dev", not(target_arch = "wasm32")))]
 fn count(i: usize) {
     STATS[i].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 }
-#[cfg(not(feature = "_dev"))]
+#[cfg(all(not(feature = "_dev"), not(target_arch = "wasm32")))]
 fn count(_: usize) {}
 
 /// Result of a parallel attempt.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) enum Outcome {
     /// Every row was written and is identical to the serial decode.
     Done,
@@ -142,6 +147,7 @@ pub(crate) enum Outcome {
 
 /// How each worker writes its rows.
 #[derive(Clone, Copy)]
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) enum Sink<'a> {
     /// Unfiltered raw rows (`raw_row_bytes` each) are the output.
     Raw,
@@ -205,6 +211,7 @@ pub(crate) fn workers_for_bytes(total_bytes: usize) -> usize {
 ///
 /// `tier_cpus` caps the count when workers will be pinned to a core tier, so
 /// pinned workers never outnumber the cores they may run on.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn plan_workers(
     segs: &[IdotSegment],
     stride: usize,
@@ -232,11 +239,13 @@ pub(crate) fn plan_workers(
 
 /// Per-worker result: (Adler-32, length) of each segment's filtered bytes,
 /// plus the zlib footer if this worker owns the last segment.
+#[cfg(not(target_arch = "wasm32"))]
 struct WorkerOk {
     adlers: Vec<(u32, usize)>,
     footer: Option<u32>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 enum WorkerErr {
     Fallback,
     Cancelled(whereat::At<PngError>),
@@ -244,6 +253,7 @@ enum WorkerErr {
 
 /// Geometry shared by all workers.
 #[derive(Clone, Copy)]
+#[cfg(not(target_arch = "wasm32"))]
 struct Geometry {
     stride: usize,
     raw_row_bytes: usize,
@@ -257,6 +267,7 @@ struct Geometry {
 ///
 /// `out_row_bytes` must equal `raw_row_bytes` for [`Sink::Raw`].
 #[allow(clippy::too_many_arguments)]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn decode_parallel(
     file: &[u8],
     ihdr: &Ihdr,
@@ -425,6 +436,7 @@ pub(crate) fn decode_parallel(
 
 /// Decode a contiguous run of segments (in practice one) into `out`.
 #[allow(clippy::too_many_arguments)]
+#[cfg(not(target_arch = "wasm32"))]
 fn run_worker(
     file: &[u8],
     segs: &[IdotSegment],
@@ -454,7 +466,7 @@ fn run_worker(
     for (i, seg) in segs.iter().enumerate() {
         let is_image_first = first_group && i == 0;
         let is_image_last = last_group && i + 1 == segs.len();
-        let source = IdatSource::new_bounded(
+        let source = ChunkSource::idat_bounded(
             Cow::Borrowed(file),
             seg.chunk_pos,
             seg.end_pos,

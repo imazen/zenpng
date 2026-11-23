@@ -17,7 +17,7 @@ use crate::error::PngError;
 use whereat::at;
 
 use super::postprocess::{OutputFormat, RowExpander, build_pixel_data};
-use super::row::{FdatSource, IdatSource, unfilter_row};
+use super::row::{ChunkSource, unfilter_row};
 
 // ── Raw frame output ────────────────────────────────────────────────
 
@@ -278,7 +278,7 @@ impl<'a> ApngDecoder<'a> {
         let bpp = frame_ihdr.filter_bpp();
 
         let capacity = crate::alloc_util::decode_buffer_capacity(stride, frame_ihdr.height)?;
-        let source = IdatSource::new(
+        let source = ChunkSource::idat(
             Cow::Borrowed(self.file_data),
             self.first_idat_pos,
             self.config.skip_critical_chunk_crc,
@@ -393,7 +393,7 @@ impl<'a> ApngDecoder<'a> {
         let bpp = frame_ihdr.filter_bpp();
 
         let fdat_pos = self.chunk_pos;
-        let source = FdatSource::new(
+        let source = ChunkSource::fdat(
             self.file_data,
             fdat_pos,
             self.config.skip_critical_chunk_crc,
@@ -451,7 +451,7 @@ impl<'a> ApngDecoder<'a> {
         }
 
         // Advance chunk_pos past the fdAT chunks we consumed
-        self.chunk_pos = decompressor.source_ref().post_fdat_pos;
+        self.chunk_pos = decompressor.source_ref().post_chunk_pos;
 
         build_pixel_data(&frame_ihdr, &self.ancillary, all_pixels, w, h)
     }

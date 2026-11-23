@@ -319,6 +319,8 @@ pub(crate) fn decode_png(
 
         // Large images: inflate on a second thread while this one unfilters.
         let pipelined = !parallel_done && pipeline::worth_it(&ihdr, limits.max_threads);
+        // `pipeline::run` and its thread code are never instantiated on wasm32.
+        #[cfg(not(target_arch = "wasm32"))]
         if pipelined {
             let bpp = reader.bpp();
             let zeros = crate::alloc_util::alloc_zeroed(alloc_pref, false, raw_row_bytes)?;
@@ -419,6 +421,8 @@ pub(crate) fn decode_png(
     );
 
     let pipelined = !parallel_done && pipeline::worth_it(&ihdr, limits.max_threads);
+    // `pipeline::run` and its thread code are never instantiated on wasm32.
+    #[cfg(not(target_arch = "wasm32"))]
     if pipelined {
         let raw = ihdr.raw_row_bytes()?;
         let bpp = reader.bpp();
@@ -512,40 +516,51 @@ fn try_idot_parallel(
     out: &mut [u8],
     cancel: &dyn Stop,
 ) -> crate::error::Result<idot::Outcome> {
-    let Some(segs) = reader.idot_segments() else {
+    // wasm32 never plans parallel workers (`idot::plan_workers` is `None`
+    // there); returning early also keeps `decode_parallel`'s thread code out
+    // of wasm builds entirely.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (data, reader, limits, sink, out, cancel);
         return Ok(idot::Outcome::Fallback);
-    };
-    let ihdr = reader.ihdr();
-    let stride = ihdr.stride()?;
-    // Cheap size/thread check first; only then look up core tiers.
-    let Some(free) = idot::plan_workers(segs, stride, limits.max_threads, None) else {
-        return Ok(idot::Outcome::Fallback);
-    };
-    // One segment per worker leaves no room for load balancing, so a strip
-    // on a slow core delays the whole image: keep those workers on the
-    // fastest core tier — but only while they fill at most half of it
-    // (filling the whole tier measured slower than spreading out). With more
-    // segments than workers, the work queue balances on its own and every
-    // core helps. See docs/IDOT_PARALLEL_PNG.md ("Core tiers").
-    let (workers, pin) = if free >= segs.len() {
-        match crate::affinity::worker_pin() {
-            Some(p) if segs.len() * 2 <= p.cpus() => (segs.len(), Some(p)),
-            _ => (free, None),
-        }
-    } else {
-        (free, None)
-    };
-    idot::decode_parallel(
-        data,
-        ihdr,
-        segs,
-        workers,
-        sink,
-        out,
-        limits.skip_critical_chunk_crc,
-        pin.as_ref(),
-        cancel,
-    )
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let Some(segs) = reader.idot_segments() else {
+            return Ok(idot::Outcome::Fallback);
+        };
+        let ihdr = reader.ihdr();
+        let stride = ihdr.stride()?;
+        // Cheap size/thread check first; only then look up core tiers.
+        let Some(free) = idot::plan_workers(segs, stride, limits.max_threads, None) else {
+            return Ok(idot::Outcome::Fallback);
+        };
+        // One segment per worker leaves no room for load balancing, so a strip
+        // on a slow core delays the whole image: keep those workers on the
+        // fastest core tier — but only while they fill at most half of it
+        // (filling the whole tier measured slower than spreading out). With more
+        // segments than workers, the work queue balances on its own and every
+        // core helps. See docs/IDOT_PARALLEL_PNG.md ("Core tiers").
+        let (workers, pin) = if free >= segs.len() {
+            match crate::affinity::worker_pin() {
+                Some(p) if segs.len() * 2 <= p.cpus() => (segs.len(), Some(p)),
+                _ => (free, None),
+            }
+        } else {
+            (free, None)
+        };
+        idot::decode_parallel(
+            data,
+            ihdr,
+            segs,
+            workers,
+            sink,
+            out,
+            limits.skip_critical_chunk_crc,
+            pin.as_ref(),
+            cancel,
+        )
+    }
 }
 
 /// Reinterpret `Vec<u8>` as `Vec<Rgba<u8>>` without copying.

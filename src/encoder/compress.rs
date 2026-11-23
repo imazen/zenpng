@@ -1587,6 +1587,7 @@ pub(crate) struct StripStream {
     rows: Vec<u8>,
     adler: u32,
     /// Worker threads compressing completed strips (multi-threaded encodes).
+    #[cfg(not(target_arch = "wasm32"))]
     pool: Option<StripPool>,
     /// How strips are written: see [`StripFraming`].
     framing: StripFraming,
@@ -1611,6 +1612,7 @@ pub(crate) enum StripFraming {
 
 /// Completed strips handed to worker threads; results come back in any
 /// order and are written in strip order.
+#[cfg(not(target_arch = "wasm32"))]
 struct StripPool {
     jobs: Option<std::sync::mpsc::Sender<StripJob>>,
     results: std::sync::mpsc::Receiver<(usize, StripResult)>,
@@ -1625,6 +1627,7 @@ struct StripPool {
     next_out: usize,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct StripJob {
     k: usize,
     rows: Vec<u8>,
@@ -1632,6 +1635,7 @@ struct StripJob {
     last: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 type StripResult = Result<(Vec<u8>, u32), zenflate::CompressionError>;
 
 fn strip_error(e: zenflate::CompressionError) -> whereat::At<PngError> {
@@ -1647,6 +1651,7 @@ fn strip_error(e: zenflate::CompressionError) -> whereat::At<PngError> {
 /// What [`StripStream::new`] decides before it allocates or spawns.
 pub(crate) struct StripPlan {
     bounds: Vec<(usize, usize)>,
+    #[cfg(not(target_arch = "wasm32"))]
     threads: usize,
     /// The pool's in-flight cap, used only when [`pooled`](Self::pooled).
     pool_in_flight: usize,
@@ -1655,7 +1660,10 @@ pub(crate) struct StripPlan {
 impl StripPlan {
     /// Whether the strips run on a worker pool.
     fn pooled(&self) -> bool {
-        self.threads > 1 && !cfg!(target_arch = "wasm32")
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.threads > 1;
+        #[cfg(target_arch = "wasm32")]
+        false
     }
 
     /// The output lag the planned stream reports.
@@ -1699,12 +1707,18 @@ impl StripStream {
         let params = EffortParams::from_effort_and_bpp(effort, format.bpp);
         let header =
             zenflate::png::StripCompressor::new(params.screen_effort.level()).zlib_header();
-        let mut pool = plan
-            .pooled()
-            .then(|| StripPool::new(plan.threads, effort, format, row_bytes, cancel));
-        if let Some(p) = pool.as_mut() {
-            p.max_in_flight = plan.pool_in_flight;
-        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let pool = {
+            let mut pool = plan
+                .pooled()
+                .then(|| StripPool::new(plan.threads, effort, format, row_bytes, cancel));
+            if let Some(p) = pool.as_mut() {
+                p.max_in_flight = plan.pool_in_flight;
+            }
+            pool
+        };
+        #[cfg(target_arch = "wasm32")]
+        let _ = cancel;
         let bounds = plan.bounds;
         Some(Self {
             worker: StripWorker::new(&params),
@@ -1716,6 +1730,7 @@ impl StripStream {
             header,
             next: 0,
             adler: 1,
+            #[cfg(not(target_arch = "wasm32"))]
             pool,
             framing,
         })
@@ -1757,6 +1772,7 @@ impl StripStream {
         }
         Some(StripPlan {
             bounds,
+            #[cfg(not(target_arch = "wasm32"))]
             threads,
             pool_in_flight,
         })
@@ -1766,10 +1782,11 @@ impl StripStream {
     /// the strip being filled, plus, with worker threads, the strips in
     /// flight.
     pub(crate) fn lag_rows(&self) -> u32 {
-        lag_rows(
-            &self.bounds,
-            self.pool.as_ref().map_or(0, |p| p.max_in_flight),
-        )
+        #[cfg(not(target_arch = "wasm32"))]
+        let in_flight = self.pool.as_ref().map_or(0, |p| p.max_in_flight);
+        #[cfg(target_arch = "wasm32")]
+        let in_flight = 0;
+        lag_rows(&self.bounds, in_flight)
     }
 
     /// Write strip `k`'s compressed bytes `z`; `adler` already includes it.
@@ -1842,6 +1859,7 @@ impl StripStream {
         // The strip's last row is the next strip's row above.
         let keep = self.rows.len() - self.row_bytes;
         let emit = self.emitter();
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(pool) = &mut self.pool {
             let mut next_rows = Vec::with_capacity(self.rows.capacity());
             next_rows.extend_from_slice(&self.rows[keep..]);
@@ -1861,25 +1879,43 @@ impl StripStream {
                 out,
             )?;
         } else {
-            let (z, adler) = self
-                .worker
-                .compress(
-                    &self.rows,
-                    self.row_bytes,
-                    self.bpp,
-                    a > 0,
-                    false,
-                    last,
-                    None,
-                    cancel,
-                )
-                .map_err(strip_error)?;
-            self.adler =
-                zenflate::adler32_combine(self.adler, adler, (b - a) * (self.row_bytes + 1));
-            emit(self.next, &z, self.adler, out);
-            self.rows.drain(..keep);
+            self.compress_strip_serial(a, b, last, keep, &emit, out, cancel)?;
         }
+        #[cfg(target_arch = "wasm32")]
+        self.compress_strip_serial(a, b, last, keep, &emit, out, cancel)?;
         self.next += 1;
+        Ok(())
+    }
+
+    /// Compress the strip just filled in `self.rows` in place and emit it:
+    /// the serial path, and the only path on wasm32.
+    #[allow(clippy::too_many_arguments)]
+    fn compress_strip_serial(
+        &mut self,
+        a: usize,
+        b: usize,
+        last: bool,
+        keep: usize,
+        emit: &EmitStrip,
+        out: &mut Vec<u8>,
+        cancel: &dyn Stop,
+    ) -> crate::error::Result<()> {
+        let (z, adler) = self
+            .worker
+            .compress(
+                &self.rows,
+                self.row_bytes,
+                self.bpp,
+                a > 0,
+                false,
+                last,
+                None,
+                cancel,
+            )
+            .map_err(strip_error)?;
+        self.adler = zenflate::adler32_combine(self.adler, adler, (b - a) * (self.row_bytes + 1));
+        emit(self.next, &z, self.adler, out);
+        self.rows.drain(..keep);
         Ok(())
     }
 
@@ -1894,17 +1930,22 @@ impl StripStream {
                 self.bounds.last().map_or(0, |b| b.1)
             ))));
         }
-        let emit = self.emitter();
-        if let Some(pool) = &mut self.pool {
-            pool.collect(
-                true,
-                &self.bounds,
-                self.row_bytes,
-                &mut self.adler,
-                &emit,
-                out,
-            )?;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let emit = self.emitter();
+            if let Some(pool) = &mut self.pool {
+                pool.collect(
+                    true,
+                    &self.bounds,
+                    self.row_bytes,
+                    &mut self.adler,
+                    &emit,
+                    out,
+                )?;
+            }
         }
+        #[cfg(target_arch = "wasm32")]
+        let _ = &mut self;
         if self.framing == StripFraming::Continuous {
             out.extend_from_slice(&self.adler.to_be_bytes());
         }
@@ -1918,6 +1959,7 @@ impl StripStream {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl StripPool {
     fn new(
         threads: usize,
@@ -2027,6 +2069,7 @@ impl StripPool {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for StripPool {
     fn drop(&mut self) {
         // Close the queue so idle workers exit; a dropped encoder doesn't
@@ -2051,41 +2094,49 @@ pub(crate) fn par_map<T: Sync, R: Send>(
     max_threads: usize,
     f: impl Fn(&T) -> R + Sync,
 ) -> Vec<R> {
-    use core::sync::atomic::{AtomicUsize, Ordering};
-    let threads = resolve_threads(max_threads).min(items.len());
-    if threads < 2 || cfg!(target_arch = "wasm32") {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = max_threads;
         return items.iter().map(&f).collect();
     }
-    let next = AtomicUsize::new(0);
-    let done: Vec<Vec<(usize, R)>> = std::thread::scope(|s| {
-        let handles: Vec<_> = (0..threads)
-            .map(|_| {
-                let (f, next) = (&f, &next);
-                s.spawn(move || {
-                    let mut done = Vec::new();
-                    loop {
-                        let k = next.fetch_add(1, Ordering::Relaxed);
-                        if k >= items.len() {
-                            break done;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use core::sync::atomic::{AtomicUsize, Ordering};
+        let threads = resolve_threads(max_threads).min(items.len());
+        if threads < 2 {
+            return items.iter().map(&f).collect();
+        }
+        let next = AtomicUsize::new(0);
+        let done: Vec<Vec<(usize, R)>> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..threads)
+                .map(|_| {
+                    let (f, next) = (&f, &next);
+                    s.spawn(move || {
+                        let mut done = Vec::new();
+                        loop {
+                            let k = next.fetch_add(1, Ordering::Relaxed);
+                            if k >= items.len() {
+                                break done;
+                            }
+                            done.push((k, f(&items[k])));
                         }
-                        done.push((k, f(&items[k])));
-                    }
+                    })
                 })
-            })
-            .collect();
-        handles
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+                .collect()
+        });
+        let mut slots: Vec<Option<R>> = (0..items.len()).map(|_| None).collect();
+        for (k, r) in done.into_iter().flatten() {
+            slots[k] = Some(r);
+        }
+        slots
             .into_iter()
-            .map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .map(|r| r.expect("every item ran"))
             .collect()
-    });
-    let mut slots: Vec<Option<R>> = (0..items.len()).map(|_| None).collect();
-    for (k, r) in done.into_iter().flatten() {
-        slots[k] = Some(r);
     }
-    slots
-        .into_iter()
-        .map(|r| r.expect("every item ran"))
-        .collect()
 }
 
 /// Run `f` on each strip `0..n`, on `threads` workers (each with its own
@@ -2096,42 +2147,50 @@ fn run_strips<T: Send>(
     params: &EffortParams,
     f: impl Fn(&mut StripWorker, usize) -> T + Sync,
 ) -> Vec<T> {
+    #[cfg(not(target_arch = "wasm32"))]
     use core::sync::atomic::{AtomicUsize, Ordering};
     if threads < 2 {
         let mut w = StripWorker::new(params);
         return (0..n).map(|k| f(&mut w, k)).collect();
     }
-    let next = AtomicUsize::new(0);
-    let mut slots: Vec<Option<T>> = (0..n).map(|_| None).collect();
-    let done: Vec<Vec<(usize, T)>> = std::thread::scope(|s| {
-        let handles: Vec<_> = (0..threads)
-            .map(|_| {
-                let (f, next) = (&f, &next);
-                s.spawn(move || {
-                    let mut w = StripWorker::new(params);
-                    let mut done = Vec::new();
-                    loop {
-                        let k = next.fetch_add(1, Ordering::Relaxed);
-                        if k >= n {
-                            break done;
+    // `threads` is 1 on wasm32, so this scoped-thread arm is never
+    // instantiated there.
+    #[cfg(target_arch = "wasm32")]
+    unreachable!("threads is 1 on wasm32");
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let next = AtomicUsize::new(0);
+        let mut slots: Vec<Option<T>> = (0..n).map(|_| None).collect();
+        let done: Vec<Vec<(usize, T)>> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..threads)
+                .map(|_| {
+                    let (f, next) = (&f, &next);
+                    s.spawn(move || {
+                        let mut w = StripWorker::new(params);
+                        let mut done = Vec::new();
+                        loop {
+                            let k = next.fetch_add(1, Ordering::Relaxed);
+                            if k >= n {
+                                break done;
+                            }
+                            done.push((k, f(&mut w, k)));
                         }
-                        done.push((k, f(&mut w, k)));
-                    }
+                    })
                 })
-            })
-            .collect();
-        handles
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+                .collect()
+        });
+        for (k, r) in done.into_iter().flatten() {
+            slots[k] = Some(r);
+        }
+        slots
             .into_iter()
-            .map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .map(|r| r.expect("every strip ran"))
             .collect()
-    });
-    for (k, r) in done.into_iter().flatten() {
-        slots[k] = Some(r);
     }
-    slots
-        .into_iter()
-        .map(|r| r.expect("every strip ran"))
-        .collect()
 }
 
 #[cfg(test)]
@@ -2194,7 +2253,13 @@ fn compress_strips(
     }
     // The strip layout doesn't depend on the thread count, so the output
     // is the same single-threaded (strips run in order on this thread).
-    let threads = if opts.parallel && !cfg!(target_arch = "wasm32") {
+    #[cfg(target_arch = "wasm32")]
+    let threads = {
+        let _ = effort;
+        1
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let threads = if opts.parallel {
         strip_threads(n, effort, resolve_threads(opts.max_threads))
     } else {
         1
@@ -4055,18 +4120,28 @@ fn zenflate_recompress(
     let mut best: Option<Vec<u8>> = None;
 
     // wasm32 has no threads to spawn.
-    let results: Vec<crate::error::Result<Vec<u8>>> =
-        if max_threads == 1 || candidates.len() <= 1 || cfg!(target_arch = "wasm32") {
-            // Sequential
+    let results: Vec<crate::error::Result<Vec<u8>>> = if max_threads == 1 || candidates.len() <= 1 {
+        // Sequential (also the only path on wasm32: `par_map` has no
+        // threads to spawn there).
+        candidates
+            .iter()
+            .map(|(_size, data)| recompress_one(data, cancel))
+            .collect()
+    } else {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            par_map(candidates, max_threads, |(_size, data)| {
+                recompress_one(data, cancel)
+            })
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
             candidates
                 .iter()
                 .map(|(_size, data)| recompress_one(data, cancel))
                 .collect()
-        } else {
-            par_map(candidates, max_threads, |(_size, data)| {
-                recompress_one(data, cancel)
-            })
-        };
+        }
+    };
 
     for result in results {
         let compressed = result?;
@@ -4121,18 +4196,28 @@ fn zenflate_full_optimal_recompress(
     let mut best: Option<Vec<u8>> = None;
 
     // wasm32 has no threads to spawn.
-    let results: Vec<crate::error::Result<Vec<u8>>> =
-        if max_threads == 1 || candidates.len() <= 1 || cfg!(target_arch = "wasm32") {
-            // Sequential
+    let results: Vec<crate::error::Result<Vec<u8>>> = if max_threads == 1 || candidates.len() <= 1 {
+        // Sequential (also the only path on wasm32: `par_map` has no
+        // threads to spawn there).
+        candidates
+            .iter()
+            .map(|(_size, data)| full_optimal_recompress_one(data, effort, cancel))
+            .collect()
+    } else {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            par_map(candidates, max_threads, |(_size, data)| {
+                full_optimal_recompress_one(data, effort, cancel)
+            })
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
             candidates
                 .iter()
                 .map(|(_size, data)| full_optimal_recompress_one(data, effort, cancel))
                 .collect()
-        } else {
-            par_map(candidates, max_threads, |(_size, data)| {
-                full_optimal_recompress_one(data, effort, cancel)
-            })
-        };
+        }
+    };
 
     for result in results {
         let compressed = result?;
@@ -4221,15 +4306,25 @@ fn zopfli_adaptive(
     // All threads share the combined stop — deadline expiry gracefully stops
     // all threads, cancellation hard-aborts them.
     let zopfli_results: Vec<crate::error::Result<Vec<u8>>> =
-        if max_threads == 1 || candidates.len() <= 1 || cfg!(target_arch = "wasm32") {
+        if max_threads == 1 || candidates.len() <= 1 {
             candidates
                 .iter()
                 .map(|(_size, data)| compress_with_zopfli_n(data, max_iters, &combined))
                 .collect()
         } else {
-            par_map(candidates, max_threads, |(_size, data)| {
-                compress_with_zopfli_n(data, max_iters, &combined)
-            })
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                par_map(candidates, max_threads, |(_size, data)| {
+                    compress_with_zopfli_n(data, max_iters, &combined)
+                })
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                candidates
+                    .iter()
+                    .map(|(_size, data)| compress_with_zopfli_n(data, max_iters, &combined))
+                    .collect()
+            }
         };
 
     for result in zopfli_results {

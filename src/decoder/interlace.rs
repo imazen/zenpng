@@ -14,7 +14,7 @@ use crate::error::PngError;
 use whereat::at;
 
 use super::postprocess::{OutputFormat, RowExpander};
-use super::row::{IdatSource, unfilter_row};
+use super::row::{ChunkSource, unfilter_row};
 
 // ── Adam7 interlacing ───────────────────────────────────────────────
 
@@ -139,7 +139,7 @@ pub(crate) fn decode_interlaced(
     // Pass 7 (x_step=1) gives the widest rows: full image width.
     let max_pass_stride = ihdr.stride()?; // 1 + raw_row_bytes for full width
     let capacity = crate::alloc_util::decode_buffer_capacity(max_pass_stride, height)?;
-    let source = IdatSource::new(
+    let source = ChunkSource::idat(
         Cow::Borrowed(data),
         first_idat_pos,
         config.skip_critical_chunk_crc,

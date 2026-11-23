@@ -9,13 +9,19 @@
 //! unfiltered in order by one thread, and the producer drains the zlib stream
 //! (verifying Adler-32 in strict mode) exactly as the serial path does.
 
+#[cfg(not(target_arch = "wasm32"))]
 use alloc::vec::Vec;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc;
 
+#[cfg(not(target_arch = "wasm32"))]
 use enough::Stop;
+#[cfg(not(target_arch = "wasm32"))]
 use whereat::at;
 
+#[cfg(not(target_arch = "wasm32"))]
 use super::row::RowDecoder;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::error::{PngError, Result};
 
 /// Smallest filtered stream (bytes) for which two threads typically give
@@ -25,6 +31,7 @@ use crate::error::{PngError, Result};
 /// renditions per format and size from 512 to 4096 px
 /// (`benchmarks/decode_pipeline_crossover_2026-10-08.{md,tsv}`). Each value is the
 /// smallest measured size from which every larger size passes.
+#[cfg(not(target_arch = "wasm32"))]
 fn pipeline_min_bytes_for(color_type: u8, bit_depth: u8) -> usize {
     const KIB: usize = 1 << 10;
     const MIB: usize = 1 << 20;
@@ -49,9 +56,11 @@ fn pipeline_min_bytes_for(color_type: u8, bit_depth: u8) -> usize {
 }
 
 /// Filtered bytes per chunk handed between the threads.
+#[cfg(not(target_arch = "wasm32"))]
 const CHUNK_BYTES: usize = 128 * 1024;
 
 /// Chunks in flight; the producer gets at most this far ahead.
+#[cfg(not(target_arch = "wasm32"))]
 const CHUNKS: usize = 4;
 
 /// Test override of [`pipeline_min_bytes_for`] (0 = none), so small test
@@ -67,15 +76,16 @@ std::thread_local! {
     pub(crate) static RUNS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
 }
 
-#[cfg(feature = "_dev")]
+#[cfg(all(feature = "_dev", not(target_arch = "wasm32")))]
 fn count_run() {
     RUNS.with(|r| r.set(r.get() + 1));
 }
-#[cfg(not(feature = "_dev"))]
+#[cfg(all(not(feature = "_dev"), not(target_arch = "wasm32")))]
 fn count_run() {}
 
 /// [`pipeline_min_bytes_for`] (or [`MIN_BYTES_OVERRIDE`]), or with the `_dev` feature the
 /// `ZENPNG_PIPELINE_MIN_BYTES` override (threshold sweeps).
+#[cfg(not(target_arch = "wasm32"))]
 fn pipeline_min_bytes(color_type: u8, bit_depth: u8) -> usize {
     #[cfg(feature = "_dev")]
     {
@@ -103,23 +113,32 @@ fn pipeline_min_bytes(color_type: u8, bit_depth: u8) -> usize {
 /// RGB8 0.83x, RGBA8 0.78x, RGB16 0.92x, gray8 0.99x). Other layouts
 /// pipeline from [`pipeline_min_bytes_for`] filtered bytes, where two threads
 /// typically reach 1.3x the one-thread throughput.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn worth_it(ihdr: &crate::chunk::ihdr::Ihdr, max_threads: usize) -> bool {
     let Ok(raw) = ihdr.raw_row_bytes() else {
         return false;
     };
     let filtered_bytes = (ihdr.height as usize).saturating_mul(raw + 1);
-    !cfg!(target_arch = "wasm32")
-        && max_threads != 1
+    max_threads != 1
         && ihdr.color_type != 3
         && ihdr.bit_depth >= 8
         && filtered_bytes >= pipeline_min_bytes(ihdr.color_type, ihdr.bit_depth)
         && std::thread::available_parallelism().is_ok_and(|n| n.get() >= 2)
 }
 
+/// wasm32 has no usable `std::thread`, so pipelining never engages; the
+/// compile-time false also lets LLVM drop `run`/`Piped` and their thread
+/// code from wasm builds entirely.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn worth_it(_ihdr: &crate::chunk::ihdr::Ihdr, _max_threads: usize) -> bool {
+    false
+}
+
 /// Inflate all `rows` filtered rows of `reader` on a second thread and call
 /// `consume(y, filtered_row)` for each, in order, on this thread. Drains the
 /// zlib stream after the last row (`RowDecoder::finish_stream`). Returns the
 /// reader for metadata collection.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn run<'a>(
     mut reader: RowDecoder<'a>,
     rows: usize,
@@ -231,6 +250,7 @@ pub(crate) fn run<'a>(
 /// Unfilter `filtered` (filter byte + row) into row `y` of `out`, whose rows
 /// are `row_bytes` long; the filter's predecessor is row `y - 1` of `out`, or
 /// `zeros` for the first row.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn unfilter_into(
     out: &mut [u8],
     y: usize,
@@ -253,6 +273,7 @@ pub(crate) fn unfilter_into(
 /// [`run`]'s producer on an owned reader, for pull-style consumers (the
 /// zencodec streaming decoder): a second thread inflates filtered rows while
 /// the caller takes them one at a time with [`Piped::next_row`].
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct Piped {
     full_rx: mpsc::Receiver<Result<(Vec<u8>, usize)>>,
     empty_tx: Option<mpsc::Sender<Vec<u8>>>,
@@ -262,6 +283,7 @@ pub(crate) struct Piped {
     stride: usize,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Piped {
     /// Start inflating `rows` rows of `reader` on a new thread.
     pub(crate) fn spawn(mut reader: RowDecoder<'static>, rows: usize) -> Self {
@@ -367,6 +389,7 @@ impl Piped {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for Piped {
     fn drop(&mut self) {
         // Hanging up both channels stops the producer wherever it waits; a

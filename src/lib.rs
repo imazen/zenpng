@@ -37,6 +37,7 @@ extern crate std;
 
 whereat::define_at_crate_info!();
 
+#[cfg(not(target_arch = "wasm32"))]
 mod affinity;
 mod alloc_util;
 mod chunk;

@@ -696,7 +696,7 @@ impl Walker<'_> {
                 entry.note("chunk type is not four ASCII letters");
             }
 
-            // Phase transitions mirror RowDecoder::new / IdatSource / finish_metadata.
+            // Phase transitions mirror RowDecoder::new / ChunkSource / finish_metadata.
             if phase == Phase::Idat && &ty != b"IDAT" {
                 self.end_idat_run()?;
                 phase = Phase::Late;
@@ -745,7 +745,7 @@ impl Walker<'_> {
                         self.note_crc(pos, &entry);
                     }
                     Phase::Late => {
-                        // `FdatSource::new` never checks the type of the chunk after an fcTL:
+                        // `ChunkSource::fdat` never checks the type of the chunk after an fcTL:
                         // whatever it is, its data is the frame's zlib stream.
                         let first_frame_chunk = self.fd_first
                             && matches!(self.fd_mode, FdMode::Read { .. })
@@ -755,13 +755,13 @@ impl Walker<'_> {
                             self.end_fd_run()?;
                         }
                         if first_frame_chunk && !as_frame {
-                            // Shorter than a sequence number: `FdatSource::new` takes it as the
+                            // Shorter than a sequence number: `ChunkSource::fdat` takes it as the
                             // frame's first chunk, gets no deflate data from it, and goes on
                             // into the fdATs that follow, so the frame stays readable.
                             self.fd_first = false;
                             done = self.classify_late(&ty, body, body_start, &mut entry);
                             entry.note(
-                                "taken as the frame's first fdAT by the animation decoder (FdatSource::new does not check the chunk type); shorter than a sequence number, it contributes no frame data",
+                                "taken as the frame's first fdAT by the animation decoder (ChunkSource::fdat does not check the chunk type); shorter than a sequence number, it contributes no frame data",
                             );
                             self.commit(entry)?;
                         } else if as_frame {
@@ -778,7 +778,7 @@ impl Walker<'_> {
                                 note.push_str("; ");
                             }
                             note.push_str(
-                                "read as the frame's zlib data although it is not an fdAT: FdatSource::new does not check the chunk type",
+                                "read as the frame's zlib data although it is not an fdAT: ChunkSource::fdat does not check the chunk type",
                             );
                             self.fd_notes.insert(c.start, note);
                             self.fd_run.push(c);
@@ -1419,7 +1419,7 @@ impl Walker<'_> {
                 return true;
             }
             b"IDAT" => e.note(
-                "IDAT after a non-IDAT chunk: the decoded stream ends at the first gap (IdatSource)",
+                "IDAT after a non-IDAT chunk: the decoded stream ends at the first gap (ChunkSource)",
             ),
             b"eXIf" => {
                 if self.slot_taken(Slot::Exif) {

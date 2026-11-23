@@ -14,29 +14,94 @@ use whereat::at;
 
 use super::postprocess::output_bytes_per_pixel;
 
-// ── IdatSource — InputSource for IDAT chunks ────────────────────────
+// ── ChunkSource — InputSource for IDAT / fdAT chunks ────────────────
 
-/// Streams raw IDAT chunk payload bytes to `StreamDecompressor`.
-/// Walks chunks in the file without collecting IDAT data into a Vec.
-pub(crate) struct IdatSource<'a> {
+/// Which chunk run this source feeds: the image IDAT stream or one APNG
+/// frame's fdAT run. Only the tag, the per-chunk payload offset and the
+/// error literals differ, so `mode` is consulted solely on cold error paths;
+/// the hot `fill_buf` loop reads the resolved `tag`/`payload_off` fields and
+/// carries no mode branch beyond the `end_pos` compare IDAT always had.
+#[derive(Clone, Copy)]
+enum ChunkMode {
+    Idat,
+    Fdat,
+}
+
+impl ChunkMode {
+    fn tag(self) -> [u8; 4] {
+        match self {
+            Self::Idat => *b"IDAT",
+            Self::Fdat => *b"fdAT",
+        }
+    }
+
+    /// Payload offset past the chunk header (fdAT leads with a 4-byte
+    /// sequence number that is skipped to reach the deflate payload).
+    fn payload_off(self) -> usize {
+        match self {
+            Self::Idat => 0,
+            Self::Fdat => 4,
+        }
+    }
+
+    fn err_truncated(self, what: &'static str) -> PngError {
+        PngError::Truncated(match (self, what) {
+            (Self::Idat, "header") => "truncated IDAT chunk header (length)".into(),
+            (Self::Idat, "data") => "truncated IDAT chunk data".into(),
+            (Self::Idat, "crc") => "truncated IDAT chunk CRC".into(),
+            (Self::Idat, "chunk") => "truncated IDAT chunk".into(),
+            (Self::Fdat, "header") => "truncated fdAT chunk header (length)".into(),
+            (Self::Fdat, "data") => "truncated fdAT chunk data".into(),
+            (Self::Fdat, "crc") => "truncated fdAT chunk CRC".into(),
+            (Self::Fdat, "chunk") => "truncated fdAT chunk".into(),
+            _ => unreachable!(),
+        })
+    }
+
+    fn err_overflow(self) -> PngError {
+        PngError::Decode(match self {
+            Self::Idat => "IDAT chunk length overflow".into(),
+            Self::Fdat => "fdAT chunk length overflow".into(),
+        })
+    }
+
+    fn err_crc_mismatch(self) -> PngError {
+        PngError::Decode(match self {
+            Self::Idat => "CRC mismatch in IDAT chunk".into(),
+            Self::Fdat => "CRC mismatch in fdAT chunk".into(),
+        })
+    }
+}
+
+/// Streams raw IDAT or fdAT chunk payload bytes to `StreamDecompressor`.
+/// Walks chunks in the file without collecting chunk data into a Vec.
+pub(crate) struct ChunkSource<'a> {
     /// Full PNG file bytes (borrowed or owned).
     data: Cow<'a, [u8]>,
     /// Byte offset of the next chunk header to check.
     chunk_pos: usize,
-    /// Range (start, end) into `data` for remaining bytes in the current IDAT chunk.
+    /// Range (start, end) into `data` for remaining payload bytes in the
+    /// current chunk (past the 4-byte fdAT sequence number for fdAT).
     current_range: (usize, usize),
-    /// True when we've seen a non-IDAT chunk after IDAT.
+    /// True when we've seen a non-`tag` chunk after the tag run.
     done: bool,
-    /// Position of the first post-IDAT chunk (for metadata collection).
-    pub post_idat_pos: usize,
-    /// Whether to skip CRC validation on IDAT chunks.
+    /// Position of the first post-`tag`-run chunk (for metadata collection /
+    /// APNG chunk scanning). 0 until set; end_pos-bounded runs leave it 0.
+    pub post_chunk_pos: usize,
+    /// Whether to skip CRC validation on tag chunks.
     skip_crc: bool,
     /// Stop before the chunk whose header starts at or after this offset
-    /// (`usize::MAX` = the whole IDAT run). Used to feed one `iDOT` segment.
+    /// (`usize::MAX` = the whole run). Used to feed one `iDOT` segment.
     end_pos: usize,
+    /// Chunk type this source consumes, resolved at construction.
+    tag: [u8; 4],
+    /// Payload offset past the chunk header, resolved at construction.
+    payload_off: usize,
+    /// Which chunk kind this is — consulted only for error literals.
+    mode: ChunkMode,
 }
 
-impl<'a> IdatSource<'a> {
+impl<'a> ChunkSource<'a> {
     /// Borrow the full PNG file data stored in this source.
     pub fn file_data(&self) -> &[u8] {
         &self.data
@@ -45,61 +110,89 @@ impl<'a> IdatSource<'a> {
     /// Create a new IDAT source positioned at the first IDAT chunk.
     /// `first_idat_pos` is the byte offset of the first IDAT chunk header.
     /// When `skip_crc` is true, IDAT CRC mismatches are tolerated.
-    pub fn new(
+    pub fn idat(
         data: Cow<'a, [u8]>,
         first_idat_pos: usize,
         skip_crc: bool,
     ) -> Result<Self, PngError> {
-        // Parse the first IDAT chunk inline. Bounds-checked and overflow-safe
-        // (mirrors `FdatSource::new`) so the IDAT path stays sound and
-        // 32-bit-clean even if a caller ever passes an unvalidated offset.
-        let length_bytes: [u8; 4] = data
-            .get(first_idat_pos..first_idat_pos + 4)
-            .ok_or_else(|| PngError::Truncated("truncated IDAT chunk header (length)".into()))?
-            .try_into()
-            .unwrap(); // infallible: slice is exactly 4 bytes
-        let length = u32::from_be_bytes(length_bytes) as usize;
-        let data_start = first_idat_pos + 8; // skip length + type
-        let data_end = data_start
-            .checked_add(length)
-            .ok_or_else(|| PngError::Decode("IDAT chunk length overflow".into()))?;
-        let next_pos = data_end
-            .checked_add(4)
-            .ok_or_else(|| PngError::Decode("IDAT chunk length overflow".into()))?; // skip CRC
-
-        if data_end > data.len() {
-            return Err(PngError::Truncated("truncated IDAT chunk data".into()));
-        }
-        if next_pos > data.len() {
-            return Err(PngError::Truncated("truncated IDAT chunk CRC".into()));
-        }
-
-        Ok(Self {
-            data,
-            chunk_pos: next_pos,
-            current_range: (data_start, data_end),
-            done: false,
-            post_idat_pos: 0,
-            skip_crc,
-            end_pos: usize::MAX,
-        })
+        Self::new(data, first_idat_pos, usize::MAX, skip_crc, ChunkMode::Idat)
     }
 
-    /// Like [`new`](Self::new), but stops before the IDAT chunk whose header
-    /// is at `end_pos` — one segment of an `iDOT` table.
-    pub fn new_bounded(
+    /// Like [`idat`](Self::idat), but stops before the IDAT chunk whose
+    /// header is at `end_pos` — one segment of an `iDOT` table.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn idat_bounded(
         data: Cow<'a, [u8]>,
         first_idat_pos: usize,
         end_pos: usize,
         skip_crc: bool,
     ) -> Result<Self, PngError> {
-        let mut s = Self::new(data, first_idat_pos, skip_crc)?;
-        s.end_pos = end_pos;
-        Ok(s)
+        Self::new(data, first_idat_pos, end_pos, skip_crc, ChunkMode::Idat)
+    }
+
+    /// Create a new fdAT source positioned at the first fdAT chunk of an
+    /// APNG frame. `first_fdat_pos` is the byte offset of that chunk's
+    /// header. The 4-byte sequence number is skipped per chunk.
+    pub fn fdat(data: &'a [u8], first_fdat_pos: usize, skip_crc: bool) -> Result<Self, PngError> {
+        Self::new(
+            Cow::Borrowed(data),
+            first_fdat_pos,
+            usize::MAX,
+            skip_crc,
+            ChunkMode::Fdat,
+        )
+    }
+
+    /// Parse the first chunk inline. Bounds-checked and overflow-safe so the
+    /// path stays sound and 32-bit-clean even if a caller ever passes an
+    /// unvalidated offset. The first chunk's type and CRC are not checked:
+    /// the IDAT path is fed by `ChunkIter` (which already validated it), and
+    /// the fdAT path deliberately accepts whatever follows fcTL.
+    fn new(
+        data: Cow<'a, [u8]>,
+        first_pos: usize,
+        end_pos: usize,
+        skip_crc: bool,
+        mode: ChunkMode,
+    ) -> Result<Self, PngError> {
+        let length_bytes: [u8; 4] = data
+            .get(first_pos..first_pos + 4)
+            .ok_or_else(|| mode.err_truncated("header"))?
+            .try_into()
+            .unwrap(); // infallible: slice is exactly 4 bytes
+        let length = u32::from_be_bytes(length_bytes) as usize;
+        let data_start = first_pos + 8; // skip length + type
+        let data_end = data_start
+            .checked_add(length)
+            .ok_or_else(|| mode.err_overflow())?;
+        let next_pos = data_end.checked_add(4).ok_or_else(|| mode.err_overflow())?; // skip CRC
+
+        if data_end > data.len() {
+            return Err(mode.err_truncated("data"));
+        }
+        if next_pos > data.len() {
+            return Err(mode.err_truncated("crc"));
+        }
+
+        // For fdAT, skip the 4-byte sequence number to reach deflate data;
+        // a payload shorter than that contributes nothing.
+        let payload_start = data_start + mode.payload_off();
+        Ok(Self {
+            data,
+            chunk_pos: next_pos,
+            current_range: (payload_start.min(data_end), data_end),
+            done: false,
+            post_chunk_pos: 0,
+            skip_crc,
+            end_pos,
+            tag: mode.tag(),
+            payload_off: mode.payload_off(),
+            mode,
+        })
     }
 }
 
-impl zenflate::InputSource for IdatSource<'_> {
+impl zenflate::InputSource for ChunkSource<'_> {
     type Error = PngError;
 
     fn fill_buf(&mut self) -> Result<&[u8], PngError> {
@@ -119,7 +212,7 @@ impl zenflate::InputSource for IdatSource<'_> {
             }
             if self.chunk_pos + 12 > self.data.len() {
                 self.done = true;
-                self.post_idat_pos = self.chunk_pos;
+                self.post_chunk_pos = self.chunk_pos;
                 return Ok(&[]);
             }
 
@@ -133,20 +226,20 @@ impl zenflate::InputSource for IdatSource<'_> {
                 .unwrap();
             let data_start = self.chunk_pos + 8;
             let Some(data_end) = data_start.checked_add(length) else {
-                return Err(PngError::Decode("IDAT chunk length overflow".into()));
+                return Err(self.mode.err_overflow());
             };
             let Some(crc_end) = data_end.checked_add(4) else {
-                return Err(PngError::Decode("IDAT chunk length overflow".into()));
+                return Err(self.mode.err_overflow());
             };
 
             if crc_end > self.data.len() {
-                return Err(PngError::Truncated("truncated IDAT chunk".into()));
+                return Err(self.mode.err_truncated("chunk"));
             }
 
-            if chunk_type != *b"IDAT" {
-                // Not IDAT — we're done with the IDAT stream
+            if chunk_type != self.tag {
+                // Not a tag chunk — we're done with this tag run
                 self.done = true;
-                self.post_idat_pos = self.chunk_pos;
+                self.post_chunk_pos = self.chunk_pos;
                 return Ok(&[]);
             }
 
@@ -156,17 +249,21 @@ impl zenflate::InputSource for IdatSource<'_> {
                     u32::from_be_bytes(self.data[data_end..crc_end].try_into().unwrap());
                 let computed_crc = crc32(crc32(0, &chunk_type), &self.data[data_start..data_end]);
                 if stored_crc != computed_crc {
-                    return Err(PngError::Decode("CRC mismatch in IDAT chunk".into()));
+                    return Err(self.mode.err_crc_mismatch());
                 }
             }
 
-            self.current_range = (data_start, data_end);
+            // Skip the per-chunk payload offset (fdAT's 4-byte sequence
+            // number; 0 for IDAT) to reach deflate data.
+            let payload_start = data_start + self.payload_off;
+            self.current_range = (payload_start.min(data_end), data_end);
             self.chunk_pos = crc_end;
 
-            if data_start < data_end {
-                return Ok(&self.data[data_start..data_end]);
+            let (start, end) = self.current_range;
+            if start < end {
+                return Ok(&self.data[start..end]);
             }
-            // Empty IDAT chunk — skip and try next
+            // Empty payload — skip and try next
         }
     }
 
@@ -237,148 +334,6 @@ where
     Ok(())
 }
 
-// ── FdatSource — InputSource for fdAT chunks ────────────────────────
-
-/// Streams raw fdAT chunk payload bytes to `StreamDecompressor`.
-/// Like `IdatSource`, but for fdAT chunks. Each fdAT starts with a
-/// 4-byte sequence number that is skipped to get the deflate payload.
-pub(crate) struct FdatSource<'a> {
-    /// Full PNG file bytes.
-    data: &'a [u8],
-    /// Byte offset of the next chunk header to check.
-    chunk_pos: usize,
-    /// Remaining bytes in the current fdAT chunk's deflate data.
-    current_data: &'a [u8],
-    /// True when we've seen a non-fdAT chunk after fdAT.
-    done: bool,
-    /// Position of the first post-fdAT chunk (for scanning).
-    pub post_fdat_pos: usize,
-    /// Whether to skip CRC validation on fdAT chunks.
-    skip_crc: bool,
-}
-
-impl<'a> FdatSource<'a> {
-    /// Create a new fdAT source positioned at the first fdAT chunk.
-    /// `first_fdat_pos` is the byte offset of the first fdAT chunk header.
-    pub fn new(data: &'a [u8], first_fdat_pos: usize, skip_crc: bool) -> Result<Self, PngError> {
-        // Parse the first fdAT chunk inline
-        let length_bytes: [u8; 4] = data
-            .get(first_fdat_pos..first_fdat_pos + 4)
-            .ok_or_else(|| PngError::Truncated("truncated fdAT chunk header (length)".into()))?
-            .try_into()
-            .unwrap(); // infallible: slice is exactly 4 bytes
-        let length = u32::from_be_bytes(length_bytes) as usize;
-        let data_start = first_fdat_pos + 8; // skip length + type
-        let data_end = data_start
-            .checked_add(length)
-            .ok_or_else(|| PngError::Decode("fdAT chunk length overflow".into()))?;
-        let next_pos = data_end
-            .checked_add(4)
-            .ok_or_else(|| PngError::Decode("fdAT chunk length overflow".into()))?;
-
-        if data_end > data.len() {
-            return Err(PngError::Truncated("truncated fdAT chunk data".into()));
-        }
-        if next_pos > data.len() {
-            return Err(PngError::Truncated("truncated fdAT chunk CRC".into()));
-        }
-
-        // Skip the 4-byte sequence number to get to deflate data
-        let deflate_start = data_start + 4;
-        let deflate_data = if deflate_start < data_end {
-            &data[deflate_start..data_end]
-        } else {
-            &data[data_end..data_end] // empty
-        };
-
-        Ok(Self {
-            data,
-            chunk_pos: next_pos,
-            current_data: deflate_data,
-            done: false,
-            post_fdat_pos: 0,
-            skip_crc,
-        })
-    }
-}
-
-impl<'a> zenflate::InputSource for FdatSource<'a> {
-    type Error = PngError;
-
-    fn fill_buf(&mut self) -> Result<&[u8], PngError> {
-        if !self.current_data.is_empty() {
-            return Ok(self.current_data);
-        }
-        if self.done {
-            return Ok(&[]);
-        }
-
-        // Advance to next chunk
-        loop {
-            if self.chunk_pos + 12 > self.data.len() {
-                self.done = true;
-                self.post_fdat_pos = self.chunk_pos;
-                return Ok(&[]);
-            }
-
-            let length = u32::from_be_bytes(
-                self.data[self.chunk_pos..self.chunk_pos + 4]
-                    .try_into()
-                    .unwrap(),
-            ) as usize;
-            let chunk_type: [u8; 4] = self.data[self.chunk_pos + 4..self.chunk_pos + 8]
-                .try_into()
-                .unwrap();
-            let data_start = self.chunk_pos + 8;
-            let Some(data_end) = data_start.checked_add(length) else {
-                return Err(PngError::Decode("fdAT chunk length overflow".into()));
-            };
-            let Some(crc_end) = data_end.checked_add(4) else {
-                return Err(PngError::Decode("fdAT chunk length overflow".into()));
-            };
-
-            if crc_end > self.data.len() {
-                return Err(PngError::Truncated("truncated fdAT chunk".into()));
-            }
-
-            if chunk_type != *b"fdAT" {
-                // Not fdAT — we're done with this frame's data
-                self.done = true;
-                self.post_fdat_pos = self.chunk_pos;
-                return Ok(&[]);
-            }
-
-            // Validate CRC (skip computation entirely when skip_crc is set)
-            if !self.skip_crc {
-                let stored_crc =
-                    u32::from_be_bytes(self.data[data_end..crc_end].try_into().unwrap());
-                let computed_crc = crc32(crc32(0, &chunk_type), &self.data[data_start..data_end]);
-                if stored_crc != computed_crc {
-                    return Err(PngError::Decode("CRC mismatch in fdAT chunk".into()));
-                }
-            }
-
-            // Skip 4-byte sequence number to get deflate data
-            let deflate_start = data_start + 4;
-            if deflate_start < data_end {
-                self.current_data = &self.data[deflate_start..data_end];
-            } else {
-                self.current_data = &[];
-            }
-            self.chunk_pos = crc_end;
-
-            if !self.current_data.is_empty() {
-                return Ok(self.current_data);
-            }
-            // Empty fdAT chunk — skip and try next
-        }
-    }
-
-    fn consume(&mut self, n: usize) {
-        self.current_data = &self.current_data[n..];
-    }
-}
-
 // ── Unfilter ────────────────────────────────────────────────────────
 
 /// Apply inverse filter to a row in-place given the previous (unfiltered) row.
@@ -402,7 +357,7 @@ pub(crate) struct RowDecoder<'a> {
     /// Boxed: zenflate's decoder keeps its Huffman tables inline (~10 KiB),
     /// and every move of `RowDecoder` would copy them (55K instructions of
     /// memcpy per 64 px decode, 2026-10-07 callgrind).
-    decompressor: Box<zenflate::StreamDecompressor<IdatSource<'a>>>,
+    decompressor: Box<zenflate::StreamDecompressor<ChunkSource<'a>>>,
     ihdr: Ihdr,
     ancillary: PngAncillary,
 
@@ -419,6 +374,7 @@ pub(crate) struct RowDecoder<'a> {
     chunk_warnings: Vec<crate::decode::PngWarning>,
 
     /// Validated `iDOT` segment table, if the file has a usable one.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     idot: Option<alloc::vec::Vec<super::idot::IdotSegment>>,
 
     /// Adler-32 is verified (strict decoding).
@@ -521,8 +477,8 @@ impl<'a> RowDecoder<'a> {
             _ => None,
         };
 
-        // Create IDAT source and decompressor — data is moved into IdatSource
-        let source = IdatSource::new(data, first_idat_pos, config.skip_critical_chunk_crc)?;
+        // Create IDAT source and decompressor — data is moved into ChunkSource
+        let source = ChunkSource::idat(data, first_idat_pos, config.skip_critical_chunk_crc)?;
         let decompressor = Box::new(
             zenflate::StreamDecompressor::zlib(source, capacity)
                 .with_skip_checksum(config.skip_decompression_checksum),
@@ -545,6 +501,7 @@ impl<'a> RowDecoder<'a> {
     }
 
     /// The validated `iDOT` segment table, if any.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn idot_segments(&self) -> Option<&[super::idot::IdotSegment]> {
         self.idot.as_deref()
     }
@@ -613,6 +570,7 @@ impl<'a> RowDecoder<'a> {
     /// Copy the next filtered row (filter byte + data, [`stride`](Self::stride)
     /// bytes) into `dest` without unfiltering it, for a consumer that
     /// unfilters on another thread.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn next_filtered_row(
         &mut self,
         dest: &mut [u8],
@@ -630,11 +588,13 @@ impl<'a> RowDecoder<'a> {
     }
 
     /// Filtered row length: filter byte + raw row bytes.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn stride(&self) -> usize {
         self.stride
     }
 
     /// Bytes per complete pixel, as the unfilter step uses it.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn bpp(&self) -> usize {
         self.bpp
     }

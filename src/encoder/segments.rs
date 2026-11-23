@@ -154,6 +154,12 @@ pub(crate) fn segment(
         slices.push(&filtered[start..end]);
         start = end;
     }
+    #[cfg(target_arch = "wasm32")]
+    let threads = {
+        let _ = max_threads;
+        1
+    };
+    #[cfg(not(target_arch = "wasm32"))]
     let threads = if max_threads == 0 {
         std::thread::available_parallelism().map_or(1, |n| n.get())
     } else {
@@ -176,29 +182,34 @@ pub(crate) fn segment(
             parts[k] = Some(compress_one(&mut main, k, d));
         }
     } else {
-        drop(main);
-        // Workers take segments round-robin by index.
-        let results: Vec<Vec<(usize, SegResult)>> = std::thread::scope(|s| {
-            let handles: Vec<_> = (0..threads)
-                .map(|t| {
-                    let slices = &slices;
-                    let compress_one = &compress_one;
-                    s.spawn(move || {
-                        let mut c = StripCompressor::new(level);
-                        (t..n)
-                            .step_by(threads)
-                            .map(|k| (k, compress_one(&mut c, k, slices[k])))
-                            .collect::<Vec<_>>()
+        #[cfg(target_arch = "wasm32")]
+        unreachable!("threads is 1 on wasm32");
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            drop(main);
+            // Workers take segments round-robin by index.
+            let results: Vec<Vec<(usize, SegResult)>> = std::thread::scope(|s| {
+                let handles: Vec<_> = (0..threads)
+                    .map(|t| {
+                        let slices = &slices;
+                        let compress_one = &compress_one;
+                        s.spawn(move || {
+                            let mut c = StripCompressor::new(level);
+                            (t..n)
+                                .step_by(threads)
+                                .map(|k| (k, compress_one(&mut c, k, slices[k])))
+                                .collect::<Vec<_>>()
+                        })
                     })
-                })
-                .collect();
-            handles
-                .into_iter()
-                .map(|h| h.join().unwrap_or_default())
-                .collect()
-        });
-        for (k, r) in results.into_iter().flatten() {
-            parts[k] = Some(r);
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|h| h.join().unwrap_or_default())
+                    .collect()
+            });
+            for (k, r) in results.into_iter().flatten() {
+                parts[k] = Some(r);
+            }
         }
     }
     let mut out_parts = Vec::with_capacity(n);
