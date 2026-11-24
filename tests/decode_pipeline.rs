@@ -105,7 +105,18 @@ fn pipelined_decode_matches_serial() {
                 decode(&png, &cfg.with_max_threads(0), &Unstoppable).unwrap()
             });
             assert!(
-                serial.pixels.copy_to_contiguous_bytes() == piped.pixels.copy_to_contiguous_bytes(),
+                serial
+                    .pixels
+                    .as_view()
+                    .try_contiguous_bytes()
+                    .unwrap()
+                    .into_owned()
+                    == piped
+                        .pixels
+                        .as_view()
+                        .try_contiguous_bytes()
+                        .unwrap()
+                        .into_owned(),
                 "{name}: pipelined output differs"
             );
             assert_eq!(serial.warnings, piped.warnings, "{name}: warnings differ");
@@ -167,12 +178,12 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
         _y: u32,
         height: u32,
         width: u32,
-        descriptor: zenpixels::PixelDescriptor,
-    ) -> Result<zenpixels::PixelSliceMut<'_>, zencodec::decode::SinkError> {
-        let stride = width as usize * descriptor.bytes_per_pixel();
+        descriptor: zenpixels::ImageSpec,
+    ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
+        let stride = width as usize * descriptor.layout.bytes_per_pixel();
         self.0.resize(height as usize * stride, 0);
         Ok(
-            zenpixels::PixelSliceMut::new(&mut self.0, width, height, stride, descriptor)
+            zenpixels::PixelViewMut::new(&mut self.0, width, height, stride, descriptor)
                 .expect("sized"),
         )
     }
@@ -202,7 +213,10 @@ fn pipelined_push_decoder_matches_serial() {
         )
         .unwrap()
         .pixels
-        .copy_to_contiguous_bytes();
+        .as_view()
+        .try_contiguous_bytes()
+        .unwrap()
+        .into_owned();
         assert!(
             piped(name, || push(&png, false)).unwrap() == serial,
             "{name}: push differs"
@@ -262,7 +276,10 @@ fn pipelined_streaming_decoder_matches_serial() {
         )
         .unwrap()
         .pixels
-        .copy_to_contiguous_bytes();
+        .as_view()
+        .try_contiguous_bytes()
+        .unwrap()
+        .into_owned();
         assert!(
             piped(name, || stream(&png, false)).unwrap() == serial,
             "{name}: stream differs"
@@ -317,7 +334,10 @@ fn serial_streaming_decoder_matches_decode() {
         )
         .unwrap()
         .pixels
-        .copy_to_contiguous_bytes();
+        .as_view()
+        .try_contiguous_bytes()
+        .unwrap()
+        .into_owned();
         assert!(
             stream_with(&png, false, true).unwrap() == serial,
             "{name}: serial stream differs"

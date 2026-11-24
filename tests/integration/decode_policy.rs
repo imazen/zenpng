@@ -13,7 +13,7 @@ use zencodec::decode::{
 use zencodec::encode::{AnimationFrameEncoder, EncodeJob, Encoder, EncoderConfig};
 use zencodec::{ImageInfo, Orientation, UnsupportedOperation};
 use zencodec_io::{CollectSink, drive_from_slice};
-use zenpixels::{PixelDescriptor, PixelSlice, PixelSliceMut};
+use zenpixels::{ImageSpec, PixelView, PixelViewMut};
 use zenpng::{PngDecodeJob, PngDecoderConfig, PngEncoderConfig, PngError};
 
 const W: u32 = 37;
@@ -119,7 +119,7 @@ fn with_metadata(png: Vec<u8>) -> Vec<u8> {
 /// A still RGB8 PNG whose incompressible image data spans 64-byte IDAT chunks.
 fn still() -> Vec<u8> {
     let data = noise((W * H * 3) as usize, 0x2545_f491);
-    let pixels = PixelSlice::new(&data, W, H, W as usize * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let pixels = PixelView::new(&data, W, H, W as usize * 3, ImageSpec::rgb8_srgb()).unwrap();
     let png = PngEncoderConfig::new()
         .job()
         .encoder()
@@ -138,11 +138,18 @@ fn animation() -> Vec<u8> {
         .unwrap();
     for seed in [0x1234_5677, 0x0bad_f00d] {
         let data = noise((W * H * 4) as usize, seed);
-        let frame =
-            PixelSlice::new(&data, W, H, W as usize * 4, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let frame = PixelView::new(&data, W, H, W as usize * 4, ImageSpec::rgba8_srgb()).unwrap();
         encoder.push_frame(frame, 20, None).unwrap();
     }
-    with_metadata(encoder.finish(None).unwrap().into_vec())
+    // Isolate the ICC gate from APNG's default sRGB cICP. A separate
+    // precedence test exercises the genuine dual-carrier case.
+    let mut file = encoder.finish(None).unwrap().into_vec();
+    let (_, start, end) = spans(&file)
+        .into_iter()
+        .find(|(tag, _, _)| tag == b"cICP")
+        .unwrap();
+    file.drain(start..end);
+    with_metadata(file)
 }
 
 fn job(policy: DecodePolicy) -> PngDecodeJob {
@@ -151,8 +158,8 @@ fn job(policy: DecodePolicy) -> PngDecodeJob {
         .try_with_policy(policy)
         .unwrap_or_else(|e| panic!("{policy:?} refused: {e:?}"))
 }
-fn packed(pixels: &PixelSlice<'_>) -> Vec<u8> {
-    let row = pixels.width() as usize * pixels.descriptor().bytes_per_pixel();
+fn packed(pixels: &PixelView<'_>) -> Vec<u8> {
+    let row = pixels.width() as usize * pixels.spec().layout.bytes_per_pixel();
     (0..pixels.rows())
         .flat_map(|y| pixels.row(y)[..row].to_vec())
         .collect()
@@ -165,10 +172,10 @@ struct Seen {
     exif: Option<Vec<u8>>,
     xmp: Option<Vec<u8>>,
     orientation: Orientation,
-    descriptor: PixelDescriptor,
+    descriptor: ImageSpec,
     pixels: Vec<u8>,
 }
-fn seen(info: &ImageInfo, descriptor: PixelDescriptor, pixels: Vec<u8>) -> Seen {
+fn seen(info: &ImageInfo, descriptor: ImageSpec, pixels: Vec<u8>) -> Seen {
     Seen {
         icc: info.source_color.icc_profile.as_deref().map(<[u8]>::to_vec),
         exif: info.embedded_metadata.exif.as_deref().map(<[u8]>::to_vec),
@@ -187,7 +194,11 @@ fn expected(policy: DecodePolicy, reference: &Seen) -> Seen {
         exif: policy.resolve_exif(true).then(|| EXIF.to_vec()),
         xmp: policy.resolve_xmp(true).then(|| XMP.to_vec()),
         orientation: Orientation::Rotate90,
-        descriptor: reference.descriptor,
+        descriptor: if policy.resolve_icc(true) {
+            reference.descriptor.clone()
+        } else {
+            ImageSpec::rgb8_srgb()
+        },
         pixels: reference.pixels.clone(),
     }
 }
@@ -200,7 +211,7 @@ fn one_shot(policy: DecodePolicy, bytes: &[u8]) -> Seen {
         .unwrap();
     seen(
         output.info(),
-        output.pixels().descriptor(),
+        output.pixels().spec().clone(),
         packed(&output.pixels()),
     )
 }
@@ -210,7 +221,7 @@ fn streamed(policy: DecodePolicy, bytes: &[u8]) -> Seen {
         .unwrap_or_else(|e| panic!("{e}"));
     let (mut rows, mut descriptor) = (Vec::new(), None);
     while let Some((_, strip)) = decoder.next_batch().unwrap() {
-        descriptor = Some(strip.descriptor());
+        descriptor = Some(strip.spec().clone());
         rows.extend(packed(&strip));
     }
     seen(decoder.info(), descriptor.unwrap(), rows)
@@ -226,7 +237,7 @@ fn incremental(policy: DecodePolicy, bytes: &[u8]) -> Seen {
     )
 }
 /// Push reports no `ImageInfo`: pixels and descriptor only.
-fn pushed(policy: DecodePolicy, bytes: &[u8]) -> (PixelDescriptor, Vec<u8>) {
+fn pushed(policy: DecodePolicy, bytes: &[u8]) -> (ImageSpec, Vec<u8>) {
     let mut sink = CollectSink::new();
     let output = job(policy)
         .push_decoder(Cow::Borrowed(bytes), &mut sink, &[])
@@ -241,7 +252,7 @@ struct Counted {
     calls: usize,
 }
 impl DecodeRowSink for Counted {
-    fn begin(&mut self, w: u32, h: u32, d: PixelDescriptor) -> Result<(), SinkError> {
+    fn begin(&mut self, w: u32, h: u32, d: ImageSpec) -> Result<(), SinkError> {
         self.calls += 1;
         self.sink.begin(w, h, d)
     }
@@ -250,8 +261,8 @@ impl DecodeRowSink for Counted {
         y: u32,
         h: u32,
         w: u32,
-        d: PixelDescriptor,
-    ) -> Result<PixelSliceMut<'_>, SinkError> {
+        d: ImageSpec,
+    ) -> Result<PixelViewMut<'_>, SinkError> {
         self.calls += 1;
         self.sink.provide_next_buffer(y, h, w, d)
     }
@@ -348,13 +359,22 @@ fn checked_setter_admits_the_metadata_gates_and_refusing_truncation_only() {
 fn metadata_gates_hold_on_every_still_route_without_changing_pixels() {
     let bytes = still();
     let reference = one_shot(DecodePolicy::none(), &bytes);
-    assert_eq!(reference.descriptor, PixelDescriptor::RGB8_SRGB);
+    let rgb_icc = ImageSpec::new(
+        zenpixels::SampleLayout::RGB8,
+        zenpixels::ColorSpace::Icc {
+            profile: std::sync::Arc::from(P3),
+            channels: 3,
+            alpha: zenpixels::AlphaMode::None,
+            intent: zenpixels::RenderingIntent::default(),
+        },
+    );
+    assert_eq!(reference.descriptor, rgb_icc);
     assert_eq!(reference.pixels.len(), (W * H * 3) as usize);
     for policy in metadata_policies() {
         let want = expected(policy, &reference);
         let probed = job(policy).probe(&bytes).unwrap();
         assert_eq!(
-            seen(&probed, want.descriptor, want.pixels.clone()),
+            seen(&probed, want.descriptor.clone(), want.pixels.clone()),
             want,
             "probe {policy:?}"
         );
@@ -379,10 +399,11 @@ fn metadata_gates_hold_for_apng_frames_and_their_colour_context() {
         let mut out = Vec::new();
         while let Some(frame) = decoder.render_next_frame(None).unwrap() {
             let pixels = frame.pixels();
-            let icc = pixels
-                .color_context()
-                .and_then(|c| c.icc.as_deref().map(<[u8]>::to_vec));
-            out.push((pixels.descriptor(), packed(pixels), icc));
+            let icc = match &pixels.spec().color {
+                zenpixels::ColorSpace::Icc { profile, .. } => Some(profile.to_vec()),
+                _ => None,
+            };
+            out.push((pixels.spec().clone(), packed(pixels), icc));
         }
         (decoder.info().clone(), out)
     };
@@ -390,14 +411,29 @@ fn metadata_gates_hold_for_apng_frames_and_their_colour_context() {
     assert_eq!(reference.len(), 2);
     for policy in metadata_policies() {
         let (info, decoded) = frames(policy);
-        let header = seen(&info, PixelDescriptor::RGBA8_SRGB, Vec::new());
+        let header = seen(
+            &info,
+            if policy.resolve_icc(true) {
+                ImageSpec::rgba8_srgb()
+            } else {
+                ImageSpec::rgb8_srgb()
+            },
+            Vec::new(),
+        );
         assert_eq!(header, expected(policy, &header), "{policy:?}");
         let icc = policy.resolve_icc(true).then(|| P3.to_vec());
         assert_eq!(decoded.len(), reference.len(), "{policy:?}");
         for (frame, (want, got)) in reference.iter().zip(&decoded).enumerate() {
             assert_eq!(
-                (got.0, &got.1),
-                (want.0, &want.1),
+                (got.0.clone(), &got.1),
+                (
+                    if policy.resolve_icc(true) {
+                        want.0.clone()
+                    } else {
+                        ImageSpec::rgba8_srgb()
+                    },
+                    &want.1
+                ),
                 "frame {frame}, {policy:?}"
             );
             // A forbidden profile must not ride along on the frame instead.

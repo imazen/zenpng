@@ -10,7 +10,7 @@
 use enough::Unstoppable;
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig, OutputTiming};
 use zencodec::{ResourceLimits, ThreadingPolicy};
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{ImageSpec, PixelView};
 use zenpng::{Compression, DowncastFlags, PngDecodeConfig, PngDecoderConfig, PngEncoderConfig};
 
 /// RGB8 noise over gradients: compresses, but not to nothing.
@@ -41,10 +41,10 @@ fn cfg(effort: u32) -> PngEncoderConfig {
         .with_threading(ThreadingPolicy::Sequential)
 }
 
-const RGB8: PixelDescriptor = PixelDescriptor::RGB8_SRGB;
+const RGB8: ImageSpec = ImageSpec::rgb8_srgb();
 
 fn one_shot(cfg: &PngEncoderConfig, px: &[u8], w: u32, h: u32) -> Vec<u8> {
-    let s = PixelSlice::new(px, w, h, w as usize * 3, RGB8).unwrap();
+    let s = PixelView::new(px, w, h, w as usize * 3, RGB8).unwrap();
     cfg.clone()
         .job()
         .encoder()
@@ -82,7 +82,7 @@ fn rows(
             break;
         }
         let k = strip.min(h - y);
-        let s = PixelSlice::new(
+        let s = PixelView::new(
             &px[y as usize * stride..(y + k) as usize * stride],
             w,
             k,
@@ -102,7 +102,10 @@ fn decode(png: &[u8]) -> Vec<u8> {
     zenpng::decode(png, &PngDecodeConfig::strict(), &Unstoppable)
         .unwrap()
         .pixels
-        .copy_to_contiguous_bytes()
+        .as_view()
+        .try_contiguous_bytes()
+        .unwrap()
+        .into_owned()
 }
 
 /// The chunks of a PNG: (type, data).
@@ -234,10 +237,10 @@ fn begin_checks_the_declaration() {
     assert!(enc.begin(32, 32, RGB8).is_err(), "canvas mismatch");
     let mut enc = cfg(0).job().encoder().unwrap();
     enc.begin(32, 32, RGB8).unwrap();
-    let rgba = PixelSlice::new(&px[..32 * 4], 8, 4, 32, PixelDescriptor::RGBA8_SRGB).unwrap();
+    let rgba = PixelView::new(&px[..32 * 4], 8, 4, 32, ImageSpec::rgba8_srgb()).unwrap();
     assert!(enc.push_rows(rgba).is_err(), "other pixel format");
     let mut enc = cfg(0).job().encoder().unwrap();
-    enc.push_rows(PixelSlice::new(&px[..96], 32, 1, 96, RGB8).unwrap())
+    enc.push_rows(PixelView::new(&px[..96], 32, 1, 96, RGB8).unwrap())
         .unwrap();
     assert!(enc.begin(32, 32, RGB8).is_err(), "begin after rows");
 }
@@ -257,7 +260,7 @@ fn output_limit_counts_bytes_already_sent() {
         for y in 0..h as usize {
             let n = enc.pending_output().len();
             enc.consume_output(n);
-            enc.push_rows(PixelSlice::new(&px[y * 291..(y + 1) * 291], w, 1, 291, RGB8).unwrap())?;
+            enc.push_rows(PixelView::new(&px[y * 291..(y + 1) * 291], w, 1, 291, RGB8).unwrap())?;
         }
         enc.finish().map(|_| ())
     };
@@ -289,7 +292,7 @@ fn one_shot_after_begin_and_a_second_begin_are_refused() {
     assert!(e.to_string().contains("twice"), "{e}");
     let mut enc = cfg(0).job().encoder().unwrap();
     enc.begin(32, 32, RGB8).unwrap();
-    let s = PixelSlice::new(&px, 32, 32, 96, RGB8).unwrap();
+    let s = PixelView::new(&px, 32, 32, 96, RGB8).unwrap();
     assert!(enc.encode(s).is_err());
 }
 

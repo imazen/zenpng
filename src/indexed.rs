@@ -1290,7 +1290,6 @@ mod tests {
     #[test]
     fn joint_compression_comparison() {
         use crate::quantize::ZenquantQuantizer;
-        use zenpixels_convert::PixelBufferConvertTypedExt;
 
         fn compare(name: &str, img: ImgRef<'_, Rgba<u8>>, tolerance: f32) {
             let config = EncodeConfig::default();
@@ -1368,9 +1367,12 @@ mod tests {
                     .unwrap()
                     .to_string_lossy()
                     .into_owned();
-                let pb = decoded.pixels.to_rgba8();
+                let pb = crate::pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                    &decoded.pixels,
+                    zenpixels::ImageSpec::rgba8_srgb(),
+                );
                 let img = ImgVec::new(
-                    pb.as_imgref().pixels().collect(),
+                    pb.as_ref().pixels().collect(),
                     pb.width() as usize,
                     pb.height() as usize,
                 );
@@ -1389,8 +1391,6 @@ mod tests {
 
     #[test]
     fn exact_palette_pixel_perfect_roundtrip() {
-        use zenpixels_convert::PixelBufferConvertTypedExt;
-
         let mut pixels = Vec::with_capacity(64);
         for y in 0..8u8 {
             for x in 0..8u8 {
@@ -1429,8 +1429,11 @@ mod tests {
             &enough::Unstoppable,
         )
         .unwrap();
-        let decoded_rgba = decoded.pixels.to_rgba8();
-        let decoded_img = decoded_rgba.as_imgref();
+        let decoded_rgba = crate::pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+            &decoded.pixels,
+            zenpixels::ImageSpec::rgba8_srgb(),
+        );
+        let decoded_img = decoded_rgba.as_ref();
         let decoded_buf = decoded_img.buf();
         assert_eq!(decoded_buf.len(), pixels.len());
         for (i, (orig, dec)) in pixels.iter().zip(decoded_buf.iter()).enumerate() {

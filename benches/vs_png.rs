@@ -65,7 +65,12 @@ fn bench_decode(suite: &mut Suite) {
         let px = out.info.width as u64 * out.info.height as u64;
         // Untimed sanity: both decoders must agree (8-bit outputs; the png
         // crate returns 16-bit samples big-endian, zenpng native-endian).
-        let ours = out.pixels.copy_to_contiguous_bytes();
+        let ours = out
+            .pixels
+            .as_view()
+            .try_contiguous_bytes()
+            .unwrap()
+            .into_owned();
         let theirs = png_main_decode(data);
         if !name.contains("16") {
             assert!(ours == theirs, "{name}: decoders disagree");
@@ -113,7 +118,12 @@ fn bench_encode(suite: &mut Suite) {
     {
         let out = zenpng_decode(data);
         let (w, h) = (out.info.width as usize, out.info.height as usize);
-        let bytes = out.pixels.copy_to_contiguous_bytes();
+        let bytes = out
+            .pixels
+            .as_view()
+            .try_contiguous_bytes()
+            .unwrap()
+            .into_owned();
         if bytes.len() != w * h * 3 {
             continue; // not RGB8 after decode
         }

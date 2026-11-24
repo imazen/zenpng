@@ -16,6 +16,11 @@ All notable changes to zenpng are documented here.
 
 ### QUEUED BREAKING CHANGES
 
+- Native decode returns zenpixels 0.5 `PixelBuf`. The zencodec adapters
+  accept `PixelView` and declare `ImageSpec`. Use `as_view().try_as_imgref()`
+  for a typed borrow and keep `PngInfo` for exact color chunk values.
+
+
 - The zencodec adapter implements zencodec's Pulse controls (review revision
   `f73a7e0e`): jobs implement `with_pulse` and retain a `SharedPulse`, the
   animation encoder and decoder take `Option<&dyn Pulse>`, and

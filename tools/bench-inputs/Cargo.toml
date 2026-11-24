@@ -1,0 +1,36 @@
+[package]
+name = "zenpng-bench-inputs"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "gen_bench_inputs"
+path = "src/main.rs"
+
+[dependencies]
+enough = "0.4.5"
+rgb = { version = "0.8.53", features = ["bytemuck"] }
+bytemuck = { version = "1.25.2", features = ["extern_crate_alloc"] }
+imgref = "1.12.3"
+png_main = { package = "png", git = "https://github.com/image-rs/image-png", rev = "b2f10c6a7e3127d4aaf231f3eae731a33e6eb0bc" }
+zenpng = { path = "../.." }
+# This standalone tool keeps zenresize's legacy zenpixels out of zenpng's graph.
+zenresize = "0.3.1"
+
+[patch.crates-io]
+# One zencodec family revision for the zenpixels 0.5 interchange types.
+# These patches also resolve the unpublished I/O, coroutine and metadata crates.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
+garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
+# Retain main's strip-compression API source.
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "7270e38faca9cdbae793938fa229d40ac4fe4c39" }

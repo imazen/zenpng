@@ -2,7 +2,7 @@
 use enough::Unstoppable;
 use imgref::ImgRef;
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{ImageSpec, PixelView};
 use zenpng::{ApngEncodeConfig, ApngFrameInput, Compression, DowncastFlags, EncodeConfig};
 
 fn payload() -> [u8; 24] {
@@ -95,7 +95,21 @@ fn raw_mastering_still_animation_and_row_routes() {
         let mut encoder = cfg.job().with_canvas_size(2, 2).encoder().unwrap();
         for row in rgba.as_chunks::<8>().0 {
             encoder
-                .push_rows(PixelSlice::new(row, 2, 1, 8, PixelDescriptor::RGBA8_SRGB).unwrap())
+                .push_rows(
+                    PixelView::new(
+                        row,
+                        2,
+                        1,
+                        8,
+                        ImageSpec::new(
+                            zenpixels::SampleLayout::RGBA8,
+                            zenpixels::Cicp::BT2100_PQ_RGB
+                                .to_color_space(zenpixels::AlphaMode::Straight)
+                                .unwrap(),
+                        ),
+                    )
+                    .unwrap(),
+                )
                 .unwrap();
         }
         verify(encoder.finish().unwrap().data(), raw);

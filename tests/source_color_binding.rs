@@ -1,6 +1,6 @@
 //! The colour chunks the zencodec adapter writes must describe the samples
 //! the file stores, taken from the current pixel interpretation (descriptor
-//! plus `PixelSlice` colour context) when the caller supplied no colour
+//! plus `PixelView` colour context) when the caller supplied no colour
 //! metadata. The checked `EncodeRequest` path supplies none. One-shot and row
 //! encodes of the same pixels must agree. Linear input is stored as 8-bit
 //! sRGB, so a description of the linear samples no longer applies.
@@ -14,7 +14,7 @@ use std::sync::Arc;
 use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
 use zencodec::operation::EncodeRequest;
 use zencodec::{CodecSet, ImageFormat, Metadata, MetadataPolicy};
-use zenpixels::{Cicp, ColorContext, ColorPrimaries, PixelDescriptor, PixelSlice};
+use zenpixels::{Cicp, ColorSpace, ImageSpec, PixelView, Primaries};
 use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
 use zenpng::{Compression, PngEncoderConfig};
 
@@ -45,8 +45,8 @@ impl Raster {
         &mut self.buf[at..at + self.stride]
     }
 
-    fn slice(&self, descriptor: PixelDescriptor) -> PixelSlice<'_> {
-        PixelSlice::new(&self.buf[self.start..], W, H, self.stride, descriptor).unwrap()
+    fn slice(&self, descriptor: ImageSpec) -> PixelView<'_> {
+        PixelView::new(&self.buf[self.start..], W, H, self.stride, descriptor).unwrap()
     }
 }
 
@@ -82,8 +82,8 @@ fn rgbf32_linear() -> Raster {
     raster
 }
 
-fn p3(base: PixelDescriptor) -> PixelDescriptor {
-    base.with_primaries(ColorPrimaries::DisplayP3)
+fn p3(base: ImageSpec) -> ImageSpec {
+    base.with_primaries(Primaries::DisplayP3)
 }
 
 struct Read {
@@ -132,7 +132,7 @@ fn assert_samples(read: &Read, tolerance: u8, what: &str) {
     }
 }
 
-fn checked(pixels: PixelSlice<'_>) -> Result<Vec<u8>, String> {
+fn checked(pixels: PixelView<'_>) -> Result<Vec<u8>, String> {
     let codecs = CodecSet::new().with_encoder(PngEncoderConfig::new());
     EncodeRequest::new(ImageFormat::Png)
         .encode(&codecs, pixels)
@@ -141,7 +141,7 @@ fn checked(pixels: PixelSlice<'_>) -> Result<Vec<u8>, String> {
 }
 
 #[allow(deprecated)] // Exercises the published best-effort job setters.
-fn with_metadata(meta: Metadata, pixels: PixelSlice<'_>) -> Result<Vec<u8>, String> {
+fn with_metadata(meta: Metadata, pixels: PixelView<'_>) -> Result<Vec<u8>, String> {
     PngEncoderConfig::new()
         .job()
         .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
@@ -159,9 +159,15 @@ const P3: (u8, u8, u8, bool) = (12, 13, 0, true);
 #[test]
 fn checked_request_binds_the_current_pixel_colour() {
     let raster = rgb8();
-    let icc = raster
-        .slice(PixelDescriptor::RGB8_SRGB)
-        .with_color_context(Arc::new(ColorContext::from_icc(DISPLAY_P3_V4)));
+    let icc = raster.slice(ImageSpec::new(
+        zenpixels::SampleLayout::RGB8,
+        ColorSpace::Icc {
+            profile: Arc::from(DISPLAY_P3_V4),
+            channels: 3,
+            alpha: zenpixels::AlphaMode::None,
+            intent: zenpixels::RenderingIntent::default(),
+        },
+    ));
     let read = oracle(&checked(icc).unwrap());
     assert_eq!(read.icc.as_deref(), Some(DISPLAY_P3_V4), "context ICC");
     assert!(
@@ -171,9 +177,10 @@ fn checked_request_binds_the_current_pixel_colour() {
     );
     assert_samples(&read, 0, "context ICC");
 
-    let cicp = raster
-        .slice(PixelDescriptor::RGB8_SRGB)
-        .with_color_context(Arc::new(ColorContext::from_cicp(Cicp::DISPLAY_P3)));
+    let cicp = raster.slice(ImageSpec::new(
+        zenpixels::SampleLayout::RGB8,
+        ColorSpace::DISPLAY_P3,
+    ));
     let read = oracle(&checked(cicp).unwrap());
     assert_eq!(read.cicp, Some(P3), "context CICP");
     assert_samples(&read, 0, "context CICP");
@@ -184,7 +191,7 @@ fn checked_request_binds_the_current_pixel_colour() {
 #[test]
 fn row_encodes_write_the_same_colour_as_one_shot() {
     let raster = rgb8();
-    let desc = p3(PixelDescriptor::RGB8_SRGB);
+    let desc = p3(ImageSpec::rgb8_srgb());
     for compression in [
         Compression::Effort(0),
         Compression::Effort(1),
@@ -197,14 +204,19 @@ fn row_encodes_write_the_same_colour_as_one_shot() {
             .job()
             .encoder()
             .unwrap()
-            .encode(raster.slice(desc))
+            .encode(raster.slice(desc.clone()))
             .unwrap();
         let mut rows = config.job().encoder().unwrap();
-        rows.begin(W, H, desc).unwrap();
+        rows.begin(W, H, desc.clone()).unwrap();
         let mut file = Vec::new();
         for y in (0..H).step_by(3) {
-            rows.push_rows(raster.slice(desc).sub_rows(y, 3.min(H - y)))
-                .unwrap();
+            rows.push_rows(
+                raster
+                    .slice(desc.clone())
+                    .sub_rows(y, 3.min(H - y))
+                    .unwrap(),
+            )
+            .unwrap();
             rows.take_output(&mut file);
         }
         file.extend_from_slice(rows.finish().unwrap().data());
@@ -221,18 +233,20 @@ fn row_encodes_write_the_same_colour_as_one_shot() {
 #[test]
 fn linear_input_writes_the_colour_of_the_stored_samples() {
     let raster = rgbf32_linear();
-    let desc = p3(PixelDescriptor::RGBF32_LINEAR);
-    for (what, context) in [
-        ("descriptor", None),
+    let desc = p3(ImageSpec::rgbf32_linear());
+    for (what, spec) in [
+        ("structured color", desc.clone()),
         (
-            "context CICP",
-            Some(ColorContext::from_cicp(Cicp::new(12, 8, 0, true))),
+            "CICP projection",
+            ImageSpec::new(
+                desc.layout,
+                Cicp::new(12, 8, 0, true)
+                    .to_color_space(zenpixels::AlphaMode::None)
+                    .unwrap(),
+            ),
         ),
     ] {
-        let mut pixels = raster.slice(desc);
-        if let Some(context) = context {
-            pixels = pixels.with_color_context(Arc::new(context));
-        }
+        let pixels = raster.slice(spec);
         let read = oracle(&checked(pixels).unwrap_or_else(|e| panic!("{what}: {e}")));
         assert_eq!(read.cicp, Some(P3), "{what}");
         assert_samples(&read, 1, what);
@@ -245,7 +259,13 @@ fn linear_input_writes_the_colour_of_the_stored_samples() {
         zenpixels_convert::icc_profiles::SynthesizedIcc::Profile(bytes) => bytes.into_owned(),
         other => panic!("icc-db must synthesize linear P3: {other:?}"),
     };
-    assert!(with_metadata(Metadata::none().with_icc(linear_p3), raster.slice(desc)).is_err());
+    assert!(
+        with_metadata(
+            Metadata::none().with_icc(linear_p3),
+            raster.slice(desc.clone())
+        )
+        .is_err()
+    );
 }
 
 /// Metadata or native configuration contradicting the pixels' explicit
@@ -253,11 +273,7 @@ fn linear_input_writes_the_colour_of_the_stored_samples() {
 #[test]
 fn stale_carriers_contradicting_the_current_context_refuse() {
     let raster = rgb8();
-    let srgb_now = || {
-        raster
-            .slice(PixelDescriptor::RGB8_SRGB)
-            .with_color_context(Arc::new(ColorContext::from_cicp(Cicp::SRGB)))
-    };
+    let srgb_now = || raster.slice(ImageSpec::rgb8_srgb());
     assert!(with_metadata(Metadata::none().with_icc(DISPLAY_P3_V4), srgb_now()).is_err());
     assert!(with_metadata(Metadata::none().with_cicp(Cicp::DISPLAY_P3), srgb_now()).is_err());
     let configured = PngEncoderConfig::new()
@@ -273,11 +289,14 @@ fn stale_carriers_contradicting_the_current_context_refuse() {
 #[test]
 fn default_srgb_bytes_are_identical_across_routes() {
     let raster = rgb8();
-    let plain = checked(raster.slice(PixelDescriptor::RGB8_SRGB)).unwrap();
+    let plain = checked(raster.slice(ImageSpec::rgb8_srgb())).unwrap();
     let explicit = checked(
-        raster
-            .slice(PixelDescriptor::RGB8_SRGB)
-            .with_color_context(Arc::new(ColorContext::from_cicp(Cicp::SRGB))),
+        raster.slice(ImageSpec::new(
+            zenpixels::SampleLayout::RGB8,
+            Cicp::SRGB
+                .to_color_space(zenpixels::AlphaMode::None)
+                .unwrap(),
+        )),
     )
     .unwrap();
     assert_eq!(plain, explicit);

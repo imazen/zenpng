@@ -9,16 +9,16 @@
 
 use sha2::Digest;
 use zencodec::encode::{DynAnimationFrameEncoder, EncodeJob, EncoderConfig};
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{ImageSpec, PixelView};
 use zenpng::{Compression, DowncastFlags, PngEncoderConfig};
 
-const RGB8: PixelDescriptor = PixelDescriptor::RGB8_SRGB;
-const RGBA8: PixelDescriptor = PixelDescriptor::RGBA8_SRGB;
-const BGRA8: PixelDescriptor = PixelDescriptor::BGRA8_SRGB;
-const GRAY8: PixelDescriptor = PixelDescriptor::GRAY8_SRGB;
-const GRAYA8: PixelDescriptor = PixelDescriptor::GRAYA8_SRGB;
-const RGB16: PixelDescriptor = PixelDescriptor::RGB16_SRGB;
-const RGBA16: PixelDescriptor = PixelDescriptor::RGBA16_SRGB;
+const RGB8: ImageSpec = ImageSpec::rgb8_srgb();
+const RGBA8: ImageSpec = ImageSpec::rgba8_srgb();
+const BGRA8: ImageSpec = ImageSpec::bgra8_srgb();
+const GRAY8: ImageSpec = ImageSpec::gray8_srgb();
+const GRAYA8: ImageSpec = ImageSpec::graya8_srgb();
+const RGB16: ImageSpec = ImageSpec::rgb16_srgb();
+const RGBA16: ImageSpec = ImageSpec::rgba16_srgb();
 
 const W: u32 = 96;
 const H: u32 = 64;
@@ -36,22 +36,22 @@ fn pixel(x: u32, y: u32, f: u32) -> [u8; 4] {
     ]
 }
 
-fn frame_bytes(desc: PixelDescriptor, f: u32, alpha: impl Fn(u32, u32) -> u16) -> Vec<u8> {
-    let bpp = desc.bytes_per_pixel();
-    let sixteen = matches!(desc.channel_type(), zenpixels::ChannelType::U16);
+fn frame_bytes(desc: ImageSpec, f: u32, alpha: impl Fn(u32, u32) -> u16) -> Vec<u8> {
+    let bpp = desc.layout.bytes_per_pixel();
+    let sixteen = matches!(desc.layout.sample, zenpixels::SampleType::U16);
     let mut out = Vec::with_capacity(W as usize * H as usize * bpp);
     for y in 0..H {
         for x in 0..W {
             let [r, g, b, _] = pixel(x, y, f);
             let a = alpha(x, y);
-            let samples: Vec<u16> = match desc.layout() {
-                zenpixels::ChannelLayout::Gray => vec![u16::from(r)],
-                zenpixels::ChannelLayout::GrayAlpha => vec![u16::from(r), a],
-                zenpixels::ChannelLayout::Rgb => vec![u16::from(r), u16::from(g), u16::from(b)],
-                zenpixels::ChannelLayout::Rgba => {
+            let samples: Vec<u16> = match desc.layout.order {
+                zenpixels::ChannelOrder::Gray => vec![u16::from(r)],
+                zenpixels::ChannelOrder::GrayAlpha => vec![u16::from(r), a],
+                zenpixels::ChannelOrder::Rgb => vec![u16::from(r), u16::from(g), u16::from(b)],
+                zenpixels::ChannelOrder::Rgba => {
                     vec![u16::from(r), u16::from(g), u16::from(b), a]
                 }
-                zenpixels::ChannelLayout::Bgra => {
+                zenpixels::ChannelOrder::Bgra => {
                     vec![u16::from(b), u16::from(g), u16::from(r), a]
                 }
                 _ => panic!("test layout"),
@@ -69,8 +69,10 @@ fn frame_bytes(desc: PixelDescriptor, f: u32, alpha: impl Fn(u32, u32) -> u16) -
     out
 }
 
-fn frames_for(desc: PixelDescriptor, alpha: impl Fn(u32, u32) -> u16) -> Vec<Vec<u8>> {
-    (0..FRAMES).map(|f| frame_bytes(desc, f, &alpha)).collect()
+fn frames_for(desc: ImageSpec, alpha: impl Fn(u32, u32) -> u16) -> Vec<Vec<u8>> {
+    (0..FRAMES)
+        .map(|f| frame_bytes(desc.clone(), f, &alpha))
+        .collect()
 }
 
 /// Encode `fs` through the dyn animation API; `declare` is the frame count
@@ -78,7 +80,7 @@ fn frames_for(desc: PixelDescriptor, alpha: impl Fn(u32, u32) -> u16) -> Vec<Vec
 fn encode(
     cfg: &PngEncoderConfig,
     fs: &[Vec<u8>],
-    desc: PixelDescriptor,
+    desc: ImageSpec,
     declare: Option<Option<u32>>,
 ) -> Vec<u8> {
     let mut a: Box<dyn DynAnimationFrameEncoder> = cfg
@@ -88,13 +90,13 @@ fn encode(
         .dyn_animation_frame_encoder()
         .unwrap();
     if let Some(n) = declare {
-        a.begin(W, H, desc, n).unwrap();
+        a.begin(W, H, desc.clone(), n).unwrap();
     }
-    let stride = W as usize * desc.bytes_per_pixel();
+    let stride = W as usize * desc.layout.bytes_per_pixel();
     let mut out = Vec::new();
     for (i, f) in fs.iter().enumerate() {
         a.push_frame(
-            PixelSlice::new(f, W, H, stride, desc).unwrap(),
+            PixelView::new(f, W, H, stride, desc.clone()).unwrap(),
             40 + i as u32 * 10,
             None,
         )
@@ -124,7 +126,7 @@ fn sha(data: &[u8]) -> String {
 
 struct Case {
     name: &'static str,
-    desc: PixelDescriptor,
+    desc: ImageSpec,
     opaque: bool,
 }
 
@@ -192,7 +194,7 @@ fn run_matrix() -> Vec<(String, String)> {
                 }
             }
         };
-        let fs = frames_for(case.desc, alpha);
+        let fs = frames_for(case.desc.clone(), alpha);
         for effort in [None, Some(0), Some(1), Some(2), Some(5), Some(7)] {
             for (dname, downcast) in [
                 ("dcdefault", Some(DowncastFlags::default())),
@@ -204,7 +206,7 @@ fn run_matrix() -> Vec<(String, String)> {
                     ("begin_unk", Some(None)),
                 ] {
                     let cfg = cfg(effort, downcast);
-                    let bytes = encode(&cfg, &fs, case.desc, declare);
+                    let bytes = encode(&cfg, &fs, case.desc.clone(), declare);
                     out.push((
                         format!("{}/{}/{}/{}", case.name, effort_name(effort), dname, bname),
                         sha(&bytes),

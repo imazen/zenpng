@@ -7,7 +7,6 @@ use std::path::Path;
 use std::time::Instant;
 
 use rgb::Rgba;
-use zenpixels_convert::PixelBufferConvertTypedExt;
 
 use zenpng::{
     ApngEncodeConfig, ApngEncodeParams, ApngFrameInput, QualityGate, ZenquantQuantizer,
@@ -103,8 +102,11 @@ fn load_corpus() -> Vec<DecodedApng> {
             .frames
             .iter()
             .map(|f| {
-                let rgba = f.pixels.to_rgba8();
-                let imgref = rgba.as_imgref();
+                let rgba = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                    &f.pixels,
+                    zenpixels::ImageSpec::rgba8_srgb(),
+                );
+                let imgref = rgba.as_ref();
                 let pixels = *imgref.buf();
                 for px in pixels {
                     if unique.len() <= 256 {
@@ -310,3 +312,6 @@ fn main() {
     );
     println!("  Originals:       {} total", fmt_size(total_orig));
 }
+
+#[path = "support/pixels.rs"]
+mod pixel_conversion;

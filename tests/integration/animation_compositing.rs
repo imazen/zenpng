@@ -3,7 +3,7 @@
 use enough::Unstoppable;
 use std::borrow::Cow;
 use zencodec::decode::{AnimationFrameDecoder, DecodeJob, DecoderConfig};
-use zenpixels::PixelDescriptor;
+use zenpixels::ImageSpec;
 use zenpng::{DowncastFlags, EncodeConfig, PngDecoderConfig};
 
 fn chunk(output: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
@@ -147,11 +147,11 @@ fn subframes_blend_dispose_and_skip_at_both_precisions() {
                         let pixels = frame.pixels();
                         assert_eq!((pixels.width(), pixels.rows()), (3, 2));
                         assert_eq!(
-                            pixels.descriptor(),
+                            *pixels.spec(),
                             if depth == 16 {
-                                PixelDescriptor::RGBA16_SRGB
+                                ImageSpec::rgba16_srgb()
                             } else {
-                                PixelDescriptor::RGBA8_SRGB
+                                ImageSpec::rgba8_srgb()
                             }
                         );
                         let actual: Vec<u16> = (0..2)
@@ -174,7 +174,7 @@ fn subframes_blend_dispose_and_skip_at_both_precisions() {
                             "depth={depth} disposal={disposal} excluded={excluded_default} start={start} index={index}"
                         );
                         for y in 0..2 {
-                            assert_eq!(pixels.row(y), whole.frames[index].pixels.as_slice().row(y));
+                            assert_eq!(pixels.row(y), whole.frames[index].pixels.as_view().row(y));
                         }
                     }
                     assert!(decoder.render_next_frame(None).unwrap().is_none());

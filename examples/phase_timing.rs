@@ -11,8 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use enough::Unstoppable;
-use zenpixels::descriptor::{ChannelLayout, ChannelType};
-use zenpixels_convert::PixelBufferConvertTypedExt;
+use zenpixels::{ChannelOrder, SampleType};
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
@@ -37,10 +36,10 @@ fn run_single(path: &Path) {
         .expect("failed to decode");
 
     let (w, h) = (decoded.info.width, decoded.info.height);
-    let desc = decoded.pixels.descriptor();
-    let (bpp_label, raw_bytes) = match (desc.layout(), desc.channel_type()) {
-        (ChannelLayout::Rgb, ChannelType::U8) => ("RGB8", w as usize * h as usize * 3),
-        (ChannelLayout::Rgba, ChannelType::U8) => ("RGBA8", w as usize * h as usize * 4),
+    let desc = decoded.pixels.spec();
+    let (bpp_label, raw_bytes) = match (desc.layout.order, desc.layout.sample) {
+        (ChannelOrder::Rgb, SampleType::U8) => ("RGB8", w as usize * h as usize * 3),
+        (ChannelOrder::Rgba, SampleType::U8) => ("RGBA8", w as usize * h as usize * 4),
         _ => panic!("unsupported pixel format: {:?}", desc),
     };
 
@@ -84,21 +83,27 @@ fn run_single(path: &Path) {
             .with_chromaticities(decoded.info.chromaticities);
 
         let total_start = Instant::now();
-        let result = match (desc.layout(), desc.channel_type()) {
-            (ChannelLayout::Rgb, ChannelType::U8) => {
-                let buf = decoded.pixels.to_rgb8();
+        let result = match (desc.layout.order, desc.layout.sample) {
+            (ChannelOrder::Rgb, SampleType::U8) => {
+                let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
+                    &decoded.pixels,
+                    zenpixels::ImageSpec::rgb8_srgb(),
+                );
                 zenpng::encode_rgb8_with_stats(
-                    buf.as_imgref(),
+                    buf.as_ref(),
                     None,
                     &config,
                     &Unstoppable,
                     &Unstoppable,
                 )
             }
-            (ChannelLayout::Rgba, ChannelType::U8) => {
-                let buf = decoded.pixels.to_rgba8();
+            (ChannelOrder::Rgba, SampleType::U8) => {
+                let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                    &decoded.pixels,
+                    zenpixels::ImageSpec::rgba8_srgb(),
+                );
                 zenpng::encode_rgba8_with_stats(
-                    buf.as_imgref(),
+                    buf.as_ref(),
                     None,
                     &config,
                     &Unstoppable,
@@ -214,23 +219,29 @@ fn run_corpus(dir: &Path) {
                 .with_srgb_intent(decoded.info.srgb_intent)
                 .with_chromaticities(decoded.info.chromaticities);
 
-            let desc = decoded.pixels.descriptor();
+            let desc = decoded.pixels.spec();
             let start = Instant::now();
-            let result = match (desc.layout(), desc.channel_type()) {
-                (ChannelLayout::Rgb, ChannelType::U8) => {
-                    let buf = decoded.pixels.to_rgb8();
+            let result = match (desc.layout.order, desc.layout.sample) {
+                (ChannelOrder::Rgb, SampleType::U8) => {
+                    let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
+                        &decoded.pixels,
+                        zenpixels::ImageSpec::rgb8_srgb(),
+                    );
                     zenpng::encode_rgb8_with_stats(
-                        buf.as_imgref(),
+                        buf.as_ref(),
                         None,
                         &config,
                         &Unstoppable,
                         &Unstoppable,
                     )
                 }
-                (ChannelLayout::Rgba, ChannelType::U8) => {
-                    let buf = decoded.pixels.to_rgba8();
+                (ChannelOrder::Rgba, SampleType::U8) => {
+                    let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                        &decoded.pixels,
+                        zenpixels::ImageSpec::rgba8_srgb(),
+                    );
                     zenpng::encode_rgba8_with_stats(
-                        buf.as_imgref(),
+                        buf.as_ref(),
                         None,
                         &config,
                         &Unstoppable,
@@ -333,3 +344,6 @@ fn format_size(bytes: usize) -> String {
         format!("{bytes}")
     }
 }
+
+#[path = "support/pixels.rs"]
+mod pixel_conversion;

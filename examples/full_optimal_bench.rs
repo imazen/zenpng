@@ -7,8 +7,7 @@
 /// Usage: cargo run --release --features zopfli --example full_optimal_bench [-- /path/to/image.png]
 use enough::Unstoppable;
 use std::time::Instant;
-use zenpixels::descriptor::{ChannelLayout, ChannelType};
-use zenpixels_convert::PixelBufferConvertTypedExt;
+use zenpixels::{ChannelOrder, SampleType};
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
@@ -50,7 +49,7 @@ fn main() {
         ("E76 (FullOpt 60i)", 76),
     ];
 
-    let desc = decoded.pixels.descriptor();
+    let desc = decoded.pixels.spec();
     let mut base_size = 0usize;
 
     for &(label, effort) in efforts {
@@ -61,14 +60,20 @@ fn main() {
             .with_chromaticities(decoded.info.chromaticities);
 
         let start = Instant::now();
-        let encoded = match (desc.layout(), desc.channel_type()) {
-            (ChannelLayout::Rgb, ChannelType::U8) => {
-                let buf = decoded.pixels.to_rgb8();
-                zenpng::encode_rgb8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
+        let encoded = match (desc.layout.order, desc.layout.sample) {
+            (ChannelOrder::Rgb, SampleType::U8) => {
+                let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
+                    &decoded.pixels,
+                    zenpixels::ImageSpec::rgb8_srgb(),
+                );
+                zenpng::encode_rgb8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
             }
-            (ChannelLayout::Rgba, ChannelType::U8) => {
-                let buf = decoded.pixels.to_rgba8();
-                zenpng::encode_rgba8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
+            (ChannelOrder::Rgba, SampleType::U8) => {
+                let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                    &decoded.pixels,
+                    zenpixels::ImageSpec::rgba8_srgb(),
+                );
+                zenpng::encode_rgba8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
             }
             _ => panic!("unsupported pixel format: {:?}", desc),
         };
@@ -105,21 +110,27 @@ fn main() {
         .with_source_gamma(decoded.info.source_gamma)
         .with_srgb_intent(decoded.info.srgb_intent)
         .with_chromaticities(decoded.info.chromaticities);
-    let maniac_png = match (desc.layout(), desc.channel_type()) {
-        (ChannelLayout::Rgb, ChannelType::U8) => {
-            let buf = decoded.pixels.to_rgb8();
+    let maniac_png = match (desc.layout.order, desc.layout.sample) {
+        (ChannelOrder::Rgb, SampleType::U8) => {
+            let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
+                &decoded.pixels,
+                zenpixels::ImageSpec::rgb8_srgb(),
+            );
             zenpng::encode_rgb8(
-                buf.as_imgref(),
+                buf.as_ref(),
                 None,
                 &maniac_config,
                 &Unstoppable,
                 &Unstoppable,
             )
         }
-        (ChannelLayout::Rgba, ChannelType::U8) => {
-            let buf = decoded.pixels.to_rgba8();
+        (ChannelOrder::Rgba, SampleType::U8) => {
+            let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                &decoded.pixels,
+                zenpixels::ImageSpec::rgba8_srgb(),
+            );
             zenpng::encode_rgba8(
-                buf.as_imgref(),
+                buf.as_ref(),
                 None,
                 &maniac_config,
                 &Unstoppable,
@@ -251,3 +262,6 @@ fn decompress_zlib(data: &[u8]) -> Vec<u8> {
         }
     }
 }
+
+#[path = "support/pixels.rs"]
+mod pixel_conversion;

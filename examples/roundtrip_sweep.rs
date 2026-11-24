@@ -40,16 +40,16 @@ fn main() {
             cfg.max_threads = threads;
             let px = &d.pixels;
             let t = std::time::Instant::now();
-            let r = if let Some(i) = px.try_as_imgref::<rgb::Rgb<u8>>() {
+            let r = if let Ok(i) = px.as_view().try_as_imgref::<rgb::Rgb<u8>>() {
                 zenpng::encode_rgb8(i, None, &cfg, &Unstoppable, &Unstoppable)
-            } else if let Some(i) = px.try_as_imgref::<rgb::Rgba<u8>>() {
+            } else if let Ok(i) = px.as_view().try_as_imgref::<rgb::Rgba<u8>>() {
                 zenpng::encode_rgba8(i, None, &cfg, &Unstoppable, &Unstoppable)
-            } else if let Some(i) = px.try_as_imgref::<rgb::Gray<u8>>() {
+            } else if let Ok(i) = px.as_view().try_as_imgref::<rgb::Gray<u8>>() {
                 zenpng::encode_gray8(i, None, &cfg, &Unstoppable, &Unstoppable)
-            } else if let Some(i) = px.try_as_imgref::<rgb::Rgb<u16>>() {
+            } else if let Ok(i) = px.as_view().try_as_imgref::<rgb::Rgb<u16>>() {
                 zenpng::encode_rgb16(i, None, &cfg, &Unstoppable, &Unstoppable)
             } else {
-                println!("skip {} {:?}", f.display(), px.descriptor());
+                println!("skip {} {:?}", f.display(), px.spec());
                 break;
             };
             let png = r.unwrap_or_else(|err| panic!("{}: e{e}: {err}", f.display()));
@@ -75,8 +75,8 @@ fn main() {
                 panic!(
                     "{} e{e}: pixel mismatch ({:?} -> {:?})",
                     f.display(),
-                    d.pixels.descriptor(),
-                    back.pixels.descriptor()
+                    d.pixels.spec(),
+                    back.pixels.spec()
                 );
             }
             n += 1;
@@ -87,16 +87,16 @@ fn main() {
 }
 
 /// Any gray/GA/RGB/RGBA 8- or 16-bit buffer as RGBA16 (8-bit scaled by 257).
-fn rgba16(px: &zenpixels::PixelBuffer) -> Vec<u16> {
-    use zenpixels::{ChannelLayout, ChannelType};
-    let desc = px.descriptor();
-    let ch = desc.layout().channels();
-    let wide = match desc.channel_type() {
-        ChannelType::U8 => false,
-        ChannelType::U16 => true,
+fn rgba16(px: &zenpixels::PixelBuf) -> Vec<u16> {
+    use zenpixels::{ChannelOrder, SampleType};
+    let desc = px.spec();
+    let ch = desc.layout.order.channels();
+    let wide = match desc.layout.sample {
+        SampleType::U8 => false,
+        SampleType::U16 => true,
         t => panic!("channel type {t:?}"),
     };
-    let b = px.copy_to_contiguous_bytes();
+    let b = px.as_view().try_contiguous_bytes().unwrap().into_owned();
     let v: Vec<u16> = if wide {
         b.as_chunks::<2>()
             .0
@@ -108,11 +108,11 @@ fn rgba16(px: &zenpixels::PixelBuffer) -> Vec<u16> {
     };
     let mut out = Vec::with_capacity(v.len() / ch * 4);
     for p in v.chunks_exact(ch) {
-        let px = match desc.layout() {
-            ChannelLayout::Gray => [p[0], p[0], p[0], 65535],
-            ChannelLayout::GrayAlpha => [p[0], p[0], p[0], p[1]],
-            ChannelLayout::Rgb => [p[0], p[1], p[2], 65535],
-            ChannelLayout::Rgba => [p[0], p[1], p[2], p[3]],
+        let px = match desc.layout.order {
+            ChannelOrder::Gray => [p[0], p[0], p[0], 65535],
+            ChannelOrder::GrayAlpha => [p[0], p[0], p[0], p[1]],
+            ChannelOrder::Rgb => [p[0], p[1], p[2], 65535],
+            ChannelOrder::Rgba => [p[0], p[1], p[2], p[3]],
             l => panic!("layout {l:?}"),
         };
         // Fully transparent pixels: colour is not preserved (documented zeroing).

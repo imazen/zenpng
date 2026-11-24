@@ -151,7 +151,8 @@ shared-contract-check:
 
 # Use the resolved Cargo.lock for profiling and input-generation binaries.
 coz-build:
-    CARGO_PROFILE_RELEASE_DEBUG=1 cargo build --release --locked --example coz_harness --example gen_bench_inputs
+    CARGO_PROFILE_RELEASE_DEBUG=1 cargo build --release --locked --example coz_harness
+    CARGO_PROFILE_RELEASE_DEBUG=1 cargo build --release --manifest-path tools/bench-inputs/Cargo.toml --target-dir target
 
 [positional-arguments]
 coz-run *args:
@@ -159,7 +160,7 @@ coz-run *args:
 
 [positional-arguments]
 coz-generate-inputs *args:
-    target/release/examples/gen_bench_inputs "$@"
+    target/release/gen_bench_inputs "$@"
 
 # Shared policy/inventory, rewrite behavior and standalone inventory compilation.
 contract-pin-check:

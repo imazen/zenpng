@@ -2338,7 +2338,6 @@ pub(crate) fn encode_apng_indexed_from_indices(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zenpixels_convert::PixelBufferConvertTypedExt;
 
     // ── Delta region tests ──────────────────────────────────────────
 
@@ -2516,14 +2515,20 @@ mod tests {
         assert_eq!(decoded.info.height, h);
 
         // Verify frame 0 pixels (RGBA8)
-        let f0_pixels = decoded.frames[0].pixels.to_rgba8();
-        let f0_img = f0_pixels.as_imgref();
+        let f0_pixels = crate::pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+            &decoded.frames[0].pixels,
+            zenpixels::ImageSpec::rgba8_srgb(),
+        );
+        let f0_img = f0_pixels.as_ref();
         assert_eq!(f0_img.buf()[0].r, 255);
         assert_eq!(f0_img.buf()[0].g, 0);
 
         // Verify frame 1 pixels
-        let f1_pixels = decoded.frames[1].pixels.to_rgba8();
-        let f1_img = f1_pixels.as_imgref();
+        let f1_pixels = crate::pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+            &decoded.frames[1].pixels,
+            zenpixels::ImageSpec::rgba8_srgb(),
+        );
+        let f1_img = f1_pixels.as_ref();
         assert_eq!(f1_img.buf()[0].r, 0);
         assert_eq!(f1_img.buf()[0].g, 255);
     }
@@ -2588,8 +2593,11 @@ mod tests {
         assert_eq!(decoded.frames.len(), 3);
 
         // Frame 2: pixel (3,3) should be white, (5,5) should be red
-        let f2_pixels = decoded.frames[2].pixels.to_rgba8();
-        let f2_img = f2_pixels.as_imgref();
+        let f2_pixels = crate::pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+            &decoded.frames[2].pixels,
+            zenpixels::ImageSpec::rgba8_srgb(),
+        );
+        let f2_img = f2_pixels.as_ref();
         let px33 = &f2_img.buf()[3 * w as usize + 3];
         assert_eq!((px33.r, px33.g, px33.b, px33.a), (255, 255, 255, 255));
         let px55 = &f2_img.buf()[5 * w as usize + 5];
@@ -2861,8 +2869,13 @@ mod tests {
 
         assert_eq!(decoded.frames.len(), 3);
         for (i, (orig_input, dec_frame)) in frames.iter().zip(decoded.frames.iter()).enumerate() {
-            let dec_buf: Vec<rgb::Rgba<u8>> =
-                dec_frame.pixels.to_rgba8().as_imgref().buf().to_vec();
+            let dec_buf: Vec<rgb::Rgba<u8>> = crate::pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                &dec_frame.pixels,
+                zenpixels::ImageSpec::rgba8_srgb(),
+            )
+            .as_ref()
+            .buf()
+            .to_vec();
             for (j, px) in dec_buf.iter().enumerate() {
                 let off = j * 4;
                 let orig = rgb::Rgba {
@@ -2944,7 +2957,13 @@ mod tests {
 
         assert_eq!(decoded.frames.len(), 5);
         for (i, (orig, dec)) in frames.iter().zip(decoded.frames.iter()).enumerate() {
-            let dec_buf: Vec<rgb::Rgba<u8>> = dec.pixels.to_rgba8().as_imgref().buf().to_vec();
+            let dec_buf: Vec<rgb::Rgba<u8>> = crate::pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                &dec.pixels,
+                zenpixels::ImageSpec::rgba8_srgb(),
+            )
+            .as_ref()
+            .buf()
+            .to_vec();
             for (j, px) in dec_buf.iter().enumerate() {
                 let off = j * 4;
                 let orig_px = rgb::Rgba {
@@ -3026,7 +3045,13 @@ mod tests {
 
         assert_eq!(decoded.frames.len(), 3);
         for (i, (orig, dec)) in frames.iter().zip(decoded.frames.iter()).enumerate() {
-            let dec_buf: Vec<rgb::Rgba<u8>> = dec.pixels.to_rgba8().as_imgref().buf().to_vec();
+            let dec_buf: Vec<rgb::Rgba<u8>> = crate::pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                &dec.pixels,
+                zenpixels::ImageSpec::rgba8_srgb(),
+            )
+            .as_ref()
+            .buf()
+            .to_vec();
             for (j, px) in dec_buf.iter().enumerate() {
                 let off = j * 4;
                 let orig_px = rgb::Rgba {
@@ -3116,8 +3141,11 @@ mod tests {
 
         let all_source = [&f0, &f1, &f2];
         for (i, (frame, &src)) in decoded.frames.iter().zip(all_source.iter()).enumerate() {
-            let decoded_rgba = frame.pixels.to_rgba8();
-            let img = decoded_rgba.as_imgref();
+            let decoded_rgba = crate::pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                &frame.pixels,
+                zenpixels::ImageSpec::rgba8_srgb(),
+            );
+            let img = decoded_rgba.as_ref();
             for (j, px) in img.buf().iter().enumerate() {
                 let off = j * 4;
                 let orig = rgb::Rgba {
@@ -3230,8 +3258,11 @@ mod tests {
                 .frames
                 .iter()
                 .map(|f| {
-                    let rgba = f.pixels.to_rgba8();
-                    rgba.copy_to_contiguous_bytes()
+                    let rgba = crate::pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                        &f.pixels,
+                        zenpixels::ImageSpec::rgba8_srgb(),
+                    );
+                    bytemuck::cast_vec(rgba.into_buf())
                 })
                 .collect();
 
@@ -3288,8 +3319,11 @@ mod tests {
 
             // Compare pixel data (transparent pixels may have zeroed RGB)
             for (i, (orig, redo)) in frame_data.iter().zip(redecoded.frames.iter()).enumerate() {
-                let redo_rgba = redo.pixels.to_rgba8();
-                let redo_img = redo_rgba.as_imgref();
+                let redo_rgba = crate::pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                    &redo.pixels,
+                    zenpixels::ImageSpec::rgba8_srgb(),
+                );
+                let redo_img = redo_rgba.as_ref();
                 assert_eq!(orig.len() / 4, redo_img.buf().len());
                 for (j, (o, r)) in orig
                     .as_chunks::<4>()

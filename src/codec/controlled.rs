@@ -57,7 +57,7 @@ impl From<At<PngError>> for ControlledError {
 
 pub(super) fn start(
     job: PngDecodeJob,
-    _preferred: &[PixelDescriptor],
+    _preferred: &[ImageSpec],
     storage: StorageBudget,
 ) -> Result<Box<DynControlledDecoder>, BoxedError> {
     if job.start_frame_index != 0 {
@@ -115,7 +115,7 @@ pub(super) fn start(
             let output = job.output_info(data)?;
             let output_bytes = u64::from(output.width)
                 .checked_mul(u64::from(output.height))
-                .and_then(|n| n.checked_mul(output.native_format.bytes_per_pixel() as u64))
+                .and_then(|n| n.checked_mul(output.native_format.layout.bytes_per_pixel() as u64))
                 .ok_or(StorageError::SizeOverflow)?;
             limits
                 .check_output_size(output_bytes)
@@ -123,11 +123,11 @@ pub(super) fn start(
             let unavailable = inspect_color(data, &mut full, job.policy.as_ref(), &check_stop)?;
             let interlaced = full.is_progressive;
             ctx.set_info(full);
-            ctx.set_output_descriptor(output.native_format);
+            ctx.set_output_descriptor(output.native_format.clone());
             let mut facts = InterpretationFacts::new(
                 output.width,
                 output.height,
-                Some(output.native_format),
+                Some(output.native_format.clone()),
                 InterpretationState::Final,
             );
             if let Some(reason) = unavailable {
@@ -140,7 +140,7 @@ pub(super) fn start(
             check_stop()?;
             if interlaced {
                 let image = job.decoder(Cow::Borrowed(data), &[])?.decode()?;
-                if image.pixels().descriptor() != output.native_format {
+                if image.pixels().spec() != &output.native_format {
                     return Err(at!(PngError::InvalidInput(
                         "controlled PNG output descriptor changed".into()
                     ))
@@ -149,13 +149,15 @@ pub(super) fn start(
                 for y in (0..output.height).step_by(64) {
                     check_stop()?;
                     let pixels = image.pixels();
-                    let rows = pixels.sub_rows(y, 64.min(output.height - y));
+                    let rows = pixels
+                        .sub_rows(y, 64.min(output.height - y))
+                        .map_err(|e| at!(PngError::InvalidBuffer(e.to_string())))?;
                     ctx.write_rows(BatchMeta::final_rows(y), &rows).await?;
                 }
             } else {
                 let mut native = job.streaming_decoder(Cow::Borrowed(data), &[])?;
                 while let Some((y, rows)) = native.next_batch()? {
-                    if rows.descriptor() != output.native_format {
+                    if rows.spec() != &output.native_format {
                         return Err(at!(PngError::InvalidInput(
                             "controlled PNG row descriptor changed".into()
                         ))
@@ -236,8 +238,8 @@ fn inspect_color(
                     reason.get_or_insert(Why::IncompleteColorMetadata);
                 }
                 if chunk.data.len() == 4
-                    && (zenpixels::TransferFunction::from_cicp(chunk.data[1]).is_none()
-                        || zenpixels::ColorPrimaries::from_cicp(chunk.data[0]).is_none())
+                    && (zenpixels::Transfer::from_cicp(chunk.data[1]).is_none()
+                        || zenpixels::Primaries::from_cicp(chunk.data[0]).is_none())
                 {
                     reason.get_or_insert(Why::UnsupportedColor);
                 }

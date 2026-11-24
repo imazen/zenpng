@@ -5,7 +5,7 @@
 
 use enough::Unstoppable;
 use zencodec::decode::{DecodeJob, DecodeRowSink, DecoderConfig, SinkError, StreamingDecode};
-use zenpixels::{PixelDescriptor, PixelSliceMut};
+use zenpixels::{ImageSpec, PixelViewMut};
 use zenpng::{PngDecodeConfig, PngDecoderConfig, decode};
 
 struct CollectSink(Vec<u8>);
@@ -16,11 +16,11 @@ impl DecodeRowSink for CollectSink {
         _y: u32,
         height: u32,
         width: u32,
-        descriptor: PixelDescriptor,
-    ) -> Result<PixelSliceMut<'_>, SinkError> {
-        let stride = width as usize * descriptor.bytes_per_pixel();
+        descriptor: ImageSpec,
+    ) -> Result<PixelViewMut<'_>, SinkError> {
+        let stride = width as usize * descriptor.layout.bytes_per_pixel();
         self.0.resize(height as usize * stride, 0);
-        Ok(PixelSliceMut::new(&mut self.0, width, height, stride, descriptor).expect("sized"))
+        Ok(PixelViewMut::new(&mut self.0, width, height, stride, descriptor).expect("sized"))
     }
 }
 
@@ -125,7 +125,12 @@ fn push_decoder_matches_decode_on_every_format() {
             .job()
             .push_decoder(data.as_slice().into(), &mut sink, &[])
             .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        let expected = expected.pixels.copy_to_contiguous_bytes();
+        let expected = expected
+            .pixels
+            .as_view()
+            .try_contiguous_bytes()
+            .unwrap()
+            .into_owned();
         assert_eq!(sink.0, expected, "{}", path.display());
         // The streaming decoder returns batches of rows (interlaced files
         // are rejected there).

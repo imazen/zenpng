@@ -10,8 +10,7 @@
 use enough::Unstoppable;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use zenpixels::descriptor::{ChannelLayout, ChannelType};
-use zenpixels_convert::PixelBufferConvertTypedExt;
+use zenpixels::{ChannelOrder, SampleType};
 
 fn main() {
     let corpus_dir = std::env::args().nth(1).unwrap_or_else(|| {
@@ -102,11 +101,11 @@ fn main() {
             continue;
         }
 
-        let desc = decoded.pixels.descriptor();
-        let (color_type, bpp) = match (desc.layout(), desc.channel_type()) {
-            (ChannelLayout::Gray, ChannelType::U8) => ("gray8", 1),
-            (ChannelLayout::Rgb, ChannelType::U8) => ("rgb8", 3),
-            (ChannelLayout::Rgba, ChannelType::U8) => ("rgba8", 4),
+        let desc = decoded.pixels.spec();
+        let (color_type, bpp) = match (desc.layout.order, desc.layout.sample) {
+            (ChannelOrder::Gray, SampleType::U8) => ("gray8", 1),
+            (ChannelOrder::Rgb, SampleType::U8) => ("rgb8", 3),
+            (ChannelOrder::Rgba, SampleType::U8) => ("rgba8", 4),
             _ => {
                 skip += 1;
                 continue;
@@ -127,18 +126,27 @@ fn main() {
                 .with_chromaticities(decoded.info.chromaticities);
 
             let start = std::time::Instant::now();
-            let result = match (desc.layout(), desc.channel_type()) {
-                (ChannelLayout::Rgb, ChannelType::U8) => {
-                    let buf = decoded.pixels.to_rgb8();
-                    zenpng::encode_rgb8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
+            let result = match (desc.layout.order, desc.layout.sample) {
+                (ChannelOrder::Rgb, SampleType::U8) => {
+                    let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
+                        &decoded.pixels,
+                        zenpixels::ImageSpec::rgb8_srgb(),
+                    );
+                    zenpng::encode_rgb8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
                 }
-                (ChannelLayout::Rgba, ChannelType::U8) => {
-                    let buf = decoded.pixels.to_rgba8();
-                    zenpng::encode_rgba8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
+                (ChannelOrder::Rgba, SampleType::U8) => {
+                    let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                        &decoded.pixels,
+                        zenpixels::ImageSpec::rgba8_srgb(),
+                    );
+                    zenpng::encode_rgba8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
                 }
-                (ChannelLayout::Gray, ChannelType::U8) => {
-                    let buf = decoded.pixels.to_gray8();
-                    zenpng::encode_gray8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
+                (ChannelOrder::Gray, SampleType::U8) => {
+                    let buf = pixel_conversion::to_pixels::<rgb::Gray<u8>>(
+                        &decoded.pixels,
+                        zenpixels::ImageSpec::gray8_srgb(),
+                    );
+                    zenpng::encode_gray8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
                 }
                 _ => {
                     write!(csv, ",0,0").unwrap();
@@ -222,3 +230,6 @@ fn collect_pngs(dir: &Path, out: &mut Vec<PathBuf>) {
         }
     }
 }
+
+#[path = "support/pixels.rs"]
+mod pixel_conversion;

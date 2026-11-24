@@ -10,7 +10,7 @@ use zencodec::{
     storage::StorageBudget,
 };
 use zencodec_io::{CollectSink, PolicyDecoder, drive_from_slice};
-use zenpixels::{PixelDescriptor, PixelSliceMut};
+use zenpixels::{ImageSpec, PixelViewMut};
 use zenpng::PngDecoderConfig;
 
 #[derive(Default)]
@@ -19,7 +19,7 @@ struct Effects {
     calls: Rc<Cell<usize>>,
 }
 impl DecodeRowSink for Effects {
-    fn begin(&mut self, w: u32, h: u32, d: PixelDescriptor) -> Result<(), SinkError> {
+    fn begin(&mut self, w: u32, h: u32, d: ImageSpec) -> Result<(), SinkError> {
         self.calls.set(self.calls.get() + 1);
         self.sink.begin(w, h, d)
     }
@@ -28,8 +28,8 @@ impl DecodeRowSink for Effects {
         y: u32,
         h: u32,
         w: u32,
-        d: PixelDescriptor,
-    ) -> Result<PixelSliceMut<'_>, SinkError> {
+        d: ImageSpec,
+    ) -> Result<PixelViewMut<'_>, SinkError> {
         self.calls.set(self.calls.get() + 1);
         self.sink.provide_next_buffer(y, h, w, d)
     }
@@ -94,7 +94,7 @@ fn native_formats_and_adam7_match_independent_pixels_after_adoption() {
         let expected = independent(&bytes);
         let native = PngDecoderConfig::new().decode(&bytes).unwrap();
         assert_eq!(
-            native.pixels().contiguous_bytes().as_ref(),
+            native.pixels().try_contiguous_bytes().unwrap().as_ref(),
             expected,
             "ordinary native {name}"
         );
@@ -128,7 +128,7 @@ fn native_formats_and_adam7_match_independent_pixels_after_adoption() {
             let (output, stats) =
                 drive_from_slice(&mut decoder, &bytes, &mut sink, None, 7).unwrap();
             assert_eq!(sink.sink.bytes(), expected, "controlled {name}");
-            assert_eq!(output.native_format, native.pixels().descriptor());
+            assert_eq!(&output.native_format, native.pixels().spec());
             assert_eq!(stats.rows, u64::from(output.height));
             assert!(sink.sink.finished());
             drop(decoder);
@@ -256,9 +256,9 @@ fn required_layout_refuses_and_preference_falls_back_without_relabeling() {
     for required in [true, false] {
         let budget = StorageBudget::new(bytes.len() + 65536, 8);
         let request = if required {
-            DecodeRequest::new().with_output(PixelDescriptor::RGBA8_SRGB)
+            DecodeRequest::new().with_output(ImageSpec::rgba8_srgb())
         } else {
-            DecodeRequest::new().preferring_output(vec![PixelDescriptor::RGBA8_SRGB])
+            DecodeRequest::new().preferring_output(vec![ImageSpec::rgba8_srgb()])
         };
         let session = request
             .with_format(ImageFormat::Png)
@@ -271,7 +271,7 @@ fn required_layout_refuses_and_preference_falls_back_without_relabeling() {
             assert!(result.is_err());
             assert_eq!(sink.calls.get(), 0);
         } else {
-            assert_eq!(result.unwrap().0.native_format, PixelDescriptor::RGB8_SRGB);
+            assert_eq!(result.unwrap().0.native_format, ImageSpec::rgb8_srgb());
         }
         drop(decoder);
         released(&budget);
@@ -568,7 +568,7 @@ fn native_hdr_and_icc_keep_exact_samples_and_reported_interpretation() {
         let mut decoder = PolicyDecoder::new(session, zencodec::operation::PolicySet::new());
         let mut sink = Effects::default();
         let (output, _) = drive_from_slice(&mut decoder, bytes, &mut sink, None, 3).unwrap();
-        assert_eq!(output.native_format, ordinary.pixels().descriptor());
+        assert_eq!(&output.native_format, ordinary.pixels().spec());
         assert_eq!(sink.sink.bytes(), independent(bytes));
         drop(decoder);
         released(&budget);
@@ -650,7 +650,10 @@ fn gray_alpha_sixteen_reports_the_same_default_transfer_as_other_png_layouts() {
         fixture("ga16_n2"),
         insert(fixture("gray16_n2"), b"tRNS", &[0, 1], false),
     ] {
-        let descriptor = PixelDescriptor::GRAYA16_SRGB;
+        let descriptor = ImageSpec::new(
+            zenpixels::SampleLayout::GRAYA16,
+            zenpixels::ImageSpec::graya8_srgb().color,
+        );
         let config = PngDecoderConfig::new();
         assert_eq!(
             config
@@ -662,9 +665,9 @@ fn gray_alpha_sixteen_reports_the_same_default_transfer_as_other_png_layouts() {
             descriptor
         );
         let image = config.clone().decode(&bytes).unwrap();
-        assert_eq!(image.pixels().descriptor(), descriptor);
+        assert_eq!(image.pixels().spec(), &descriptor);
         assert_eq!(
-            image.pixels().contiguous_bytes().as_ref(),
+            image.pixels().try_contiguous_bytes().unwrap().as_ref(),
             independent(&bytes)
         );
         let mut stream = config
@@ -672,7 +675,7 @@ fn gray_alpha_sixteen_reports_the_same_default_transfer_as_other_png_layouts() {
             .streaming_decoder(bytes.as_slice().into(), &[])
             .unwrap();
         while let Some((_, rows)) = stream.next_batch().unwrap() {
-            assert_eq!(rows.descriptor(), descriptor);
+            assert_eq!(rows.spec(), &descriptor);
         }
     }
 }

@@ -31,7 +31,12 @@ fn main() {
         let data = std::fs::read(path).unwrap();
         let serial_cfg = PngDecodeConfig::default().with_max_threads(1);
         let reference = decode(&data, &serial_cfg, &Unstoppable).unwrap();
-        let ref_bytes = reference.pixels.copy_to_contiguous_bytes();
+        let ref_bytes = reference
+            .pixels
+            .as_view()
+            .try_contiguous_bytes()
+            .unwrap()
+            .into_owned();
         let mp = reference.info.width as f64 * reference.info.height as f64 / 1e6;
         let mut identical = true;
         let before = zenpng::__idot_stats();
@@ -40,7 +45,14 @@ fn main() {
             // Identity once, outside the timed loop (the 20 MB copy + compare
             // would otherwise change which pages the allocator hands back).
             let out = decode(&data, &cfg, &Unstoppable).unwrap();
-            if out.pixels.copy_to_contiguous_bytes() != ref_bytes {
+            if out
+                .pixels
+                .as_view()
+                .try_contiguous_bytes()
+                .unwrap()
+                .into_owned()
+                != ref_bytes
+            {
                 identical = false;
             }
             drop(out);

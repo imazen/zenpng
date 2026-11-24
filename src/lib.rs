@@ -64,6 +64,7 @@ pub mod internal_params;
 #[cfg(feature = "inventory")]
 mod inventory;
 mod optimize;
+mod pixel;
 mod quantize;
 mod simd;
 mod types;
@@ -256,3 +257,7 @@ pub mod __bench_scan {
 
 #[cfg(feature = "metadata-rewrite")]
 pub mod metadata;
+
+#[cfg(test)]
+#[path = "../examples/support/pixels.rs"]
+mod pixel_conversion;

@@ -112,8 +112,16 @@ fn tiny_idot_fixtures() {
                 match (&serial, &par) {
                     (Ok(s), Ok(p)) => {
                         let (sb, pb) = (
-                            s.pixels.copy_to_contiguous_bytes(),
-                            p.pixels.copy_to_contiguous_bytes(),
+                            s.pixels
+                                .as_view()
+                                .try_contiguous_bytes()
+                                .unwrap()
+                                .into_owned(),
+                            p.pixels
+                                .as_view()
+                                .try_contiguous_bytes()
+                                .unwrap()
+                                .into_owned(),
                         );
                         assert!(sb == pb, "{name}: pixels differ (threads {threads})");
                         assert_eq!(s.warnings, p.warnings, "{name}: warnings differ");

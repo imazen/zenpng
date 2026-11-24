@@ -52,7 +52,11 @@ fn strip_encode_is_thread_count_independent_and_lossless() {
             let png = encode_rgb8(img.as_ref(), None, &cfg, &Unstoppable, &Unstoppable).unwrap();
             let back = decode(&png, &PngDecodeConfig::strict(), &Unstoppable).unwrap();
             assert_eq!(
-                back.pixels.copy_to_contiguous_bytes(),
+                back.pixels
+                    .as_view()
+                    .try_contiguous_bytes()
+                    .unwrap()
+                    .into_owned(),
                 src,
                 "effort {effort}, {threads} threads"
             );

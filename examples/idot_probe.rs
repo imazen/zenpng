@@ -371,7 +371,13 @@ fn main() {
         }
         let ok_start = start_filters.iter().skip(1).all(|&f| f <= 1);
         let ok_serial = par_pixels == serial_pixels;
-        let ok_ref = serial_pixels == reference.pixels.copy_to_contiguous_bytes();
+        let ok_ref = serial_pixels
+            == reference
+                .pixels
+                .as_view()
+                .try_contiguous_bytes()
+                .unwrap()
+                .into_owned();
         let (f, i, u, p) = (median(t_full), median(t_inf), median(t_unf), median(t_par));
         let mp = (w * h) as f64 / 1e6;
         println!(

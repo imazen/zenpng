@@ -82,7 +82,12 @@ fn png_roundtrip_all_tiers_match() {
 
     let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
         let decoded = decode(&encoded, &PngDecodeConfig::default(), &Unstoppable).unwrap();
-        let pixel_bytes = decoded.pixels.copy_to_contiguous_bytes();
+        let pixel_bytes = decoded
+            .pixels
+            .as_view()
+            .try_contiguous_bytes()
+            .unwrap()
+            .into_owned();
         let h = hash_bytes(&pixel_bytes);
 
         if let Some(ref_h) = reference_hash {

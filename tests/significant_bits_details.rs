@@ -59,7 +59,8 @@ fn native_sbit_survives_without_relabeling_coded_or_exact_depth() {
             assert_eq!(output.extras::<SignificantBits>(), Some(&expected));
             assert_eq!(output.info().source_color.bit_depth, Some(depth));
             let pixels = output.pixels();
-            let exact = pixels.exact_depth().expect("current samples are measured");
+            let exact = zencodec::sample::ExactDepth::from_view(&pixels)
+                .expect("current samples are measured");
             assert_eq!(exact.color_bits(), depth);
             assert!(exact.holds_for(&pixels).unwrap());
             let decoded: Vec<u16> = if depth == 16 {

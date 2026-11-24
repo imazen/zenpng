@@ -12,7 +12,7 @@ use zencodec::encode::{
     AnimationFrameEncoder, EncodeDeclaration, EncodeJob, EncodePolicy, Encoder, EncoderConfig,
 };
 use zencodec::{At, CodecError, ErrorCategory, Metadata, MetadataPolicy, PolicyKind};
-use zenpixels::{Cicp, ColorContext, ColorModel, PixelDescriptor, PixelSlice};
+use zenpixels::{AlphaMode, Cicp, ColorSpace, IccColorSpace, ImageSpec, PixelView};
 use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, SynthesizedIcc};
 use zenpng::{DowncastFlags, PngEncoderConfig};
 
@@ -48,17 +48,18 @@ const ROUTES: [Route; 3] = [Route::OneShot, Route::Rows, Route::Animation];
 fn encode(
     route: Route,
     meta: Metadata,
-    context: Option<Arc<ColorContext>>,
+    context: Option<ColorSpace>,
     policy: Option<EncodePolicy>,
 ) -> Result<Vec<u8>, At<CodecError>> {
     let data = samples();
+    let spec = ImageSpec::new(
+        zenpixels::SampleLayout::RGBA8,
+        context.unwrap_or(ColorSpace::SRGB_ALPHA),
+    );
     let pixels = || {
-        let pixels =
-            PixelSlice::new(&data, W, H, W as usize * 4, PixelDescriptor::RGBA8_SRGB).unwrap();
-        match &context {
-            Some(context) => pixels.with_color_context(Arc::clone(context)),
-            None => pixels,
-        }
+        PixelView::new(&data, W, H, W as usize * 4, spec.clone()).map_err(|e| {
+            CodecError::of(whereat::at!(zenpng::PngError::InvalidBuffer(e.to_string())))
+        })
     };
     let mut job = PngEncoderConfig::new()
         .with_downcast(DowncastFlags::none())
@@ -72,13 +73,10 @@ fn encode(
         }
     }
     Ok(match route {
-        Route::OneShot => job.encoder()?.encode(pixels())?.into_vec(),
+        Route::OneShot => job.encoder()?.encode(pixels()?)?.into_vec(),
         Route::Rows => {
             let mut encoder = job.encoder()?;
-            let mut declaration = EncodeDeclaration::new(W, H, PixelDescriptor::RGBA8_SRGB);
-            if let Some(context) = &context {
-                declaration = declaration.with_color(context);
-            }
+            let declaration = EncodeDeclaration::new(W, H, spec.clone());
             if let Err(error) = encoder.begin_declared(&declaration) {
                 assert!(
                     encoder.pending_output().is_empty(),
@@ -86,12 +84,12 @@ fn encode(
                 );
                 return Err(error);
             }
-            encoder.push_rows(pixels())?;
+            encoder.push_rows(pixels()?)?;
             encoder.finish()?.into_vec()
         }
         Route::Animation => {
             let mut encoder = job.animation_frame_encoder()?;
-            encoder.push_frame(pixels(), 20, None)?;
+            encoder.push_frame(pixels()?, 20, None)?;
             encoder.finish(None)?.into_vec()
         }
     })
@@ -127,11 +125,7 @@ fn unidentified() -> Vec<u8> {
     let mut profile = DISPLAY_P3_V4.to_vec();
     let last = profile.len() - 1;
     profile[last] ^= 1;
-    assert!(
-        zenpixels::ColorProfileSource::Icc(&profile)
-            .resolve()
-            .is_none()
-    );
+    assert!(zenpixels::icc::IccIdentification::from_icc(&profile).is_none());
     profile
 }
 
@@ -145,11 +139,23 @@ fn with(profile: &[u8], at: usize, bytes: &[u8]) -> Vec<u8> {
 /// 2.17 refused to open as a profile (zenjpeg
 /// `benchmarks/icc_fixture_lcms_probe_2026-10-28.txt`), which zenpixels does
 /// not identify either.
+fn icc_color(profile: &[u8]) -> ColorSpace {
+    ColorSpace::Icc {
+        profile: Arc::from(profile),
+        channels: 3,
+        alpha: AlphaMode::Straight,
+        intent: zenpixels::RenderingIntent::default(),
+    }
+}
+
 fn context_profiles() -> Vec<(&'static str, Vec<u8>)> {
     let p3 = DISPLAY_P3_V4;
     let truncated = p3[..100].to_vec();
     // The header's colour-space field alone does not make a profile.
-    assert_eq!(ColorModel::from_icc(&truncated), Some(ColorModel::Rgb));
+    assert_eq!(
+        zenpixels::icc::profile_color_space(&truncated),
+        Some(IccColorSpace::Rgb)
+    );
     vec![
         ("Display P3", p3.to_vec()),
         ("an unidentified profile", unidentified()),
@@ -170,7 +176,7 @@ fn context_profiles() -> Vec<(&'static str, Vec<u8>)> {
 fn forbidding_a_colour_context_profile_refuses() {
     for route in ROUTES {
         for (what, profile) in context_profiles() {
-            let context = Some(Arc::new(ColorContext::from_icc(profile.clone())));
+            let context = Some(icc_color(&profile));
             let alone = encode(route, Metadata::none(), context.clone(), forbid());
             assert!(alone.is_err(), "{route:?}, {what}: dropped the context");
             let repeated = Metadata::none().with_icc(profile.clone());
@@ -182,7 +188,7 @@ fn forbidding_a_colour_context_profile_refuses() {
         }
         // Complete RGB profiles reach the carrier decision: policy refusals.
         for profile in [DISPLAY_P3_V4.to_vec(), unidentified()] {
-            let context = Some(Arc::new(ColorContext::from_icc(profile)));
+            let context = Some(icc_color(&profile));
             let error = encode(route, Metadata::none(), context, forbid()).unwrap_err();
             assert_eq!(
                 error.error().category(),
@@ -196,7 +202,7 @@ fn forbidding_a_colour_context_profile_refuses() {
 #[test]
 fn a_context_cicp_carries_the_colour_when_the_profile_is_forbidden() {
     for route in ROUTES {
-        let context = Some(Arc::new(ColorContext::from_cicp(Cicp::DISPLAY_P3)));
+        let context = Some(ColorSpace::DISPLAY_P3_ALPHA);
         let file = encode(route, Metadata::none(), context, forbid())
             .unwrap_or_else(|error| panic!("{route:?}: {error}"));
         assert_eq!(chunks(&file), (None, Some((12, 13, 0, true))), "{route:?}");
@@ -215,7 +221,7 @@ fn rec2020_icc() -> Vec<u8> {
 
 #[test]
 fn a_context_contradicting_the_job_colour_refuses_on_every_encoder() {
-    let p3 = || Some(Arc::new(ColorContext::from_icc(DISPLAY_P3_V4)));
+    let p3 = || Some(icc_color(DISPLAY_P3_V4));
     let rec2020 = rec2020_icc();
     for route in ROUTES {
         for (what, meta) in [

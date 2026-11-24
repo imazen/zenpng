@@ -5,7 +5,7 @@
 
 #![allow(dead_code)]
 
-use zenpixels::{ChannelLayout, ChannelType};
+use zenpixels::{ChannelOrder, SampleType};
 
 /// ImageIO keeps 1/2-bit palette images indexed (one index per byte in the
 /// buffer). Expand such a buffer to RGBA8 through the file's PLTE/tRNS.
@@ -34,33 +34,33 @@ pub fn expand_indexed(png: &[u8], indices: &[u8]) -> Option<Vec<u8>> {
 
 /// zenpng pixels -> ImageIO layout, plus a mask of bytes to compare.
 pub fn to_imageio(
-    px: &zenpixels::PixelBuffer,
+    px: &zenpixels::PixelBuf,
     bpc: usize,
     bpp: usize,
     alpha_info: u32,
 ) -> Result<(Vec<u8>, Vec<bool>), String> {
-    let desc = px.descriptor();
-    let src_ch = desc.layout().channels();
-    let src_bpc = match desc.channel_type() {
-        ChannelType::U8 => 8,
-        ChannelType::U16 => 16,
+    let desc = px.spec();
+    let src_ch = desc.layout.order.channels();
+    let src_bpc = match desc.layout.sample {
+        SampleType::U8 => 8,
+        SampleType::U16 => 16,
         t => return Err(format!("zenpng channel type {t:?}")),
     };
     if src_bpc != bpc {
         return Err(format!("depth: zenpng {src_bpc}-bit, ImageIO {bpc}-bit"));
     }
-    let bytes = px.copy_to_contiguous_bytes();
+    let bytes = px.as_view().try_contiguous_bytes().unwrap().into_owned();
     let cb = bpc / 8;
     let dst_ch = bpp / bpc;
     let n = bytes.len() / (src_ch * cb);
     let max = vec![0xFFu8; cb];
     let mut out = Vec::with_capacity(n * dst_ch * cb);
     let mut mask = Vec::with_capacity(n * dst_ch * cb);
-    let (src_gray, src_alpha) = match desc.layout() {
-        ChannelLayout::Gray => (true, false),
-        ChannelLayout::GrayAlpha => (true, true),
-        ChannelLayout::Rgb => (false, false),
-        ChannelLayout::Rgba => (false, true),
+    let (src_gray, src_alpha) = match desc.layout.order {
+        ChannelOrder::Gray => (true, false),
+        ChannelOrder::GrayAlpha => (true, true),
+        ChannelOrder::Rgb => (false, false),
+        ChannelOrder::Rgba => (false, true),
         l => return Err(format!("zenpng layout {l:?}")),
     };
     let dst_alpha = matches!(alpha_info, 1..=4);

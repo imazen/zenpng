@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 
 use enough::Unstoppable;
 use zencodec::Metadata;
-use zenpixels::PixelBuffer;
-use zenpixels::descriptor::{ChannelLayout, ChannelType};
-use zenpixels_convert::PixelBufferConvertTypedExt;
+use zenpixels::PixelBuf;
+use zenpixels::{ChannelOrder, SampleType};
+
 use zenpng::{EncodeConfig, PngInfo};
 
 fn main() {
@@ -159,35 +159,44 @@ fn build_metadata(info: &PngInfo) -> Option<Metadata> {
 }
 
 fn reencode(
-    pixels: &PixelBuffer,
+    pixels: &PixelBuf,
     meta: Option<&Metadata>,
     config: &EncodeConfig,
 ) -> Result<Vec<u8>, whereat::At<zenpng::PngError>> {
     let u = &enough::Unstoppable;
-    let desc = pixels.descriptor();
-    match (desc.layout(), desc.channel_type()) {
-        (ChannelLayout::Rgb, ChannelType::U8) => {
-            let buf = pixels.to_rgb8();
-            zenpng::encode_rgb8(buf.as_imgref(), meta, config, u, u)
+    let desc = pixels.spec();
+    match (desc.layout.order, desc.layout.sample) {
+        (ChannelOrder::Rgb, SampleType::U8) => {
+            let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
+                pixels,
+                zenpixels::ImageSpec::rgb8_srgb(),
+            );
+            zenpng::encode_rgb8(buf.as_ref(), meta, config, u, u)
         }
-        (ChannelLayout::Rgba, ChannelType::U8) => {
-            let buf = pixels.to_rgba8();
-            zenpng::encode_rgba8(buf.as_imgref(), meta, config, u, u)
+        (ChannelOrder::Rgba, SampleType::U8) => {
+            let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                pixels,
+                zenpixels::ImageSpec::rgba8_srgb(),
+            );
+            zenpng::encode_rgba8(buf.as_ref(), meta, config, u, u)
         }
-        (ChannelLayout::Gray, ChannelType::U8) => {
-            let buf = pixels.to_gray8();
-            zenpng::encode_gray8(buf.as_imgref(), meta, config, u, u)
+        (ChannelOrder::Gray, SampleType::U8) => {
+            let buf = pixel_conversion::to_pixels::<rgb::Gray<u8>>(
+                pixels,
+                zenpixels::ImageSpec::gray8_srgb(),
+            );
+            zenpng::encode_gray8(buf.as_ref(), meta, config, u, u)
         }
-        (ChannelLayout::Rgb, ChannelType::U16) => {
-            let imgref = pixels.try_as_imgref::<rgb::Rgb<u16>>().unwrap();
+        (ChannelOrder::Rgb, SampleType::U16) => {
+            let imgref = pixels.as_view().try_as_imgref::<rgb::Rgb<u16>>().unwrap();
             zenpng::encode_rgb16(imgref, meta, config, u, u)
         }
-        (ChannelLayout::Rgba, ChannelType::U16) => {
-            let imgref = pixels.try_as_imgref::<rgb::Rgba<u16>>().unwrap();
+        (ChannelOrder::Rgba, SampleType::U16) => {
+            let imgref = pixels.as_view().try_as_imgref::<rgb::Rgba<u16>>().unwrap();
             zenpng::encode_rgba16(imgref, meta, config, u, u)
         }
-        (ChannelLayout::Gray, ChannelType::U16) => {
-            let imgref = pixels.try_as_imgref::<rgb::Gray<u16>>().unwrap();
+        (ChannelOrder::Gray, SampleType::U16) => {
+            let imgref = pixels.as_view().try_as_imgref::<rgb::Gray<u16>>().unwrap();
             zenpng::encode_gray16(imgref, meta, config, u, u)
         }
         // A well-formed request for a pixel format this example's re-encode
@@ -281,3 +290,6 @@ fn collect_pngs(dir: &Path, out: &mut Vec<PathBuf>) {
         }
     }
 }
+
+#[path = "support/pixels.rs"]
+mod pixel_conversion;

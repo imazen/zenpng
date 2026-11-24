@@ -5,7 +5,6 @@ use enough::Unstoppable;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use zenpixels_convert::PixelBufferConvertTypedExt;
 
 fn main() {
     let dir = std::env::args().nth(1).unwrap_or_else(|| {
@@ -75,8 +74,11 @@ fn main() {
             .frames
             .iter()
             .map(|f| {
-                let rgba = f.pixels.to_rgba8();
-                let imgref = rgba.as_imgref();
+                let rgba = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                    &f.pixels,
+                    zenpixels::ImageSpec::rgba8_srgb(),
+                );
+                let imgref = rgba.as_ref();
                 bytemuck::cast_slice::<rgb::Rgba<u8>, u8>(imgref.buf()).to_vec()
             })
             .collect();
@@ -241,3 +243,6 @@ fn collect_pngs(dir: &Path, out: &mut Vec<PathBuf>) {
         }
     }
 }
+
+#[path = "support/pixels.rs"]
+mod pixel_conversion;

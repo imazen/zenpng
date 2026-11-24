@@ -1,6 +1,5 @@
 use enough::Unstoppable;
-use zenpixels::descriptor::{ChannelLayout, ChannelType};
-use zenpixels_convert::PixelBufferConvertTypedExt;
+use zenpixels::{ChannelOrder, SampleType};
 
 /// Test Crush level with various deadlines on a single image.
 fn main() {
@@ -41,16 +40,22 @@ fn main() {
             None => Box::new(Unstoppable),
         };
 
-        let desc = decoded.pixels.descriptor();
+        let desc = decoded.pixels.spec();
         let start = std::time::Instant::now();
-        let encoded = match (desc.layout(), desc.channel_type()) {
-            (ChannelLayout::Rgb, ChannelType::U8) => {
-                let buf = decoded.pixels.to_rgb8();
-                zenpng::encode_rgb8(buf.as_imgref(), None, &config, &Unstoppable, &*deadline)
+        let encoded = match (desc.layout.order, desc.layout.sample) {
+            (ChannelOrder::Rgb, SampleType::U8) => {
+                let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
+                    &decoded.pixels,
+                    zenpixels::ImageSpec::rgb8_srgb(),
+                );
+                zenpng::encode_rgb8(buf.as_ref(), None, &config, &Unstoppable, &*deadline)
             }
-            (ChannelLayout::Rgba, ChannelType::U8) => {
-                let buf = decoded.pixels.to_rgba8();
-                zenpng::encode_rgba8(buf.as_imgref(), None, &config, &Unstoppable, &*deadline)
+            (ChannelOrder::Rgba, SampleType::U8) => {
+                let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                    &decoded.pixels,
+                    zenpixels::ImageSpec::rgba8_srgb(),
+                );
+                zenpng::encode_rgba8(buf.as_ref(), None, &config, &Unstoppable, &*deadline)
             }
             _ => panic!("unsupported format: {:?}", desc),
         };
@@ -74,3 +79,6 @@ fn main() {
 
     println!("\nReference: ect -9 = 1,984,008 bytes");
 }
+
+#[path = "support/pixels.rs"]
+mod pixel_conversion;

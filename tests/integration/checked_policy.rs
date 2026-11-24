@@ -4,7 +4,7 @@ use zencodec::{
     ColorEmitPolicy, Metadata, MetadataPolicy, UnsupportedOperation,
     encode::{AnimationFrameEncoder, EncodeJob, EncodePolicy, Encoder, EncoderConfig},
 };
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{ImageSpec, PixelView};
 use zenpng::{Compression, DowncastFlags, PngEncoderConfig};
 
 fn config(effort: u32) -> PngEncoderConfig {
@@ -41,8 +41,11 @@ fn checked_verbatim_preserves_authority_for_still_rows_and_animation() {
     ];
     let data = [row0, row1].concat();
     let expected = [&row0[..12], &row1[..12]].concat();
-    let desc = PixelDescriptor::RGBA8_SRGB;
-    let pixels = || PixelSlice::new(&data, 3, 2, 16, desc).unwrap();
+    let desc = ImageSpec::new(
+        zenpixels::SampleLayout::RGBA8,
+        zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
+    );
+    let pixels = || PixelView::new(&data, 3, 2, 16, desc.clone()).unwrap();
     let policy = EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim);
     for effort in [0, 1, 7] {
         let job = || {
@@ -55,9 +58,9 @@ fn checked_verbatim_preserves_authority_for_still_rows_and_animation() {
         let encoded = job().encoder().unwrap().encode(pixels()).unwrap();
         assert_carriers_and_pixels(encoded.data(), &expected);
         let mut rows = job().with_canvas_size(3, 2).encoder().unwrap();
-        rows.begin(3, 2, desc).unwrap();
+        rows.begin(3, 2, desc.clone()).unwrap();
         for row in [&row0, &row1] {
-            rows.push_rows(PixelSlice::new(row, 3, 1, 16, desc).unwrap())
+            rows.push_rows(PixelView::new(row, 3, 1, 16, desc.clone()).unwrap())
                 .unwrap();
         }
         assert_carriers_and_pixels(rows.finish().unwrap().data(), &expected);
@@ -96,7 +99,7 @@ fn refused_checked_policy_does_not_replace_the_accepted_policy() {
     let output = job
         .encoder()
         .unwrap()
-        .encode(PixelSlice::new(&pixels, 1, 1, 4, PixelDescriptor::RGBA8_SRGB).unwrap())
+        .encode(PixelView::new(&pixels, 1, 1, 4, ImageSpec::rgba8_srgb()).unwrap())
         .unwrap();
     assert_carriers_and_pixels(output.data(), &pixels);
 }

@@ -13,8 +13,7 @@
 use std::time::Instant;
 
 use enough::Unstoppable;
-use zenpixels::descriptor::{ChannelLayout, ChannelType};
-use zenpixels_convert::PixelBufferConvertTypedExt;
+use zenpixels::{ChannelOrder, SampleType};
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
@@ -29,8 +28,13 @@ fn main() {
     let decoded = zenpng::decode(&source, &zenpng::PngDecodeConfig::none(), &Unstoppable).unwrap();
 
     let (w, h) = (decoded.info.width as usize, decoded.info.height as usize);
-    let bpp = decoded.pixels.descriptor().bytes_per_pixel();
-    let pixel_bytes = decoded.pixels.copy_to_contiguous_bytes();
+    let bpp = decoded.pixels.spec().layout.bytes_per_pixel();
+    let pixel_bytes = decoded
+        .pixels
+        .as_view()
+        .try_contiguous_bytes()
+        .unwrap()
+        .into_owned();
     let row_bytes = w * bpp;
     let raw_bytes = pixel_bytes.len();
     let megapixels = (w * h) as f64 / 1_000_000.0;
@@ -248,18 +252,24 @@ fn main() {
         } else {
             2
         };
-        let desc = decoded.pixels.descriptor();
+        let desc = decoded.pixels.spec();
         let mut size = 0;
         let t = Instant::now();
         for _ in 0..iters {
-            let result = match (desc.layout(), desc.channel_type()) {
-                (ChannelLayout::Rgb, ChannelType::U8) => {
-                    let buf = decoded.pixels.to_rgb8();
-                    zenpng::encode_rgb8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
+            let result = match (desc.layout.order, desc.layout.sample) {
+                (ChannelOrder::Rgb, SampleType::U8) => {
+                    let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
+                        &decoded.pixels,
+                        zenpixels::ImageSpec::rgb8_srgb(),
+                    );
+                    zenpng::encode_rgb8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
                 }
-                (ChannelLayout::Rgba, ChannelType::U8) => {
-                    let buf = decoded.pixels.to_rgba8();
-                    zenpng::encode_rgba8(buf.as_imgref(), None, &config, &Unstoppable, &Unstoppable)
+                (ChannelOrder::Rgba, SampleType::U8) => {
+                    let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+                        &decoded.pixels,
+                        zenpixels::ImageSpec::rgba8_srgb(),
+                    );
+                    zenpng::encode_rgba8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
                 }
                 _ => panic!("unsupported format: {:?}", desc),
             };
@@ -458,3 +468,6 @@ fn bigram_entropy_score(data: &[u8]) -> f64 {
     }
     entropy
 }
+
+#[path = "support/pixels.rs"]
+mod pixel_conversion;

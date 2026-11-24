@@ -64,13 +64,18 @@ fn main() {
         let (w, h) = (decoded.info.width as usize, decoded.info.height as usize);
 
         // Get raw pixel bytes
-        let desc = decoded.pixels.descriptor();
-        let bpp = desc.bytes_per_pixel();
+        let desc = decoded.pixels.spec();
+        let bpp = desc.layout.bytes_per_pixel();
         if bpp != 3 && bpp != 4 {
             eprintln!("  SKIP: unsupported pixel format");
             continue;
         }
-        let pixel_bytes = decoded.pixels.copy_to_contiguous_bytes();
+        let pixel_bytes = decoded
+            .pixels
+            .as_view()
+            .try_contiguous_bytes()
+            .unwrap()
+            .into_owned();
         let row_bytes = w * bpp;
 
         // Filter with brute-force (L1 eval, 10 context rows) — same as Best level

@@ -314,12 +314,12 @@ fn top(inv: &Inventory) -> Vec<Row> {
 // ── Tests ────────────────────────────────────────────────────────────
 
 /// Encode a small image through the zencodec encode path.
-fn encode(w: u32, h: u32, desc: zenpixels::PixelDescriptor, bpp: usize) -> Vec<u8> {
+fn encode(w: u32, h: u32, desc: zenpixels::ImageSpec, bpp: usize) -> Vec<u8> {
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
     let bytes: Vec<u8> = (0..w as usize * h as usize * bpp)
         .map(|i| (i * 7 % 251) as u8 | 1)
         .collect();
-    let slice = zenpixels::PixelSlice::new(&bytes, w, h, w as usize * bpp, desc).unwrap();
+    let slice = zenpixels::PixelView::new(&bytes, w, h, w as usize * bpp, desc).unwrap();
     PngEncoderConfig::new()
         .job()
         .encoder()
@@ -335,12 +335,12 @@ fn encode(w: u32, h: u32, desc: zenpixels::PixelDescriptor, bpp: usize) -> Vec<u
 /// same kind of encoder output directly.
 #[test]
 fn conformance_with_encoder_output() {
-    use zenpixels::PixelDescriptor as P;
+    use zenpixels::ImageSpec as P;
     for (w, h, desc, bpp) in [
-        (40, 24, P::RGBA8_SRGB, 4),
-        (40, 24, P::RGB8_SRGB, 3),
-        (7, 5, P::GRAY8_SRGB, 1),
-        (1, 1, P::RGB8_SRGB, 3),
+        (40, 24, P::rgba8_srgb(), 4),
+        (40, 24, P::rgb8_srgb(), 3),
+        (7, 5, P::gray8_srgb(), 1),
+        (1, 1, P::rgb8_srgb(), 3),
     ] {
         let bytes = encode(w, h, desc, bpp);
         zencodec_testkit::check_inventory(PngDecoderConfig::new(), &bytes)

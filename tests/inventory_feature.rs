@@ -71,14 +71,9 @@ fn every_stop_poll_retains_a_one_shot_timeout() {
         }
     }
     let pixels = vec![13; 64 * 64 * 3];
-    let slice = zenpixels::PixelSlice::new(
-        &pixels,
-        64,
-        64,
-        64 * 3,
-        zenpixels::PixelDescriptor::RGB8_SRGB,
-    )
-    .unwrap();
+    let slice =
+        zenpixels::PixelView::new(&pixels, 64, 64, 64 * 3, zenpixels::ImageSpec::rgb8_srgb())
+            .unwrap();
     let encoded = zenpng::PngEncoderConfig::new()
         .job()
         .encoder()

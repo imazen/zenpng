@@ -11,18 +11,18 @@ reduction by [zenquant](https://github.com/imazen/zenquant).
 
 ```toml
 [dependencies]
-zenpng = "0.1"
-zenpixels-convert = { version = "0.2", features = ["rgb", "imgref"] } # .to_rgba8(), .as_imgref()
+zenpng = "0.2"
+zenpixels-convert = { version = "0.5", features = ["imgref"] }
 imgref = "1"     # ImgRef for encode input
 rgb = "0.8"      # rgb::Rgba<u8> + FromSlice::as_rgba
 enough = "0.4"   # Unstoppable / cancellation tokens
-zencodec = "0.1" # zencodec::Metadata, for the `metadata` encode arg (see "Metadata")
+zencodec = "0.2" # zencodec::Metadata, for the `metadata` encode arg (see "Metadata")
 ```
 
 ```rust
 use zenpng::{decode, encode_rgba8, EncodeConfig, Compression, PngDecodeConfig};
 use enough::Unstoppable;
-use zenpixels_convert::PixelBufferConvertTypedExt; // brings `.to_rgba8()` onto PixelBuffer
+use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, convert_buf};
 
 // Decode
 // --- Decode to packed RGBA8 ---
@@ -30,24 +30,27 @@ let png_bytes: &[u8] = &[/* ... */];
 let output = decode(png_bytes, &PngDecodeConfig::default(), &Unstoppable)?;
 println!("{}x{}, alpha={}", output.info.width, output.info.height, output.info.has_alpha);
 
-// `output.pixels` is a `zenpixels::PixelBuffer` in the file's NATIVE color type
-// (grayscale / indexed / RGB / 16-bit ...). Normalize to RGBA8 with the
-// the `PixelBufferConvertTypedExt` trait imported above (from `zenpixels-convert`):
-let rgba = output.pixels.to_rgba8();                        // PixelBuffer<rgb::Rgba<u8>>
-let rgba_bytes: Vec<u8> = rgba.copy_to_contiguous_bytes();  // width*height*4, packed R,G,B,A
+// Convert the owned native PixelBuf to packed sRGB RGBA8.
+let rgba = convert_buf(
+    &output.pixels.as_view(),
+    ImageSpec::rgba8_srgb(),
+    &ConvertPolicy::permissive(),
+    PeakSource::Declared,
+)?;
+let rgba_pixels = rgba.as_view().try_as_imgref::<rgb::Rgba<u8>>()?;
 
 // --- Encode RGBA8 back to PNG ---
 // 2nd arg is `metadata: Option<&zencodec::Metadata>`: pass `Some(&meta)` to embed
 // ICC / EXIF / XMP / HDR chunks; `None` writes NO such metadata (see "Metadata" below).
 // The two trailing args are the cancellation token and the deadline; pass
-// `&Unstoppable` for both to opt out. `rgba.as_imgref()` reuses the buffer above;
+// `&Unstoppable` for both to opt out. `rgba_pixels` borrows the converted buffer;
 // to encode your OWN flat RGBA bytes, use `imgref::ImgRef::new(rgb::FromSlice::as_rgba(&bytes), w, h)`.
-let encoded = encode_rgba8(rgba.as_imgref(), None, &EncodeConfig::default(), &Unstoppable, &Unstoppable)?;
+let encoded = encode_rgba8(rgba_pixels, None, &EncodeConfig::default(), &Unstoppable, &Unstoppable)?;
 //                                            ^^^^ None drops all ICC/EXIF/XMP — pass Some(&meta) to keep them.
 
 // Encode with a specific preset
 let config = EncodeConfig::default().with_compression(Compression::High);
-let smaller = encode_rgba8(rgba.as_imgref(), None, &config, &Unstoppable, &Unstoppable)?;
+let smaller = encode_rgba8(rgba_pixels, None, &config, &Unstoppable, &Unstoppable)?;
 ```
 
 The `encode_*` family covers every native pixel type: `encode_rgba8`,
@@ -345,10 +348,10 @@ drops them. To preserve metadata across a decode → encode roundtrip, build a
 `Metadata` from the decode `output.info` and pass `Some(&meta)`:
 
 ```rust
-use zenpng::{EncodeConfig, PngDecodeConfig};
-use zencodec::Metadata;
+use zenpng::{PngEncoderConfig, PngDecodeConfig};
+use zencodec::{ColorEmitPolicy, Metadata, MetadataPolicy};
+use zencodec::encode::{EncodeJob, EncodePolicy, Encoder, EncoderConfig};
 use enough::Unstoppable;
-use zenpixels_convert::PixelBufferConvertTypedExt; // .to_rgba8()
 
 let output = zenpng::decode(png_bytes, &PngDecodeConfig::default(), &Unstoppable)?;
 
@@ -360,14 +363,10 @@ if let Some(exif) = output.info.exif        { meta = meta.with_exif(exif); }
 if let Some(xmp)  = output.info.xmp         { meta = meta.with_xmp(xmp); }
 if let Some(cicp) = output.info.cicp        { meta = meta.with_cicp(cicp); }
 
-let rgba = output.pixels.to_rgba8();
-let encoded = zenpng::encode_rgba8(
-    rgba.as_imgref(),
-    Some(&meta),                  // <-- carries ICC/EXIF/XMP through; `None` would drop them
-    &EncodeConfig::default(),
-    &Unstoppable,
-    &Unstoppable,
-)?;
+let mut job = PngEncoderConfig::new().job();
+job.try_set_policy(EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim))?;
+job.try_set_metadata_policy(meta, MetadataPolicy::PreserveExact)?;
+let encoded = job.encoder()?.encode(output.pixels.as_view())?;
 ```
 
 The PNG color-space chunks gAMA, sRGB, and cHRM are set on `EncodeConfig` instead

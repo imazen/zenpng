@@ -12,7 +12,7 @@
 
 use sha2::Digest;
 use zencodec::encode::{DynAnimationFrameEncoder, EncodeJob, EncoderConfig};
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{ImageSpec, PixelView};
 use zenpng::{Compression, DowncastFlags, PngEncoderConfig};
 
 /// A small deterministic hash, for noise that does not depend on any crate.
@@ -168,8 +168,8 @@ const ANIMS: &[Anim] = &[
 
 /// The frames of `a` in `desc` (RGB8, RGBA8 or BGRA8), rows padded by
 /// `a.pad` pixels of junk.
-fn frames(a: &Anim, desc: PixelDescriptor) -> (Vec<Vec<u8>>, usize) {
-    let bpp = desc.bytes_per_pixel();
+fn frames(a: &Anim, desc: ImageSpec) -> (Vec<Vec<u8>>, usize) {
+    let bpp = desc.layout.bytes_per_pixel();
     let stride = (a.w + a.pad) as usize * bpp;
     let fs = (0..a.frames)
         .map(|f| {
@@ -178,10 +178,10 @@ fn frames(a: &Anim, desc: PixelDescriptor) -> (Vec<Vec<u8>>, usize) {
                 for x in 0..a.w {
                     let [r, g, b, al] = (a.px)(x, y, f);
                     let o = y as usize * stride + x as usize * bpp;
-                    let px: &[u8] = match desc.layout() {
-                        zenpixels::ChannelLayout::Rgb => &[r, g, b],
-                        zenpixels::ChannelLayout::Rgba => &[r, g, b, al],
-                        zenpixels::ChannelLayout::Bgra => &[b, g, r, al],
+                    let px: &[u8] = match desc.layout.order {
+                        zenpixels::ChannelOrder::Rgb => &[r, g, b],
+                        zenpixels::ChannelOrder::Rgba => &[r, g, b, al],
+                        zenpixels::ChannelOrder::Bgra => &[b, g, r, al],
                         _ => panic!("test layout"),
                     };
                     out[o..o + bpp].copy_from_slice(px);
@@ -193,8 +193,8 @@ fn frames(a: &Anim, desc: PixelDescriptor) -> (Vec<Vec<u8>>, usize) {
     (fs, stride)
 }
 
-fn encode(cfg: &PngEncoderConfig, a: &Anim, desc: PixelDescriptor, begin: bool) -> Vec<u8> {
-    let (fs, stride) = frames(a, desc);
+fn encode(cfg: &PngEncoderConfig, a: &Anim, desc: ImageSpec, begin: bool) -> Vec<u8> {
+    let (fs, stride) = frames(a, desc.clone());
     let mut enc: Box<dyn DynAnimationFrameEncoder> = cfg
         .clone()
         .job()
@@ -202,12 +202,12 @@ fn encode(cfg: &PngEncoderConfig, a: &Anim, desc: PixelDescriptor, begin: bool) 
         .dyn_animation_frame_encoder()
         .unwrap();
     if begin {
-        enc.begin(a.w, a.h, desc, Some(a.frames)).unwrap();
+        enc.begin(a.w, a.h, desc.clone(), Some(a.frames)).unwrap();
     }
     let mut out = Vec::new();
     for (i, f) in fs.iter().enumerate() {
         enc.push_frame(
-            PixelSlice::new(f, a.w, a.h, stride, desc).unwrap(),
+            PixelView::new(f, a.w, a.h, stride, desc.clone()).unwrap(),
             50 + i as u32,
             None,
         )
@@ -247,9 +247,9 @@ fn run_matrix() -> MatrixRun {
     let mut ops = Vec::new();
     for a in ANIMS {
         for (dname, desc) in [
-            ("rgb8", PixelDescriptor::RGB8_SRGB),
-            ("rgba8", PixelDescriptor::RGBA8_SRGB),
-            ("bgra8", PixelDescriptor::BGRA8_SRGB),
+            ("rgb8", ImageSpec::rgb8_srgb()),
+            ("rgba8", ImageSpec::rgba8_srgb()),
+            ("bgra8", ImageSpec::bgra8_srgb()),
         ] {
             for effort in [None, Some(2), Some(3), Some(5), Some(7), Some(10)] {
                 for (cname, downcast) in [
@@ -261,7 +261,7 @@ fn run_matrix() -> MatrixRun {
                         if let Some(e) = effort {
                             c = c.with_compression(Compression::Effort(e));
                         }
-                        let bytes = encode(&c, a, desc, begin);
+                        let bytes = encode(&c, a, desc.clone(), begin);
                         ops.extend(frame_ops(&bytes));
                         let e = effort.map_or("default".to_string(), |e| format!("e{e}"));
                         let b = if begin { "begin" } else { "nobegin" };

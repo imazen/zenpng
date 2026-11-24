@@ -982,7 +982,12 @@ mod tests {
             let decoded =
                 crate::decode(&png, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
             assert_eq!(decoded.info.width, 8);
-            let raw = decoded.pixels.copy_to_contiguous_bytes();
+            let raw = decoded
+                .pixels
+                .as_view()
+                .try_contiguous_bytes()
+                .unwrap()
+                .into_owned();
             assert_eq!(
                 raw, expected,
                 "GA16 round-trip is not byte-exact at effort {effort}"
@@ -1028,7 +1033,12 @@ mod tests {
             .unwrap();
             let decoded =
                 crate::decode(&png, &crate::PngDecodeConfig::strict(), &Unstoppable).unwrap();
-            let raw = decoded.pixels.copy_to_contiguous_bytes();
+            let raw = decoded
+                .pixels
+                .as_view()
+                .try_contiguous_bytes()
+                .unwrap()
+                .into_owned();
             assert_eq!(
                 raw, expected,
                 "RGBA16 round-trip is not byte-exact at effort {effort}"
