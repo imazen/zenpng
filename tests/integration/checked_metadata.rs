@@ -434,7 +434,14 @@ fn explicit_color_policy_cannot_substitute_retained_icc() {
         .job()
         .try_with_metadata_policy(meta.clone(), MetadataPolicy::PreserveExact)
         .unwrap();
-    assert_readback(&encode(job.clone()), &meta, &[7, 19, 43, 255]);
+    let data = [7, 19, 43, 255];
+    let spec = ImageSpec::new(
+        zenpixels::SampleLayout::RGBA8,
+        zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
+    );
+    let pixels = PixelView::from_packed(&data, 1, 1, spec).unwrap();
+    let output = job.clone().encoder().unwrap().encode(pixels).unwrap();
+    assert_readback(output.data(), &meta, &data);
     let conflict = job.with_policy(zencodec::encode::EncodePolicy::none().with_embed_icc(false));
     assert!(conflict.encoder().is_err());
 }
