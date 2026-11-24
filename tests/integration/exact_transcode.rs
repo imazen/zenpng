@@ -130,18 +130,18 @@ fn hidden_rgb_animation_uses_exact_source_deltas() {
 }
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn explicit_icc_is_not_overridden_by_descriptor_derived_cicp() {
     let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     let meta = zencodec::Metadata::none().with_icc(icc);
-    let desc = ImageSpec::rgb8_srgb().with_primaries(zenpixels::Primaries::Bt2020);
+    let desc = ImageSpec::new(
+        zenpixels::SampleLayout::RGB8,
+        zenpixels::ColorSpace::DISPLAY_P3,
+    );
     let px = [7u8, 19, 43];
     let out = config(1)
         .job()
-        .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
-        .with_policy(
-            zencodec::encode::EncodePolicy::none().with_color(zencodec::ColorEmitPolicy::Verbatim),
-        )
+        .try_with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+        .unwrap()
         .encoder()
         .unwrap()
         .encode(PixelView::new(&px, 1, 1, 3, desc).unwrap())
@@ -149,11 +149,60 @@ fn explicit_icc_is_not_overridden_by_descriptor_derived_cicp() {
     let info = zenpng::probe(out.data()).unwrap();
     assert_eq!(info.icc_profile.as_deref(), Some(icc));
     assert!(info.cicp.is_none());
-    let oracle = png::Decoder::new(Cursor::new(out.data()))
+    let mut oracle = png::Decoder::new(Cursor::new(out.data()))
         .read_info()
         .unwrap();
     assert_eq!(oracle.info().icc_profile.as_deref(), Some(icc));
     assert!(oracle.info().coding_independent_code_points.is_none());
+    let mut decoded = [0; 3];
+    let frame = oracle.next_frame(&mut decoded).unwrap();
+    assert_eq!(frame.color_type, png::ColorType::Rgb);
+    assert_eq!(frame.bit_depth, png::BitDepth::Eight);
+    assert_eq!(decoded, px);
+}
+
+#[test]
+fn required_p3_icc_refuses_bt2020_samples_before_writing_header() {
+    let meta = zencodec::Metadata::none().with_icc(zenpixels_convert::icc_profiles::DISPLAY_P3_V4);
+    let make = || {
+        config(0)
+            .job()
+            .with_canvas_size(1, 1)
+            .try_with_metadata_policy(meta.clone(), zencodec::MetadataPolicy::PreserveExact)
+            .unwrap()
+            .encoder()
+            .unwrap()
+    };
+    let bt2020 = ImageSpec::rgb8_srgb().with_primaries(zenpixels::Primaries::Bt2020);
+    let px = [7u8, 19, 43];
+    let pixels = PixelView::new(&px, 1, 1, 3, bt2020.clone()).unwrap();
+    let check_conflict = |err: whereat::At<zencodec::CodecError>| {
+        assert!(
+            matches!(err.error().detail().and_then(|detail| detail.downcast_ref::<zenpng::PngError>()),
+            Some(zenpng::PngError::InvalidInput(reason)) if reason.contains("contradicts"))
+        );
+    };
+    check_conflict(make().encode(pixels.clone()).unwrap_err());
+    #[allow(deprecated)] // The former override lived in the legacy Verbatim route.
+    let legacy = config(0)
+        .job()
+        .with_metadata_policy(meta.clone(), zencodec::MetadataPolicy::PreserveExact)
+        .with_policy(
+            zencodec::encode::EncodePolicy::none().with_color(zencodec::ColorEmitPolicy::Verbatim),
+        )
+        .encoder()
+        .unwrap();
+    check_conflict(legacy.encode(pixels).unwrap_err());
+    let mut rows = make();
+    check_conflict(rows.begin(1, 1, bt2020).unwrap_err());
+    assert!(rows.pending_output().is_empty());
+    let p3 = ImageSpec::new(
+        zenpixels::SampleLayout::RGB8,
+        zenpixels::ColorSpace::DISPLAY_P3,
+    );
+    let mut correct = make();
+    correct.begin(1, 1, p3).unwrap();
+    assert!(correct.pending_output().starts_with(b"\x89PNG"));
 }
 
 #[test]

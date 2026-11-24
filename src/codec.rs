@@ -1449,6 +1449,12 @@ fn same_meaning(
     if a.0.is_some() && a.0 == b.0 || a.0.is_none() && b.0.is_none() && a.1 == b.1 {
         return true;
     }
+    let full_range = |(icc, cicp): (Option<&[u8]>, Option<Cicp>)| {
+        icc.is_some() || cicp.is_none_or(|c| c.full_range)
+    };
+    if full_range(a) != full_range(b) {
+        return false;
+    }
     match (identify(a), identify(b)) {
         (Some(a), Some(b)) => a.1 == b.1 && (gray || a.0 == b.0),
         _ => false,
@@ -1747,16 +1753,8 @@ impl PngEncoder {
         let stored = Self::stored_color(spec)?;
         let written = self.written_color();
         if written != (None, None) {
-            // Legacy metadata explicitly requested verbatim is allowed to label
-            // RGB pixels without an attached ICC profile.
-            let verbatim = self.metadata_requirement.is_none()
-                && self
-                    .policy
-                    .as_ref()
-                    .is_some_and(|p| p.color == Some(zencodec::ColorEmitPolicy::Verbatim));
             if matches!(stored, StoredColor::Legacy { .. })
-                || !(verbatim && written.0.is_some() && !matches!(stored, StoredColor::Icc(_)))
-                    && stored != StoredColor::Default
+                || stored != StoredColor::Default
                     && !same_meaning(written, stored.parts(), spec.layout.order.is_gray_family())
             {
                 return Err(at!(PngError::InvalidInput(
@@ -4200,10 +4198,9 @@ impl PngDecoder<'_> {
             pixels.spec().layout.sample,
             SampleType::U8 | SampleType::U16
         ) {
-            let exact = zencodec::sample::ExactDepth::measure(&pixels.as_view())
+            let exact = zenpixels::sample::ExactDepth::measure(&pixels.as_view())
                 .map_err(|e| at!(PngError::InvalidBuffer(e.to_string())))?;
-            let facts = exact.attach_verified(pixels.as_view()).facts();
-            pixels.set_facts(facts);
+            pixels.set_facts(pixels.facts().with_depth(exact));
         }
         cancel.check().map_err(|e| at!(PngError::from(e)))?;
         let output = DecodeOutput::new(pixels, info).with_source_encoding_details(probe);
@@ -4342,33 +4339,42 @@ fn decoded_spec_for_policy(
     )
 }
 
+fn decoded_row_metadata(
+    info: &crate::decode::PngInfo,
+    icc: Option<alloc::sync::Arc<[u8]>>,
+) -> zencodec::decode::RowMetadata {
+    use zenpixels::{ColorOrigin, HdrMetadata, OriginKind};
+
+    let mut metadata = zencodec::decode::RowMetadata::default();
+    metadata.origin = match (icc, info.cicp) {
+        (Some(icc), Some(cicp)) => Some(ColorOrigin::from_icc_and_cicp(icc, cicp)),
+        (None, Some(cicp)) => Some(ColorOrigin::from_cicp(cicp)),
+        (Some(icc), None) => Some(ColorOrigin::from_icc(icc)),
+        (None, None) if info.source_gamma.is_some() || info.chromaticities.is_some() => {
+            let mut origin = ColorOrigin::assumed();
+            origin.kind = OriginKind::GamaChrm;
+            Some(origin)
+        }
+        (None, None) => None,
+    };
+    metadata.hdr = HdrMetadata {
+        cll: info.content_light_level,
+        mastering: info.mastering_display,
+    };
+    metadata
+}
+
 pub(crate) fn tag_decoded_pixels(
     pixels: PixelBuf,
     info: &crate::decode::PngInfo,
     icc: Option<alloc::sync::Arc<[u8]>>,
 ) -> Result<PixelBuf, At<PngError>> {
-    use zenpixels::{ColorOrigin, HdrMetadata, OriginKind};
     let spec = decoded_spec(pixels.spec().clone(), info, icc.as_ref());
-    let origin = match (icc, info.cicp) {
-        (Some(icc), Some(cicp)) => ColorOrigin::from_icc_and_cicp(icc, cicp),
-        (None, Some(cicp)) => ColorOrigin::from_cicp(cicp),
-        (Some(icc), None) => ColorOrigin::from_icc(icc),
-        (None, None) => {
-            let mut origin = ColorOrigin::assumed();
-            if info.source_gamma.is_some() || info.chromaticities.is_some() {
-                origin.kind = OriginKind::GamaChrm;
-            }
-            origin
-        }
-    };
+    let mut metadata = decoded_row_metadata(info, icc);
+    metadata.facts = pixels.facts();
     pixels
         .with_spec(spec)
-        .map(|pixels| {
-            pixels.with_origin(origin).with_hdr(HdrMetadata {
-                cll: info.content_light_level,
-                mastering: info.mastering_display,
-            })
-        })
+        .map(|pixels| metadata.attach_owned(pixels))
         .map_err(|e| at!(PngError::InvalidBuffer(e.to_string())))
 }
 
@@ -4376,8 +4382,8 @@ pub(crate) fn tag_decoded_pixels(
 /// directly into the sink buffer, avoiding the 2x peak memory of the
 /// full-decode-then-copy fallback.
 ///
-/// Falls back to `helpers::copy_decode_to_sink` for interlaced PNGs
-/// (Adam7 scatters pixels across 7 passes and requires a full canvas).
+/// Uses the shared copy path for Adam7 images and for requested layout
+/// conversions that the native row stream cannot provide.
 fn push_decoder_native<'a>(
     job: PngDecodeJob,
     data: Cow<'a, [u8]>,
@@ -4397,13 +4403,20 @@ fn push_decoder_native<'a>(
     // Check for interlacing — fall back to full decode for Adam7. The shared
     // helper drives the job's trait decode path, so it yields the
     // `At<CodecError>` envelope directly.
-    if data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1 {
+    let interlaced = data.len() >= 29 && data[..8] == crate::chunk::PNG_SIGNATURE && data[28] == 1;
+    let convert = if !interlaced && !preferred.is_empty() {
+        let output = zencodec::decode::DecodeJob::output_info(&job, &data)?;
+        decode_conversion_target(&output.native_format, preferred).is_some()
+    } else {
+        false
+    };
+    if interlaced || convert {
         return zencodec::helpers::copy_decode_to_sink(job, data, sink, preferred, |e| {
             PngError::Io(alloc::format!("sink error: {e}")).into()
         });
     }
 
-    push_decoder_native_noninterlaced(job, data, sink, preferred).map_err(CodecError::of)
+    push_decoder_native_noninterlaced(job, data, sink).map_err(CodecError::of)
 }
 
 /// Non-interlaced native row-streaming decode into the sink, returning the rich
@@ -4413,10 +4426,6 @@ fn push_decoder_native_noninterlaced<'a>(
     job: PngDecodeJob,
     data: Cow<'a, [u8]>,
     sink: &mut dyn zencodec::decode::DecodeRowSink,
-    // Native row-streaming emits the PNG's native descriptor; format
-    // negotiation only applies to the interlaced full-decode fallback (handled
-    // by the caller), so the preference list is unused here.
-    _preferred: &[ImageSpec],
 ) -> Result<OutputInfo, At<PngError>> {
     use crate::decoder::row::RowDecoder;
 
@@ -4456,13 +4465,29 @@ fn push_decoder_native_noninterlaced<'a>(
         .check_dimensions(w, h)
         .map_err(|e| at!(PngError::LimitExceeded(e)))?;
 
-    let descriptor = decoded_spec_for_policy(
+    let mut image_info = convert_info(&info);
+    apply_policy_to_info(&mut image_info, job.policy.as_ref());
+    let icc = image_info.source_color.icc_profile;
+    let descriptor = decoded_spec(
         native_output_descriptor(ihdr.color_type, ihdr.bit_depth, has_trns),
         &info,
-        job.policy.as_ref(),
+        icc.as_ref(),
     );
-
+    let metadata = decoded_row_metadata(&info, icc);
     sink.begin(w, h, descriptor.clone()).map_err(wrap_sink)?;
+    let max_rows = sink.max_buffer_rows().get();
+    macro_rules! lend_rows {
+        ($y:expr, $n:expr) => {
+            sink.provide_buffer_with_metadata(
+                zencodec::decode::BatchMeta::final_rows($y),
+                $n,
+                w,
+                descriptor.clone(),
+                &metadata,
+            )
+            .map_err(wrap_sink)
+        };
+    }
 
     // Passthrough fast path: RGB8 or RGBA8 without tRNS — raw unfiltered
     // data IS the output pixels. Decode directly into the sink buffer.
@@ -4470,113 +4495,89 @@ fn push_decoder_native_noninterlaced<'a>(
         !has_trns && ihdr.bit_depth == 8 && (ihdr.color_type == 6 || ihdr.color_type == 2);
     let raw_row_bytes = ihdr.raw_row_bytes()?;
 
+    let expander = crate::decoder::postprocess::RowExpander::new(&ihdr, reader.ancillary())?;
+    let out_row_bytes = expander.out_row_bytes();
+    if out_row_bytes != w as usize * descriptor.layout.bytes_per_pixel() {
+        return Err(at!(PngError::Internal(
+            zencodec::InternalKind::Bug,
+            alloc::format!(
+                "expander row {out_row_bytes} B != descriptor row {} B",
+                w as usize * descriptor.layout.bytes_per_pixel()
+            )
+        )));
+    }
+
     // Large images with threads allowed: inflate on a second thread while
     // this one unfilters and expands into the sink, as `decode()` does.
     let pipelined = crate::decoder::pipeline::worth_it(&ihdr, png_config.max_threads);
     if pipelined {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let expander =
-                crate::decoder::postprocess::RowExpander::new(&ihdr, reader.ancillary())?;
-            let out_row_bytes = expander.out_row_bytes();
-            if out_row_bytes != w as usize * descriptor.layout.bytes_per_pixel() {
-                return Err(at!(PngError::Internal(
-                    zencodec::InternalKind::Bug,
-                    alloc::format!(
-                        "expander row {out_row_bytes} B != descriptor row {} B",
-                        w as usize * descriptor.layout.bytes_per_pixel()
-                    )
-                )));
-            }
-            let mut dst = sink
-                .provide_next_buffer(0, h, w, descriptor.clone())
-                .map_err(wrap_sink)?;
             let bpp = reader.bpp();
             let mut prev = alloc::vec![0u8; raw_row_bytes];
             let mut cur = alloc::vec![0u8; raw_row_bytes];
-            reader = crate::decoder::pipeline::run(reader, h as usize, cancel, |y, f| {
+            let mut expand_row = |f: &[u8], dst: &mut [u8]| {
                 cur.copy_from_slice(&f[1..]);
                 crate::decoder::row::unfilter_row(f[0], &mut cur, &prev, bpp)?;
-                expander.expand(&cur, &mut dst.row_mut(y as u32)[..out_row_bytes]);
+                expander.expand(&cur, &mut dst[..out_row_bytes]);
                 core::mem::swap(&mut cur, &mut prev);
                 Ok(())
-            })?;
-            drop(dst);
+            };
+            reader = if max_rows >= h {
+                let mut dst = lend_rows!(0, h)?;
+                crate::decoder::pipeline::run(reader, h as usize, cancel, |y, f| {
+                    expand_row(f, dst.row_mut(y as u32))
+                })?
+            } else {
+                crate::decoder::pipeline::run_chunks(
+                    reader,
+                    h as usize,
+                    cancel,
+                    |y, stride, batch| {
+                        let mut rows = batch.chunks_exact(stride);
+                        let mut y = y as u32;
+                        while rows.len() > 0 {
+                            let n = max_rows.min(rows.len() as u32);
+                            let mut dst = lend_rows!(y, n)?;
+                            for (r, f) in rows.by_ref().take(n as usize).enumerate() {
+                                expand_row(f, dst.row_mut(r as u32))?;
+                            }
+                            y += n;
+                        }
+                        Ok(())
+                    },
+                )?
+            };
         }
         #[cfg(target_arch = "wasm32")]
         unreachable!("pipeline::worth_it is false on wasm32");
-    } else if is_passthrough {
-        // Request the full sink buffer up front so we can use split_at_mut
-        // for zero-copy prev-row references during unfiltering.
-        let mut dst = sink
-            .provide_next_buffer(0, h, w, descriptor.clone())
-            .map_err(wrap_sink)?;
-
-        // Row 0: prev is zeros
-        if h > 0 {
-            let zeros = alloc::vec![0u8; raw_row_bytes];
-            let row_slice = dst.row_mut(0);
-            match reader.next_raw_row_direct(&mut row_slice[..raw_row_bytes], &zeros) {
-                Some(Ok(())) => {}
-                Some(Err(e)) => return Err(e),
-                None => {
-                    return Err(at!(PngError::Truncated("image data ends at row 0".into())));
-                }
-            }
-            cancel.check().map_err(|e| at!(PngError::from(e)))?;
-        }
-
-        // Rows 1..h: prev is the previous row in the sink buffer.
-        // We cannot borrow two rows from PixelViewMut simultaneously via
-        // row_mut, so copy the previous row into a temp buffer for unfilter.
-        let mut prev_buf = alloc::vec![0u8; raw_row_bytes];
-        for y in 1..h {
-            // Save previous row for unfilter reference
-            prev_buf.copy_from_slice(&dst.row_mut(y - 1)[..raw_row_bytes]);
-            let row_slice = dst.row_mut(y);
-            match reader.next_raw_row_direct(&mut row_slice[..raw_row_bytes], &prev_buf) {
-                Some(Ok(())) => {}
-                Some(Err(e)) => return Err(e),
-                None => {
-                    return Err(at!(PngError::Truncated(alloc::format!(
-                        "image data ends at row {y}"
-                    ))));
-                }
-            }
-            cancel.check().map_err(|e| at!(PngError::from(e)))?;
-        }
-        drop(dst);
     } else {
-        // General path: expand each raw row straight into the sink row.
-        let expander = crate::decoder::postprocess::RowExpander::new(&ihdr, reader.ancillary())?;
-        let out_row_bytes = expander.out_row_bytes();
-        if out_row_bytes != w as usize * descriptor.layout.bytes_per_pixel() {
-            return Err(at!(PngError::Internal(
-                zencodec::InternalKind::Bug,
-                alloc::format!(
-                    "expander row {out_row_bytes} B != descriptor row {} B",
-                    w as usize * descriptor.layout.bytes_per_pixel()
-                )
-            )));
-        }
-
-        let mut dst = sink
-            .provide_next_buffer(0, h, w, descriptor.clone())
-            .map_err(wrap_sink)?;
-
-        for y in 0..h {
-            let raw = match reader.next_raw_row() {
-                Some(r) => r?,
-                None => {
-                    return Err(at!(PngError::Truncated(alloc::format!(
-                        "image data ends at row {y}"
-                    ))));
+        let mut prev = alloc::vec![0; if is_passthrough { raw_row_bytes } else { 0 }];
+        let mut y = 0;
+        while y < h {
+            let n = max_rows.min(h - y);
+            let mut dst = lend_rows!(y, n)?;
+            for r in 0..n {
+                let row = &mut dst.row_mut(r)[..out_row_bytes];
+                let truncated = || {
+                    at!(PngError::Truncated(alloc::format!(
+                        "image data ends at row {}",
+                        y + r
+                    )))
+                };
+                if is_passthrough {
+                    reader
+                        .next_raw_row_direct(row, &prev)
+                        .ok_or_else(truncated)??;
+                    prev.copy_from_slice(row);
+                } else {
+                    let raw = reader.next_raw_row().ok_or_else(truncated)??;
+                    expander.expand(raw, row);
                 }
-            };
-            expander.expand(raw, &mut dst.row_mut(y)[..out_row_bytes]);
-            cancel.check().map_err(|e| at!(PngError::from(e)))?;
+                cancel.check().map_err(|e| at!(PngError::from(e)))?;
+            }
+            y += n;
         }
-        drop(dst);
     }
 
     // The pipeline drained the stream already (as `decode()`).
@@ -4625,7 +4626,7 @@ pub struct PngStreamingDecoder<'a> {
     /// Post-processed rows of one batch (`batch_rows` × `row_pitch`), reused
     /// across calls.
     row_buf: crate::decoder::postprocess::OutBuf,
-    hdr: zenpixels::HdrMetadata,
+    row_metadata: zencodec::decode::RowMetadata,
     /// The last unfiltered row of the previous batch (copy formats unfilter
     /// the next batch's first row against it).
     prev_buf: Vec<u8>,
@@ -4756,6 +4757,7 @@ impl<'a> PngStreamingDecoder<'a> {
             (None, None) => unreachable!("one reader is built"),
         };
 
+        let row_metadata = decoded_row_metadata(&probe_info, info.source_color.icc_profile.clone());
         Ok(Self {
             rows,
             info,
@@ -4765,10 +4767,7 @@ impl<'a> PngStreamingDecoder<'a> {
                 descriptor.layout.sample == SampleType::U16,
             )?,
             descriptor,
-            hdr: zenpixels::HdrMetadata {
-                cll: probe_info.content_light_level,
-                mastering: probe_info.mastering_display,
-            },
+            row_metadata,
             prev_buf: alloc::vec![0u8; if expander.is_copy() { ihdr.raw_row_bytes()? } else { 0 }],
             row_pitch: out_row_bytes,
             batch_rows,
@@ -4896,10 +4895,9 @@ impl PngStreamingDecoder<'_> {
                 zencodec::InternalKind::Bug,
                 alloc::format!("pixel slice: {e}")
             ))
-        })?
-        .with_hdr(self.hdr);
+        })?;
 
-        Ok(Some((y, slice)))
+        Ok(Some((y, self.row_metadata.attach(slice))))
     }
 }
 
@@ -4931,6 +4929,7 @@ pub struct PngAnimationFrameDecoder {
     compositor: crate::decoder::apng::ApngCompositor,
     failed: bool,
     native_info: crate::decode::PngInfo,
+    row_metadata: zencodec::decode::RowMetadata,
 }
 
 impl PngAnimationFrameDecoder {
@@ -4983,6 +4982,8 @@ impl PngAnimationFrameDecoder {
             }
         };
 
+        let row_metadata =
+            decoded_row_metadata(&probe_info, image_info.source_color.icc_profile.clone());
         Ok(Self {
             file_data,
             info: image_info,
@@ -4995,6 +4996,7 @@ impl PngAnimationFrameDecoder {
             compositor,
             failed: false,
             native_info: probe_info,
+            row_metadata,
         })
     }
 }
@@ -5101,18 +5103,15 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
                 canvas.as_view()
             } else {
                 let view = canvas.as_view();
-                PixelView::new(
+                let view = PixelView::new(
                     view.as_strided_bytes(),
                     view.width(),
                     view.rows(),
                     view.stride(),
                     spec,
                 )
-                .map_err(|e| CodecError::of(at!(PngError::InvalidBuffer(e.to_string()))))?
-                .with_hdr(zenpixels::HdrMetadata {
-                    cll: self.native_info.content_light_level,
-                    mastering: self.native_info.mastering_display,
-                })
+                .map_err(|e| CodecError::of(at!(PngError::InvalidBuffer(e.to_string()))))?;
+                self.row_metadata.attach(view)
             };
             self.failed = false;
             let frame = AnimationFrame::with_duration(pixel_slice, duration, idx);
@@ -5128,17 +5127,10 @@ use rgb::{Gray, Rgb, Rgba};
 use zenpixels::GrayAlpha16;
 use zenpixels::{ChannelOrder, PixelBuf, SampleType};
 fn negotiate_and_convert(pixels: PixelBuf, preferred: &[ImageSpec]) -> PixelBuf {
-    if preferred.is_empty() || preferred.contains(pixels.spec()) {
-        return pixels;
-    }
-    let Some(mut target) = zencodec::decode::negotiate_pixel_format(preferred, DECODE_DESCRIPTORS)
-    else {
+    let Some(mut target) = decode_conversion_target(pixels.spec(), preferred) else {
         return pixels;
     };
     let source = pixels.spec();
-    if source.layout == target.layout {
-        return pixels;
-    }
     let alpha = if target.layout.order.has_alpha_slot() && !source.layout.order.has_alpha_slot() {
         AlphaMode::Opaque
     } else {
@@ -5152,6 +5144,14 @@ fn negotiate_and_convert(pixels: PixelBuf, preferred: &[ImageSpec]) -> PixelBuf 
         target.color.with_alpha(alpha)
     };
     convert_to(&pixels, target).unwrap_or(pixels)
+}
+
+fn decode_conversion_target(source: &ImageSpec, preferred: &[ImageSpec]) -> Option<ImageSpec> {
+    if preferred.is_empty() || preferred.contains(source) {
+        return None;
+    }
+    zencodec::decode::negotiate_pixel_format(preferred, DECODE_DESCRIPTORS)
+        .filter(|target| target.layout != source.layout)
 }
 
 fn convert_to(
@@ -5274,14 +5274,9 @@ fn orientation_exif(orientation: zencodec::Orientation) -> alloc::sync::Arc<[u8]
 /// [`ColorEmitPolicy`](zencodec::ColorEmitPolicy). Returns `Ok(None)` if no
 /// metadata was provided.
 ///
-/// `channel_count` is the channel count of the pixels being encoded (1 = gray,
-/// 3 = RGB, 4 = RGBA, etc.); it lets the resolver suppress cICP for grayscale
-/// where an RGB CICP would recolor the image. Pass `None` when the count is not
-/// yet known (the resolver still falls back to ICC color-space detection).
-///
-/// Errors when the plan needs an ICC synthesized for the source CICP and this
-/// build can't produce one (see the `cms` feature): cICP is too new to be the
-/// sole color carrier, so encoding without the ICC would misrepresent the image.
+/// Typed input passes color binding before emission. At job admission and on
+/// the raw authoring API, the supplied metadata describes the intended samples.
+/// `channel_count` distinguishes gray from RGB when the layout is known.
 fn apply_encode_policy(
     metadata: Option<&Metadata>,
     policy: Option<&zencodec::encode::EncodePolicy>,
@@ -5322,77 +5317,121 @@ fn apply_encode_policy(
         filtered.exif = Some(orientation_exif(filtered.orientation));
     }
 
-    // Resolve color emission (ICC vs cICP) under the color policy. Build a
-    // `SourceColor` from the (already coarse-filtered) metadata and run the
-    // resolver against PNG's capabilities, then lower the plan back onto the
-    // metadata's color carriers.
     let color_policy = policy
         .map(|p| p.resolve_color(zencodec::ColorEmitPolicy::Balanced))
         .unwrap_or(zencodec::ColorEmitPolicy::Balanced);
 
-    let mut src = zencodec::SourceColor::default();
-    if let Some(n) = channel_count {
-        src = src.with_channel_count(n);
-    }
-    if let Some(c) = filtered.cicp {
-        src = src
-            .with_cicp(c)
-            .with_color_authority(zencodec::ColorAuthority::Cicp);
-    }
-    if let Some(icc) = &filtered.icc_profile {
-        src = src
-            .with_icc_profile(icc.clone())
-            .with_color_authority(zencodec::ColorAuthority::Icc);
-    }
-
-    let plan = zencodec::resolve_color_emit(&src, &PNG_ENCODE_CAPS, color_policy);
-
-    // Lower the plan: cICP carrier.
-    filtered.cicp = plan.cicp;
-    // Lower the plan: ICC disposition. The `embed_icc == Some(false)` coarse
-    // gate already cleared the ICC and forbids synthesizing a new one.
-    match plan.icc {
-        zencodec::IccDisposition::KeepSource => {
-            // Leave `filtered.icc_profile` as-is (already coarse-filtered).
-        }
-        zencodec::IccDisposition::SynthesizeFrom(cicp) => {
-            filtered.icc_profile = if embed_icc {
-                // Transfer-aware lowering: `synthesize_icc_for_cicp` matches the TRC
-                // (a BT.2020-PQ source never gets the SDR-TRC Rec.2020 profile).
-                // `Profile` → own a copy; `NotNeeded` → nothing to embed.
-                //
-                // Every other outcome is an ERROR, not a silent skip: the plan
-                // asked for an ICC because PNG's cICP chunk (PNG 3.0, 2025) is
-                // too new to be the sole color carrier — most deployed decoders
-                // ignore it and would read the pixels as sRGB. Refusing beats
-                // misrepresenting the image. The database supplies supported
-                // PQ pairs; scene HLG needs an explicit rendering target for ICC.
-                use zenpixels_convert::icc_profiles::SynthesizedIcc;
-                match zenpixels_convert::icc_profiles::SynthesizedIcc::for_cicp(cicp) {
-                    SynthesizedIcc::Profile(bytes) => Some(alloc::sync::Arc::from(bytes.as_ref())),
-                    SynthesizedIcc::NotNeeded => None,
-                    outcome => {
-                        // The caller can supply a qualified companion or select
-                        // a policy that permits native CICP alone.
-                        return Err(at!(PngError::CmsRequired(alloc::format!(
-                            "this image's color (CICP primaries {} / transfer {}) needs a \
-                             synthesized ICC profile this build can't produce ({outcome:?}); \
-                             supply an ICC profile or select native CICP-only emission",
-                            cicp.color_primaries,
-                            cicp.transfer_characteristics
-                        ))));
-                    }
+    // A native cICP can describe the samples without going through metadata
+    // policy. Resolve an explicit metadata carrier when there is one.
+    if filtered.icc_profile.is_some() || filtered.cicp.is_some() {
+        let mut src = zencodec::SourceColor::default();
+        let mut verbatim_cicp = None;
+        let gray = matches!(channel_count, Some(1 | 2));
+        let color = if let Some(profile) = &filtered.icc_profile {
+            let channels = match zenpixels::IccColorSpace::from_icc(profile) {
+                Some(zenpixels::IccColorSpace::Gray) if channel_count.is_none() || gray => 1,
+                Some(zenpixels::IccColorSpace::Rgb) if !gray => 3,
+                _ => {
+                    return Err(at!(PngError::InvalidInput(
+                        "the metadata ICC profile does not describe the PNG channels".into(),
+                    )));
+                }
+            };
+            src = src
+                .with_icc_profile(profile.clone())
+                .with_color_authority(zencodec::ColorAuthority::Icc);
+            if let Some(cicp) = filtered.cicp {
+                src = src
+                    .with_cicp(cicp)
+                    .with_color_authority(zencodec::ColorAuthority::Icc);
+            }
+            ColorSpace::Icc {
+                profile: profile.clone(),
+                channels,
+                alpha: AlphaMode::None,
+                intent: zenpixels::RenderingIntent::default(),
+            }
+        } else {
+            let cicp = filtered.cicp.expect("metadata color carrier");
+            // The legacy PNG authoring API normalizes matrix coefficients to
+            // RGB identity. Checked exact retention already requires matrix 0.
+            let rgb_cicp = Cicp::new(
+                cicp.color_primaries,
+                cicp.transfer_characteristics,
+                0,
+                cicp.full_range,
+            );
+            let transfer =
+                Transfer::from_cicp(cicp.transfer_characteristics).unwrap_or(Transfer::Unknown);
+            let range = if cicp.full_range {
+                SignalRange::Full
+            } else {
+                SignalRange::Narrow
+            };
+            let color = if gray {
+                ColorSpace::Gray {
+                    transfer,
+                    range,
+                    alpha: AlphaMode::None,
+                    white: None,
                 }
             } else {
-                None
+                ColorSpace::Rgb {
+                    primaries: Primaries::from_cicp(cicp.color_primaries)
+                        .unwrap_or(Primaries::Unknown),
+                    transfer,
+                    range,
+                    alpha: AlphaMode::None,
+                    white: None,
+                }
             };
+            let planner_cicp = if !gray && color_policy == zencodec::ColorEmitPolicy::Verbatim {
+                // Several H.273 codes project to the same Transfer. The
+                // resolver compares against the canonical projection; retain
+                // the caller's bytes once it admits that representation.
+                verbatim_cicp = Some(rgb_cicp);
+                color.try_cicp().unwrap_or(rgb_cicp)
+            } else {
+                rgb_cicp
+            };
+            src = src
+                .with_cicp(planner_cicp)
+                .with_color_authority(zencodec::ColorAuthority::Cicp);
+            color
+        };
+
+        // Exclude iCCP from the target if the coarse gate forbids it.
+        let caps = PNG_ENCODE_CAPS.clone().with_icc(embed_icc);
+        let plan =
+            zencodec::resolve_color_emit(&src, &color, &caps, color_policy).map_err(|e| {
+                at!(PngError::PolicyRejected(
+                    zencodec::PolicyKind::Encode,
+                    e.to_string()
+                ))
+            })?;
+        filtered.cicp = plan.cicp.map(|cicp| verbatim_cicp.unwrap_or(cicp));
+        match plan.icc {
+            zencodec::IccDisposition::KeepSource => {}
+            zencodec::IccDisposition::SynthesizeFrom(cicp) => {
+                filtered.icc_profile = synthesized_profile(
+                    cicp,
+                    zenpixels_convert::icc_profiles::SynthesizedIcc::for_cicp(cicp),
+                )?;
+            }
+            zencodec::IccDisposition::SynthesizeGrayFrom(cicp) => {
+                filtered.icc_profile = synthesized_profile(
+                    cicp,
+                    zenpixels_convert::icc_profiles::SynthesizedIcc::for_gray_cicp(cicp),
+                )?;
+            }
+            zencodec::IccDisposition::Drop => filtered.icc_profile = None,
+            _ => {
+                return Err(at!(PngError::PolicyRejected(
+                    zencodec::PolicyKind::Encode,
+                    "the requested ICC disposition cannot be written as PNG".into(),
+                )));
+            }
         }
-        zencodec::IccDisposition::Drop => {
-            filtered.icc_profile = None;
-        }
-        // `IccDisposition` is #[non_exhaustive]; a future variant defaults to the
-        // conservative choice of preserving the source ICC unchanged.
-        _ => {}
     }
 
     // Forbidding the profile must not relabel the pixels: what the file still
@@ -5417,6 +5456,21 @@ fn apply_encode_policy(
     }
 
     Ok(Some(filtered))
+}
+
+fn synthesized_profile(
+    cicp: Cicp,
+    result: zenpixels_convert::icc_profiles::SynthesizedIcc,
+) -> Result<Option<alloc::sync::Arc<[u8]>>, At<PngError>> {
+    use zenpixels_convert::icc_profiles::SynthesizedIcc;
+    match result {
+        SynthesizedIcc::Profile(bytes) => Ok(Some(alloc::sync::Arc::from(bytes.as_ref()))),
+        outcome => Err(at!(PngError::CmsRequired(alloc::format!(
+            "no compatible ICC profile for cICP primaries {} / transfer {} ({outcome:?})",
+            cicp.color_primaries,
+            cicp.transfer_characteristics
+        )))),
+    }
 }
 
 /// Apply decode policy to control metadata extraction and strictness.
@@ -9136,107 +9190,93 @@ mod tests {
         );
     }
 
-    /// A PQ (BT.2100) CICP-only source needs an ICC the bundled tables can't
-    /// produce. Without the `cms` feature that is an encode ERROR — cICP is too
-    /// new to be PNG's sole color carrier, and silently emitting without the
-    /// zenpixels-convert 0.2.13 made `synthesize_icc_for_cicp` feature-
-    /// independent (the full H.273 grid ships as a bundled LZ4 blob;
-    /// moxcms is build-time-only), so a no-`cms` build synthesizes the
-    /// same PQ ICC as a `cms` build and the encode SUCCEEDS with both
-    /// carriers. This test previously expected a refusal ("PQ CICP
-    /// without cms must refuse, not mislabel") — that expectation went
-    /// stale with the bundle migration (zenjpeg made the same call in
-    /// its 8447d4d4): the output is no longer mislabeled, it carries a
-    /// real PQ profile. Expectation updated 2026-06-11 with user
-    /// sign-off.
-    #[cfg(not(feature = "cms"))]
+    /// Both feature configurations ship the database used for the companion ICC.
     #[test]
-    #[allow(deprecated)] // Exercises the published best-effort job setters.
-    fn cicp_pq_without_cms_synthesizes_icc_from_bundle() {
-        let enc = PngEncoderConfig::new();
-        let meta = Metadata::default().with_cicp(zenpixels::Cicp::BT2100_PQ);
-        let job = enc
+    #[allow(deprecated)] // Balanced emission is available through the legacy policy setter.
+    fn cicp_pq_embeds_a_bt2020_pq_rgb_profile() {
+        let output = PngEncoderConfig::new()
+            .with_downcast(crate::encode::DowncastFlags::none())
             .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact);
-        let encoder = job.encoder().unwrap();
-        let pixels = vec![
-            Rgb {
-                r: 10u8,
-                g: 20,
-                b: 30
-            };
-            4
-        ];
-        let img = Img::new(pixels, 2, 2);
-        let out = encoder
-            .do_encode(
-                bytemuck::cast_slice(img.buf()),
-                2,
-                2,
-                crate::encode::ColorType::Rgb,
+            .try_with_metadata_policy(
+                Metadata::none().with_cicp(Cicp::BT2100_PQ_RGB),
+                zencodec::MetadataPolicy::PreserveExact,
             )
-            .expect("PQ CICP must synthesize from the bundle and succeed without cms");
-
-        let decoded =
-            crate::decode::decode(out.data(), &PngDecodeConfig::none(), &enough::Unstoppable)
-                .unwrap();
-        let embedded = decoded
-            .info
-            .icc_profile
-            .as_deref()
-            .expect("no-cms build must embed the bundle-synthesized PQ ICC");
-        assert!(!embedded.is_empty());
-        // cICP rides alongside as the primary (new-decoder) carrier.
-        assert_eq!(
-            decoded.info.cicp,
-            Some(zenpixels::Cicp::new(9, 16, 0, true))
-        );
-    }
-
-    /// With the `cms` feature, the same PQ CICP-only source synthesizes a real
-    /// (moxcms-generated) ICC and the encode succeeds with both carriers.
-    #[cfg(feature = "cms")]
-    #[test]
-    #[allow(deprecated)] // Exercises the published best-effort job setters.
-    fn cicp_pq_with_cms_synthesizes_icc() {
-        let enc = PngEncoderConfig::new();
-        let meta = Metadata::default().with_cicp(zenpixels::Cicp::BT2100_PQ);
-        let job = enc
-            .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact);
-        let encoder = job.encoder().unwrap();
-        let pixels = vec![
-            Rgb {
-                r: 10u8,
-                g: 20,
-                b: 30
-            };
-            4
-        ];
-        let img = Img::new(pixels, 2, 2);
-        let out = encoder
-            .do_encode(
-                bytemuck::cast_slice(img.buf()),
-                2,
-                2,
-                crate::encode::ColorType::Rgb,
+            .unwrap()
+            .with_policy(
+                zencodec::encode::EncodePolicy::none()
+                    .with_color(zencodec::ColorEmitPolicy::Balanced),
             )
-            .expect("PQ CICP with cms must synthesize an ICC and succeed");
+            .encoder()
+            .unwrap()
+            .do_encode(&[10, 20, 30], 1, 1, crate::encode::ColorType::Rgb)
+            .unwrap();
 
-        let decoded =
-            crate::decode::decode(out.data(), &PngDecodeConfig::none(), &enough::Unstoppable)
+        let cicp = crate::chunk::ChunkIter::new(output.data())
+            .map(Result::unwrap)
+            .find(|chunk| &chunk.chunk_type == b"cICP")
+            .unwrap();
+        assert_eq!(cicp.data, [9, 16, 0, 1]);
+
+        let mut oracle = png::Decoder::new(std::io::Cursor::new(output.data()))
+            .read_info()
+            .unwrap();
+        let mut samples = [0; 3];
+        let frame = oracle.next_frame(&mut samples).unwrap();
+        assert_eq!(frame.color_type, png::ColorType::Rgb);
+        assert_eq!(samples, [10, 20, 30]);
+        let icc = oracle.info().icc_profile.as_deref().unwrap();
+        assert_eq!(&icc[12..24], b"mntrRGB XYZ ");
+        assert_eq!(&icc[36..40], b"acsp");
+
+        let read_u32 = |bytes: &[u8]| u32::from_be_bytes(bytes.try_into().unwrap());
+        let table_end = 132 + 12 * read_u32(&icc[128..132]) as usize;
+        let tag = |name: &[u8; 4]| {
+            let entry = icc[132..table_end]
+                .as_chunks::<12>()
+                .0
+                .iter()
+                .find(|entry| &entry[..4] == name)
                 .unwrap();
-        let embedded = decoded
-            .info
-            .icc_profile
-            .as_deref()
-            .expect("cms build must embed a synthesized PQ ICC");
-        assert!(!embedded.is_empty());
-        // cICP rides alongside as the primary (new-decoder) carrier.
-        assert_eq!(
-            decoded.info.cicp,
-            Some(zenpixels::Cicp::new(9, 16, 0, true))
-        );
+            let start = read_u32(&entry[4..8]) as usize;
+            &icc[start..start + read_u32(&entry[8..12]) as usize]
+        };
+        // Linear BT.2020 RGB-to-XYZ with Bradford D65-to-D50 adaptation.
+        for (name, expected) in [
+            (b"rXYZ", [0.6735, 0.2790, -0.0019]),
+            (b"gXYZ", [0.1657, 0.6753, 0.0300]),
+            (b"bXYZ", [0.1250, 0.0456, 0.7969]),
+        ] {
+            let xyz = tag(name);
+            assert_eq!(&xyz[..4], b"XYZ ");
+            for (actual, expected) in xyz[8..20].as_chunks::<4>().0.iter().zip(expected) {
+                let value = f64::from(i32::from_be_bytes(*actual)) / 65_536.0;
+                assert!(
+                    (value - expected).abs() <= 0.0002,
+                    "{name:?}: {value} vs {expected}"
+                );
+            }
+        }
+        assert_eq!(&tag(b"cicp")[8..12], &[9, 16, 0, 1]);
+
+        let curve = tag(b"rTRC");
+        assert_eq!(tag(b"gTRC"), curve);
+        assert_eq!(tag(b"bTRC"), curve);
+        assert_eq!(&curve[..4], b"curv");
+        let n = read_u32(&curve[8..12]) as usize;
+        for i in [0, 1, n / 64, n / 16, n / 8, n / 4, n / 2, 3 * n / 4, n - 1] {
+            // ST 2084 EOTF, normalized to 10,000 nits and rounded to ICC u16.
+            let v = (i as f64 / (n - 1) as f64).powf(32.0 / 2523.0);
+            let pq = ((v - 3424.0 / 4096.0).max(0.0) / (2413.0 / 128.0 - (2392.0 / 128.0) * v))
+                .powf(16384.0 / 2610.0);
+            let expected = (65535.0 * pq).round() as u16;
+            let actual = u16::from_be_bytes(curve[12 + 2 * i..14 + 2 * i].try_into().unwrap());
+            assert!(
+                actual.abs_diff(expected) <= 1,
+                "TRC[{i}]: {actual} vs {expected}"
+            );
+        }
+        assert_eq!(&tag(b"A2B0")[..4], b"mAB ");
+        assert_eq!(&tag(b"D2B0")[..4], b"mpet");
     }
 
     // ── EncoderConfig trait ──
@@ -11031,7 +11071,7 @@ mod tests {
             16
         ];
         let img = Img::new(pixels, 4, 4);
-        let meta = Metadata::none().with_cicp(zencodec::Cicp::BT2100_PQ);
+        let meta = Metadata::none().with_cicp(zencodec::Cicp::BT2100_PQ_RGB);
         let encoded = crate::encode::encode_rgb16(
             img.as_ref(),
             Some(&meta),
@@ -11041,19 +11081,21 @@ mod tests {
         )
         .unwrap();
 
-        // The cICP chunk survives the encode (guards the descriptor checks
-        // below: a missing chunk would silently degrade them to sRGB).
-        assert!(
-            encoded.windows(4).any(|w| w == b"cICP"),
-            "encoder dropped the cICP chunk"
-        );
-        let probed = crate::decode::probe(&encoded).unwrap();
-        // PNG normalizes matrix_coefficients to 0 (RGB is PNG's only color
-        // model), so the round-tripped CICP is the still-image RGB form.
+        let cicp = crate::chunk::ChunkIter::new(&encoded)
+            .map(Result::unwrap)
+            .find(|chunk| &chunk.chunk_type == b"cICP")
+            .unwrap();
+        assert_eq!(cicp.data, [9, 16, 0, 1]);
+        let mut oracle = png::Decoder::new(std::io::Cursor::new(&encoded))
+            .read_info()
+            .unwrap();
+        let mut sample_bytes = [0; 4 * 4 * 6];
+        let frame = oracle.next_frame(&mut sample_bytes).unwrap();
+        assert_eq!(frame.color_type, png::ColorType::Rgb);
+        assert_eq!(frame.bit_depth, png::BitDepth::Sixteen);
         assert_eq!(
-            probed.cicp,
-            Some(zencodec::Cicp::new(9, 16, 0, true)),
-            "probe did not surface the cICP chunk"
+            sample_bytes.as_slice(),
+            [0x03, 0xe8, 0x4e, 0x20, 0xea, 0x60].repeat(16)
         );
 
         // Probe level: output_info's native format carries PQ + BT.2020.
@@ -11358,7 +11400,7 @@ mod strip_stream_tests {
         for effort in [0, 1] {
             let mut cfg = PngEncoderConfig::new()
                 .with_compression(Compression::Effort(effort))
-                .with_cicp(Some(zencodec::Cicp::BT2100_PQ));
+                .with_cicp(Some(zencodec::Cicp::BT2100_PQ_RGB));
             // Same color type both ways (the one-shot path would reduce
             // this content).
             cfg.config.downcast = crate::encode::DowncastFlags::none();

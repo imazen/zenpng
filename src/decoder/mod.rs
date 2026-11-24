@@ -57,7 +57,7 @@ pub(crate) fn build_png_info(ihdr: &Ihdr, ancillary: &mut PngAncillary) -> PngIn
 
     let cicp = ancillary
         .cicp
-        .map(|c| Cicp::new(c[0], c[1], c[2], c[3] != 0));
+        .and_then(|bytes| Cicp::try_from_bytes(bytes).ok());
 
     let content_light_level = ancillary.clli.map(|c| {
         ContentLightLevel::new(

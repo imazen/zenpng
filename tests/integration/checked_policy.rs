@@ -96,10 +96,14 @@ fn refused_checked_policy_does_not_replace_the_accepted_policy() {
     }
     job.try_set_policy(EncodePolicy::none()).unwrap();
     let pixels = [7, 19, 43, 255];
+    let spec = ImageSpec::new(
+        zenpixels::SampleLayout::RGBA8,
+        zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
+    );
     let output = job
         .encoder()
         .unwrap()
-        .encode(PixelView::new(&pixels, 1, 1, 4, ImageSpec::rgba8_srgb()).unwrap())
+        .encode(PixelView::new(&pixels, 1, 1, 4, spec).unwrap())
         .unwrap();
     assert_carriers_and_pixels(output.data(), &pixels);
 }

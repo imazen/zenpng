@@ -140,10 +140,26 @@ pub(crate) fn worth_it(_ihdr: &crate::chunk::ihdr::Ihdr, _max_threads: usize) ->
 /// reader for metadata collection.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn run<'a>(
-    mut reader: RowDecoder<'a>,
+    reader: RowDecoder<'a>,
     rows: usize,
     cancel: &dyn Stop,
     mut consume: impl FnMut(usize, &[u8]) -> Result<()>,
+) -> Result<RowDecoder<'a>> {
+    run_chunks(reader, rows, cancel, |y, stride, chunk| {
+        for (r, row) in chunk.chunks_exact(stride).enumerate() {
+            consume(y + r, row)?;
+        }
+        Ok(())
+    })
+}
+
+/// Like `run`, lending a batch of filtered rows on the caller's thread.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn run_chunks<'a>(
+    mut reader: RowDecoder<'a>,
+    rows: usize,
+    cancel: &dyn Stop,
+    mut consume: impl FnMut(usize, usize, &[u8]) -> Result<()>,
 ) -> Result<RowDecoder<'a>> {
     count_run();
     let stride = reader.stride();
@@ -219,13 +235,8 @@ pub(crate) fn run<'a>(
                 outcome = Err(at!(PngError::from(e)));
                 break;
             }
-            for r in 0..n {
-                if let Err(e) = consume(y + r, &buf[r * stride..(r + 1) * stride]) {
-                    outcome = Err(e);
-                    break;
-                }
-            }
-            if outcome.is_err() {
+            if let Err(e) = consume(y, stride, &buf[..n * stride]) {
+                outcome = Err(e);
                 break;
             }
             y += n;

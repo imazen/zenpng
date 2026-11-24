@@ -18,7 +18,7 @@ zenpixels-convert = { version = "0.5", features = ["imgref"] }
 imgref = "1"     # ImgRef for encode input
 rgb = "0.8"      # rgb::Rgba<u8> + FromSlice::as_rgba
 enough = "0.4"   # Unstoppable / cancellation tokens
-zencodec = "0.2" # zencodec::Metadata, for the `metadata` encode arg (see "Metadata")
+zencodec = "0.3" # zencodec::Metadata, for the `metadata` encode arg (see "Metadata")
 ```
 
 ```rust

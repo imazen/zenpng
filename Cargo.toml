@@ -18,16 +18,16 @@ include = [
 ]
 
 [dependencies]
-# The zencodec 0.2 family: version edges, resolved by each root's own
+# The zencodec 0.3 family: version edges, resolved by each root's own
 # [patch.crates-io] (dependency patch tables do not propagate).
-zencodec-coroutine = { version = "0.1.0", optional = true }
-zenmeta = { version = "0.1.0", default-features = false, features = ["rewrite"], optional = true }
+zencodec-coroutine = { version = "0.2.0", optional = true }
+zenmeta = { version = "0.2.0", default-features = false, features = ["rewrite"], optional = true }
 thiserror = { version = "2.0.21", default-features = false }
 rgb = { version = "0.8.53", default-features = false, features = ["as-bytes"] }
 imgref = "1.12.3"
 bytemuck = { version = "1.25.2", default-features = false, features = ["extern_crate_alloc"] }
 enough = "0.4.5"
-zencodec = { version = ">=0.2.0, <0.3.0" }
+zencodec = { version = ">=0.3.0, <0.5.0" }
 zenpixels = { version = ">=0.5.0, <0.6.0", default-features = false, features = ["icc", "imgref"] }
 # Balanced PNG emission has supplied PQ ICC companions even without `cms`.
 # In 0.5 the profile database is opt-in, so preserve that contract explicitly.
@@ -52,7 +52,7 @@ almost-enough = { version = "0.4.5", features = ["std"] }
 rustix = { version = "1.1.5", default-features = false, features = ["std", "thread"] }
 
 [dev-dependencies]
-zencodec-io = { version = "0.1.0", features = ["std"] }
+zencodec-io = { version = "0.2.0", features = ["std"] }
 png = "0.18"
 # image-rs/image-png main, for benches/vs_png.rs (pinned commit; 2026-10-05).
 png_main = { package = "png", git = "https://github.com/image-rs/image-png", rev = "b2f10c6a7e3127d4aaf231f3eae731a33e6eb0bc" }
@@ -64,7 +64,7 @@ fdeflate = "0.3.7"
 zopfli = "0.8"
 lodepng = "3.12.2"
 # The root patch keeps the conformance harness and codec on one trait source.
-zencodec-testkit = ">=0.2.0, <0.3.0"
+zencodec-testkit = ">=0.3.0, <0.5.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 codec-corpus = "1.0.2"
@@ -194,13 +194,13 @@ harness = false
 [patch.crates-io]
 # One zencodec family revision for the zenpixels 0.5 interchange types.
 # These patches also resolve the unpublished I/O, coroutine and metadata crates.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "e0dba0052a839ecfe17e4c911a3761e793605adf" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "e0dba0052a839ecfe17e4c911a3761e793605adf" }
 garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
 # Retain main's strip-compression API source.
