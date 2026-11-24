@@ -183,3 +183,59 @@ fn subframes_blend_dispose_and_skip_at_both_precisions() {
         }
     }
 }
+
+#[test]
+fn sink_completion_carries_exact_displayed_frame_timing() {
+    use zencodec::animation::FrameDuration;
+
+    let (bytes, expected) = fixture(8, 2, true);
+    let config = PngDecoderConfig::new();
+    let mut sink_decoder = config
+        .clone()
+        .job()
+        .with_start_frame_index(1)
+        .animation_frame_decoder(Cow::Borrowed(&bytes), &[])
+        .unwrap();
+    let mut owned_decoder = config
+        .job()
+        .with_start_frame_index(1)
+        .animation_frame_decoder(Cow::Borrowed(&bytes), &[])
+        .unwrap();
+    let duration = FrameDuration::new(1001, 30000).unwrap();
+    for (index, expected) in expected.iter().enumerate().skip(1) {
+        let mut sink = zencodec_io::CollectSink::new();
+        let completion = sink_decoder
+            .render_next_frame_to_sink(None, &mut sink)
+            .unwrap()
+            .unwrap();
+        let timing = completion.frame.unwrap();
+        assert_eq!(timing.frame_index, index as u32);
+        assert_eq!(timing.duration, duration);
+        assert_eq!(timing.pts, None);
+        assert_eq!((completion.width, completion.height), (3, 2));
+        assert_eq!(completion.native_format, ImageSpec::rgba8_srgb());
+        assert_eq!(
+            sink.bytes(),
+            expected.iter().map(|&v| v as u8).collect::<Vec<_>>()
+        );
+
+        let owned = owned_decoder
+            .render_next_frame(None)
+            .unwrap()
+            .unwrap()
+            .try_to_owned_frame()
+            .unwrap();
+        assert_eq!(owned.duration(), duration);
+        assert_eq!(owned.frame_index(), index as u32);
+        assert_eq!(
+            owned.pixels().try_contiguous_bytes().unwrap().as_ref(),
+            sink.bytes()
+        );
+    }
+    assert!(
+        sink_decoder
+            .render_next_frame_to_sink(None, &mut zencodec_io::CollectSink::new())
+            .unwrap()
+            .is_none()
+    );
+}

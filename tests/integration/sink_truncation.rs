@@ -219,3 +219,141 @@ fn strict_policy_verifies_adler_in_push_and_streaming() {
         assert_eq!(end.is_err(), strict, "streaming, strict={strict}");
     }
 }
+
+#[test]
+fn push_respects_bounded_loans_and_preserves_color_metadata() {
+    use std::num::NonZeroU32;
+    use zencodec::decode::{BatchMeta, RowMetadata};
+    use zencodec_io::CollectSink as PixelCollector;
+    use zenpixels::{Cicp, HdrMetadata};
+
+    #[derive(Default)]
+    struct Bounded {
+        output: PixelCollector,
+        next_y: u32,
+    }
+    impl DecodeRowSink for Bounded {
+        fn begin(&mut self, w: u32, h: u32, spec: ImageSpec) -> Result<(), SinkError> {
+            self.output.begin(w, h, spec)
+        }
+
+        fn max_buffer_rows(&self) -> NonZeroU32 {
+            NonZeroU32::new(2).unwrap()
+        }
+
+        fn provide_next_buffer(
+            &mut self,
+            _y: u32,
+            _h: u32,
+            _w: u32,
+            _spec: ImageSpec,
+        ) -> Result<PixelViewMut<'_>, SinkError> {
+            Err("the decoder omitted row metadata".into())
+        }
+
+        fn provide_buffer_with_metadata(
+            &mut self,
+            batch: BatchMeta,
+            h: u32,
+            w: u32,
+            spec: ImageSpec,
+            metadata: &RowMetadata,
+        ) -> Result<PixelViewMut<'_>, SinkError> {
+            assert!(batch.is_final);
+            assert_eq!(batch.y, self.next_y);
+            assert!(h > 0 && h <= self.max_buffer_rows().get());
+            assert_eq!(
+                metadata.origin.as_ref().unwrap().cicp,
+                Some(Cicp::BT2100_PQ_RGB)
+            );
+            assert!(metadata.hdr.cll.is_some());
+            self.next_y += h;
+            self.output
+                .provide_buffer_with_metadata(batch, h, w, spec, metadata)
+        }
+
+        fn finish(&mut self) -> Result<(), SinkError> {
+            self.output.finish()
+        }
+    }
+
+    // The large RGBA case crosses the x86_64 pipeline threshold. All cases
+    // use Paeth so the first row of each strip depends on the preceding one.
+    for (color, w, h) in [
+        (png::ColorType::Rgb, 5, 7),
+        (png::ColorType::Rgba, 4096, 800),
+        (png::ColorType::Grayscale, 5, 7),
+    ] {
+        let channels = color.samples();
+        let expected: Vec<u8> = (0..w as usize * h as usize * channels)
+            .map(|i| (i.wrapping_mul(29) ^ (i >> 15)) as u8)
+            .collect();
+        let mut file = Vec::new();
+        {
+            let mut writer = png::Encoder::new(&mut file, w, h);
+            writer.set_color(color);
+            writer.set_filter(png::Filter::Paeth);
+            writer
+                .write_header()
+                .unwrap()
+                .write_image_data(&expected)
+                .unwrap();
+        }
+        let mut tags = Vec::new();
+        chunk(&mut tags, b"cICP", &[9, 16, 0, 1]);
+        chunk(
+            &mut tags,
+            b"cLLI",
+            &[0, 0x98, 0x96, 0x80, 0, 0x0f, 0x42, 0x40],
+        );
+        file.splice(33..33, tags);
+        let mut sink = Bounded::default();
+        let output = PngDecoderConfig::new()
+            .job()
+            .push_decoder(file.as_slice().into(), &mut sink, &[])
+            .unwrap();
+        assert_eq!((output.width, output.height), (w, h));
+        assert_eq!(sink.next_y, h);
+        let mut pull = PngDecoderConfig::new()
+            .job()
+            .streaming_decoder(file.as_slice().into(), &[])
+            .unwrap();
+        let (_, first) = pull.next_batch().unwrap().unwrap();
+        let pixels = sink.output.into_buffer().unwrap();
+        assert_eq!(pixels.spec(), &output.native_format);
+        assert_eq!(
+            pixels.as_view().try_contiguous_bytes().unwrap().as_ref(),
+            expected
+        );
+        assert_eq!(first.origin(), Some(pixels.origin()));
+        assert_eq!(first.hdr(), pixels.hdr());
+        assert_ne!(first.hdr(), HdrMetadata::default());
+
+        if color == png::ColorType::Rgb {
+            let mut converted = Bounded::default();
+            let output = PngDecoderConfig::new()
+                .job()
+                .push_decoder(
+                    file.as_slice().into(),
+                    &mut converted,
+                    &[ImageSpec::rgba8_srgb()],
+                )
+                .unwrap();
+            let pixels = converted.output.into_buffer().unwrap();
+            assert_eq!(output.native_format, *pixels.spec());
+            assert_eq!(pixels.spec().layout, ImageSpec::rgba8_srgb().layout);
+            assert_eq!(pixels.spec().color.alpha(), zenpixels::AlphaMode::Opaque);
+            assert!(output.has_alpha);
+            let rgba: Vec<_> = expected
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .flat_map(|&[r, g, b]| [r, g, b, 255])
+                .collect();
+            assert_eq!(
+                pixels.as_view().try_contiguous_bytes().unwrap().as_ref(),
+                rgba
+            );
+        }
+    }
+}

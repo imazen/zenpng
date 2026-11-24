@@ -34,6 +34,11 @@ All notable changes to zenpng are documented here.
 
 ### Changed
 
+- Align the root, fuzz, and benchmark input packages with zencodec 0.3
+  (`093211c2`) and zenpixels 0.5 (`e0dba005`). Push decodes honor the
+  sink's maximum row loan and carry HDR and color origin on the delivered
+  rows. APNG sink completion includes the encoded frame duration and index.
+
 - Upgrade `archmage` and `magetypes` to `0.9.33`, advance root and fuzz `zenflate` (`7270e38f`) and `zenpixels` / `zenpixels-convert` (`7badb147`) patches, and refresh `fuzz/Cargo.lock`.
 
 - Update dependency floors in `Cargo.toml`, `fuzz/Cargo.toml`, and `apidoc/Cargo.toml` (`zenflate` 0.4.1 / `f6c96cc6`, `zenzop` 0.4.2, `zenquant` 0.1.3, `archmage` 0.9.32, `magetypes` 0.9.32, `enough` 0.4.5, `almost-enough` 0.4.5, `whereat` 0.1.5, `linear-srgb` 0.6.12, `bytemuck` 1.25.2, `imgref` 1.12.3, `rgb` 0.8.53, `thiserror` 2.0.21, `zenbench` 0.1.11, `zenutils-apidoc` 0.1.1) and refresh `fuzz/Cargo.lock` and `apidoc/Cargo.lock`.
@@ -57,6 +62,10 @@ All notable changes to zenpng are documented here.
   crates.io, so releases stay gated on publishing them.
 
 ### Fixed
+
+- Still encodes reject verbatim ICC metadata that contradicts the active
+  samples before writing a header. Exact PNG cICP retention preserves the
+  original transfer code when multiple codes share a pixel interpretation.
 
 - Use `zenpixels::icc::IccIdentification::from_icc` in encode metadata/context identification (`identify`, `stored_color`, `bind_color`) so bundle-synthesized `MetadataOnly` profiles (such as linear P3 and Rec. 2020) are recognized consistently; align `PngAnimationFrameEncoder::capture_first_frame` with `PngEncoder::bind_color` by placing frame `ColorContext` CICP code points in `config.cicp` (keeping default sRGB untagged and letting BT.2100 HLG animation frames write `cICP` without forcing ICC synthesis); update integration tests to public `zenpixels` / `zenpixels-convert` ICC facades.
 

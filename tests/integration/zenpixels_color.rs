@@ -30,18 +30,31 @@ fn compress(data: &[u8]) -> Vec<u8> {
 }
 
 fn fixture(kind: u8, bits: u8, row: &[u8], extra: &[(&[u8; 4], &[u8])]) -> Vec<u8> {
+    raster_fixture(kind, bits, 1, &[row], extra)
+}
+
+fn raster_fixture(
+    kind: u8,
+    bits: u8,
+    width: u32,
+    rows: &[&[u8]],
+    extra: &[(&[u8; 4], &[u8])],
+) -> Vec<u8> {
     let mut file = b"\x89PNG\r\n\x1a\n".to_vec();
     let mut hdr = [0; 13];
-    hdr[3] = 1;
-    hdr[7] = 1;
+    hdr[..4].copy_from_slice(&width.to_be_bytes());
+    hdr[4..8].copy_from_slice(&(rows.len() as u32).to_be_bytes());
     hdr[8] = bits;
     hdr[9] = kind;
     chunk(&mut file, b"IHDR", &hdr);
     for &(tag, bytes) in extra {
         chunk(&mut file, tag, bytes);
     }
-    let mut scan = vec![0];
-    scan.extend_from_slice(row);
+    let mut scan = Vec::new();
+    for row in rows {
+        scan.push(0);
+        scan.extend_from_slice(row);
+    }
     chunk(&mut file, b"IDAT", &compress(&scan));
     chunk(&mut file, b"IEND", &[]);
     file
@@ -233,4 +246,212 @@ fn grayscale_icc_keeps_gray_profile_and_samples() {
             .as_deref(),
         Some(profile.as_ref())
     );
+}
+
+#[test]
+fn baking_hdr_orientation_preserves_color_and_raw_signaling() {
+    use zencodec::Orientation;
+    use zenpixels::{AlphaMode, ImageSpec, SampleLayout};
+
+    let cicp = [9, 16, 0, 1];
+    let cll = [9_999_999u32, 123_456];
+    let cll_wire: Vec<_> = cll.into_iter().flat_map(u32::to_be_bytes).collect();
+    let mdcv = [
+        0x8a, 0x48, 0x39, 0x08, 0x21, 0x34, 0x9b, 0xaa, 0x19, 0x96, 0x08, 0xfc, 0x3d, 0x13, 0x40,
+        0x42, 0, 0x98, 0x96, 0x80, 0, 0, 0, 0x32,
+    ];
+    // Big-endian TIFF, one SHORT orientation entry with value 6 (Rotate90).
+    let exif = b"MM\0*\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01\0\x06\0\0\0\0\0\0";
+    let a = [0x0001u16, 0x0002, 0x0003];
+    let b = [0x1234, 0x2345, 0x3456];
+    let c = [0x8000, 0x0004, 0x5432];
+    let d = [0x0034, 0x7676, 0xff00];
+    let e = [0xfffe, 0x6000, 0x0002];
+    let f = [0x0067, 0x7878, 0x9a0b];
+    let wire = |pixels: &[[u16; 3]]| {
+        pixels
+            .iter()
+            .flatten()
+            .flat_map(|value| value.to_be_bytes())
+            .collect::<Vec<_>>()
+    };
+    let file = raster_fixture(
+        2,
+        16,
+        2,
+        &[&wire(&[a, b]), &wire(&[c, d]), &wire(&[e, f])],
+        &[
+            (b"cICP", &cicp),
+            (b"cLLI", &cll_wire),
+            (b"mDCV", &mdcv),
+            (b"eXIf", exif),
+        ],
+    );
+    assert_eq!(pixels_from_oracle(&file), wire(&[a, b, c, d, e, f]));
+    let decode = |file: &[u8]| {
+        PngDecoderConfig::new()
+            .job()
+            .decoder(Cow::Borrowed(file), &[])
+            .unwrap()
+            .decode()
+            .unwrap()
+    };
+    let decoded = decode(&file);
+    assert_eq!(decoded.info().orientation, Orientation::Rotate90);
+    let spec = ImageSpec::new(
+        SampleLayout::RGB16,
+        Cicp::BT2100_PQ_RGB.to_color_space(AlphaMode::None).unwrap(),
+    );
+    let pixels = decoded.pixels();
+    assert_eq!(pixels.spec(), &spec);
+    let origin = pixels.origin().unwrap().clone();
+    assert_eq!(origin.kind, OriginKind::Cicp);
+    assert_eq!(origin.cicp, Some(Cicp::BT2100_PQ_RGB));
+    let hdr = pixels.hdr();
+    assert!(hdr.cll.is_some() && hdr.mastering.is_some());
+    let facts = pixels.facts();
+    assert!(facts.depth.is_some());
+
+    let oriented =
+        zenpixels_convert::apply_orientation(&pixels, decoded.info().orientation).unwrap();
+    assert_eq!((oriented.width(), oriented.height()), (3, 2));
+    assert_eq!(oriented.spec(), &spec);
+    assert_eq!(oriented.origin(), &origin);
+    assert_eq!(oriented.hdr(), hdr);
+    assert_eq!(oriented.facts(), facts);
+    let row_words = |row: &[u8]| {
+        row.as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
+            .map(u16::from_ne_bytes)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(row_words(oriented.as_view().row(0)), [e, c, a].concat());
+    assert_eq!(row_words(oriented.as_view().row(1)), [f, d, b].concat());
+
+    let raw = zenpng::probe(&file).unwrap();
+    assert_eq!(raw.content_light_level_raw, Some(cll));
+    assert_eq!(raw.mastering_display_raw, Some(mdcv));
+    // Native builders carry the exact PNG integers. The already baked
+    // orientation is represented by the absence of eXIf in the new file.
+    let encoded = PngEncoderConfig::new()
+        .with_compression(Compression::None)
+        .with_downcast(DowncastFlags::none())
+        .with_content_light_level_raw(raw.content_light_level_raw)
+        .with_mastering_display_raw(raw.mastering_display_raw)
+        .job()
+        .encoder()
+        .unwrap()
+        .encode(oriented.as_view())
+        .unwrap();
+    let output = encoded.data();
+    assert_eq!(pixels_from_oracle(output), wire(&[e, c, a, f, d, b]));
+    let oracle = png::Decoder::new(Cursor::new(output)).read_info().unwrap();
+    assert_eq!((oracle.info().width, oracle.info().height), (3, 2));
+    assert!(oracle.info().exif_metadata.is_none());
+    let mut chunks = &output[8..];
+    let mut found = 0;
+    while !chunks.is_empty() {
+        let n = u32::from_be_bytes(chunks[..4].try_into().unwrap()) as usize;
+        let payload = &chunks[8..8 + n];
+        match &chunks[4..8] {
+            b"cICP" => {
+                assert_eq!(payload, cicp);
+                found |= 1;
+            }
+            b"cLLI" => {
+                assert_eq!(payload, cll_wire);
+                found |= 2;
+            }
+            b"mDCV" => {
+                assert_eq!(payload, mdcv);
+                found |= 4;
+            }
+            _ => {}
+        }
+        chunks = &chunks[12 + n..];
+    }
+    assert_eq!(found, 7);
+    let roundtrip = decode(output);
+    assert_eq!(roundtrip.info().orientation, Orientation::Identity);
+    assert_eq!(roundtrip.pixels().spec(), &spec);
+    assert_eq!(roundtrip.pixels().origin(), Some(&origin));
+    assert_eq!(roundtrip.pixels().hdr(), hdr);
+}
+
+#[test]
+fn exact_cicp_retention_keeps_the_original_transfer_code() {
+    use zenpixels::{ImageSpec, PixelView};
+
+    // Transfer::Bt709 projects back to code 1, including when the source
+    // signaled code 14. Exact retention must carry the original code.
+    let source = Cicp::new(9, 14, 0, true);
+    let spec = ImageSpec::rgb8_srgb()
+        .with_primaries(Primaries::Bt2020)
+        .with_transfer(Transfer::Bt709);
+    let samples = [7, 19, 43];
+    let encoded = PngEncoderConfig::new()
+        .with_compression(Compression::None)
+        .with_downcast(DowncastFlags::none())
+        .job()
+        .try_with_metadata_policy(
+            zencodec::Metadata::none().with_cicp(source),
+            zencodec::MetadataPolicy::PreserveExact,
+        )
+        .unwrap()
+        .encoder()
+        .unwrap()
+        .encode(PixelView::from_packed(&samples, 1, 1, spec).unwrap())
+        .unwrap();
+    let oracle = png::Decoder::new(Cursor::new(encoded.data()))
+        .read_info()
+        .unwrap();
+    assert_eq!(
+        oracle
+            .info()
+            .coding_independent_code_points
+            .unwrap()
+            .transfer_function,
+        14
+    );
+    assert_eq!(pixels_from_oracle(encoded.data()), samples);
+}
+
+#[test]
+fn gray_pq_metadata_gets_a_gray_companion_profile() {
+    use zencodec::encode::EncodePolicy;
+    use zenpixels::{ImageSpec, PixelView};
+
+    let coded = [0x1234u16, 0x4321];
+    let spec = ImageSpec::gray16_srgb().with_transfer(Transfer::Pq);
+    #[allow(deprecated)] // Balanced ICC emission is a legacy policy option.
+    let job = PngEncoderConfig::new()
+        .with_compression(Compression::None)
+        .with_downcast(DowncastFlags::none())
+        .job()
+        .with_policy(EncodePolicy::none().with_color(zencodec::ColorEmitPolicy::Balanced))
+        .with_metadata(zencodec::Metadata::none().with_cicp(Cicp::new(1, 16, 0, true)));
+    let output = job
+        .encoder()
+        .unwrap()
+        .encode(PixelView::from_packed(bytemuck::cast_slice(&coded), 2, 1, spec).unwrap())
+        .unwrap();
+    let oracle = png::Decoder::new(Cursor::new(output.data()))
+        .read_info()
+        .unwrap();
+    assert_eq!(oracle.info().color_type, png::ColorType::Grayscale);
+    let icc = oracle.info().icc_profile.as_deref().unwrap();
+    assert_eq!(&icc[12..20], b"mntrGRAY");
+    assert_eq!(pixels_from_oracle(output.data()), [0x12, 0x34, 0x43, 0x21]);
+}
+
+#[test]
+fn malformed_cicp_range_flag_does_not_become_active_color() {
+    let row = [7, 19, 43];
+    let file = fixture(2, 8, &row, &[(b"cICP", &[9, 16, 0, 2])]);
+    let decoded = zenpng::decode(&file, &PngDecodeConfig::strict(), &Unstoppable).unwrap();
+    assert_eq!(decoded.info.cicp, None);
+    assert_eq!(decoded.pixels.spec().color, ColorSpace::SRGB);
+    assert_eq!(decoded.pixels.as_view().row(0), row);
 }

@@ -2488,7 +2488,7 @@ mod tests {
         let img = Img::new(pixels, w, h);
         let clli = ContentLightLevel::new(1000, 400);
         let config = EncodeConfig::default()
-            .with_cicp(Some(Cicp::BT2100_PQ))
+            .with_cicp(Some(Cicp::BT2100_PQ_RGB))
             .with_content_light_level(Some(clli))
             .with_mastering_display(Some(MasteringDisplay::HDR10_REFERENCE));
         let encoded =
@@ -2497,7 +2497,7 @@ mod tests {
             crate::decode(&encoded, &crate::PngDecodeConfig::default(), &Unstoppable).unwrap();
         // 16-bit HDR samples preserved (no downcast).
         assert_eq!(decoded.info.bit_depth, 16);
-        // BT.2100 PQ signaling survives; PNG forces matrix-coefficients = 0 (RGB model).
+        // BT.2100 PQ signaling survives in the PNG RGB form.
         assert_eq!(decoded.info.cicp, Some(Cicp::new(9, 16, 0, true)));
         // HDR light-level + mastering-display chunks wired through the public encode API.
         assert_eq!(decoded.info.content_light_level, Some(clli));

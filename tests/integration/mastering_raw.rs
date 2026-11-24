@@ -20,7 +20,26 @@ fn payload() -> [u8; 24] {
     raw
 }
 
-fn verify(bytes: &[u8], raw: [u8; 24]) {
+fn verify(bytes: &[u8], raw: [u8; 24], color: png::ColorType, frames: u32) {
+    let mut chunks = &bytes[8..];
+    let mut found = 0;
+    while !chunks.is_empty() {
+        let n = u32::from_be_bytes(chunks[..4].try_into().unwrap()) as usize;
+        let payload = &chunks[8..8 + n];
+        match &chunks[4..8] {
+            b"cICP" => {
+                assert_eq!(payload, [9, 16, 0, 1]);
+                found |= 1;
+            }
+            b"mDCV" => {
+                assert_eq!(payload, raw);
+                found |= 2;
+            }
+            _ => {}
+        }
+        chunks = &chunks[12 + n..];
+    }
+    assert_eq!(found, 3);
     assert_eq!(
         zenpng::probe(bytes).unwrap().mastering_display_raw,
         Some(raw)
@@ -49,17 +68,35 @@ fn verify(bytes: &[u8], raw: [u8; 24]) {
         );
     }
     let mut pixels = vec![0; oracle.output_buffer_size().unwrap()];
-    oracle.next_frame(&mut pixels).unwrap();
+    assert_eq!(
+        oracle.info().animation_control.map_or(1, |a| a.num_frames),
+        frames
+    );
+    let expected: &[u8] = if color == png::ColorType::Rgba {
+        &[7, 19, 43, 255]
+    } else {
+        &[7, 19, 43]
+    };
+    for _ in 0..frames {
+        let frame = oracle.next_frame(&mut pixels).unwrap();
+        assert_eq!(frame.color_type, color);
+        assert_eq!(frame.bit_depth, png::BitDepth::Eight);
+        assert_eq!(
+            pixels[..frame.buffer_size()],
+            expected.repeat((frame.width * frame.height) as usize)
+        );
+    }
 }
 
 #[test]
 fn raw_mastering_still_animation_and_row_routes() {
     let raw = payload();
-    let cicp = zencodec::Cicp::BT2100_PQ;
+    let cicp = zencodec::Cicp::BT2100_PQ_RGB;
     let pixels = [rgb::Rgb::new(7u8, 19, 43); 4];
     let rgba = [7u8, 19, 43, 255].repeat(4);
     let config = EncodeConfig::default()
         .with_compression(Compression::None)
+        .with_downcast(DowncastFlags::none())
         .with_cicp(Some(cicp))
         .with_mastering_display(Some(zenpixels::hdr::MasteringDisplay::HDR10_REFERENCE))
         .with_mastering_display_raw(Some(raw));
@@ -71,7 +108,7 @@ fn raw_mastering_still_animation_and_row_routes() {
         &Unstoppable,
     )
     .unwrap();
-    verify(&still, raw);
+    verify(&still, raw, png::ColorType::Rgb, 1);
     let animation = zenpng::encode_apng(
         &[
             ApngFrameInput::new(&rgba, 1, 60),
@@ -85,7 +122,7 @@ fn raw_mastering_still_animation_and_row_routes() {
         &Unstoppable,
     )
     .unwrap();
-    verify(&animation, raw);
+    verify(&animation, raw, png::ColorType::Rgba, 2);
     for effort in [0, 1, 7] {
         let cfg = zenpng::PngEncoderConfig::new()
             .with_compression(Compression::Effort(effort))
@@ -112,7 +149,12 @@ fn raw_mastering_still_animation_and_row_routes() {
                 )
                 .unwrap();
         }
-        verify(encoder.finish().unwrap().data(), raw);
+        verify(
+            encoder.finish().unwrap().data(),
+            raw,
+            png::ColorType::Rgba,
+            1,
+        );
     }
     // Restoring the typed setter must explicitly remove the raw override.
     assert!(
@@ -149,4 +191,37 @@ fn raw_mastering_still_animation_and_row_routes() {
             .mastering_display_raw
             .is_none()
     );
+}
+
+#[test]
+fn checked_matrix_nine_retention_refuses_before_output() {
+    let cfg = zenpng::PngEncoderConfig::new().with_compression(Compression::None);
+    let pixels = [7, 19, 43];
+    let spec = ImageSpec::new(
+        zenpixels::SampleLayout::RGB8,
+        zenpixels::Cicp::BT2100_PQ_RGB
+            .to_color_space(zenpixels::AlphaMode::None)
+            .unwrap(),
+    );
+    let write = |cicp, output: &mut Vec<u8>| -> Result<(), zencodec::encode::BoxedError> {
+        let mut job = cfg.clone().job().with_canvas_size(1, 1);
+        job.try_set_metadata_policy(
+            zencodec::Metadata::none().with_cicp(cicp),
+            zencodec::MetadataPolicy::PreserveExact,
+        )?;
+        let bytes = job
+            .encoder()?
+            .encode(PixelView::new(&pixels, 1, 1, 3, spec.clone())?)?;
+        output.extend_from_slice(bytes.data());
+        Ok(())
+    };
+    let mut output = Vec::new();
+    let error = write(zenpixels::Cicp::BT2100_PQ, &mut output).unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<zencodec::UnsupportedOperation>(),
+        Some(&zencodec::UnsupportedOperation::MetadataRetention)
+    );
+    assert!(output.is_empty());
+    write(zenpixels::Cicp::BT2100_PQ_RGB, &mut output).unwrap();
+    assert!(output.starts_with(b"\x89PNG"));
 }

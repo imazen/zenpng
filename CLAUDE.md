@@ -643,3 +643,17 @@ Current zenpixels exposes ICC classification and synthesis through associated
 methods. Three runtime calls and one test still used private free helpers.
 They now use the public facades, with current core/pixel pins in root and fuzz
 graphs. Existing ICC/codec assertions and profile semantics are preserved.
+
+## Known Bugs — zenpixels 0.5 handoff
+
+The legacy Verbatim setter let a Display P3 ICC relabel active BT.2020 still
+samples. The current color check now applies to that route and rejects the
+mismatch before writing a header. The matching P3 case retains the exact
+profile and samples. PNG's checked cICP route retains the original code when
+zenpixels maps multiple wire values to one transfer. Native builders continue
+to accept legacy matrix input and write identity matrix on the wire.
+
+Bounded push sinks receive increasing final strips with HDR and color origin.
+Both PQ companion configurations use the same ICC database. Regression tests
+check the ICC primaries and sampled PQ curve, and an asymmetric RGB16 fixture
+checks the exact pixels and HDR metadata through a baked EXIF rotation.
