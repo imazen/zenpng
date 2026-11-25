@@ -100,9 +100,13 @@ impl zencodec::decode::DecodeRowSink for VecSink {
     ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
         let stride = width as usize * descriptor.layout.bytes_per_pixel();
         self.0.resize(height as usize * stride, 0);
-        Ok(
-            zenpixels::PixelViewMut::new(&mut self.0, width, height, stride, descriptor)
-                .expect("sized"),
+        Ok(zenpixels::PixelViewMut::new_with_spec_cow(
+            &mut self.0,
+            width,
+            height,
+            stride,
+            zenpixels::SpecCow::from_owned(descriptor),
         )
+        .expect("sized"))
     }
 }

@@ -46,7 +46,14 @@ impl Raster {
     }
 
     fn slice(&self, descriptor: ImageSpec) -> PixelView<'_> {
-        PixelView::new(&self.buf[self.start..], W, H, self.stride, descriptor).unwrap()
+        PixelView::new_with_spec_cow(
+            &self.buf[self.start..],
+            W,
+            H,
+            self.stride,
+            zenpixels::SpecCow::from_owned(descriptor),
+        )
+        .unwrap()
     }
 }
 
@@ -191,7 +198,7 @@ fn checked_request_binds_the_current_pixel_colour() {
 #[test]
 fn row_encodes_write_the_same_colour_as_one_shot() {
     let raster = rgb8();
-    let desc = p3(ImageSpec::rgb8_srgb());
+    let desc = p3(ImageSpec::RGB8_SRGB);
     for compression in [
         Compression::Effort(0),
         Compression::Effort(1),
@@ -233,7 +240,7 @@ fn row_encodes_write_the_same_colour_as_one_shot() {
 #[test]
 fn linear_input_writes_the_colour_of_the_stored_samples() {
     let raster = rgbf32_linear();
-    let desc = p3(ImageSpec::rgbf32_linear());
+    let desc = p3(ImageSpec::RGBF32_LINEAR);
     for (what, spec) in [
         ("structured color", desc.clone()),
         (
@@ -273,7 +280,7 @@ fn linear_input_writes_the_colour_of_the_stored_samples() {
 #[test]
 fn stale_carriers_contradicting_the_current_context_refuse() {
     let raster = rgb8();
-    let srgb_now = || raster.slice(ImageSpec::rgb8_srgb());
+    let srgb_now = || raster.slice(ImageSpec::RGB8_SRGB);
     assert!(with_metadata(Metadata::none().with_icc(DISPLAY_P3_V4), srgb_now()).is_err());
     assert!(with_metadata(Metadata::none().with_cicp(Cicp::DISPLAY_P3), srgb_now()).is_err());
     let configured = PngEncoderConfig::new()
@@ -289,7 +296,7 @@ fn stale_carriers_contradicting_the_current_context_refuse() {
 #[test]
 fn default_srgb_bytes_are_identical_across_routes() {
     let raster = rgb8();
-    let plain = checked(raster.slice(ImageSpec::rgb8_srgb())).unwrap();
+    let plain = checked(raster.slice(ImageSpec::RGB8_SRGB)).unwrap();
     let explicit = checked(
         raster.slice(ImageSpec::new(
             zenpixels::SampleLayout::RGB8,

@@ -40,7 +40,7 @@ fn main() {
     let pixel_bytes_owned = decoded
         .pixels
         .as_view()
-        .try_contiguous_bytes()
+        .contiguous_bytes()
         .unwrap()
         .into_owned();
     let pixel_bytes: &[u8] = &pixel_bytes_owned;
@@ -111,14 +111,14 @@ fn main() {
                 (ChannelOrder::Rgba, SampleType::U8) => {
                     let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
                         &decoded.pixels,
-                        zenpixels::ImageSpec::rgba8_srgb(),
+                        zenpixels::ImageSpec::RGBA8_SRGB,
                     );
                     zenpng::encode_rgba8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
                 }
                 (ChannelOrder::Rgb, SampleType::U8) => {
                     let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
                         &decoded.pixels,
-                        zenpixels::ImageSpec::rgb8_srgb(),
+                        zenpixels::ImageSpec::RGB8_SRGB,
                     );
                     zenpng::encode_rgb8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
                 }
@@ -141,7 +141,7 @@ fn main() {
         (ChannelOrder::Rgba, SampleType::U8) => {
             let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
                 &decoded.pixels,
-                zenpixels::ImageSpec::rgba8_srgb(),
+                zenpixels::ImageSpec::RGBA8_SRGB,
             );
             zenpng::encode_rgba8(buf.as_ref(), None, &none_config, &Unstoppable, &Unstoppable)
                 .unwrap()
@@ -149,7 +149,7 @@ fn main() {
         (ChannelOrder::Rgb, SampleType::U8) => {
             let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
                 &decoded.pixels,
-                zenpixels::ImageSpec::rgb8_srgb(),
+                zenpixels::ImageSpec::RGB8_SRGB,
             );
             zenpng::encode_rgb8(buf.as_ref(), None, &none_config, &Unstoppable, &Unstoppable)
                 .unwrap()
@@ -198,7 +198,7 @@ fn main() {
         (ChannelOrder::Rgba, SampleType::U8) => {
             let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
                 &decoded.pixels,
-                zenpixels::ImageSpec::rgba8_srgb(),
+                zenpixels::ImageSpec::RGBA8_SRGB,
             );
             zenpng::encode_rgba8(buf.as_ref(), None, &fast_config, &Unstoppable, &Unstoppable)
                 .unwrap()
@@ -206,7 +206,7 @@ fn main() {
         (ChannelOrder::Rgb, SampleType::U8) => {
             let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
                 &decoded.pixels,
-                zenpixels::ImageSpec::rgb8_srgb(),
+                zenpixels::ImageSpec::RGB8_SRGB,
             );
             zenpng::encode_rgb8(buf.as_ref(), None, &fast_config, &Unstoppable, &Unstoppable)
                 .unwrap()

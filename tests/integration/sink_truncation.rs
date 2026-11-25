@@ -20,7 +20,14 @@ impl DecodeRowSink for CollectSink {
     ) -> Result<PixelViewMut<'_>, SinkError> {
         let stride = width as usize * descriptor.layout.bytes_per_pixel();
         self.0.resize(height as usize * stride, 0);
-        Ok(PixelViewMut::new(&mut self.0, width, height, stride, descriptor).expect("sized"))
+        Ok(PixelViewMut::new_with_spec_cow(
+            &mut self.0,
+            width,
+            height,
+            stride,
+            zenpixels::SpecCow::from_owned(descriptor),
+        )
+        .expect("sized"))
     }
 }
 
@@ -128,7 +135,7 @@ fn push_decoder_matches_decode_on_every_format() {
         let expected = expected
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         assert_eq!(sink.0, expected, "{}", path.display());
@@ -322,7 +329,7 @@ fn push_respects_bounded_loans_and_preserves_color_metadata() {
         let pixels = sink.output.into_buffer().unwrap();
         assert_eq!(pixels.spec(), &output.native_format);
         assert_eq!(
-            pixels.as_view().try_contiguous_bytes().unwrap().as_ref(),
+            pixels.as_view().contiguous_bytes().unwrap().as_ref(),
             expected
         );
         assert_eq!(first.origin(), Some(pixels.origin()));
@@ -336,12 +343,12 @@ fn push_respects_bounded_loans_and_preserves_color_metadata() {
                 .push_decoder(
                     file.as_slice().into(),
                     &mut converted,
-                    &[ImageSpec::rgba8_srgb()],
+                    &[ImageSpec::RGBA8_SRGB],
                 )
                 .unwrap();
             let pixels = converted.output.into_buffer().unwrap();
             assert_eq!(output.native_format, *pixels.spec());
-            assert_eq!(pixels.spec().layout, ImageSpec::rgba8_srgb().layout);
+            assert_eq!(pixels.spec().layout, ImageSpec::RGBA8_SRGB.layout);
             assert_eq!(pixels.spec().color.alpha(), zenpixels::AlphaMode::Opaque);
             assert!(output.has_alpha);
             let rgba: Vec<_> = expected
@@ -350,10 +357,7 @@ fn push_respects_bounded_loans_and_preserves_color_metadata() {
                 .iter()
                 .flat_map(|&[r, g, b]| [r, g, b, 255])
                 .collect();
-            assert_eq!(
-                pixels.as_view().try_contiguous_bytes().unwrap().as_ref(),
-                rgba
-            );
+            assert_eq!(pixels.as_view().contiguous_bytes().unwrap().as_ref(), rgba);
         }
     }
 }

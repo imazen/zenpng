@@ -87,7 +87,7 @@ fn run_single(path: &Path) {
             (ChannelOrder::Rgb, SampleType::U8) => {
                 let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
                     &decoded.pixels,
-                    zenpixels::ImageSpec::rgb8_srgb(),
+                    zenpixels::ImageSpec::RGB8_SRGB,
                 );
                 zenpng::encode_rgb8_with_stats(
                     buf.as_ref(),
@@ -100,7 +100,7 @@ fn run_single(path: &Path) {
             (ChannelOrder::Rgba, SampleType::U8) => {
                 let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
                     &decoded.pixels,
-                    zenpixels::ImageSpec::rgba8_srgb(),
+                    zenpixels::ImageSpec::RGBA8_SRGB,
                 );
                 zenpng::encode_rgba8_with_stats(
                     buf.as_ref(),
@@ -225,7 +225,7 @@ fn run_corpus(dir: &Path) {
                 (ChannelOrder::Rgb, SampleType::U8) => {
                     let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
                         &decoded.pixels,
-                        zenpixels::ImageSpec::rgb8_srgb(),
+                        zenpixels::ImageSpec::RGB8_SRGB,
                     );
                     zenpng::encode_rgb8_with_stats(
                         buf.as_ref(),
@@ -238,7 +238,7 @@ fn run_corpus(dir: &Path) {
                 (ChannelOrder::Rgba, SampleType::U8) => {
                     let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
                         &decoded.pixels,
-                        zenpixels::ImageSpec::rgba8_srgb(),
+                        zenpixels::ImageSpec::RGBA8_SRGB,
                     );
                     zenpng::encode_rgba8_with_stats(
                         buf.as_ref(),

@@ -46,7 +46,14 @@ impl DecodeRowSink for Rows {
         self.strip.clear();
         self.strip.resize(row * height as usize, 0);
         self.strip_rows = height;
-        Ok(PixelViewMut::new(&mut self.strip, width, height, row, descriptor).unwrap())
+        Ok(PixelViewMut::new_with_spec_cow(
+            &mut self.strip,
+            width,
+            height,
+            row,
+            zenpixels::SpecCow::from_owned(descriptor),
+        )
+        .unwrap())
     }
     fn finish(&mut self) -> Result<(), SinkError> {
         self.ship();

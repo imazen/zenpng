@@ -7,7 +7,7 @@ use zenpixels::{ImageSpec, PixelBuf};
 use zenpng::{PngDecoderConfig, PngEncoderConfig};
 
 fn pixels() -> PixelBuf {
-    PixelBuf::from_bytes([10, 20, 30, 255].repeat(12), 4, 3, ImageSpec::rgba8_srgb()).unwrap()
+    PixelBuf::from_bytes([10, 20, 30, 255].repeat(12), 4, 3, ImageSpec::RGBA8_SRGB).unwrap()
 }
 fn wire_delays(bytes: &[u8]) -> Vec<(u16, u16)> {
     let mut offset = 8;
@@ -52,7 +52,7 @@ fn fractional_zero_and_long_delays_are_exact_on_wire_and_decode() {
     );
     let mut decoder = PngDecoderConfig::new()
         .job()
-        .animation_frame_decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::rgba8_srgb()])
+        .animation_frame_decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::RGBA8_SRGB])
         .unwrap();
     assert_eq!(decoder.loop_count(), Some(2));
     for (n, d) in durations {
@@ -83,7 +83,7 @@ fn rejected_timing_and_dimensions_do_not_accept_frames() {
                 .is_err()
         );
     }
-    let wrong = PixelBuf::from_bytes(vec![0; 4], 1, 1, ImageSpec::rgba8_srgb()).unwrap();
+    let wrong = PixelBuf::from_bytes(vec![0; 4], 1, 1, ImageSpec::RGBA8_SRGB).unwrap();
     assert!(
         encoder
             .push_frame_timed(wrong.as_view(), FrameDuration::from_millis(10), None)
@@ -98,11 +98,7 @@ fn rejected_timing_and_dimensions_do_not_accept_frames() {
 #[test]
 fn native_zero_denominator_means_centiseconds_without_rounding() {
     let pixels = pixels();
-    let bytes = pixels
-        .as_view()
-        .try_contiguous_bytes()
-        .unwrap()
-        .into_owned();
+    let bytes = pixels.as_view().contiguous_bytes().unwrap().into_owned();
     let frames = [
         zenpng::ApngFrameInput::new(&bytes, 7, 0),
         zenpng::ApngFrameInput::new(&bytes, 1, 30000),
@@ -197,13 +193,13 @@ fn limit_or_alpha_rejection_leaves_the_encoder_usable() {
         )
         .animation_frame_encoder()
         .unwrap();
-    let large = PixelBuf::from_bytes(vec![0; 52], 13, 1, ImageSpec::rgba8_srgb()).unwrap();
+    let large = PixelBuf::from_bytes(vec![0; 52], 13, 1, ImageSpec::RGBA8_SRGB).unwrap();
     assert!(enc.push_frame(large.as_view(), 10, None).is_err());
     let premultiplied = PixelBuf::from_bytes(
         vec![0; 48],
         4,
         3,
-        ImageSpec::rgba8_srgb().with_alpha(zenpixels::AlphaMode::Premultiplied),
+        ImageSpec::RGBA8_SRGB.with_alpha(zenpixels::AlphaMode::Premultiplied),
     )
     .unwrap();
     assert!(enc.push_frame(premultiplied.as_view(), 10, None).is_err());
@@ -223,7 +219,7 @@ fn sixteen_bit_animation_preserves_all_sample_bits_and_color_signaling() {
         Transfer::Hlg(zenpixels::HlgMode::Scene),
         Transfer::Linear,
     ] {
-        let descriptor = ImageSpec::rgba16_srgb()
+        let descriptor = ImageSpec::RGBA16_SRGB
             .with_transfer(transfer)
             .with_primaries(Primaries::Bt2020);
         let mut frames = Vec::new();
@@ -315,7 +311,7 @@ fn animation_inherits_frame_icc_and_enforces_decode_job_limits() {
             intent: zenpixels::RenderingIntent::default(),
         },
     );
-    let source = source.with_spec(spec).unwrap();
+    let source = source.relabel_spec(spec).unwrap();
     let mut encoder = PngEncoderConfig::new()
         .job()
         .with_metadata_policy(

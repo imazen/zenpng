@@ -119,7 +119,7 @@ fn with_metadata(png: Vec<u8>) -> Vec<u8> {
 /// A still RGB8 PNG whose incompressible image data spans 64-byte IDAT chunks.
 fn still() -> Vec<u8> {
     let data = noise((W * H * 3) as usize, 0x2545_f491);
-    let pixels = PixelView::new(&data, W, H, W as usize * 3, ImageSpec::rgb8_srgb()).unwrap();
+    let pixels = PixelView::new(&data, W, H, W as usize * 3, &zenpixels::specs::RGB8_SRGB).unwrap();
     let png = PngEncoderConfig::new()
         .job()
         .encoder()
@@ -138,7 +138,8 @@ fn animation() -> Vec<u8> {
         .unwrap();
     for seed in [0x1234_5677, 0x0bad_f00d] {
         let data = noise((W * H * 4) as usize, seed);
-        let frame = PixelView::new(&data, W, H, W as usize * 4, ImageSpec::rgba8_srgb()).unwrap();
+        let frame =
+            PixelView::new(&data, W, H, W as usize * 4, &zenpixels::specs::RGBA8_SRGB).unwrap();
         encoder.push_frame(frame, 20, None).unwrap();
     }
     // Isolate the ICC gate from APNG's default sRGB cICP. A separate
@@ -197,7 +198,7 @@ fn expected(policy: DecodePolicy, reference: &Seen) -> Seen {
         descriptor: if policy.resolve_icc(true) {
             reference.descriptor.clone()
         } else {
-            ImageSpec::rgb8_srgb()
+            ImageSpec::RGB8_SRGB
         },
         pixels: reference.pixels.clone(),
     }
@@ -414,9 +415,9 @@ fn metadata_gates_hold_for_apng_frames_and_their_colour_context() {
         let header = seen(
             &info,
             if policy.resolve_icc(true) {
-                ImageSpec::rgba8_srgb()
+                ImageSpec::RGBA8_SRGB
             } else {
-                ImageSpec::rgb8_srgb()
+                ImageSpec::RGB8_SRGB
             },
             Vec::new(),
         );
@@ -430,7 +431,7 @@ fn metadata_gates_hold_for_apng_frames_and_their_colour_context() {
                     if policy.resolve_icc(true) {
                         want.0.clone()
                     } else {
-                        ImageSpec::rgba8_srgb()
+                        ImageSpec::RGBA8_SRGB
                     },
                     &want.1
                 ),

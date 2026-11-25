@@ -152,7 +152,7 @@ pub struct EncodeConfig {
     ///
     /// PNG-3 copy semantics are the caller's responsibility: emit an unknown
     /// chunk only when its safe-to-copy bit (lowercase fourth letter, see
-    /// [`OwnedAncillaryChunk::is_safe_to_copy`]) permits copying it past the
+    /// [`crate::chunk::OwnedAncillaryChunk::is_safe_to_copy`]) permits copying it past the
     /// changes this encode makes to critical image data.
     pub unknown_chunks: Vec<crate::chunk::OwnedAncillaryChunk>,
 }
@@ -1549,7 +1549,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
@@ -1601,7 +1601,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         assert_eq!(raw.len(), w * h * 4);
@@ -1630,7 +1630,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels.iter().map(|p| p.value()).collect();
@@ -1656,7 +1656,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels
@@ -1686,7 +1686,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels
@@ -1717,7 +1717,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels
@@ -1748,7 +1748,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         for (i, px) in pixels.iter().enumerate() {
@@ -1828,7 +1828,7 @@ mod tests {
         let frame_bytes = apng.frames[0]
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         // All pixels are (128, 128, 128, 128)
@@ -1996,7 +1996,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         for (i, px) in pixels.iter().enumerate() {
@@ -2036,7 +2036,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         for (i, px) in pixels.iter().enumerate() {
@@ -2166,7 +2166,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels
@@ -2198,7 +2198,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels
@@ -2231,7 +2231,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels
@@ -2410,13 +2410,13 @@ mod tests {
         let f0 = decoded.frames[0]
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         let f1 = decoded.frames[1]
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         assert_eq!(f0, frame0);
@@ -2444,13 +2444,13 @@ mod tests {
         let f0 = decoded.frames[0]
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         let f1 = decoded.frames[1]
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         assert_eq!(f0, frame0);
@@ -2599,7 +2599,7 @@ mod tests {
         // true-streaming path; its AfterIdat chunks must still land
         // between IDAT and IEND.
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-        use zenpixels::{ImageSpec, PixelView};
+        use zenpixels::PixelView;
         let mut rows = crate::PngEncoderConfig::new()
             .with_compression(Compression::None)
             .with_downcast(DowncastFlags::none())
@@ -2614,7 +2614,7 @@ mod tests {
             .unwrap();
         let pixels = [7u8; 4 * 4 * 4];
         for row in pixels.as_chunks::<16>().0 {
-            rows.push_rows(PixelView::new(row, 4, 1, 16, ImageSpec::rgba8_srgb()).unwrap())
+            rows.push_rows(PixelView::new(row, 4, 1, 16, &zenpixels::specs::RGBA8_SRGB).unwrap())
                 .unwrap();
         }
         let out = rows.finish().unwrap();

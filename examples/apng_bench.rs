@@ -76,7 +76,7 @@ fn main() {
             .map(|f| {
                 let rgba = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
                     &f.pixels,
-                    zenpixels::ImageSpec::rgba8_srgb(),
+                    zenpixels::ImageSpec::RGBA8_SRGB,
                 );
                 let imgref = rgba.as_ref();
                 bytemuck::cast_slice::<rgb::Rgba<u8>, u8>(imgref.buf()).to_vec()

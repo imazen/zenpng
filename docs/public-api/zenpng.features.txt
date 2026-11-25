@@ -34,7 +34,7 @@ pub fn ImagequantQuantizer::with_dithering(self, f32) -> Self
 pub fn ImagequantQuantizer::with_max_colors(self, u16) -> Self
 pub fn ImagequantQuantizer::with_max_quality(self, u8) -> Self
 pub fn ImagequantQuantizer::with_speed(self, i32) -> Self
-pub fn PngDecodeJob::dyn_controlled_decoder(self, &[zenpixels::descriptor::PixelDescriptor], zencodec::storage::StorageBudget) -> core::result::Result<alloc::boxed::Box<zencodec::traits::control::DynControlledDecoder>, zencodec::traits::BoxedError>
+pub fn PngDecodeJob::dyn_controlled_decoder(self, &[zenpixels::color::ImageSpec], zencodec::storage::StorageBudget) -> core::result::Result<alloc::boxed::Box<zencodec::traits::control::DynControlledDecoder>, zencodec::traits::BoxedError>
 pub fn PngDecodeJob::inventory(&self, &[u8]) -> core::result::Result<zencodec::inventory::Inventory, whereat::at::At<zencodec::error::CodecError>>
 pub struct QuantetteQuantizer
 pub QuantetteQuantizer::dithering: bool

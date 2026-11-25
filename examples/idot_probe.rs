@@ -375,7 +375,7 @@ fn main() {
             == reference
                 .pixels
                 .as_view()
-                .try_contiguous_bytes()
+                .contiguous_bytes()
                 .unwrap()
                 .into_owned();
         let (f, i, u, p) = (median(t_full), median(t_inf), median(t_unf), median(t_par));

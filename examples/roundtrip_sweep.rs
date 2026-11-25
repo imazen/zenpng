@@ -40,13 +40,13 @@ fn main() {
             cfg.max_threads = threads;
             let px = &d.pixels;
             let t = std::time::Instant::now();
-            let r = if let Ok(i) = px.as_view().try_as_imgref::<rgb::Rgb<u8>>() {
+            let r = if let Ok(i) = px.as_view().as_imgref::<rgb::Rgb<u8>>() {
                 zenpng::encode_rgb8(i, None, &cfg, &Unstoppable, &Unstoppable)
-            } else if let Ok(i) = px.as_view().try_as_imgref::<rgb::Rgba<u8>>() {
+            } else if let Ok(i) = px.as_view().as_imgref::<rgb::Rgba<u8>>() {
                 zenpng::encode_rgba8(i, None, &cfg, &Unstoppable, &Unstoppable)
-            } else if let Ok(i) = px.as_view().try_as_imgref::<rgb::Gray<u8>>() {
+            } else if let Ok(i) = px.as_view().as_imgref::<rgb::Gray<u8>>() {
                 zenpng::encode_gray8(i, None, &cfg, &Unstoppable, &Unstoppable)
-            } else if let Ok(i) = px.as_view().try_as_imgref::<rgb::Rgb<u16>>() {
+            } else if let Ok(i) = px.as_view().as_imgref::<rgb::Rgb<u16>>() {
                 zenpng::encode_rgb16(i, None, &cfg, &Unstoppable, &Unstoppable)
             } else {
                 println!("skip {} {:?}", f.display(), px.spec());
@@ -96,7 +96,7 @@ fn rgba16(px: &zenpixels::PixelBuf) -> Vec<u16> {
         SampleType::U16 => true,
         t => panic!("channel type {t:?}"),
     };
-    let b = px.as_view().try_contiguous_bytes().unwrap().into_owned();
+    let b = px.as_view().contiguous_bytes().unwrap().into_owned();
     let v: Vec<u16> = if wide {
         b.as_chunks::<2>()
             .0

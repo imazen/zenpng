@@ -21,7 +21,7 @@ fn load_png_as_rgba(path: &Path) -> Option<ImgVec<Rgba<u8>>> {
     let h = decoded.info.height as usize;
     let rgba_img = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
         &decoded.pixels,
-        zenpixels::ImageSpec::rgba8_srgb(),
+        zenpixels::ImageSpec::RGBA8_SRGB,
     );
     let pixels: Vec<Rgba<u8>> = rgba_img
         .as_ref()

@@ -18,19 +18,19 @@ fn config() -> PngEncoderConfig {
 fn encode(job: zenpng::PngEncodeJob) -> Vec<u8> {
     let data = [7, 19, 43, 255];
     let enc = job.encoder().unwrap();
-    enc.encode(PixelView::new(&data, 1, 1, 4, ImageSpec::rgba8_srgb()).unwrap())
+    enc.encode(PixelView::new(&data, 1, 1, 4, &zenpixels::specs::RGBA8_SRGB).unwrap())
         .unwrap()
         .into_vec()
 }
 
 fn encode_hdr(job: zenpng::PngEncodeJob) -> Vec<u8> {
     let data = [7, 19, 43, 255];
-    let descriptor = ImageSpec::rgba8_srgb()
+    let descriptor = ImageSpec::RGBA8_SRGB
         .with_primaries(zenpixels::Primaries::Bt2020)
         .with_transfer(zenpixels::Transfer::Pq);
     job.encoder()
         .unwrap()
-        .encode(PixelView::new(&data, 1, 1, 4, descriptor).unwrap())
+        .encode(PixelView::new(&data, 1, 1, 4, &descriptor).unwrap())
         .unwrap()
         .into_vec()
 }
@@ -201,19 +201,11 @@ fn checked_carriers_survive_still_rows_pull_apng_and_erasure() {
         .with_icc(zenpixels_convert::icc_profiles::DISPLAY_P3_V4)
         .with_content_light_level(ContentLightLevel::new(1000, 400));
     let data = [7, 19, 43, 255];
-    let pixels = || {
-        PixelView::new(
-            &data,
-            1,
-            1,
-            4,
-            ImageSpec::new(
-                zenpixels::SampleLayout::RGBA8,
-                zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
-            ),
-        )
-        .unwrap()
-    };
+    let p3_rgba8 = ImageSpec::new(
+        zenpixels::SampleLayout::RGBA8,
+        zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
+    );
+    let pixels = || PixelView::new(&data, 1, 1, 4, &p3_rgba8).unwrap();
     let job = || {
         config()
             .job()
@@ -373,7 +365,7 @@ fn ordinary_erased_job_owns_checked_metadata() {
     job.try_set_metadata_policy(metadata.clone(), MetadataPolicy::PreserveExact)
         .unwrap();
     let data = [7, 19, 43, 255];
-    let pixels = PixelView::new(&data, 1, 1, 4, ImageSpec::rgba8_srgb()).unwrap();
+    let pixels = PixelView::new(&data, 1, 1, 4, &zenpixels::specs::RGBA8_SRGB).unwrap();
     let output = job.into_encoder().unwrap().encode(pixels).unwrap();
     assert_readback(output.data(), &metadata, &data);
 }
@@ -404,10 +396,10 @@ fn field_orientation_and_float_color_cannot_be_silently_rewritten() {
         .unwrap();
     let data = [0.5_f32, 0.5, 0.5];
     let bytes: &[u8] = bytemuck::cast_slice(&data);
-    let pixels = PixelView::new(bytes, 1, 1, 12, ImageSpec::rgbf32_linear()).unwrap();
+    let pixels = PixelView::new(bytes, 1, 1, 12, &zenpixels::specs::RGBF32_LINEAR).unwrap();
     assert!(job.clone().encoder().unwrap().encode(pixels).is_err());
     let mut rows = job.with_canvas_size(1, 1).encoder().unwrap();
-    assert!(rows.begin(1, 1, ImageSpec::rgbf32_linear()).is_err());
+    assert!(rows.begin(1, 1, ImageSpec::RGBF32_LINEAR).is_err());
     assert!(rows.pending_output().is_empty());
 }
 
@@ -439,7 +431,7 @@ fn explicit_color_policy_cannot_substitute_retained_icc() {
         zenpixels::SampleLayout::RGBA8,
         zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
     );
-    let pixels = PixelView::from_packed(&data, 1, 1, spec).unwrap();
+    let pixels = PixelView::from_bytes(&data, 1, 1, &spec).unwrap();
     let output = job.clone().encoder().unwrap().encode(pixels).unwrap();
     assert_readback(output.data(), &meta, &data);
     let conflict = job.with_policy(zencodec::encode::EncodePolicy::none().with_embed_icc(false));
@@ -460,19 +452,11 @@ fn streaming_animation_preserves_checked_record_and_refuses_conflicting_context_
             .with_canvas_size(1, 1)
     };
     let data = [7, 19, 43, 255];
-    let make_pixels = || {
-        PixelView::new(
-            &data,
-            1,
-            1,
-            4,
-            ImageSpec::new(
-                zenpixels::SampleLayout::RGBA8,
-                zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
-            ),
-        )
-        .unwrap()
-    };
+    let p3_rgba8 = ImageSpec::new(
+        zenpixels::SampleLayout::RGBA8,
+        zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
+    );
+    let make_pixels = || PixelView::new(&data, 1, 1, 4, &p3_rgba8).unwrap();
     let mut rejected = job().animation_frame_encoder().unwrap();
     rejected
         .begin(
@@ -493,7 +477,7 @@ fn streaming_animation_preserves_checked_record_and_refuses_conflicting_context_
     .with_transfer(zenpixels::Transfer::Pq);
     assert!(
         rejected
-            .push_frame(PixelView::from_packed(&data, 1, 1, pq).unwrap(), 20, None)
+            .push_frame(PixelView::from_bytes(&data, 1, 1, &pq).unwrap(), 20, None)
             .is_err()
     );
     assert!(rejected.pending_output().is_empty());

@@ -109,7 +109,7 @@ fn prepare_filtered_idat(path: &Path) -> Option<Vec<u8>> {
     let raw_pixels = decoded
         .pixels
         .as_view()
-        .try_contiguous_bytes()
+        .contiguous_bytes()
         .unwrap()
         .into_owned();
 

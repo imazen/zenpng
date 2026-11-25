@@ -9,7 +9,7 @@ use std::io::Cursor;
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zencodec::encode::{EncodeJob, EncodePolicy, Encoder, EncoderConfig};
 use zencodec::{At, CodecError, ErrorCategory, Metadata, MetadataPolicy, Orientation, PolicyKind};
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::PixelView;
 use zenpng::{PngDecoderConfig, PngEncoderConfig};
 
 const W: u32 = 9;
@@ -18,7 +18,7 @@ const H: u32 = 5;
 #[allow(deprecated)] // Exercises the published best-effort job setters.
 fn encode(meta: Metadata, policy: Option<EncodePolicy>) -> Result<Vec<u8>, At<CodecError>> {
     let data: Vec<u8> = (0..W * H * 3).map(|i| (i * 17 % 251) as u8).collect();
-    let pixels = PixelView::new(&data, W, H, W as usize * 3, ImageSpec::rgb8_srgb()).unwrap();
+    let pixels = PixelView::new(&data, W, H, W as usize * 3, &zenpixels::specs::RGB8_SRGB).unwrap();
     let mut job = PngEncoderConfig::new()
         .job()
         .with_metadata_policy(meta, MetadataPolicy::PreserveExact);

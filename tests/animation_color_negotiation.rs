@@ -13,7 +13,7 @@ fn exact_native_color_preference_never_converts_the_animation() {
         (Primaries::Bt2020, Transfer::Pq),
         (Primaries::Bt2020, Transfer::Hlg(zenpixels::HlgMode::Scene)),
     ] {
-        let descriptor = ImageSpec::rgba16_srgb()
+        let descriptor = ImageSpec::RGBA16_SRGB
             .with_primaries(primaries)
             .with_transfer(transfer);
         let color = Cicp::new(
@@ -65,8 +65,7 @@ fn exact_native_color_preference_never_converts_the_animation() {
 
 #[test]
 fn unrecognized_cicp_does_not_claim_srgb() {
-    let input =
-        PixelBuf::from_bytes(vec![127, 37, 83, 255], 1, 1, ImageSpec::rgba8_srgb()).unwrap();
+    let input = PixelBuf::from_bytes(vec![127, 37, 83, 255], 1, 1, ImageSpec::RGBA8_SRGB).unwrap();
     let mut encoder = zenpng::PngEncoderConfig::new()
         .with_cicp(Some(Cicp::SRGB))
         .job()

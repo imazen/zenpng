@@ -489,7 +489,7 @@ pub(crate) fn build_pixel_buffer(
     );
     let pixels = match buf {
         OutBuf::U8(v) => PixelBuf::from_bytes(v, w as u32, h as u32, spec),
-        OutBuf::U16(v) => PixelBuf::from_vec(v, w as u32, h as u32, spec),
+        OutBuf::U16(v) => PixelBuf::from_typed(v, w as u32, h as u32, spec),
     };
     pixels.map_err(|e| at!(PngError::Decode(e.to_string())))
 }

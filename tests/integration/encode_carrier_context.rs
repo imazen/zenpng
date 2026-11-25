@@ -57,7 +57,7 @@ fn encode(
         context.unwrap_or(ColorSpace::SRGB_ALPHA),
     );
     let pixels = || {
-        PixelView::new(&data, W, H, W as usize * 4, spec.clone()).map_err(|e| {
+        PixelView::new(&data, W, H, W as usize * 4, &spec).map_err(|e| {
             CodecError::of(whereat::at!(zenpng::PngError::InvalidBuffer(e.to_string())))
         })
     };

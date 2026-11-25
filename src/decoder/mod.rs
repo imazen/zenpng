@@ -1438,11 +1438,7 @@ mod tests {
     }
 
     fn pixel_data_to_bytes(pixels: &PixelBuf) -> Vec<u8> {
-        pixels
-            .as_view()
-            .try_contiguous_bytes()
-            .unwrap()
-            .into_owned()
+        pixels.as_view().contiguous_bytes().unwrap().into_owned()
     }
 
     fn format_pixel_data(pixels: &PixelBuf) -> &'static str {

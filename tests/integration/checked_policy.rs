@@ -45,7 +45,7 @@ fn checked_verbatim_preserves_authority_for_still_rows_and_animation() {
         zenpixels::SampleLayout::RGBA8,
         zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
     );
-    let pixels = || PixelView::new(&data, 3, 2, 16, desc.clone()).unwrap();
+    let pixels = || PixelView::new(&data, 3, 2, 16, &desc).unwrap();
     let policy = EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim);
     for effort in [0, 1, 7] {
         let job = || {
@@ -60,7 +60,7 @@ fn checked_verbatim_preserves_authority_for_still_rows_and_animation() {
         let mut rows = job().with_canvas_size(3, 2).encoder().unwrap();
         rows.begin(3, 2, desc.clone()).unwrap();
         for row in [&row0, &row1] {
-            rows.push_rows(PixelView::new(row, 3, 1, 16, desc.clone()).unwrap())
+            rows.push_rows(PixelView::new(row, 3, 1, 16, &desc).unwrap())
                 .unwrap();
         }
         assert_carriers_and_pixels(rows.finish().unwrap().data(), &expected);
@@ -103,7 +103,7 @@ fn refused_checked_policy_does_not_replace_the_accepted_policy() {
     let output = job
         .encoder()
         .unwrap()
-        .encode(PixelView::new(&pixels, 1, 1, 4, spec).unwrap())
+        .encode(PixelView::new(&pixels, 1, 1, 4, &spec).unwrap())
         .unwrap();
     assert_carriers_and_pixels(output.data(), &pixels);
 }

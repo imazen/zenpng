@@ -40,7 +40,7 @@ fn hidden_rgb_survives_buffered_strip_and_segmented_output() {
         }
     }
     for effort in [1, 7] {
-        let pixels = PixelView::new(&padded, w, h, stride, ImageSpec::rgba8_srgb()).unwrap();
+        let pixels = PixelView::new(&padded, w, h, stride, &zenpixels::specs::RGBA8_SRGB).unwrap();
         let out = config(effort)
             .job()
             .encoder()
@@ -54,8 +54,10 @@ fn hidden_rgb_survives_buffered_strip_and_segmented_output() {
             .encoder()
             .unwrap();
         for row in padded.chunks_exact(stride) {
-            rows.push_rows(PixelView::new(row, w, 1, stride, ImageSpec::rgba8_srgb()).unwrap())
-                .unwrap();
+            rows.push_rows(
+                PixelView::new(row, w, 1, stride, &zenpixels::specs::RGBA8_SRGB).unwrap(),
+            )
+            .unwrap();
         }
         assert_eq!(independent(rows.finish().unwrap().data()), expected);
     }
@@ -101,7 +103,7 @@ fn hidden_rgb_animation_uses_exact_source_deltas() {
     for frame in &frames {
         encoder
             .push_frame(
-                PixelView::new(frame, w, h, w as usize * 4, ImageSpec::rgba8_srgb()).unwrap(),
+                PixelView::new(frame, w, h, w as usize * 4, &zenpixels::specs::RGBA8_SRGB).unwrap(),
                 17,
                 None,
             )
@@ -144,7 +146,7 @@ fn explicit_icc_is_not_overridden_by_descriptor_derived_cicp() {
         .unwrap()
         .encoder()
         .unwrap()
-        .encode(PixelView::new(&px, 1, 1, 3, desc).unwrap())
+        .encode(PixelView::new(&px, 1, 1, 3, &desc).unwrap())
         .unwrap();
     let info = zenpng::probe(out.data()).unwrap();
     assert_eq!(info.icc_profile.as_deref(), Some(icc));
@@ -173,9 +175,9 @@ fn required_p3_icc_refuses_bt2020_samples_before_writing_header() {
             .encoder()
             .unwrap()
     };
-    let bt2020 = ImageSpec::rgb8_srgb().with_primaries(zenpixels::Primaries::Bt2020);
+    let bt2020 = ImageSpec::RGB8_SRGB.with_primaries(zenpixels::Primaries::Bt2020);
     let px = [7u8, 19, 43];
-    let pixels = PixelView::new(&px, 1, 1, 3, bt2020.clone()).unwrap();
+    let pixels = PixelView::new(&px, 1, 1, 3, &bt2020).unwrap();
     let check_conflict = |err: whereat::At<zencodec::CodecError>| {
         assert!(
             matches!(err.error().detail().and_then(|detail| detail.downcast_ref::<zenpng::PngError>()),
@@ -208,10 +210,10 @@ fn required_p3_icc_refuses_bt2020_samples_before_writing_header() {
 #[test]
 fn gray_alpha_native_depth_and_strided_rows() {
     for descriptor in [
-        ImageSpec::graya8_srgb(),
+        ImageSpec::GRAYA8_SRGB,
         ImageSpec::new(
             zenpixels::SampleLayout::GRAYA16,
-            zenpixels::ImageSpec::graya8_srgb().color,
+            zenpixels::ImageSpec::GRAYA8_SRGB.color,
         ),
     ] {
         assert!(PngEncoderConfig::supported_descriptors().contains(&descriptor));
@@ -238,7 +240,7 @@ fn gray_alpha_native_depth_and_strided_rows() {
             }
         }
         for effort in [0, 1, 7] {
-            let pixels = PixelView::new(&padded, w, h, stride, descriptor.clone()).unwrap();
+            let pixels = PixelView::new(&padded, w, h, stride, &descriptor).unwrap();
             let whole = config(effort)
                 .job()
                 .encoder()
@@ -251,7 +253,7 @@ fn gray_alpha_native_depth_and_strided_rows() {
                 .encoder()
                 .unwrap();
             for row in padded.chunks_exact(stride) {
-                rows.push_rows(PixelView::new(row, w, 1, stride, descriptor.clone()).unwrap())
+                rows.push_rows(PixelView::new(row, w, 1, stride, &descriptor).unwrap())
                     .unwrap();
             }
             for output in [whole, rows.finish().unwrap()] {

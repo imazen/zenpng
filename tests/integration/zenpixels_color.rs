@@ -387,7 +387,7 @@ fn exact_cicp_retention_keeps_the_original_transfer_code() {
     // Transfer::Bt709 projects back to code 1, including when the source
     // signaled code 14. Exact retention must carry the original code.
     let source = Cicp::new(9, 14, 0, true);
-    let spec = ImageSpec::rgb8_srgb()
+    let spec = ImageSpec::RGB8_SRGB
         .with_primaries(Primaries::Bt2020)
         .with_transfer(Transfer::Bt709);
     let samples = [7, 19, 43];
@@ -402,7 +402,7 @@ fn exact_cicp_retention_keeps_the_original_transfer_code() {
         .unwrap()
         .encoder()
         .unwrap()
-        .encode(PixelView::from_packed(&samples, 1, 1, spec).unwrap())
+        .encode(PixelView::from_bytes(&samples, 1, 1, &spec).unwrap())
         .unwrap();
     let oracle = png::Decoder::new(Cursor::new(encoded.data()))
         .read_info()
@@ -424,7 +424,7 @@ fn gray_pq_metadata_gets_a_gray_companion_profile() {
     use zenpixels::{ImageSpec, PixelView};
 
     let coded = [0x1234u16, 0x4321];
-    let spec = ImageSpec::gray16_srgb().with_transfer(Transfer::Pq);
+    let spec = ImageSpec::GRAY16_SRGB.with_transfer(Transfer::Pq);
     #[allow(deprecated)] // Balanced ICC emission is a legacy policy option.
     let job = PngEncoderConfig::new()
         .with_compression(Compression::None)
@@ -435,7 +435,7 @@ fn gray_pq_metadata_gets_a_gray_companion_profile() {
     let output = job
         .encoder()
         .unwrap()
-        .encode(PixelView::from_packed(bytemuck::cast_slice(&coded), 2, 1, spec).unwrap())
+        .encode(PixelView::from_bytes(bytemuck::cast_slice(&coded), 2, 1, &spec).unwrap())
         .unwrap();
     let oracle = png::Decoder::new(Cursor::new(output.data()))
         .read_info()

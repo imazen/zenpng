@@ -138,7 +138,7 @@ fn raw_mastering_still_animation_and_row_routes() {
                         2,
                         1,
                         8,
-                        ImageSpec::new(
+                        &ImageSpec::new(
                             zenpixels::SampleLayout::RGBA8,
                             zenpixels::Cicp::BT2100_PQ_RGB
                                 .to_color_space(zenpixels::AlphaMode::Straight)
@@ -211,7 +211,7 @@ fn checked_matrix_nine_retention_refuses_before_output() {
         )?;
         let bytes = job
             .encoder()?
-            .encode(PixelView::new(&pixels, 1, 1, 3, spec.clone())?)?;
+            .encode(PixelView::new(&pixels, 1, 1, 3, &spec)?)?;
         output.extend_from_slice(bytes.data());
         Ok(())
     };

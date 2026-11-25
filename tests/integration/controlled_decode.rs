@@ -94,7 +94,7 @@ fn native_formats_and_adam7_match_independent_pixels_after_adoption() {
         let expected = independent(&bytes);
         let native = PngDecoderConfig::new().decode(&bytes).unwrap();
         assert_eq!(
-            native.pixels().try_contiguous_bytes().unwrap().as_ref(),
+            native.pixels().contiguous_bytes().unwrap().as_ref(),
             expected,
             "ordinary native {name}"
         );
@@ -256,9 +256,9 @@ fn required_layout_refuses_and_preference_falls_back_without_relabeling() {
     for required in [true, false] {
         let budget = StorageBudget::new(bytes.len() + 65536, 8);
         let request = if required {
-            DecodeRequest::new().with_output(ImageSpec::rgba8_srgb())
+            DecodeRequest::new().with_output(ImageSpec::RGBA8_SRGB)
         } else {
-            DecodeRequest::new().preferring_output(vec![ImageSpec::rgba8_srgb()])
+            DecodeRequest::new().preferring_output(vec![ImageSpec::RGBA8_SRGB])
         };
         let session = request
             .with_format(ImageFormat::Png)
@@ -271,7 +271,7 @@ fn required_layout_refuses_and_preference_falls_back_without_relabeling() {
             assert!(result.is_err());
             assert_eq!(sink.calls.get(), 0);
         } else {
-            assert_eq!(result.unwrap().0.native_format, ImageSpec::rgb8_srgb());
+            assert_eq!(result.unwrap().0.native_format, ImageSpec::RGB8_SRGB);
         }
         drop(decoder);
         released(&budget);
@@ -652,7 +652,7 @@ fn gray_alpha_sixteen_reports_the_same_default_transfer_as_other_png_layouts() {
     ] {
         let descriptor = ImageSpec::new(
             zenpixels::SampleLayout::GRAYA16,
-            zenpixels::ImageSpec::graya8_srgb().color,
+            zenpixels::ImageSpec::GRAYA8_SRGB.color,
         );
         let config = PngDecoderConfig::new();
         assert_eq!(
@@ -667,7 +667,7 @@ fn gray_alpha_sixteen_reports_the_same_default_transfer_as_other_png_layouts() {
         let image = config.clone().decode(&bytes).unwrap();
         assert_eq!(image.pixels().spec(), &descriptor);
         assert_eq!(
-            image.pixels().try_contiguous_bytes().unwrap().as_ref(),
+            image.pixels().contiguous_bytes().unwrap().as_ref(),
             independent(&bytes)
         );
         let mut stream = config

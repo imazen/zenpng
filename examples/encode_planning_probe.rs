@@ -59,9 +59,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             return Err("expected stored, prefiltered, strips, strips-parallel or buffered".into());
         }
     };
-    let p3 = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let (descriptor, context) = match colour.as_str() {
-        "srgb" => (ImageSpec::rgb8_srgb(), None),
+        "srgb" => (ImageSpec::RGB8_SRGB, None),
         "p3-icc" => (
             p3,
             Some(ColorSpace::Icc {

@@ -49,7 +49,7 @@ impl Pixels {
             self.w as u32,
             n as u32,
             stride,
-            self.desc.clone(),
+            &self.desc,
         )
         .unwrap()
     }
@@ -63,7 +63,7 @@ fn synthetic(w: usize, h: usize) -> Pixels {
         data,
         w,
         h,
-        desc: ImageSpec::rgba8_srgb(),
+        desc: ImageSpec::RGBA8_SRGB,
     }
 }
 
@@ -90,13 +90,13 @@ fn load(file: &[u8]) -> Pixels {
         }
     }
     let desc = match data.len() / (w * h) {
-        3 => ImageSpec::rgb8_srgb(),
-        4 => ImageSpec::rgba8_srgb(),
+        3 => ImageSpec::RGB8_SRGB,
+        4 => ImageSpec::RGBA8_SRGB,
         n => panic!("expected an RGB8 or RGBA8 PNG, got {n} bytes/pixel"),
     };
     // ALPHA=1: give an RGB8 input a horizontal alpha ramp (the left 1/16
     // fully transparent), for RGBA8 measurements on real content.
-    if desc == ImageSpec::rgb8_srgb() && std::env::var_os("ALPHA").is_some_and(|v| v == "1") {
+    if desc == ImageSpec::RGB8_SRGB && std::env::var_os("ALPHA").is_some_and(|v| v == "1") {
         let mut rgba = Vec::with_capacity(w * h * 4);
         for (i, px) in data.as_chunks::<3>().0.iter().enumerate() {
             let x = i % w;
@@ -107,7 +107,7 @@ fn load(file: &[u8]) -> Pixels {
             data: rgba,
             w,
             h,
-            desc: ImageSpec::rgba8_srgb(),
+            desc: ImageSpec::RGBA8_SRGB,
         };
     }
     Pixels { data, w, h, desc }
@@ -171,7 +171,14 @@ impl DecodeRowSink for VecSink {
     ) -> Result<PixelViewMut<'_>, SinkError> {
         let stride = width as usize * descriptor.layout.bytes_per_pixel();
         self.0.resize(height as usize * stride, 0);
-        Ok(PixelViewMut::new(&mut self.0, width, height, stride, descriptor).expect("sized"))
+        Ok(PixelViewMut::new_with_spec_cow(
+            &mut self.0,
+            width,
+            height,
+            stride,
+            zenpixels::SpecCow::from_owned(descriptor),
+        )
+        .expect("sized"))
     }
 }
 

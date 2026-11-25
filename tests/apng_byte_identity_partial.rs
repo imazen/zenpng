@@ -207,7 +207,7 @@ fn encode(cfg: &PngEncoderConfig, a: &Anim, desc: ImageSpec, begin: bool) -> Vec
     let mut out = Vec::new();
     for (i, f) in fs.iter().enumerate() {
         enc.push_frame(
-            PixelView::new(f, a.w, a.h, stride, desc.clone()).unwrap(),
+            PixelView::new(f, a.w, a.h, stride, &desc).unwrap(),
             50 + i as u32,
             None,
         )
@@ -247,9 +247,9 @@ fn run_matrix() -> MatrixRun {
     let mut ops = Vec::new();
     for a in ANIMS {
         for (dname, desc) in [
-            ("rgb8", ImageSpec::rgb8_srgb()),
-            ("rgba8", ImageSpec::rgba8_srgb()),
-            ("bgra8", ImageSpec::bgra8_srgb()),
+            ("rgb8", ImageSpec::RGB8_SRGB),
+            ("rgba8", ImageSpec::RGBA8_SRGB),
+            ("bgra8", ImageSpec::BGRA8_SRGB),
         ] {
             for effort in [None, Some(2), Some(3), Some(5), Some(7), Some(10)] {
                 for (cname, downcast) in [

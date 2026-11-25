@@ -108,13 +108,13 @@ fn pipelined_decode_matches_serial() {
                 serial
                     .pixels
                     .as_view()
-                    .try_contiguous_bytes()
+                    .contiguous_bytes()
                     .unwrap()
                     .into_owned()
                     == piped
                         .pixels
                         .as_view()
-                        .try_contiguous_bytes()
+                        .contiguous_bytes()
                         .unwrap()
                         .into_owned(),
                 "{name}: pipelined output differs"
@@ -182,10 +182,14 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
     ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
         let stride = width as usize * descriptor.layout.bytes_per_pixel();
         self.0.resize(height as usize * stride, 0);
-        Ok(
-            zenpixels::PixelViewMut::new(&mut self.0, width, height, stride, descriptor)
-                .expect("sized"),
+        Ok(zenpixels::PixelViewMut::new_with_spec_cow(
+            &mut self.0,
+            width,
+            height,
+            stride,
+            zenpixels::SpecCow::from_owned(descriptor),
         )
+        .expect("sized"))
     }
 }
 
@@ -214,7 +218,7 @@ fn pipelined_push_decoder_matches_serial() {
         .unwrap()
         .pixels
         .as_view()
-        .try_contiguous_bytes()
+        .contiguous_bytes()
         .unwrap()
         .into_owned();
         assert!(
@@ -277,7 +281,7 @@ fn pipelined_streaming_decoder_matches_serial() {
         .unwrap()
         .pixels
         .as_view()
-        .try_contiguous_bytes()
+        .contiguous_bytes()
         .unwrap()
         .into_owned();
         assert!(
@@ -335,7 +339,7 @@ fn serial_streaming_decoder_matches_decode() {
         .unwrap()
         .pixels
         .as_view()
-        .try_contiguous_bytes()
+        .contiguous_bytes()
         .unwrap()
         .into_owned();
         assert!(

@@ -43,12 +43,12 @@ pub(crate) fn view_from_imgref<P: PixelType>(
                 "image stride overflows bytes".into()
             ))
         })?;
-    PixelView::new(
+    PixelView::new_with_spec_cow(
         bytemuck::cast_slice(image.buf()),
         width,
         height,
         stride,
-        default_spec(P::LAYOUT),
+        zenpixels::SpecCow::from_owned(default_spec(P::LAYOUT)),
     )
     .map_err(|e| at!(PngError::InvalidBuffer(e.to_string())))
 }
@@ -68,12 +68,12 @@ pub(crate) fn view_from_imgref_mut<P: PixelType>(
                 "image stride overflows bytes".into()
             ))
         })?;
-    PixelViewMut::new(
+    PixelViewMut::new_with_spec_cow(
         bytemuck::cast_slice_mut(image.into_buf()),
         width,
         height,
         stride,
-        default_spec(P::LAYOUT),
+        zenpixels::SpecCow::from_owned(default_spec(P::LAYOUT)),
     )
     .map_err(|e| at!(PngError::InvalidBuffer(e.to_string())))
 }

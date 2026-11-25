@@ -29,7 +29,7 @@ fn main() {
         let bytes = dec
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         if bytes.len() != w * h * 4 {
@@ -77,7 +77,7 @@ fn main() {
             let px = back
                 .pixels
                 .as_view()
-                .try_contiguous_bytes()
+                .contiguous_bytes()
                 .unwrap()
                 .into_owned();
             if n == 1 {

@@ -9,8 +9,8 @@ use zencodec::encode::{AnimationFrameEncoder, AnimationOutputTiming, EncodeJob, 
 use zenpixels::{ImageSpec, PixelView};
 use zenpng::{Compression, DowncastFlags, PngDecoderConfig, PngEncoderConfig};
 
-const RGBA8: ImageSpec = ImageSpec::rgba8_srgb();
-const RGB8: ImageSpec = ImageSpec::rgb8_srgb();
+const RGBA8: ImageSpec = ImageSpec::RGBA8_SRGB;
+const RGB8: ImageSpec = ImageSpec::RGB8_SRGB;
 
 /// `n` frames of a moving block over a gradient; RGBA with varying alpha,
 /// or RGB.
@@ -63,14 +63,7 @@ fn encode(
     let mut seen = vec![a.pending_output().len()];
     a.take_output(&mut out);
     for (i, f) in frames.iter().enumerate() {
-        let s = PixelView::new(
-            f,
-            w,
-            h,
-            w as usize * desc.layout.bytes_per_pixel(),
-            desc.clone(),
-        )
-        .unwrap();
+        let s = PixelView::new(f, w, h, w as usize * desc.layout.bytes_per_pixel(), &desc).unwrap();
         a.push_frame(s, 40 + i as u32 * 10, None).unwrap();
         seen.push(out.len() + a.pending_output().len());
         let mut chunk = Vec::new();
@@ -155,14 +148,16 @@ fn the_declared_frame_count_binds() {
         let mut a = c.clone().job().animation_frame_encoder().unwrap();
         a.begin(w, h, RGBA8, Some(2)).unwrap();
         for f in &fr[..2] {
-            let s = PixelView::new(f, w, h, w as usize * 4, RGBA8).unwrap();
+            let s = PixelView::new(f, w, h, w as usize * 4, &zenpixels::specs::RGBA8_SRGB).unwrap();
             a.push_frame(s, 40, None).unwrap();
         }
-        let s = PixelView::new(&fr[2], w, h, w as usize * 4, RGBA8).unwrap();
+        let s =
+            PixelView::new(&fr[2], w, h, w as usize * 4, &zenpixels::specs::RGBA8_SRGB).unwrap();
         assert!(a.push_frame(s, 40, None).is_err(), "a third of two frames");
         let mut a = c.clone().job().animation_frame_encoder().unwrap();
         a.begin(w, h, RGBA8, Some(3)).unwrap();
-        let s = PixelView::new(&fr[0], w, h, w as usize * 4, RGBA8).unwrap();
+        let s =
+            PixelView::new(&fr[0], w, h, w as usize * 4, &zenpixels::specs::RGBA8_SRGB).unwrap();
         a.push_frame(s, 40, None).unwrap();
         assert!(a.finish(None).is_err(), "one of three frames");
         let mut a = c.job().animation_frame_encoder().unwrap();

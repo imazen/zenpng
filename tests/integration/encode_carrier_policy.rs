@@ -81,7 +81,7 @@ fn encode_with(
             alpha: zenpixels::AlphaMode::Straight,
         },
     );
-    let pixels = || PixelView::new(&data, W, H, W as usize * 4, spec.clone()).unwrap();
+    let pixels = || PixelView::new(&data, W, H, W as usize * 4, &spec).unwrap();
     let mut job = PngEncoderConfig::new()
         .with_downcast(DowncastFlags::none())
         .with_cicp(native)

@@ -483,9 +483,9 @@ impl ApngCompositor {
         let is_16bit = ihdr.bit_depth == 16;
         config.validate(ihdr.width, ihdr.height, if is_16bit { 8 } else { 4 })?;
         let descriptor = if is_16bit {
-            zenpixels::ImageSpec::rgba16_srgb()
+            zenpixels::ImageSpec::RGBA16_SRGB
         } else {
-            zenpixels::ImageSpec::rgba8_srgb()
+            zenpixels::ImageSpec::RGBA8_SRGB
         };
         let canvas = PixelBuf::new(ihdr.width, ihdr.height, descriptor)
             .map_err(|e| at!(PngError::OutOfMemory(e.to_string())))?;
@@ -1322,17 +1322,17 @@ mod tests {
     /// Extract RGBA8 bytes from PixelBuf for comparison.
     fn pixel_data_to_rgba8_bytes(pixels: &PixelBuf) -> Vec<u8> {
         use rgb::ComponentBytes;
-        if let Ok(img) = pixels.as_view().try_as_imgref::<rgb::Rgba<u8>>() {
+        if let Ok(img) = pixels.as_view().as_imgref::<rgb::Rgba<u8>>() {
             return img.buf().as_bytes().to_vec();
         }
-        if let Ok(img) = pixels.as_view().try_as_imgref::<rgb::Rgb<u8>>() {
+        if let Ok(img) = pixels.as_view().as_imgref::<rgb::Rgb<u8>>() {
             let mut out = Vec::with_capacity(img.buf().len() * 4);
             for p in *img.buf() {
                 out.extend_from_slice(&[p.r, p.g, p.b, 255]);
             }
             return out;
         }
-        if let Ok(img) = pixels.as_view().try_as_imgref::<rgb::Rgba<u16>>() {
+        if let Ok(img) = pixels.as_view().as_imgref::<rgb::Rgba<u16>>() {
             let mut out = Vec::with_capacity(img.buf().len() * 4);
             for p in *img.buf() {
                 out.extend_from_slice(&[

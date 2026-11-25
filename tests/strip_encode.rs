@@ -54,7 +54,7 @@ fn strip_encode_is_thread_count_independent_and_lossless() {
             assert_eq!(
                 back.pixels
                     .as_view()
-                    .try_contiguous_bytes()
+                    .contiguous_bytes()
                     .unwrap()
                     .into_owned(),
                 src,

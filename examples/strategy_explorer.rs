@@ -31,7 +31,7 @@ fn main() {
     let pixel_bytes = decoded
         .pixels
         .as_view()
-        .try_contiguous_bytes()
+        .contiguous_bytes()
         .unwrap()
         .into_owned();
     let row_bytes = w * bpp;

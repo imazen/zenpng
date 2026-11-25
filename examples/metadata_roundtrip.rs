@@ -169,34 +169,34 @@ fn reencode(
         (ChannelOrder::Rgb, SampleType::U8) => {
             let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
                 pixels,
-                zenpixels::ImageSpec::rgb8_srgb(),
+                zenpixels::ImageSpec::RGB8_SRGB,
             );
             zenpng::encode_rgb8(buf.as_ref(), meta, config, u, u)
         }
         (ChannelOrder::Rgba, SampleType::U8) => {
             let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
                 pixels,
-                zenpixels::ImageSpec::rgba8_srgb(),
+                zenpixels::ImageSpec::RGBA8_SRGB,
             );
             zenpng::encode_rgba8(buf.as_ref(), meta, config, u, u)
         }
         (ChannelOrder::Gray, SampleType::U8) => {
             let buf = pixel_conversion::to_pixels::<rgb::Gray<u8>>(
                 pixels,
-                zenpixels::ImageSpec::gray8_srgb(),
+                zenpixels::ImageSpec::GRAY8_SRGB,
             );
             zenpng::encode_gray8(buf.as_ref(), meta, config, u, u)
         }
         (ChannelOrder::Rgb, SampleType::U16) => {
-            let imgref = pixels.as_view().try_as_imgref::<rgb::Rgb<u16>>().unwrap();
+            let imgref = pixels.as_view().as_imgref::<rgb::Rgb<u16>>().unwrap();
             zenpng::encode_rgb16(imgref, meta, config, u, u)
         }
         (ChannelOrder::Rgba, SampleType::U16) => {
-            let imgref = pixels.as_view().try_as_imgref::<rgb::Rgba<u16>>().unwrap();
+            let imgref = pixels.as_view().as_imgref::<rgb::Rgba<u16>>().unwrap();
             zenpng::encode_rgba16(imgref, meta, config, u, u)
         }
         (ChannelOrder::Gray, SampleType::U16) => {
-            let imgref = pixels.as_view().try_as_imgref::<rgb::Gray<u16>>().unwrap();
+            let imgref = pixels.as_view().as_imgref::<rgb::Gray<u16>>().unwrap();
             zenpng::encode_gray16(imgref, meta, config, u, u)
         }
         // A well-formed request for a pixel format this example's re-encode

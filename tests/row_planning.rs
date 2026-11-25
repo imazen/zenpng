@@ -82,15 +82,15 @@ const EFFORTS: [u32; 9] = [0, 1, 2, 5, 7, 13, 16, 19, 22];
 /// Declarations whose interpretation, layout or depth differ, and a
 /// contradiction that must refuse in both planning and startup.
 fn declarations() -> Vec<(&'static str, ImageSpec, Option<ColorSpace>)> {
-    let p3 = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     vec![
-        ("rgb8", ImageSpec::rgb8_srgb(), None),
-        ("rgba8", ImageSpec::rgba8_srgb(), None),
-        ("gray8", ImageSpec::gray8_srgb(), None),
-        ("rgb16", ImageSpec::rgb16_srgb(), None),
+        ("rgb8", ImageSpec::RGB8_SRGB, None),
+        ("rgba8", ImageSpec::RGBA8_SRGB, None),
+        ("gray8", ImageSpec::GRAY8_SRGB, None),
+        ("rgb16", ImageSpec::RGB16_SRGB, None),
         ("p3 descriptor", p3.clone(), None),
         ("p3 icc", p3.clone(), Some(icc_color())),
-        ("linear f32", ImageSpec::rgbf32_linear(), None),
+        ("linear f32", ImageSpec::RGBF32_LINEAR, None),
         ("contradiction", p3, Some(ColorSpace::SRGB)),
     ]
 }
@@ -193,7 +193,7 @@ fn strided_rgb(width: u32, height: u32) -> (Vec<u8>, usize) {
 #[test]
 fn planning_is_repeatable_and_leaves_the_job_unchanged() {
     let (data, stride) = strided_rgb(640, 900);
-    let pixels = || PixelView::new(&data, 640, 900, stride, ImageSpec::rgb8_srgb()).unwrap();
+    let pixels = || PixelView::new(&data, 640, 900, stride, &zenpixels::specs::RGB8_SRGB).unwrap();
     for effort in EFFORTS {
         let job = PngEncoderConfig::new()
             .with_compression(Compression::Effort(effort))
@@ -204,7 +204,7 @@ fn planning_is_repeatable_and_leaves_the_job_unchanged() {
                 &job,
                 640,
                 900,
-                ImageSpec::rgb8_srgb(),
+                ImageSpec::RGB8_SRGB,
                 None,
                 OutputAccess::Forward,
             )
@@ -216,7 +216,7 @@ fn planning_is_repeatable_and_leaves_the_job_unchanged() {
             .clone()
             .encoder()
             .unwrap()
-            .begin_output(640, 900, ImageSpec::rgb8_srgb(), OutputAccess::SeekBack)
+            .begin_output(640, 900, ImageSpec::RGB8_SRGB, OutputAccess::SeekBack)
             .unwrap();
         assert_eq!(timing, first, "effort {effort}");
         let actual = job.encoder().unwrap().encode(pixels()).unwrap();
@@ -230,18 +230,10 @@ fn planning_is_repeatable_and_leaves_the_job_unchanged() {
 #[test]
 fn declared_colour_reaches_the_header_and_rows_match_one_shot_colour() {
     let (data, stride) = strided_rgb(640, 900);
-    let p3 = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let context = icc_color();
-    let pixels = || {
-        PixelView::new(
-            &data,
-            640,
-            900,
-            stride,
-            ImageSpec::new(p3.layout, context.clone()),
-        )
-        .unwrap()
-    };
+    let context_spec = ImageSpec::new(p3.layout, context.clone());
+    let pixels = || PixelView::new(&data, 640, 900, stride, &context_spec).unwrap();
     for effort in [0, 1, 5, 19] {
         let job = PngEncoderConfig::new()
             .with_compression(Compression::Effort(effort))
@@ -321,16 +313,16 @@ fn zencodec_io_planned_row_adapter_writes_the_direct_row_file() {
     }
     let (w, h) = (640u32, 900u32);
     let (data, stride) = strided_rgb(w, h);
-    let p3 = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let icc = icc_color();
     let contradiction = ColorSpace::SRGB;
     let pixels = |color: &ColorSpace| {
-        PixelView::new(
+        PixelView::new_with_spec_cow(
             &data,
             w,
             h,
             stride,
-            ImageSpec::new(p3.layout, color.clone()),
+            zenpixels::SpecCow::from_owned(ImageSpec::new(p3.layout, color.clone())),
         )
         .unwrap()
     };
@@ -404,13 +396,13 @@ fn zencodec_io_planned_row_adapter_writes_the_direct_row_file() {
 #[test]
 fn erased_hooks_forward_the_plan_and_the_native_error() {
     use zencodec::encode::DynEncoderConfig;
-    let p3 = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let contradiction = ColorSpace::SRGB;
     let (mut planned, mut refused) = (0, 0);
     for effort in EFFORTS {
         let config = PngEncoderConfig::new().with_compression(Compression::Effort(effort));
         for (descriptor, color) in [
-            (ImageSpec::rgb8_srgb(), None),
+            (ImageSpec::RGB8_SRGB, None),
             (p3.clone(), Some(&contradiction)),
         ] {
             let declaration = declaration(640, 900, descriptor, color, OutputAccess::Forward);
@@ -458,7 +450,7 @@ fn erased_hooks_forward_the_plan_and_the_native_error() {
 #[test]
 fn a_refused_declaration_leaves_the_encoder_unchanged() {
     let (data, stride) = strided_rgb(8, 8);
-    let p3 = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     for effort in [0, 1, 7] {
         let mut enc = PngEncoderConfig::new()
             .with_compression(Compression::Effort(effort))
@@ -467,8 +459,8 @@ fn a_refused_declaration_leaves_the_encoder_unchanged() {
             .encoder()
             .unwrap();
         assert!(begin_declared(&mut enc, 64, 32, p3.clone(), None, OutputAccess::Forward).is_err());
-        enc.begin(8, 8, ImageSpec::rgb8_srgb()).unwrap();
-        enc.push_rows(PixelView::new(&data, 8, 8, stride, ImageSpec::rgb8_srgb()).unwrap())
+        enc.begin(8, 8, ImageSpec::RGB8_SRGB).unwrap();
+        enc.push_rows(PixelView::new(&data, 8, 8, stride, &zenpixels::specs::RGB8_SRGB).unwrap())
             .unwrap();
         let mut file = Vec::new();
         enc.take_output(&mut file);
@@ -501,7 +493,7 @@ fn cancelled_planning_refuses_with_its_reason() {
         &job,
         32,
         32,
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGB8_SRGB,
         None,
         OutputAccess::Forward,
     )

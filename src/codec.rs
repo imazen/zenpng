@@ -117,22 +117,22 @@ const RGB8_P3: ImageSpec = ImageSpec::new(SampleLayout::RGB8, ColorSpace::DISPLA
 const RGBA8_P3: ImageSpec = ImageSpec::new(SampleLayout::RGBA8, ColorSpace::DISPLAY_P3_ALPHA);
 
 static ENCODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::graya8_srgb(),
+    ImageSpec::GRAYA8_SRGB,
     crate::pixel::default_spec(SampleLayout::GRAYA16),
-    ImageSpec::rgb8_srgb(),
-    ImageSpec::rgba8_srgb(),
-    ImageSpec::gray8_srgb(),
-    ImageSpec::bgra8_srgb(),
-    ImageSpec::rgbx8_srgb(),
-    ImageSpec::bgrx8_srgb(),
-    ImageSpec::rgb16_srgb(),
-    ImageSpec::rgba16_srgb(),
-    ImageSpec::gray16_srgb(),
-    ImageSpec::rgbf32_linear(),
-    ImageSpec::rgbaf32_linear(),
-    ImageSpec::grayf32_linear(),
-    ImageSpec::rgb16_bt2100_pq(),
-    ImageSpec::rgb16_bt2100_hlg_scene(),
+    ImageSpec::RGB8_SRGB,
+    ImageSpec::RGBA8_SRGB,
+    ImageSpec::GRAY8_SRGB,
+    ImageSpec::BGRA8_SRGB,
+    ImageSpec::RGBX8_SRGB,
+    ImageSpec::BGRX8_SRGB,
+    ImageSpec::RGB16_SRGB,
+    ImageSpec::RGBA16_SRGB,
+    ImageSpec::GRAY16_SRGB,
+    ImageSpec::RGBF32_LINEAR,
+    ImageSpec::RGBAF32_LINEAR,
+    ImageSpec::GRAYF32_LINEAR,
+    ImageSpec::RGB16_BT2100_PQ,
+    ImageSpec::RGB16_BT2100_HLG_SCENE,
     RGB16_P3_PQ,
     RGB16_P3_HLG,
     RGBA16_BT2100_PQ,
@@ -144,18 +144,18 @@ static ENCODE_DESCRIPTORS: &[ImageSpec] = &[
 ];
 
 static DECODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::rgb8_srgb(),
-    ImageSpec::rgba8_srgb(),
-    ImageSpec::gray8_srgb(),
-    ImageSpec::bgra8_srgb(),
-    ImageSpec::rgb16_srgb(),
-    ImageSpec::rgba16_srgb(),
-    ImageSpec::gray16_srgb(),
-    ImageSpec::rgbf32_linear(),
-    ImageSpec::rgbaf32_linear(),
-    ImageSpec::grayf32_linear(),
-    ImageSpec::rgb16_bt2100_pq(),
-    ImageSpec::rgb16_bt2100_hlg_scene(),
+    ImageSpec::RGB8_SRGB,
+    ImageSpec::RGBA8_SRGB,
+    ImageSpec::GRAY8_SRGB,
+    ImageSpec::BGRA8_SRGB,
+    ImageSpec::RGB16_SRGB,
+    ImageSpec::RGBA16_SRGB,
+    ImageSpec::GRAY16_SRGB,
+    ImageSpec::RGBF32_LINEAR,
+    ImageSpec::RGBAF32_LINEAR,
+    ImageSpec::GRAYF32_LINEAR,
+    ImageSpec::RGB16_BT2100_PQ,
+    ImageSpec::RGB16_BT2100_HLG_SCENE,
     RGB16_P3_PQ,
     RGB16_P3_HLG,
     RGBA16_BT2100_PQ,
@@ -1456,7 +1456,7 @@ fn same_meaning(
         return false;
     }
     match (identify(a), identify(b)) {
-        (Some(a), Some(b)) => a.1 == b.1 && (gray || a.0 == b.0),
+        (Some(a), Some(b)) => a.1.same_curve(b.1) && (gray || a.0 == b.0),
         _ => false,
     }
 }
@@ -1509,7 +1509,7 @@ impl zencodec::encode::Encoder for PngEncoder {
     /// Declare the image and the current colour context of the rows that
     /// will follow, then choose the row mode.
     ///
-    /// The same as [`begin_output`](Self::begin_output), with the rows'
+    /// The same as [`begin_output`](zencodec::encode::Encoder::begin_output), with the rows'
     /// colour declared before the header is written: the header's iCCP/cICP
     /// describe it, and rows pushed later must mean the same thing. Returns
     /// the plan [`EncodeJob::plan_encode`](zencodec::encode::EncodeJob::plan_encode)
@@ -1530,7 +1530,7 @@ impl zencodec::encode::Encoder for PngEncoder {
     }
 
     /// PNG never patches earlier bytes: forward and seek-back destinations
-    /// get the same layout and timing as [`begin`](Self::begin).
+    /// get the same layout and timing as [`begin`](zencodec::encode::Encoder::begin).
     fn begin_output(
         &mut self,
         width: u32,
@@ -4200,7 +4200,7 @@ impl PngDecoder<'_> {
         ) {
             let exact = zenpixels::sample::ExactDepth::measure(&pixels.as_view())
                 .map_err(|e| at!(PngError::InvalidBuffer(e.to_string())))?;
-            pixels.set_facts(pixels.facts().with_depth(exact));
+            pixels.assume_facts(pixels.facts().with_depth(exact));
         }
         cancel.check().map_err(|e| at!(PngError::from(e)))?;
         let output = DecodeOutput::new(pixels, info).with_source_encoding_details(probe);
@@ -4217,21 +4217,21 @@ impl PngDecoder<'_> {
 /// type, bit depth, and tRNS presence. Must match `build_pixel_data`.
 pub(crate) fn native_output_descriptor(color_type: u8, bit_depth: u8, has_trns: bool) -> ImageSpec {
     match (color_type, bit_depth, has_trns) {
-        (0, 16, false) => ImageSpec::gray16_srgb(),
+        (0, 16, false) => ImageSpec::GRAY16_SRGB,
         (0, 16, true) => crate::pixel::default_spec(SampleLayout::GRAYA16),
-        (0, _, false) => ImageSpec::gray8_srgb(),
-        (0, _, true) => ImageSpec::rgba8_srgb(),
-        (2, 16, false) => ImageSpec::rgb16_srgb(),
-        (2, 16, true) => ImageSpec::rgba16_srgb(),
-        (2, 8, false) => ImageSpec::rgb8_srgb(),
-        (2, 8, true) => ImageSpec::rgba8_srgb(),
-        (3, _, true) => ImageSpec::rgba8_srgb(),
-        (3, _, false) => ImageSpec::rgb8_srgb(),
+        (0, _, false) => ImageSpec::GRAY8_SRGB,
+        (0, _, true) => ImageSpec::RGBA8_SRGB,
+        (2, 16, false) => ImageSpec::RGB16_SRGB,
+        (2, 16, true) => ImageSpec::RGBA16_SRGB,
+        (2, 8, false) => ImageSpec::RGB8_SRGB,
+        (2, 8, true) => ImageSpec::RGBA8_SRGB,
+        (3, _, true) => ImageSpec::RGBA8_SRGB,
+        (3, _, false) => ImageSpec::RGB8_SRGB,
         (4, 16, _) => crate::pixel::default_spec(SampleLayout::GRAYA16),
-        (4, 8, _) => ImageSpec::rgba8_srgb(),
-        (6, 16, _) => ImageSpec::rgba16_srgb(),
-        (6, 8, _) => ImageSpec::rgba8_srgb(),
-        _ => ImageSpec::rgba8_srgb(), // fallback
+        (4, 8, _) => ImageSpec::RGBA8_SRGB,
+        (6, 16, _) => ImageSpec::RGBA16_SRGB,
+        (6, 8, _) => ImageSpec::RGBA8_SRGB,
+        _ => ImageSpec::RGBA8_SRGB, // fallback
     }
 }
 
@@ -4309,7 +4309,7 @@ fn decoded_spec(
     }
     if let Some(chrm) = info.chromaticities {
         let xy = |x, y| (x as f32 / 100_000.0, y as f32 / 100_000.0);
-        let primaries = CustomPrimaries::try_new(
+        let primaries = CustomPrimaries::new(
             xy(chrm.red_x, chrm.red_y),
             xy(chrm.green_x, chrm.green_y),
             xy(chrm.blue_x, chrm.blue_y),
@@ -4373,7 +4373,7 @@ pub(crate) fn tag_decoded_pixels(
     let mut metadata = decoded_row_metadata(info, icc);
     metadata.facts = pixels.facts();
     pixels
-        .with_spec(spec)
+        .relabel_spec(spec)
         .map(|pixels| metadata.attach_owned(pixels))
         .map_err(|e| at!(PngError::InvalidBuffer(e.to_string())))
 }
@@ -4888,7 +4888,7 @@ impl PngStreamingDecoder<'_> {
             self.width,
             n as u32,
             pitch,
-            self.descriptor.clone(),
+            &self.descriptor,
         )
         .map_err(|e| {
             at!(PngError::Internal(
@@ -5103,12 +5103,12 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
                 canvas.as_view()
             } else {
                 let view = canvas.as_view();
-                let view = PixelView::new(
+                let view = PixelView::new_with_spec_cow(
                     view.as_strided_bytes(),
                     view.width(),
                     view.rows(),
                     view.stride(),
-                    spec,
+                    zenpixels::SpecCow::from_owned(spec),
                 )
                 .map_err(|e| CodecError::of(at!(PngError::InvalidBuffer(e.to_string()))))?;
                 self.row_metadata.attach(view)
@@ -5159,7 +5159,7 @@ fn convert_to(
     spec: ImageSpec,
 ) -> Result<PixelBuf, At<zenpixels_convert::ConvertError>> {
     let policy = zenpixels_convert::ConvertPolicy::permissive();
-    zenpixels_convert::convert_buf(
+    zenpixels_convert::convert_to_buf_with_peak(
         &pixels.as_view(),
         spec,
         &policy,
@@ -5168,19 +5168,19 @@ fn convert_to(
 }
 
 fn to_rgb8(pixels: PixelBuf) -> imgref::ImgVec<Rgb<u8>> {
-    to_imgvec(pixels, ImageSpec::rgb8_srgb())
+    to_imgvec(pixels, ImageSpec::RGB8_SRGB)
 }
 
 fn to_rgba8(pixels: PixelBuf) -> imgref::ImgVec<Rgba<u8>> {
-    to_imgvec(pixels, ImageSpec::rgba8_srgb())
+    to_imgvec(pixels, ImageSpec::RGBA8_SRGB)
 }
 
 fn to_gray8(pixels: PixelBuf) -> imgref::ImgVec<Gray<u8>> {
-    to_imgvec(pixels, ImageSpec::gray8_srgb())
+    to_imgvec(pixels, ImageSpec::GRAY8_SRGB)
 }
 
 fn to_bgra8(pixels: PixelBuf) -> imgref::ImgVec<rgb::alt::BGRA<u8>> {
-    to_imgvec(pixels, ImageSpec::bgra8_srgb())
+    to_imgvec(pixels, ImageSpec::BGRA8_SRGB)
 }
 
 fn to_imgvec<P: zenpixels::PixelType>(pixels: PixelBuf, spec: ImageSpec) -> imgref::ImgVec<P> {
@@ -5190,10 +5190,10 @@ fn to_imgvec<P: zenpixels::PixelType>(pixels: PixelBuf, spec: ImageSpec) -> imgr
         // These typed convenience methods return numeric samples without a
         // color descriptor. Work on the existing codes in the native layout.
         let input = crate::pixel::default_spec(pixels.spec().layout);
-        let pixels = pixels.with_spec(input).expect("same native layout");
+        let pixels = pixels.relabel_spec(input).expect("same native layout");
         convert_to(&pixels, spec).expect("native PNG layout conversion")
     };
-    pixels.try_into_imgvec().expect("converted PNG layout")
+    pixels.into_imgvec().expect("converted PNG layout")
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -5390,7 +5390,7 @@ fn apply_encode_policy(
                 // resolver compares against the canonical projection; retain
                 // the caller's bytes once it admits that representation.
                 verbatim_cicp = Some(rgb_cicp);
-                color.try_cicp().unwrap_or(rgb_cicp)
+                color.project_cicp().unwrap_or(rgb_cicp)
             } else {
                 rgb_cicp
             };
@@ -5579,7 +5579,7 @@ fn check_truncation_policy(
 /// Returns `Cow::Borrowed` when rows are tightly packed (zero-copy),
 /// `Cow::Owned` when stride padding must be stripped.
 fn contiguous_bytes<'a>(pixels: &PixelView<'a>) -> Result<Cow<'a, [u8]>, At<PngError>> {
-    pixels.try_contiguous_bytes().map_err(|e| match e.error() {
+    pixels.contiguous_bytes().map_err(|e| match e.error() {
         zenpixels::BufferError::AllocationFailed => at!(PngError::OutOfMemory(e.to_string())),
         _ => at!(PngError::InvalidBuffer(e.to_string())),
     })
@@ -6228,12 +6228,12 @@ fn to_rgb16(pixels: PixelBuf) -> imgref::ImgVec<Rgb<u16>> {
     let h = pixels.height() as usize;
     match (desc.layout.sample, desc.layout.order) {
         (SampleType::U16, ChannelOrder::Rgb) => {
-            let img = pixels.as_view().try_as_imgref::<Rgb<u16>>().unwrap();
+            let img = pixels.as_view().as_imgref::<Rgb<u16>>().unwrap();
             let buf: Vec<Rgb<u16>> = img.pixels().collect();
             imgref::ImgVec::new(buf, w, h)
         }
         (SampleType::U16, ChannelOrder::Rgba) => {
-            let img = pixels.as_view().try_as_imgref::<Rgba<u16>>().unwrap();
+            let img = pixels.as_view().as_imgref::<Rgba<u16>>().unwrap();
             let buf: Vec<Rgb<u16>> = img
                 .pixels()
                 .map(|p| Rgb {
@@ -6245,7 +6245,7 @@ fn to_rgb16(pixels: PixelBuf) -> imgref::ImgVec<Rgb<u16>> {
             imgref::ImgVec::new(buf, w, h)
         }
         (SampleType::U16, ChannelOrder::Gray) => {
-            let img = pixels.as_view().try_as_imgref::<Gray<u16>>().unwrap();
+            let img = pixels.as_view().as_imgref::<Gray<u16>>().unwrap();
             let buf: Vec<Rgb<u16>> = img
                 .pixels()
                 .map(|p| {
@@ -6256,7 +6256,7 @@ fn to_rgb16(pixels: PixelBuf) -> imgref::ImgVec<Rgb<u16>> {
             imgref::ImgVec::new(buf, w, h)
         }
         (SampleType::U16, ChannelOrder::GrayAlpha) => {
-            let img = pixels.as_view().try_as_imgref::<GrayAlpha16>().unwrap();
+            let img = pixels.as_view().as_imgref::<GrayAlpha16>().unwrap();
             let buf: Vec<Rgb<u16>> = img
                 .pixels()
                 .map(|p| {
@@ -6290,12 +6290,12 @@ fn to_rgba16(pixels: PixelBuf) -> imgref::ImgVec<Rgba<u16>> {
     let h = pixels.height() as usize;
     match (desc.layout.sample, desc.layout.order) {
         (SampleType::U16, ChannelOrder::Rgba) => {
-            let img = pixels.as_view().try_as_imgref::<Rgba<u16>>().unwrap();
+            let img = pixels.as_view().as_imgref::<Rgba<u16>>().unwrap();
             let buf: Vec<Rgba<u16>> = img.pixels().collect();
             imgref::ImgVec::new(buf, w, h)
         }
         (SampleType::U16, ChannelOrder::Rgb) => {
-            let img = pixels.as_view().try_as_imgref::<Rgb<u16>>().unwrap();
+            let img = pixels.as_view().as_imgref::<Rgb<u16>>().unwrap();
             let buf: Vec<Rgba<u16>> = img
                 .pixels()
                 .map(|p| Rgba {
@@ -6308,7 +6308,7 @@ fn to_rgba16(pixels: PixelBuf) -> imgref::ImgVec<Rgba<u16>> {
             imgref::ImgVec::new(buf, w, h)
         }
         (SampleType::U16, ChannelOrder::Gray) => {
-            let img = pixels.as_view().try_as_imgref::<Gray<u16>>().unwrap();
+            let img = pixels.as_view().as_imgref::<Gray<u16>>().unwrap();
             let buf: Vec<Rgba<u16>> = img
                 .pixels()
                 .map(|p| {
@@ -6324,7 +6324,7 @@ fn to_rgba16(pixels: PixelBuf) -> imgref::ImgVec<Rgba<u16>> {
             imgref::ImgVec::new(buf, w, h)
         }
         (SampleType::U16, ChannelOrder::GrayAlpha) => {
-            let img = pixels.as_view().try_as_imgref::<GrayAlpha16>().unwrap();
+            let img = pixels.as_view().as_imgref::<GrayAlpha16>().unwrap();
             let buf: Vec<Rgba<u16>> = img
                 .pixels()
                 .map(|p| Rgba {
@@ -6361,17 +6361,17 @@ fn to_gray16(pixels: PixelBuf) -> imgref::ImgVec<Gray<u16>> {
     let h = pixels.height() as usize;
     match (desc.layout.sample, desc.layout.order) {
         (SampleType::U16, ChannelOrder::Gray) => {
-            let img = pixels.as_view().try_as_imgref::<Gray<u16>>().unwrap();
+            let img = pixels.as_view().as_imgref::<Gray<u16>>().unwrap();
             let buf: Vec<Gray<u16>> = img.pixels().collect();
             imgref::ImgVec::new(buf, w, h)
         }
         (SampleType::U16, ChannelOrder::GrayAlpha) => {
-            let img = pixels.as_view().try_as_imgref::<GrayAlpha16>().unwrap();
+            let img = pixels.as_view().as_imgref::<GrayAlpha16>().unwrap();
             let buf: Vec<Gray<u16>> = img.pixels().map(|p| Gray(p.v)).collect();
             imgref::ImgVec::new(buf, w, h)
         }
         (SampleType::U16, ChannelOrder::Rgb) => {
-            let img = pixels.as_view().try_as_imgref::<Rgb<u16>>().unwrap();
+            let img = pixels.as_view().as_imgref::<Rgb<u16>>().unwrap();
             let buf: Vec<Gray<u16>> = img
                 .pixels()
                 .map(|p| {
@@ -6383,7 +6383,7 @@ fn to_gray16(pixels: PixelBuf) -> imgref::ImgVec<Gray<u16>> {
             imgref::ImgVec::new(buf, w, h)
         }
         (SampleType::U16, ChannelOrder::Rgba) => {
-            let img = pixels.as_view().try_as_imgref::<Rgba<u16>>().unwrap();
+            let img = pixels.as_view().as_imgref::<Rgba<u16>>().unwrap();
             let buf: Vec<Gray<u16>> = img
                 .pixels()
                 .map(|p| {
@@ -6471,7 +6471,7 @@ fn pixel_descriptor_for_data(pixels: &PixelBuf) -> ImageSpec {
 fn pixel_data_bytes(pixels: &PixelBuf) -> Vec<u8> {
     pixels
         .as_view()
-        .try_contiguous_bytes()
+        .contiguous_bytes()
         .expect("native PNG buffer")
         .into_owned()
 }
@@ -6693,11 +6693,11 @@ mod tests {
         use zencodec::encode::EncoderConfig;
         let desc = PngEncoderConfig::supported_descriptors();
         assert!(
-            desc.contains(&ImageSpec::rgbx8_srgb()),
+            desc.contains(&zenpixels::specs::RGBX8_SRGB),
             "RGBX8_SRGB must be in supported_descriptors"
         );
         assert!(
-            desc.contains(&ImageSpec::bgrx8_srgb()),
+            desc.contains(&zenpixels::specs::BGRX8_SRGB),
             "BGRX8_SRGB must be in supported_descriptors"
         );
     }
@@ -6749,7 +6749,7 @@ mod tests {
             buf.extend_from_slice(&[255, 128, 0, 0x13]);
         }
         let stride = (w * 4) as usize;
-        let slice = PixelView::new(&buf, w, h, stride, ImageSpec::rgbx8_srgb()).unwrap();
+        let slice = PixelView::new(&buf, w, h, stride, &zenpixels::specs::RGBX8_SRGB).unwrap();
 
         let output = PngEncoderConfig::new()
             .job()
@@ -6787,7 +6787,7 @@ mod tests {
             buf.extend_from_slice(&[0, 128, 255, 0x42]);
         }
         let stride = (w * 4) as usize;
-        let slice = PixelView::new(&buf, w, h, stride, ImageSpec::bgrx8_srgb()).unwrap();
+        let slice = PixelView::new(&buf, w, h, stride, &zenpixels::specs::BGRX8_SRGB).unwrap();
 
         let output = PngEncoderConfig::new()
             .job()
@@ -6832,9 +6832,9 @@ mod tests {
         }
 
         let rgbx_slice =
-            PixelView::new(&rgbx, w, h, (w * 4) as usize, ImageSpec::rgbx8_srgb()).unwrap();
+            PixelView::new(&rgbx, w, h, (w * 4) as usize, &zenpixels::specs::RGBX8_SRGB).unwrap();
         let rgb_slice =
-            PixelView::new(&rgb, w, h, (w * 3) as usize, ImageSpec::rgb8_srgb()).unwrap();
+            PixelView::new(&rgb, w, h, (w * 3) as usize, &zenpixels::specs::RGB8_SRGB).unwrap();
 
         let rgbx_out = PngEncoderConfig::new()
             .job()
@@ -6945,7 +6945,7 @@ mod tests {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         for (desc, name) in [
-            (ImageSpec::rgb16_bt2100_pq(), "BT.2100 PQ"),
+            (ImageSpec::RGB16_BT2100_PQ, "BT.2100 PQ"),
             (RGB16_P3_PQ, "Display-P3 PQ"),
             (RGB8_P3, "Display-P3 sRGB 8-bit"),
             (RGBA16_BT2100_PQ, "BT.2100 PQ with alpha"),
@@ -6966,7 +6966,7 @@ mod tests {
             let bytes: Vec<u8> = (0..(w as usize * h as usize * bpp))
                 .map(|i| (i * 7 % 251) as u8)
                 .collect();
-            let src = PixelView::new(&bytes, w, h, w as usize * bpp, desc.clone()).unwrap();
+            let src = PixelView::new(&bytes, w, h, w as usize * bpp, &desc).unwrap();
 
             let png = PngEncoderConfig::new()
                 .job()
@@ -7004,7 +7004,7 @@ mod tests {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let bytes = vec![9u8; 4 * 2 * 3];
-        let src = PixelView::new(&bytes, 4, 2, 4 * 3, ImageSpec::rgb8_srgb()).unwrap();
+        let src = PixelView::new(&bytes, 4, 2, 4 * 3, &zenpixels::specs::RGB8_SRGB).unwrap();
         let png = PngEncoderConfig::new()
             .job()
             .encoder()
@@ -7314,7 +7314,7 @@ mod tests {
             assert_eq!(out.height(), h as u32);
             out.into_buffer()
                 .as_view()
-                .try_contiguous_bytes()
+                .contiguous_bytes()
                 .unwrap()
                 .into_owned()
         };
@@ -7431,7 +7431,7 @@ mod tests {
         let img = decoded
             .pixels
             .as_view()
-            .try_as_imgref::<Rgb<u16>>()
+            .as_imgref::<Rgb<u16>>()
             .expect("expected Rgb16");
         for (i, (orig, dec)) in pixels.iter().zip(img.pixels()).enumerate() {
             assert_eq!(
@@ -7488,7 +7488,7 @@ mod tests {
         let img = decoded
             .pixels
             .as_view()
-            .try_as_imgref::<Rgba<u16>>()
+            .as_imgref::<Rgba<u16>>()
             .expect("expected Rgba16");
         for (i, (orig, dec)) in pixels.iter().zip(img.pixels()).enumerate() {
             assert_eq!(
@@ -7520,7 +7520,7 @@ mod tests {
         let img = decoded
             .pixels
             .as_view()
-            .try_as_imgref::<Gray<u16>>()
+            .as_imgref::<Gray<u16>>()
             .expect("expected Gray16");
         for (i, (orig, dec)) in pixels.iter().zip(img.pixels()).enumerate() {
             assert_eq!(
@@ -7607,7 +7607,7 @@ mod tests {
         let img = decoded
             .pixels
             .as_view()
-            .try_as_imgref::<Rgb<u8>>()
+            .as_imgref::<Rgb<u8>>()
             .expect("expected Rgb8");
         for (orig, dec) in pixels.iter().zip(img.pixels()) {
             assert_eq!(*orig, dec);
@@ -7659,7 +7659,7 @@ mod tests {
         let img = decoded
             .pixels
             .as_view()
-            .try_as_imgref::<Rgba<u8>>()
+            .as_imgref::<Rgba<u8>>()
             .expect("expected Rgba8");
         for (orig, dec) in pixels.iter().zip(img.pixels()) {
             assert_eq!(*orig, dec);
@@ -7686,7 +7686,7 @@ mod tests {
         let img = decoded
             .pixels
             .as_view()
-            .try_as_imgref::<Gray<u8>>()
+            .as_imgref::<Gray<u8>>()
             .expect("expected Gray8");
         for (orig, dec) in pixels.iter().zip(img.pixels()) {
             assert_eq!(*orig, dec);
@@ -8491,7 +8491,7 @@ mod tests {
         let pixels = orig
             .pixels
             .as_view()
-            .try_as_imgref::<Rgb<u8>>()
+            .as_imgref::<Rgb<u8>>()
             .expect("frymire.png should decode as RGB8");
         let encoded = crate::encode::encode_rgb8(
             pixels,
@@ -8543,7 +8543,7 @@ mod tests {
         let pixels = orig
             .pixels
             .as_view()
-            .try_as_imgref::<Rgba<u8>>()
+            .as_imgref::<Rgba<u8>>()
             .expect("red-night.png should decode as RGBA8");
         let encoded = crate::encode::encode_rgba8(
             pixels,
@@ -8587,7 +8587,7 @@ mod tests {
         let pixels = orig
             .pixels
             .as_view()
-            .try_as_imgref::<Rgba<u8>>()
+            .as_imgref::<Rgba<u8>>()
             .expect("shirt_transparent.png should decode as RGBA8");
         let encoded = crate::encode::encode_rgba8(
             pixels,
@@ -8628,7 +8628,7 @@ mod tests {
         let rgb_pixels = decoded
             .pixels
             .as_view()
-            .try_as_imgref::<Rgb<u8>>()
+            .as_imgref::<Rgb<u8>>()
             .unwrap_or_else(|_| panic!("expected Rgb8, got {:?}", decoded.pixels.spec()));
 
         for (name, comp) in [
@@ -8693,7 +8693,7 @@ mod tests {
         let dec_img = decoded
             .pixels
             .as_view()
-            .try_as_imgref::<Rgb<u8>>()
+            .as_imgref::<Rgb<u8>>()
             .unwrap_or_else(|_| panic!("expected Rgb8, got {:?}", decoded.pixels.spec()));
         assert_eq!(dec_img.width(), width);
         assert_eq!(dec_img.height(), height);
@@ -9285,8 +9285,8 @@ mod tests {
     fn encoder_supported_descriptors() {
         let descs = <PngEncoderConfig as EncoderConfig>::supported_descriptors();
         assert!(!descs.is_empty());
-        assert!(descs.contains(&ImageSpec::rgb8_srgb()));
-        assert!(descs.contains(&ImageSpec::rgba8_srgb()));
+        assert!(descs.contains(&zenpixels::specs::RGB8_SRGB));
+        assert!(descs.contains(&zenpixels::specs::RGBA8_SRGB));
     }
 
     #[test]
@@ -10006,13 +10006,13 @@ mod tests {
             decoded_push
                 .pixels
                 .as_view()
-                .try_contiguous_bytes()
+                .contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned(),
             decoded_one
                 .pixels
                 .as_view()
-                .try_contiguous_bytes()
+                .contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned()
         );
@@ -10220,13 +10220,13 @@ mod tests {
             dec_push
                 .pixels
                 .as_view()
-                .try_contiguous_bytes()
+                .contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned(),
             dec_one
                 .pixels
                 .as_view()
-                .try_contiguous_bytes()
+                .contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned()
         );
@@ -10334,13 +10334,13 @@ mod tests {
             decoded
                 .pixels
                 .as_view()
-                .try_contiguous_bytes()
+                .contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned(),
             decoded_one
                 .pixels
                 .as_view()
-                .try_contiguous_bytes()
+                .contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned()
         );
@@ -10608,13 +10608,13 @@ mod tests {
             decoded
                 .pixels
                 .as_view()
-                .try_contiguous_bytes()
+                .contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned(),
             decoded_one
                 .pixels
                 .as_view()
-                .try_contiguous_bytes()
+                .contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned()
         );
@@ -10762,7 +10762,7 @@ mod tests {
         assert_eq!(info.height, 4);
         assert_eq!(
             info.native_format,
-            ImageSpec::gray8_srgb(),
+            ImageSpec::GRAY8_SRGB,
             "grayscale PNG should report GRAY8_SRGB, not {:?}",
             info.native_format
         );
@@ -10782,7 +10782,7 @@ mod tests {
         let info = dec.job().output_info(output.data()).unwrap();
         assert_eq!(
             info.native_format,
-            ImageSpec::gray16_srgb(),
+            ImageSpec::GRAY16_SRGB,
             "16-bit grayscale PNG should report GRAY16_SRGB, not {:?}",
             info.native_format
         );
@@ -10807,7 +10807,7 @@ mod tests {
         let info = dec.job().output_info(output.data()).unwrap();
         assert_eq!(
             info.native_format,
-            ImageSpec::rgb8_srgb(),
+            ImageSpec::RGB8_SRGB,
             "RGB PNG should report RGB8_SRGB, not {:?}",
             info.native_format
         );
@@ -10832,7 +10832,7 @@ mod tests {
         let info = dec.job().output_info(output.data()).unwrap();
         assert_eq!(
             info.native_format,
-            ImageSpec::rgba8_srgb(),
+            ImageSpec::RGBA8_SRGB,
             "RGBA PNG should report RGBA8_SRGB, not {:?}",
             info.native_format
         );
@@ -11041,14 +11041,14 @@ mod tests {
         let decoder = job
             .decoder(
                 alloc::borrow::Cow::Borrowed(encoded.data()),
-                &[ImageSpec::bgra8_srgb()],
+                &[ImageSpec::BGRA8_SRGB],
             )
             .unwrap();
         let out = decoder.decode().unwrap();
         assert!(!out.info().has_alpha, "container reports no alpha source");
         let desc = out.into_buffer().spec().clone();
         assert_eq!(desc.color.alpha(), AlphaMode::Opaque);
-        assert_eq!(desc.layout, ImageSpec::bgra8_srgb().layout);
+        assert_eq!(desc.layout, ImageSpec::BGRA8_SRGB.layout);
     }
 
     /// A cICP BT.2100-PQ source re-tags the decode descriptor: PQ transfer +
@@ -11136,7 +11136,7 @@ mod tests {
             .job()
             .decoder(
                 alloc::borrow::Cow::Borrowed(encoded.as_slice()),
-                &[ImageSpec::rgba16_srgb()],
+                &[ImageSpec::RGBA16_SRGB],
             )
             .unwrap()
             .decode()
@@ -11209,7 +11209,7 @@ mod tests {
         let decoder = job
             .decoder(
                 alloc::borrow::Cow::Borrowed(encoded.data()),
-                &[ImageSpec::bgra8_srgb()],
+                &[ImageSpec::BGRA8_SRGB],
             )
             .unwrap();
         let out = decoder.decode().unwrap();
@@ -11297,7 +11297,7 @@ mod strip_stream_tests {
         while y < h {
             let n = chunk.min(h - y);
             let rows = &data[y as usize * stride..(y + n) as usize * stride];
-            enc.push_rows(PixelView::new(rows, w, n, stride, desc.clone()).unwrap())
+            enc.push_rows(PixelView::new(rows, w, n, stride, &desc).unwrap())
                 .unwrap();
             assert!(
                 matches!(enc.streaming, Some(super::StreamingMode::Strips(_))),
@@ -11313,7 +11313,7 @@ mod strip_stream_tests {
         use crate::decode::PngDecodeConfig;
         use enough::Unstoppable;
         let stride = w as usize * desc.layout.bytes_per_pixel();
-        let whole = PixelView::new(data, w, h, stride, desc.clone()).unwrap();
+        let whole = PixelView::new(data, w, h, stride, &desc).unwrap();
         for effort in [1, 2, 5, 7, 9, 13, 15] {
             // Streaming chooses filters per strip (it can't see the strips
             // to come); the one-shot encode does the same here, and
@@ -11337,7 +11337,7 @@ mod strip_stream_tests {
                 assert!(
                     d.pixels
                         .as_view()
-                        .try_contiguous_bytes()
+                        .contiguous_bytes()
                         .expect("native PNG buffer")
                         .into_owned()
                         == px,
@@ -11356,7 +11356,7 @@ mod strip_stream_tests {
         // 1024 wide RGB8: 3072-byte rows, 700 rows = 4 strips of ~512 KiB.
         let (w, h) = (1024u32, 700u32);
         let rgb = pixels(w as usize, h as usize, 3, 1);
-        check("rgb8", &rgb, w, h, ImageSpec::rgb8_srgb(), Some(&rgb));
+        check("rgb8", &rgb, w, h, ImageSpec::RGB8_SRGB, Some(&rgb));
 
         // RGBA8 with fully transparent runs: RGB under alpha 0 is zeroed in both.
         let mut rgba = pixels(w as usize, h as usize, 4, 2);
@@ -11365,7 +11365,7 @@ mod strip_stream_tests {
                 px[3] = 0;
             }
         }
-        check("rgba8", &rgba, w, h, ImageSpec::rgba8_srgb(), None);
+        check("rgba8", &rgba, w, h, ImageSpec::RGBA8_SRGB, None);
 
         let gray = pixels(2048, 600, 1, 3);
         check(
@@ -11373,17 +11373,17 @@ mod strip_stream_tests {
             &gray,
             2048,
             600,
-            ImageSpec::gray8_srgb(),
+            ImageSpec::GRAY8_SRGB,
             Some(&gray),
         );
 
         // 16-bit input is written big-endian by both paths.
         let rgb16 = pixels(512, 400, 6, 4);
-        check("rgb16", &rgb16, 512, 400, ImageSpec::rgb16_srgb(), None);
+        check("rgb16", &rgb16, 512, 400, ImageSpec::RGB16_SRGB, None);
 
         // BGRA8 is reordered to RGBA by both paths.
         let bgra = pixels(1024, 300, 4, 5);
-        check("bgra8", &bgra, 1024, 300, ImageSpec::bgra8_srgb(), None);
+        check("bgra8", &bgra, 1024, 300, ImageSpec::BGRA8_SRGB, None);
     }
 
     /// Every `push_rows` mode writes the same header as the one-shot encoder,
@@ -11393,7 +11393,7 @@ mod strip_stream_tests {
     fn streaming_header_matches_oneshot_with_cicp() {
         let (w, h) = (64u32, 40u32);
         let px = pixels(w as usize, h as usize, 3, 9);
-        let desc = ImageSpec::rgb8_srgb()
+        let desc = ImageSpec::RGB8_SRGB
             .with_primaries(zenpixels::Primaries::Bt2020)
             .with_transfer(zenpixels::Transfer::Pq);
         let stride = w as usize * 3;
@@ -11409,10 +11409,10 @@ mod strip_stream_tests {
                 .job()
                 .encoder()
                 .unwrap()
-                .encode(PixelView::new(&px, w, h, stride, desc.clone()).unwrap())
+                .encode(PixelView::new(&px, w, h, stride, &desc).unwrap())
                 .unwrap();
             let mut enc = cfg.job().with_canvas_size(w, h).encoder().unwrap();
-            enc.push_rows(PixelView::new(&px, w, h, stride, desc.clone()).unwrap())
+            enc.push_rows(PixelView::new(&px, w, h, stride, &desc).unwrap())
                 .unwrap();
             let streamed = enc.finish().unwrap();
             assert!(
@@ -11450,8 +11450,9 @@ mod strip_stream_tests {
                 .with_canvas_size(w, h)
                 .encoder()
                 .unwrap();
-            let pushed =
-                enc.push_rows(PixelView::new(&px, w, h, stride, ImageSpec::rgb8_srgb()).unwrap());
+            let pushed = enc.push_rows(
+                PixelView::new(&px, w, h, stride, &zenpixels::specs::RGB8_SRGB).unwrap(),
+            );
             let res = pushed.and_then(|()| enc.finish().map(|_| ()));
             assert!(
                 res.is_err(),

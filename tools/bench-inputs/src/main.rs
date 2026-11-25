@@ -64,16 +64,16 @@ fn write_png(
 /// truncated to the high byte — input generation only).
 fn to_rgb8(out: &PngDecodeOutput) -> (Vec<u8>, u32, u32) {
     let (w, h) = (out.info.width, out.info.height);
-    if let Ok(img) = out.pixels.as_view().try_as_imgref::<rgb::Rgb<u8>>() {
+    if let Ok(img) = out.pixels.as_view().as_imgref::<rgb::Rgb<u8>>() {
         let (buf, _, _) = img.to_contiguous_buf();
         return (bytemuck::cast_slice(buf.as_ref()).to_vec(), w, h);
     }
-    if let Ok(img) = out.pixels.as_view().try_as_imgref::<rgb::Rgba<u8>>() {
+    if let Ok(img) = out.pixels.as_view().as_imgref::<rgb::Rgba<u8>>() {
         let (buf, _, _) = img.to_contiguous_buf();
         let px: &[rgb::Rgba<u8>] = buf.as_ref();
         return (px.iter().flat_map(|p| [p.r, p.g, p.b]).collect(), w, h);
     }
-    if let Ok(img) = out.pixels.as_view().try_as_imgref::<rgb::Gray<u8>>() {
+    if let Ok(img) = out.pixels.as_view().as_imgref::<rgb::Gray<u8>>() {
         let (buf, _, _) = img.to_contiguous_buf();
         let px: &[rgb::Gray<u8>] = buf.as_ref();
         return (

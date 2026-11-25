@@ -68,7 +68,7 @@ fn bench_decode(suite: &mut Suite) {
         let ours = out
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         let theirs = png_main_decode(data);
@@ -121,7 +121,7 @@ fn bench_encode(suite: &mut Suite) {
         let bytes = out
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         if bytes.len() != w * h * 3 {

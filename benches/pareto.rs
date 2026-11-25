@@ -297,12 +297,7 @@ fn bench_encode(suite: &mut Suite) {
         }
         let d = zenpng_decode(data, 1);
         let alpha = name.contains("_rgba8_");
-        let bytes = d
-            .pixels
-            .as_view()
-            .try_contiguous_bytes()
-            .unwrap()
-            .into_owned();
+        let bytes = d.pixels.as_view().contiguous_bytes().unwrap().into_owned();
         let (w, h) = (d.info.width as usize, d.info.height as usize);
         if bytes.len() != w * h * if alpha { 4 } else { 3 } {
             continue; // the file decoded to another layout (e.g. gray)
@@ -351,14 +346,14 @@ fn add_decode_group(suite: &mut Suite, group: String, data: &'static [u8], check
         let ours = out
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         assert!(ours == png_decode(data), "{group}: png disagrees");
         let mt = zenpng_decode(data, 0)
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         assert!(ours == mt, "{group}: zenpng MT disagrees with ST");
@@ -386,12 +381,7 @@ fn bench_decode(suite: &mut Suite) {
             let d = zenpng_decode(data, 1);
             let (w, h) = (d.info.width as usize, d.info.height as usize);
             let alpha = name.contains("_rgba8_");
-            let bytes = d
-                .pixels
-                .as_view()
-                .try_contiguous_bytes()
-                .unwrap()
-                .into_owned();
+            let bytes = d.pixels.as_view().contiguous_bytes().unwrap().into_owned();
             if bytes.len() != w * h * if alpha { 4 } else { 3 } {
                 continue;
             }
@@ -422,10 +412,14 @@ impl zencodec::decode::DecodeRowSink for VecSink {
     ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
         let stride = width as usize * descriptor.layout.bytes_per_pixel();
         self.0.resize(height as usize * stride, 0);
-        Ok(
-            zenpixels::PixelViewMut::new(&mut self.0, width, height, stride, descriptor)
-                .expect("sized"),
+        Ok(zenpixels::PixelViewMut::new_with_spec_cow(
+            &mut self.0,
+            width,
+            height,
+            stride,
+            zenpixels::SpecCow::from_owned(descriptor),
         )
+        .expect("sized"))
     }
 }
 
@@ -498,14 +492,14 @@ fn idot_reencode(data: &[u8]) -> Option<Vec<u8>> {
     let d = zenpng_decode(data, 1);
     let cfg = effort_cfg(7, false).with_decode_segments(8);
     let px = &d.pixels;
-    let out = if let Ok(i) = px.as_view().try_as_imgref::<rgb::Rgb<u8>>() {
+    let out = if let Ok(i) = px.as_view().as_imgref::<rgb::Rgb<u8>>() {
         zenpng::encode_rgb8(i, None, &cfg, &Unstoppable, &Unstoppable)
-    } else if let Ok(i) = px.as_view().try_as_imgref::<rgb::Rgba<u8>>() {
+    } else if let Ok(i) = px.as_view().as_imgref::<rgb::Rgba<u8>>() {
         zenpng::encode_rgba8(i, None, &cfg, &Unstoppable, &Unstoppable)
-    } else if let Ok(i) = px.as_view().try_as_imgref::<rgb::Gray<u8>>() {
+    } else if let Ok(i) = px.as_view().as_imgref::<rgb::Gray<u8>>() {
         zenpng::encode_gray8(i, None, &cfg, &Unstoppable, &Unstoppable)
     } else {
-        let i = px.as_view().try_as_imgref::<rgb::Rgb<u16>>().ok()?;
+        let i = px.as_view().as_imgref::<rgb::Rgb<u16>>().ok()?;
         zenpng::encode_rgb16(i, None, &cfg, &Unstoppable, &Unstoppable)
     }
     .unwrap();
@@ -529,7 +523,7 @@ fn bench_pipeline_decode(suite: &mut Suite) {
         let whole = zenpng_decode(data, 1)
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         for seq in [true, false] {
@@ -554,13 +548,13 @@ fn bench_pipeline_decode(suite: &mut Suite) {
                 zenpng_decode(i, 0)
                     .pixels
                     .as_view()
-                    .try_contiguous_bytes()
+                    .contiguous_bytes()
                     .unwrap()
                     .into_owned()
                     == zenpng_decode(i, 1)
                         .pixels
                         .as_view()
-                        .try_contiguous_bytes()
+                        .contiguous_bytes()
                         .unwrap()
                         .into_owned(),
                 "{name}: parallel iDOT decode differs from serial"
@@ -616,7 +610,7 @@ fn bench_stream_decode(suite: &mut Suite) {
         let whole = zenpng_decode(data, 1)
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         assert!(push_decode(data) == whole, "{name}: push differs");
@@ -685,9 +679,9 @@ fn img_slice(img: Img, y: usize, rows: usize) -> zenpixels::PixelView<'static> {
     let bpp = if img.alpha { 4 } else { 3 };
     let stride = img.w * bpp;
     let desc = if img.alpha {
-        zenpixels::ImageSpec::rgba8_srgb()
+        &zenpixels::specs::RGBA8_SRGB
     } else {
-        zenpixels::ImageSpec::rgb8_srgb()
+        &zenpixels::specs::RGB8_SRGB
     };
     zenpixels::PixelView::new(
         &img.px[y * stride..(y + rows) * stride],
@@ -710,12 +704,7 @@ fn bench_stream_encode(suite: &mut Suite) {
         }
         let d = zenpng_decode(data, 1);
         let alpha = name.contains("_rgba8_");
-        let bytes = d
-            .pixels
-            .as_view()
-            .try_contiguous_bytes()
-            .unwrap()
-            .into_owned();
+        let bytes = d.pixels.as_view().contiguous_bytes().unwrap().into_owned();
         let (w, h) = (d.info.width as usize, d.info.height as usize);
         if bytes.len() != w * h * if alpha { 4 } else { 3 } {
             continue;

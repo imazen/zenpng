@@ -76,17 +76,17 @@ fn encode_one_cfg(out: &PngDecodeOutput, effort: u32, single_thread: bool) -> Ve
         .with_compression(Compression::Effort(effort))
         .with_parallel(!single_thread);
     let px = &out.pixels;
-    let encoded = if let Ok(img) = px.as_view().try_as_imgref::<rgb::Rgb<u8>>() {
+    let encoded = if let Ok(img) = px.as_view().as_imgref::<rgb::Rgb<u8>>() {
         zenpng::encode_rgb8(img, None, &cfg, &Unstoppable, &Unstoppable)
-    } else if let Ok(img) = px.as_view().try_as_imgref::<rgb::Rgba<u8>>() {
+    } else if let Ok(img) = px.as_view().as_imgref::<rgb::Rgba<u8>>() {
         zenpng::encode_rgba8(img, None, &cfg, &Unstoppable, &Unstoppable)
-    } else if let Ok(img) = px.as_view().try_as_imgref::<rgb::Gray<u8>>() {
+    } else if let Ok(img) = px.as_view().as_imgref::<rgb::Gray<u8>>() {
         zenpng::encode_gray8(img, None, &cfg, &Unstoppable, &Unstoppable)
-    } else if let Ok(img) = px.as_view().try_as_imgref::<rgb::Rgb<u16>>() {
+    } else if let Ok(img) = px.as_view().as_imgref::<rgb::Rgb<u16>>() {
         zenpng::encode_rgb16(img, None, &cfg, &Unstoppable, &Unstoppable)
-    } else if let Ok(img) = px.as_view().try_as_imgref::<rgb::Rgba<u16>>() {
+    } else if let Ok(img) = px.as_view().as_imgref::<rgb::Rgba<u16>>() {
         zenpng::encode_rgba16(img, None, &cfg, &Unstoppable, &Unstoppable)
-    } else if let Ok(img) = px.as_view().try_as_imgref::<rgb::Gray<u16>>() {
+    } else if let Ok(img) = px.as_view().as_imgref::<rgb::Gray<u16>>() {
         zenpng::encode_gray16(img, None, &cfg, &Unstoppable, &Unstoppable)
     } else {
         return encode_gray_alpha(out, effort, single_thread);
@@ -107,11 +107,11 @@ fn encode_gray_alpha(out: &PngDecodeOutput, effort: u32, single_thread: bool) ->
     let bytes = out
         .pixels
         .as_view()
-        .try_contiguous_bytes()
+        .contiguous_bytes()
         .unwrap()
         .into_owned();
     let stride = w as usize * desc.layout.bytes_per_pixel();
-    let pixels = PixelView::new(&bytes, w, h, stride, desc.clone())
+    let pixels = PixelView::new(&bytes, w, h, stride, desc)
         .unwrap_or_else(|e| panic!("gray+alpha pixel slice: {e}"));
     let mut cfg = PngEncoderConfig::new().with_compression(Compression::Effort(effort));
     if single_thread {
@@ -148,7 +148,7 @@ fn zenpng_samples(out: &PngDecodeOutput) -> Samples {
     let mut stream_order = out
         .pixels
         .as_view()
-        .try_contiguous_bytes()
+        .contiguous_bytes()
         .unwrap()
         .into_owned();
     if bits == 16 && cfg!(target_endian = "little") {
@@ -348,7 +348,7 @@ fn cmd_hash(effort: u32, files: Vec<PathBuf>) {
         let px = out
             .pixels
             .as_view()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         let mut h = Sha256::new();
@@ -488,7 +488,7 @@ fn cmd_pair(args: &[String]) {
             let pixels = out
                 .pixels
                 .as_view()
-                .try_contiguous_bytes()
+                .contiguous_bytes()
                 .unwrap()
                 .into_owned();
             h.update((pixels.len() as u64).to_le_bytes());

@@ -12,13 +12,13 @@ use zencodec::encode::{DynAnimationFrameEncoder, EncodeJob, EncoderConfig};
 use zenpixels::{ImageSpec, PixelView};
 use zenpng::{Compression, DowncastFlags, PngEncoderConfig};
 
-const RGB8: ImageSpec = ImageSpec::rgb8_srgb();
-const RGBA8: ImageSpec = ImageSpec::rgba8_srgb();
-const BGRA8: ImageSpec = ImageSpec::bgra8_srgb();
-const GRAY8: ImageSpec = ImageSpec::gray8_srgb();
-const GRAYA8: ImageSpec = ImageSpec::graya8_srgb();
-const RGB16: ImageSpec = ImageSpec::rgb16_srgb();
-const RGBA16: ImageSpec = ImageSpec::rgba16_srgb();
+const RGB8: ImageSpec = ImageSpec::RGB8_SRGB;
+const RGBA8: ImageSpec = ImageSpec::RGBA8_SRGB;
+const BGRA8: ImageSpec = ImageSpec::BGRA8_SRGB;
+const GRAY8: ImageSpec = ImageSpec::GRAY8_SRGB;
+const GRAYA8: ImageSpec = ImageSpec::GRAYA8_SRGB;
+const RGB16: ImageSpec = ImageSpec::RGB16_SRGB;
+const RGBA16: ImageSpec = ImageSpec::RGBA16_SRGB;
 
 const W: u32 = 96;
 const H: u32 = 64;
@@ -96,7 +96,7 @@ fn encode(
     let mut out = Vec::new();
     for (i, f) in fs.iter().enumerate() {
         a.push_frame(
-            PixelView::new(f, W, H, stride, desc.clone()).unwrap(),
+            PixelView::new(f, W, H, stride, &desc).unwrap(),
             40 + i as u32 * 10,
             None,
         )

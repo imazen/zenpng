@@ -1369,7 +1369,7 @@ mod tests {
                     .into_owned();
                 let pb = crate::pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
                     &decoded.pixels,
-                    zenpixels::ImageSpec::rgba8_srgb(),
+                    zenpixels::ImageSpec::RGBA8_SRGB,
                 );
                 let img = ImgVec::new(
                     pb.as_ref().pixels().collect(),
@@ -1431,7 +1431,7 @@ mod tests {
         .unwrap();
         let decoded_rgba = crate::pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
             &decoded.pixels,
-            zenpixels::ImageSpec::rgba8_srgb(),
+            zenpixels::ImageSpec::RGBA8_SRGB,
         );
         let decoded_img = decoded_rgba.as_ref();
         let decoded_buf = decoded_img.buf();

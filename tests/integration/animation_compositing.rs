@@ -149,9 +149,9 @@ fn subframes_blend_dispose_and_skip_at_both_precisions() {
                         assert_eq!(
                             *pixels.spec(),
                             if depth == 16 {
-                                ImageSpec::rgba16_srgb()
+                                ImageSpec::RGBA16_SRGB
                             } else {
-                                ImageSpec::rgba8_srgb()
+                                ImageSpec::RGBA8_SRGB
                             }
                         );
                         let actual: Vec<u16> = (0..2)
@@ -213,7 +213,7 @@ fn sink_completion_carries_exact_displayed_frame_timing() {
         assert_eq!(timing.duration, duration);
         assert_eq!(timing.pts, None);
         assert_eq!((completion.width, completion.height), (3, 2));
-        assert_eq!(completion.native_format, ImageSpec::rgba8_srgb());
+        assert_eq!(completion.native_format, ImageSpec::RGBA8_SRGB);
         assert_eq!(
             sink.bytes(),
             expected.iter().map(|&v| v as u8).collect::<Vec<_>>()
@@ -228,7 +228,7 @@ fn sink_completion_carries_exact_displayed_frame_timing() {
         assert_eq!(owned.duration(), duration);
         assert_eq!(owned.frame_index(), index as u32);
         assert_eq!(
-            owned.pixels().try_contiguous_bytes().unwrap().as_ref(),
+            owned.pixels().contiguous_bytes().unwrap().as_ref(),
             sink.bytes()
         );
     }
