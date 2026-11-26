@@ -1442,7 +1442,7 @@ mod tests {
     }
 
     fn format_pixel_data(pixels: &PixelBuf) -> &'static str {
-        let desc = pixels.spec();
+        let desc = pixels.format();
         match (desc.layout.order, desc.layout.sample) {
             (ChannelOrder::Rgb, SampleType::U8) => "Rgb8",
             (ChannelOrder::Rgba, SampleType::U8) => "Rgba8",

@@ -2614,7 +2614,7 @@ mod tests {
             .unwrap();
         let pixels = [7u8; 4 * 4 * 4];
         for row in pixels.as_chunks::<16>().0 {
-            rows.push_rows(PixelView::new(row, 4, 1, 16, &zenpixels::specs::RGBA8_SRGB).unwrap())
+            rows.push_rows(PixelView::new(row, 4, 1, 16, &zenpixels::formats::RGBA8_SRGB).unwrap())
                 .unwrap();
         }
         let out = rows.finish().unwrap();

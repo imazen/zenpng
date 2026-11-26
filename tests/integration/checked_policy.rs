@@ -4,7 +4,7 @@ use zencodec::{
     ColorEmitPolicy, Metadata, MetadataPolicy, UnsupportedOperation,
     encode::{AnimationFrameEncoder, EncodeJob, EncodePolicy, Encoder, EncoderConfig},
 };
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::{PixelFormat, PixelView};
 use zenpng::{Compression, DowncastFlags, PngEncoderConfig};
 
 fn config(effort: u32) -> PngEncoderConfig {
@@ -41,7 +41,7 @@ fn checked_verbatim_preserves_authority_for_still_rows_and_animation() {
     ];
     let data = [row0, row1].concat();
     let expected = [&row0[..12], &row1[..12]].concat();
-    let desc = ImageSpec::new(
+    let desc = PixelFormat::new(
         zenpixels::SampleLayout::RGBA8,
         zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
     );
@@ -96,7 +96,7 @@ fn refused_checked_policy_does_not_replace_the_accepted_policy() {
     }
     job.try_set_policy(EncodePolicy::none()).unwrap();
     let pixels = [7, 19, 43, 255];
-    let spec = ImageSpec::new(
+    let spec = PixelFormat::new(
         zenpixels::SampleLayout::RGBA8,
         zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
     );

@@ -7,7 +7,7 @@
 use zencodec::Cicp;
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 use zenpixels::hdr::ContentLightLevel;
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::{PixelFormat, PixelView};
 use zenpng::{Compression, PngEncoderConfig};
 
 /// Find a PNG chunk's payload by 4-byte type (IHDR is the first chunk after
@@ -29,7 +29,7 @@ fn with_cicp_and_cll_emit_chunks_through_trait_encode() {
     let (w, h) = (4u32, 2u32);
     // RGB16: 6 bytes/pixel, tightly packed. Content is irrelevant to chunks.
     let bytes = vec![0x11u8; (w * h * 6) as usize];
-    let spec = ImageSpec::RGB16_SRGB
+    let spec = PixelFormat::RGB16_SRGB
         .with_primaries(zenpixels::Primaries::DisplayP3)
         .with_transfer(zenpixels::Transfer::Pq);
     let slice = PixelView::new(&bytes, w, h, (w * 6) as usize, &spec).expect("rgb16 slice");
@@ -71,7 +71,7 @@ fn a_linear_cicp_on_f32_input_is_written_as_srgb() {
     let (w, h) = (3u32, 2u32);
     let floats: Vec<f32> = (0..w * h * 3).map(|i| (i as f32) / 20.0).collect();
     let bytes: Vec<u8> = floats.iter().flat_map(|f| f.to_ne_bytes()).collect();
-    let desc = ImageSpec::RGBF32_LINEAR.with_primaries(zenpixels::Primaries::DisplayP3);
+    let desc = PixelFormat::RGBF32_LINEAR.with_primaries(zenpixels::Primaries::DisplayP3);
     let slice = || PixelView::new(&bytes, w, h, (w * 12) as usize, &desc).unwrap();
     let p3_linear = Cicp::new(12, 8, 0, true);
 
@@ -128,8 +128,16 @@ fn colour_type(png: &[u8]) -> u8 {
 fn grey_pixels_with_an_rgb_icc_stay_rgb() {
     let (w, h) = (4u32, 4u32);
     let bytes: Vec<u8> = (0..w * h).flat_map(|i| [(i * 9) as u8; 3]).collect();
-    let slice =
-        || PixelView::new(&bytes, w, h, (w * 3) as usize, &zenpixels::specs::RGB8_SRGB).unwrap();
+    let slice = || {
+        PixelView::new(
+            &bytes,
+            w,
+            h,
+            (w * 3) as usize,
+            &zenpixels::formats::RGB8_SRGB,
+        )
+        .unwrap()
+    };
     let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4.to_vec();
     assert_eq!(&icc[16..20], b"RGB ");
 
@@ -154,7 +162,7 @@ fn grey_pixels_with_an_rgb_icc_stay_rgb() {
                 &bytes,
                 w,
                 h,
-                &ImageSpec::new(
+                &PixelFormat::new(
                     zenpixels::SampleLayout::RGB8,
                     zenpixels::ColorSpace::DISPLAY_P3,
                 ),
@@ -190,7 +198,7 @@ fn translucent_hdr_keeps_alpha_through_negotiation() {
             [12, 18, 0, 1],
         ),
     ] {
-        let descriptor = ImageSpec::new(
+        let descriptor = PixelFormat::new(
             zenpixels::SampleLayout::new(SampleType::U16, ChannelOrder::Rgba),
             zenpixels::Cicp::new(cicp[0], cicp[1], cicp[2], cicp[3] == 1)
                 .to_color_space(AlphaMode::Straight)
@@ -218,8 +226,8 @@ fn translucent_hdr_keeps_alpha_through_negotiation() {
             .with_alpha(zenpixels_convert::AlphaPolicy::DiscardUnchecked);
         let selected =
             zenpixels_convert::Negotiate::select(&descriptor, supported, &policy).unwrap();
-        assert_eq!(selected.spec, descriptor, "{cicp:?}: negotiated away");
-        let slice = PixelView::new(bytes, w, h, stride, &selected.spec).unwrap();
+        assert_eq!(selected.format, descriptor, "{cicp:?}: negotiated away");
+        let slice = PixelView::new(bytes, w, h, stride, &selected.format).unwrap();
 
         let out = PngEncoderConfig::new()
             .with_compression(Compression::Fast)

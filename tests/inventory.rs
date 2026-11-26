@@ -314,7 +314,7 @@ fn top(inv: &Inventory) -> Vec<Row> {
 // ── Tests ────────────────────────────────────────────────────────────
 
 /// Encode a small image through the zencodec encode path.
-fn encode(w: u32, h: u32, desc: zenpixels::ImageSpec, bpp: usize) -> Vec<u8> {
+fn encode(w: u32, h: u32, desc: zenpixels::PixelFormat, bpp: usize) -> Vec<u8> {
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
     let bytes: Vec<u8> = (0..w as usize * h as usize * bpp)
         .map(|i| (i * 7 % 251) as u8 | 1)
@@ -335,7 +335,7 @@ fn encode(w: u32, h: u32, desc: zenpixels::ImageSpec, bpp: usize) -> Vec<u8> {
 /// same kind of encoder output directly.
 #[test]
 fn conformance_with_encoder_output() {
-    use zenpixels::ImageSpec as P;
+    use zenpixels::PixelFormat as P;
     for (w, h, desc, bpp) in [
         (40, 24, P::RGBA8_SRGB, 4),
         (40, 24, P::RGB8_SRGB, 3),

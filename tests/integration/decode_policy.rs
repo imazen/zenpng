@@ -13,7 +13,7 @@ use zencodec::decode::{
 use zencodec::encode::{AnimationFrameEncoder, EncodeJob, Encoder, EncoderConfig};
 use zencodec::{ImageInfo, Orientation, UnsupportedOperation};
 use zencodec_io::{CollectSink, drive_from_slice};
-use zenpixels::{ImageSpec, PixelView, PixelViewMut};
+use zenpixels::{PixelFormat, PixelView, PixelViewMut};
 use zenpng::{PngDecodeJob, PngDecoderConfig, PngEncoderConfig, PngError};
 
 const W: u32 = 37;
@@ -119,7 +119,8 @@ fn with_metadata(png: Vec<u8>) -> Vec<u8> {
 /// A still RGB8 PNG whose incompressible image data spans 64-byte IDAT chunks.
 fn still() -> Vec<u8> {
     let data = noise((W * H * 3) as usize, 0x2545_f491);
-    let pixels = PixelView::new(&data, W, H, W as usize * 3, &zenpixels::specs::RGB8_SRGB).unwrap();
+    let pixels =
+        PixelView::new(&data, W, H, W as usize * 3, &zenpixels::formats::RGB8_SRGB).unwrap();
     let png = PngEncoderConfig::new()
         .job()
         .encoder()
@@ -139,7 +140,7 @@ fn animation() -> Vec<u8> {
     for seed in [0x1234_5677, 0x0bad_f00d] {
         let data = noise((W * H * 4) as usize, seed);
         let frame =
-            PixelView::new(&data, W, H, W as usize * 4, &zenpixels::specs::RGBA8_SRGB).unwrap();
+            PixelView::new(&data, W, H, W as usize * 4, &zenpixels::formats::RGBA8_SRGB).unwrap();
         encoder.push_frame(frame, 20, None).unwrap();
     }
     // Isolate the ICC gate from APNG's default sRGB cICP. A separate
@@ -160,7 +161,7 @@ fn job(policy: DecodePolicy) -> PngDecodeJob {
         .unwrap_or_else(|e| panic!("{policy:?} refused: {e:?}"))
 }
 fn packed(pixels: &PixelView<'_>) -> Vec<u8> {
-    let row = pixels.width() as usize * pixels.spec().layout.bytes_per_pixel();
+    let row = pixels.width() as usize * pixels.format().layout.bytes_per_pixel();
     (0..pixels.rows())
         .flat_map(|y| pixels.row(y)[..row].to_vec())
         .collect()
@@ -173,10 +174,10 @@ struct Seen {
     exif: Option<Vec<u8>>,
     xmp: Option<Vec<u8>>,
     orientation: Orientation,
-    descriptor: ImageSpec,
+    descriptor: PixelFormat,
     pixels: Vec<u8>,
 }
-fn seen(info: &ImageInfo, descriptor: ImageSpec, pixels: Vec<u8>) -> Seen {
+fn seen(info: &ImageInfo, descriptor: PixelFormat, pixels: Vec<u8>) -> Seen {
     Seen {
         icc: info.source_color.icc_profile.as_deref().map(<[u8]>::to_vec),
         exif: info.embedded_metadata.exif.as_deref().map(<[u8]>::to_vec),
@@ -198,7 +199,7 @@ fn expected(policy: DecodePolicy, reference: &Seen) -> Seen {
         descriptor: if policy.resolve_icc(true) {
             reference.descriptor.clone()
         } else {
-            ImageSpec::RGB8_SRGB
+            PixelFormat::RGB8_SRGB
         },
         pixels: reference.pixels.clone(),
     }
@@ -212,7 +213,7 @@ fn one_shot(policy: DecodePolicy, bytes: &[u8]) -> Seen {
         .unwrap();
     seen(
         output.info(),
-        output.pixels().spec().clone(),
+        output.pixels().format().clone(),
         packed(&output.pixels()),
     )
 }
@@ -222,7 +223,7 @@ fn streamed(policy: DecodePolicy, bytes: &[u8]) -> Seen {
         .unwrap_or_else(|e| panic!("{e}"));
     let (mut rows, mut descriptor) = (Vec::new(), None);
     while let Some((_, strip)) = decoder.next_batch().unwrap() {
-        descriptor = Some(strip.spec().clone());
+        descriptor = Some(strip.format().clone());
         rows.extend(packed(&strip));
     }
     seen(decoder.info(), descriptor.unwrap(), rows)
@@ -238,7 +239,7 @@ fn incremental(policy: DecodePolicy, bytes: &[u8]) -> Seen {
     )
 }
 /// Push reports no `ImageInfo`: pixels and descriptor only.
-fn pushed(policy: DecodePolicy, bytes: &[u8]) -> (ImageSpec, Vec<u8>) {
+fn pushed(policy: DecodePolicy, bytes: &[u8]) -> (PixelFormat, Vec<u8>) {
     let mut sink = CollectSink::new();
     let output = job(policy)
         .push_decoder(Cow::Borrowed(bytes), &mut sink, &[])
@@ -253,7 +254,7 @@ struct Counted {
     calls: usize,
 }
 impl DecodeRowSink for Counted {
-    fn begin(&mut self, w: u32, h: u32, d: ImageSpec) -> Result<(), SinkError> {
+    fn begin(&mut self, w: u32, h: u32, d: PixelFormat) -> Result<(), SinkError> {
         self.calls += 1;
         self.sink.begin(w, h, d)
     }
@@ -262,7 +263,7 @@ impl DecodeRowSink for Counted {
         y: u32,
         h: u32,
         w: u32,
-        d: ImageSpec,
+        d: PixelFormat,
     ) -> Result<PixelViewMut<'_>, SinkError> {
         self.calls += 1;
         self.sink.provide_next_buffer(y, h, w, d)
@@ -360,7 +361,7 @@ fn checked_setter_admits_the_metadata_gates_and_refusing_truncation_only() {
 fn metadata_gates_hold_on_every_still_route_without_changing_pixels() {
     let bytes = still();
     let reference = one_shot(DecodePolicy::none(), &bytes);
-    let rgb_icc = ImageSpec::new(
+    let rgb_icc = PixelFormat::new(
         zenpixels::SampleLayout::RGB8,
         zenpixels::ColorSpace::Icc {
             profile: std::sync::Arc::from(P3),
@@ -400,11 +401,11 @@ fn metadata_gates_hold_for_apng_frames_and_their_colour_context() {
         let mut out = Vec::new();
         while let Some(frame) = decoder.render_next_frame(None).unwrap() {
             let pixels = frame.pixels();
-            let icc = match &pixels.spec().color {
+            let icc = match &pixels.format().color {
                 zenpixels::ColorSpace::Icc { profile, .. } => Some(profile.to_vec()),
                 _ => None,
             };
-            out.push((pixels.spec().clone(), packed(pixels), icc));
+            out.push((pixels.format().clone(), packed(pixels), icc));
         }
         (decoder.info().clone(), out)
     };
@@ -415,9 +416,9 @@ fn metadata_gates_hold_for_apng_frames_and_their_colour_context() {
         let header = seen(
             &info,
             if policy.resolve_icc(true) {
-                ImageSpec::RGBA8_SRGB
+                PixelFormat::RGBA8_SRGB
             } else {
-                ImageSpec::RGB8_SRGB
+                PixelFormat::RGB8_SRGB
             },
             Vec::new(),
         );
@@ -431,7 +432,7 @@ fn metadata_gates_hold_for_apng_frames_and_their_colour_context() {
                     if policy.resolve_icc(true) {
                         want.0.clone()
                     } else {
-                        ImageSpec::RGBA8_SRGB
+                        PixelFormat::RGBA8_SRGB
                     },
                     &want.1
                 ),

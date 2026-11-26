@@ -22,7 +22,7 @@ zencodec = "0.3" # zencodec::Metadata, for the `metadata` encode arg (see "Metad
 ```rust
 use zenpng::{decode, encode_rgba8, EncodeConfig, Compression, PngDecodeConfig};
 use enough::Unstoppable;
-use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, convert_buf};
+use zenpixels_convert::{ConvertPolicy, PeakSource, PixelFormat, convert_to_buf_with_peak};
 
 // Decode
 // --- Decode to packed RGBA8 ---
@@ -31,9 +31,9 @@ let output = decode(png_bytes, &PngDecodeConfig::default(), &Unstoppable)?;
 println!("{}x{}, alpha={}", output.info.width, output.info.height, output.info.has_alpha);
 
 // Convert the owned native PixelBuf to packed sRGB RGBA8.
-let rgba = convert_buf(
+let rgba = convert_to_buf_with_peak(
     &output.pixels.as_view(),
-    ImageSpec::rgba8_srgb(),
+    PixelFormat::RGBA8_SRGB,
     &ConvertPolicy::permissive(),
     PeakSource::Declared,
 )?;

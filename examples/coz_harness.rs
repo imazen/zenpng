@@ -98,7 +98,7 @@ fn encode_one_cfg(out: &PngDecodeOutput, effort: u32, single_thread: bool) -> Ve
 /// descriptor and the same compression, threading and default downcasts.
 fn encode_gray_alpha(out: &PngDecodeOutput, effort: u32, single_thread: bool) -> Vec<u8> {
     let (w, h) = (out.info.width, out.info.height);
-    let desc = out.pixels.spec();
+    let desc = out.pixels.format();
     assert!(
         desc.layout.channels() == 2
             && matches!(desc.layout.sample, SampleType::U8 | SampleType::U16),
@@ -139,7 +139,7 @@ struct Samples {
 /// byte order; the conversion to stream order depends only on the target's
 /// endianness, so a decoder that skipped or doubled the swap cannot match.
 fn zenpng_samples(out: &PngDecodeOutput) -> Samples {
-    let desc = out.pixels.spec();
+    let desc = out.pixels.format();
     let bits = match desc.layout.sample {
         SampleType::U8 => 8,
         SampleType::U16 => 16,

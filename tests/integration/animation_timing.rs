@@ -3,11 +3,11 @@ use std::borrow::Cow;
 use zencodec::animation::FrameDuration;
 use zencodec::decode::{AnimationFrameDecoder, DecodeJob, DecoderConfig};
 use zencodec::encode::{AnimationFrameEncoder, EncodeJob, EncoderConfig};
-use zenpixels::{ImageSpec, PixelBuf};
+use zenpixels::{PixelBuf, PixelFormat};
 use zenpng::{PngDecoderConfig, PngEncoderConfig};
 
 fn pixels() -> PixelBuf {
-    PixelBuf::from_bytes([10, 20, 30, 255].repeat(12), 4, 3, ImageSpec::RGBA8_SRGB).unwrap()
+    PixelBuf::from_bytes([10, 20, 30, 255].repeat(12), 4, 3, PixelFormat::RGBA8_SRGB).unwrap()
 }
 fn wire_delays(bytes: &[u8]) -> Vec<(u16, u16)> {
     let mut offset = 8;
@@ -52,7 +52,7 @@ fn fractional_zero_and_long_delays_are_exact_on_wire_and_decode() {
     );
     let mut decoder = PngDecoderConfig::new()
         .job()
-        .animation_frame_decoder(Cow::Borrowed(encoded.data()), &[ImageSpec::RGBA8_SRGB])
+        .animation_frame_decoder(Cow::Borrowed(encoded.data()), &[PixelFormat::RGBA8_SRGB])
         .unwrap();
     assert_eq!(decoder.loop_count(), Some(2));
     for (n, d) in durations {
@@ -83,7 +83,7 @@ fn rejected_timing_and_dimensions_do_not_accept_frames() {
                 .is_err()
         );
     }
-    let wrong = PixelBuf::from_bytes(vec![0; 4], 1, 1, ImageSpec::RGBA8_SRGB).unwrap();
+    let wrong = PixelBuf::from_bytes(vec![0; 4], 1, 1, PixelFormat::RGBA8_SRGB).unwrap();
     assert!(
         encoder
             .push_frame_timed(wrong.as_view(), FrameDuration::from_millis(10), None)
@@ -193,13 +193,13 @@ fn limit_or_alpha_rejection_leaves_the_encoder_usable() {
         )
         .animation_frame_encoder()
         .unwrap();
-    let large = PixelBuf::from_bytes(vec![0; 52], 13, 1, ImageSpec::RGBA8_SRGB).unwrap();
+    let large = PixelBuf::from_bytes(vec![0; 52], 13, 1, PixelFormat::RGBA8_SRGB).unwrap();
     assert!(enc.push_frame(large.as_view(), 10, None).is_err());
     let premultiplied = PixelBuf::from_bytes(
         vec![0; 48],
         4,
         3,
-        ImageSpec::RGBA8_SRGB.with_alpha(zenpixels::AlphaMode::Premultiplied),
+        PixelFormat::RGBA8_SRGB.with_alpha(zenpixels::AlphaMode::Premultiplied),
     )
     .unwrap();
     assert!(enc.push_frame(premultiplied.as_view(), 10, None).is_err());
@@ -219,7 +219,7 @@ fn sixteen_bit_animation_preserves_all_sample_bits_and_color_signaling() {
         Transfer::Hlg(zenpixels::HlgMode::Scene),
         Transfer::Linear,
     ] {
-        let descriptor = ImageSpec::RGBA16_SRGB
+        let descriptor = PixelFormat::RGBA16_SRGB
             .with_transfer(transfer)
             .with_primaries(Primaries::Bt2020);
         let mut frames = Vec::new();
@@ -285,7 +285,7 @@ fn sixteen_bit_animation_preserves_all_sample_bits_and_color_signaling() {
             .unwrap();
         for source in &frames {
             let frame = decoder.render_next_frame(None).unwrap().unwrap();
-            assert_eq!(frame.pixels().spec(), &descriptor);
+            assert_eq!(frame.pixels().format(), &descriptor);
             for y in 0..13 {
                 assert_eq!(frame.pixels().row(y), source.as_view().row(y));
             }
@@ -302,16 +302,16 @@ fn animation_inherits_frame_icc_and_enforces_decode_job_limits() {
     use zenpixels::ColorSpace;
     let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     let source = pixels();
-    let spec = ImageSpec::new(
-        source.spec().layout,
+    let spec = PixelFormat::new(
+        source.format().layout,
         ColorSpace::Icc {
             profile: Arc::from(icc),
             channels: 3,
-            alpha: source.spec().color.alpha(),
+            alpha: source.format().color.alpha(),
             intent: zenpixels::RenderingIntent::default(),
         },
     );
-    let source = source.relabel_spec(spec).unwrap();
+    let source = source.relabel_format(spec).unwrap();
     let mut encoder = PngEncoderConfig::new()
         .job()
         .with_metadata_policy(
@@ -343,7 +343,7 @@ fn animation_inherits_frame_icc_and_enforces_decode_job_limits() {
         .animation_frame_decoder(Cow::Borrowed(output.data()), &[])
         .unwrap();
     let frame = decoder.render_next_frame(None).unwrap().unwrap();
-    let active = &frame.pixels().spec().color;
+    let active = &frame.pixels().format().color;
     match active {
         ColorSpace::Icc { profile, .. } => assert_eq!(profile.as_ref(), icc),
         _ => assert_eq!(active.to_cicp(), Some(zenpixels::Cicp::DISPLAY_P3)),

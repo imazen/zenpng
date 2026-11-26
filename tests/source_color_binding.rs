@@ -14,7 +14,7 @@ use std::sync::Arc;
 use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
 use zencodec::operation::EncodeRequest;
 use zencodec::{CodecSet, ImageFormat, Metadata, MetadataPolicy};
-use zenpixels::{Cicp, ColorSpace, ImageSpec, PixelView, Primaries};
+use zenpixels::{Cicp, ColorSpace, PixelFormat, PixelView, Primaries};
 use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
 use zenpng::{Compression, PngEncoderConfig};
 
@@ -45,13 +45,13 @@ impl Raster {
         &mut self.buf[at..at + self.stride]
     }
 
-    fn slice(&self, descriptor: ImageSpec) -> PixelView<'_> {
-        PixelView::new_with_spec_cow(
+    fn slice(&self, descriptor: PixelFormat) -> PixelView<'_> {
+        PixelView::new_with_format_cow(
             &self.buf[self.start..],
             W,
             H,
             self.stride,
-            zenpixels::SpecCow::from_owned(descriptor),
+            zenpixels::FormatCow::from_owned(descriptor),
         )
         .unwrap()
     }
@@ -89,7 +89,7 @@ fn rgbf32_linear() -> Raster {
     raster
 }
 
-fn p3(base: ImageSpec) -> ImageSpec {
+fn p3(base: PixelFormat) -> PixelFormat {
     base.with_primaries(Primaries::DisplayP3)
 }
 
@@ -166,7 +166,7 @@ const P3: (u8, u8, u8, bool) = (12, 13, 0, true);
 #[test]
 fn checked_request_binds_the_current_pixel_colour() {
     let raster = rgb8();
-    let icc = raster.slice(ImageSpec::new(
+    let icc = raster.slice(PixelFormat::new(
         zenpixels::SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(DISPLAY_P3_V4),
@@ -184,7 +184,7 @@ fn checked_request_binds_the_current_pixel_colour() {
     );
     assert_samples(&read, 0, "context ICC");
 
-    let cicp = raster.slice(ImageSpec::new(
+    let cicp = raster.slice(PixelFormat::new(
         zenpixels::SampleLayout::RGB8,
         ColorSpace::DISPLAY_P3,
     ));
@@ -198,7 +198,7 @@ fn checked_request_binds_the_current_pixel_colour() {
 #[test]
 fn row_encodes_write_the_same_colour_as_one_shot() {
     let raster = rgb8();
-    let desc = p3(ImageSpec::RGB8_SRGB);
+    let desc = p3(PixelFormat::RGB8_SRGB);
     for compression in [
         Compression::Effort(0),
         Compression::Effort(1),
@@ -240,12 +240,12 @@ fn row_encodes_write_the_same_colour_as_one_shot() {
 #[test]
 fn linear_input_writes_the_colour_of_the_stored_samples() {
     let raster = rgbf32_linear();
-    let desc = p3(ImageSpec::RGBF32_LINEAR);
+    let desc = p3(PixelFormat::RGBF32_LINEAR);
     for (what, spec) in [
         ("structured color", desc.clone()),
         (
             "CICP projection",
-            ImageSpec::new(
+            PixelFormat::new(
                 desc.layout,
                 Cicp::new(12, 8, 0, true)
                     .to_color_space(zenpixels::AlphaMode::None)
@@ -280,7 +280,7 @@ fn linear_input_writes_the_colour_of_the_stored_samples() {
 #[test]
 fn stale_carriers_contradicting_the_current_context_refuse() {
     let raster = rgb8();
-    let srgb_now = || raster.slice(ImageSpec::RGB8_SRGB);
+    let srgb_now = || raster.slice(PixelFormat::RGB8_SRGB);
     assert!(with_metadata(Metadata::none().with_icc(DISPLAY_P3_V4), srgb_now()).is_err());
     assert!(with_metadata(Metadata::none().with_cicp(Cicp::DISPLAY_P3), srgb_now()).is_err());
     let configured = PngEncoderConfig::new()
@@ -296,9 +296,9 @@ fn stale_carriers_contradicting_the_current_context_refuse() {
 #[test]
 fn default_srgb_bytes_are_identical_across_routes() {
     let raster = rgb8();
-    let plain = checked(raster.slice(ImageSpec::RGB8_SRGB)).unwrap();
+    let plain = checked(raster.slice(PixelFormat::RGB8_SRGB)).unwrap();
     let explicit = checked(
-        raster.slice(ImageSpec::new(
+        raster.slice(PixelFormat::new(
             zenpixels::SampleLayout::RGB8,
             Cicp::SRGB
                 .to_color_space(zenpixels::AlphaMode::None)

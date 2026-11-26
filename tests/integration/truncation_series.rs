@@ -16,8 +16,14 @@ fn valid_png() -> Vec<u8> {
     let (w, h) = (8u32, 8u32);
     // RGB8, tightly packed. Content is irrelevant to the truncation check.
     let bytes = vec![0x77u8; (w * h * 3) as usize];
-    let slice = PixelView::new(&bytes, w, h, (w * 3) as usize, &zenpixels::specs::RGB8_SRGB)
-        .expect("rgb8 slice");
+    let slice = PixelView::new(
+        &bytes,
+        w,
+        h,
+        (w * 3) as usize,
+        &zenpixels::formats::RGB8_SRGB,
+    )
+    .expect("rgb8 slice");
     PngEncoderConfig::new()
         .job()
         .encoder()

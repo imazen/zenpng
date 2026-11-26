@@ -83,7 +83,7 @@ fn main() {
             };
 
         let (w, h) = (decoded.info.width, decoded.info.height);
-        let desc = decoded.pixels.spec();
+        let desc = decoded.pixels.format();
         let raw_pixels = w as usize * h as usize * desc.layout.bytes_per_pixel();
 
         // Re-encode with zenpng at each level
@@ -111,7 +111,7 @@ fn main() {
                 (ChannelOrder::Rgb, SampleType::U8) => {
                     let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
                         &decoded.pixels,
-                        zenpixels::ImageSpec::RGB8_SRGB,
+                        zenpixels::PixelFormat::RGB8_SRGB,
                     );
                     zenpng::encode_rgb8(
                         buf.as_ref(),
@@ -124,7 +124,7 @@ fn main() {
                 (ChannelOrder::Rgba, SampleType::U8) => {
                     let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
                         &decoded.pixels,
-                        zenpixels::ImageSpec::RGBA8_SRGB,
+                        zenpixels::PixelFormat::RGBA8_SRGB,
                     );
                     zenpng::encode_rgba8(
                         buf.as_ref(),
@@ -137,7 +137,7 @@ fn main() {
                 (ChannelOrder::Gray, SampleType::U8) => {
                     let buf = pixel_conversion::to_pixels::<rgb::Gray<u8>>(
                         &decoded.pixels,
-                        zenpixels::ImageSpec::GRAY8_SRGB,
+                        zenpixels::PixelFormat::GRAY8_SRGB,
                     );
                     zenpng::encode_gray8(
                         buf.as_ref(),

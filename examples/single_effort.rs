@@ -61,27 +61,27 @@ fn main() {
             .with_srgb_intent(decoded.info.srgb_intent)
             .with_chromaticities(decoded.info.chromaticities);
 
-        let desc = decoded.pixels.spec();
+        let desc = decoded.pixels.format();
         let start = std::time::Instant::now();
         let result = match (desc.layout.order, desc.layout.sample) {
             (ChannelOrder::Rgb, SampleType::U8) => {
                 let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
                     &decoded.pixels,
-                    zenpixels::ImageSpec::RGB8_SRGB,
+                    zenpixels::PixelFormat::RGB8_SRGB,
                 );
                 zenpng::encode_rgb8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
             }
             (ChannelOrder::Rgba, SampleType::U8) => {
                 let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
                     &decoded.pixels,
-                    zenpixels::ImageSpec::RGBA8_SRGB,
+                    zenpixels::PixelFormat::RGBA8_SRGB,
                 );
                 zenpng::encode_rgba8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
             }
             (ChannelOrder::Gray, SampleType::U8) => {
                 let buf = pixel_conversion::to_pixels::<rgb::Gray<u8>>(
                     &decoded.pixels,
-                    zenpixels::ImageSpec::GRAY8_SRGB,
+                    zenpixels::PixelFormat::GRAY8_SRGB,
                 );
                 zenpng::encode_gray8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
             }

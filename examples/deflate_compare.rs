@@ -64,7 +64,7 @@ fn main() {
         let (w, h) = (decoded.info.width as usize, decoded.info.height as usize);
 
         // Get raw pixel bytes
-        let desc = decoded.pixels.spec();
+        let desc = decoded.pixels.format();
         let bpp = desc.layout.bytes_per_pixel();
         if bpp != 3 && bpp != 4 {
             eprintln!("  SKIP: unsupported pixel format");

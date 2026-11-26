@@ -164,26 +164,26 @@ fn reencode(
     config: &EncodeConfig,
 ) -> Result<Vec<u8>, whereat::At<zenpng::PngError>> {
     let u = &enough::Unstoppable;
-    let desc = pixels.spec();
+    let desc = pixels.format();
     match (desc.layout.order, desc.layout.sample) {
         (ChannelOrder::Rgb, SampleType::U8) => {
             let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
                 pixels,
-                zenpixels::ImageSpec::RGB8_SRGB,
+                zenpixels::PixelFormat::RGB8_SRGB,
             );
             zenpng::encode_rgb8(buf.as_ref(), meta, config, u, u)
         }
         (ChannelOrder::Rgba, SampleType::U8) => {
             let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
                 pixels,
-                zenpixels::ImageSpec::RGBA8_SRGB,
+                zenpixels::PixelFormat::RGBA8_SRGB,
             );
             zenpng::encode_rgba8(buf.as_ref(), meta, config, u, u)
         }
         (ChannelOrder::Gray, SampleType::U8) => {
             let buf = pixel_conversion::to_pixels::<rgb::Gray<u8>>(
                 pixels,
-                zenpixels::ImageSpec::GRAY8_SRGB,
+                zenpixels::PixelFormat::GRAY8_SRGB,
             );
             zenpng::encode_gray8(buf.as_ref(), meta, config, u, u)
         }

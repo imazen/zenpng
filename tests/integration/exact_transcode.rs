@@ -1,7 +1,7 @@
 //! Exact transparent samples and explicit ICC authority for codec consumers.
 use std::io::Cursor;
 use zencodec::encode::{AnimationFrameEncoder, EncodeJob, Encoder, EncoderConfig};
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::{PixelFormat, PixelView};
 use zenpng::{Compression, DowncastFlags, PngEncoderConfig};
 
 fn config(effort: u32) -> PngEncoderConfig {
@@ -40,7 +40,8 @@ fn hidden_rgb_survives_buffered_strip_and_segmented_output() {
         }
     }
     for effort in [1, 7] {
-        let pixels = PixelView::new(&padded, w, h, stride, &zenpixels::specs::RGBA8_SRGB).unwrap();
+        let pixels =
+            PixelView::new(&padded, w, h, stride, &zenpixels::formats::RGBA8_SRGB).unwrap();
         let out = config(effort)
             .job()
             .encoder()
@@ -55,7 +56,7 @@ fn hidden_rgb_survives_buffered_strip_and_segmented_output() {
             .unwrap();
         for row in padded.chunks_exact(stride) {
             rows.push_rows(
-                PixelView::new(row, w, 1, stride, &zenpixels::specs::RGBA8_SRGB).unwrap(),
+                PixelView::new(row, w, 1, stride, &zenpixels::formats::RGBA8_SRGB).unwrap(),
             )
             .unwrap();
         }
@@ -103,7 +104,8 @@ fn hidden_rgb_animation_uses_exact_source_deltas() {
     for frame in &frames {
         encoder
             .push_frame(
-                PixelView::new(frame, w, h, w as usize * 4, &zenpixels::specs::RGBA8_SRGB).unwrap(),
+                PixelView::new(frame, w, h, w as usize * 4, &zenpixels::formats::RGBA8_SRGB)
+                    .unwrap(),
                 17,
                 None,
             )
@@ -135,7 +137,7 @@ fn hidden_rgb_animation_uses_exact_source_deltas() {
 fn explicit_icc_is_not_overridden_by_descriptor_derived_cicp() {
     let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     let meta = zencodec::Metadata::none().with_icc(icc);
-    let desc = ImageSpec::new(
+    let desc = PixelFormat::new(
         zenpixels::SampleLayout::RGB8,
         zenpixels::ColorSpace::DISPLAY_P3,
     );
@@ -175,7 +177,7 @@ fn required_p3_icc_refuses_bt2020_samples_before_writing_header() {
             .encoder()
             .unwrap()
     };
-    let bt2020 = ImageSpec::RGB8_SRGB.with_primaries(zenpixels::Primaries::Bt2020);
+    let bt2020 = PixelFormat::RGB8_SRGB.with_primaries(zenpixels::Primaries::Bt2020);
     let px = [7u8, 19, 43];
     let pixels = PixelView::new(&px, 1, 1, 3, &bt2020).unwrap();
     let check_conflict = |err: whereat::At<zencodec::CodecError>| {
@@ -198,7 +200,7 @@ fn required_p3_icc_refuses_bt2020_samples_before_writing_header() {
     let mut rows = make();
     check_conflict(rows.begin(1, 1, bt2020).unwrap_err());
     assert!(rows.pending_output().is_empty());
-    let p3 = ImageSpec::new(
+    let p3 = PixelFormat::new(
         zenpixels::SampleLayout::RGB8,
         zenpixels::ColorSpace::DISPLAY_P3,
     );
@@ -210,10 +212,10 @@ fn required_p3_icc_refuses_bt2020_samples_before_writing_header() {
 #[test]
 fn gray_alpha_native_depth_and_strided_rows() {
     for descriptor in [
-        ImageSpec::GRAYA8_SRGB,
-        ImageSpec::new(
+        PixelFormat::GRAYA8_SRGB,
+        PixelFormat::new(
             zenpixels::SampleLayout::GRAYA16,
-            zenpixels::ImageSpec::GRAYA8_SRGB.color,
+            zenpixels::PixelFormat::GRAYA8_SRGB.color,
         ),
     ] {
         assert!(PngEncoderConfig::supported_descriptors().contains(&descriptor));

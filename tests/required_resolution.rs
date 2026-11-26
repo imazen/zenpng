@@ -6,7 +6,7 @@ use zencodec::{
     encode::{AnimationFrameEncoder, DynEncoderConfig, EncodeJob, Encoder, EncoderConfig},
     operation::{Decision, EncodeRequest, Question},
 };
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::{PixelFormat, PixelView};
 use zenpng::{Compression, PngDecoderConfig, PngEncoderConfig};
 
 const BYTES: [u8; 24] = [
@@ -14,7 +14,7 @@ const BYTES: [u8; 24] = [
     0xff, 0xff, 0xff,
 ];
 fn pixels() -> PixelView<'static> {
-    PixelView::new(&BYTES, 3, 2, 12, &zenpixels::specs::RGB8_SRGB).unwrap()
+    PixelView::new(&BYTES, 3, 2, 12, &zenpixels::formats::RGB8_SRGB).unwrap()
 }
 fn resolution(x: f64, y: f64, unit: ResolutionUnit) -> Resolution {
     Resolution { x, y, unit }
@@ -96,7 +96,7 @@ fn exact_density_survives_generic_erased_registered_and_row_paths() {
                 .unwrap()
                 .encoder()
                 .unwrap();
-            rows.begin(3, 2, ImageSpec::RGB8_SRGB).unwrap();
+            rows.begin(3, 2, PixelFormat::RGB8_SRGB).unwrap();
             for y in 0..2 {
                 rows.push_rows(
                     PixelView::new(
@@ -104,7 +104,7 @@ fn exact_density_survives_generic_erased_registered_and_row_paths() {
                         3,
                         1,
                         9,
-                        &zenpixels::specs::RGB8_SRGB,
+                        &zenpixels::formats::RGB8_SRGB,
                     )
                     .unwrap(),
                 )
@@ -160,7 +160,9 @@ fn animation_canvas_keeps_the_same_required_density_and_frame_pixels() {
             .animation_frame_encoder()
             .unwrap();
         if streaming {
-            encoder.begin(3, 2, ImageSpec::RGB8_SRGB, Some(2)).unwrap();
+            encoder
+                .begin(3, 2, PixelFormat::RGB8_SRGB, Some(2))
+                .unwrap();
         }
         for _ in 0..2 {
             encoder
@@ -172,7 +174,7 @@ fn animation_canvas_keeps_the_same_required_density_and_frame_pixels() {
         assert!(expected.is_equivalent_to(&info.resolution.unwrap()));
         let mut decoder = PngDecoderConfig::new()
             .job()
-            .animation_frame_decoder(Cow::Borrowed(output.data()), &[ImageSpec::RGB8_SRGB])
+            .animation_frame_decoder(Cow::Borrowed(output.data()), &[PixelFormat::RGB8_SRGB])
             .unwrap();
         for _ in 0..2 {
             let frame = decoder.render_next_frame(None).unwrap().unwrap();

@@ -9,16 +9,16 @@
 
 use sha2::Digest;
 use zencodec::encode::{DynAnimationFrameEncoder, EncodeJob, EncoderConfig};
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::{PixelFormat, PixelView};
 use zenpng::{Compression, DowncastFlags, PngEncoderConfig};
 
-const RGB8: ImageSpec = ImageSpec::RGB8_SRGB;
-const RGBA8: ImageSpec = ImageSpec::RGBA8_SRGB;
-const BGRA8: ImageSpec = ImageSpec::BGRA8_SRGB;
-const GRAY8: ImageSpec = ImageSpec::GRAY8_SRGB;
-const GRAYA8: ImageSpec = ImageSpec::GRAYA8_SRGB;
-const RGB16: ImageSpec = ImageSpec::RGB16_SRGB;
-const RGBA16: ImageSpec = ImageSpec::RGBA16_SRGB;
+const RGB8: PixelFormat = PixelFormat::RGB8_SRGB;
+const RGBA8: PixelFormat = PixelFormat::RGBA8_SRGB;
+const BGRA8: PixelFormat = PixelFormat::BGRA8_SRGB;
+const GRAY8: PixelFormat = PixelFormat::GRAY8_SRGB;
+const GRAYA8: PixelFormat = PixelFormat::GRAYA8_SRGB;
+const RGB16: PixelFormat = PixelFormat::RGB16_SRGB;
+const RGBA16: PixelFormat = PixelFormat::RGBA16_SRGB;
 
 const W: u32 = 96;
 const H: u32 = 64;
@@ -36,7 +36,7 @@ fn pixel(x: u32, y: u32, f: u32) -> [u8; 4] {
     ]
 }
 
-fn frame_bytes(desc: ImageSpec, f: u32, alpha: impl Fn(u32, u32) -> u16) -> Vec<u8> {
+fn frame_bytes(desc: PixelFormat, f: u32, alpha: impl Fn(u32, u32) -> u16) -> Vec<u8> {
     let bpp = desc.layout.bytes_per_pixel();
     let sixteen = matches!(desc.layout.sample, zenpixels::SampleType::U16);
     let mut out = Vec::with_capacity(W as usize * H as usize * bpp);
@@ -69,7 +69,7 @@ fn frame_bytes(desc: ImageSpec, f: u32, alpha: impl Fn(u32, u32) -> u16) -> Vec<
     out
 }
 
-fn frames_for(desc: ImageSpec, alpha: impl Fn(u32, u32) -> u16) -> Vec<Vec<u8>> {
+fn frames_for(desc: PixelFormat, alpha: impl Fn(u32, u32) -> u16) -> Vec<Vec<u8>> {
     (0..FRAMES)
         .map(|f| frame_bytes(desc.clone(), f, &alpha))
         .collect()
@@ -80,7 +80,7 @@ fn frames_for(desc: ImageSpec, alpha: impl Fn(u32, u32) -> u16) -> Vec<Vec<u8>> 
 fn encode(
     cfg: &PngEncoderConfig,
     fs: &[Vec<u8>],
-    desc: ImageSpec,
+    desc: PixelFormat,
     declare: Option<Option<u32>>,
 ) -> Vec<u8> {
     let mut a: Box<dyn DynAnimationFrameEncoder> = cfg
@@ -126,7 +126,7 @@ fn sha(data: &[u8]) -> String {
 
 struct Case {
     name: &'static str,
-    desc: ImageSpec,
+    desc: PixelFormat,
     opaque: bool,
 }
 

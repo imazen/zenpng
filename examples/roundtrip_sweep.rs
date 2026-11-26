@@ -49,7 +49,7 @@ fn main() {
             } else if let Ok(i) = px.as_view().as_imgref::<rgb::Rgb<u16>>() {
                 zenpng::encode_rgb16(i, None, &cfg, &Unstoppable, &Unstoppable)
             } else {
-                println!("skip {} {:?}", f.display(), px.spec());
+                println!("skip {} {:?}", f.display(), px.format());
                 break;
             };
             let png = r.unwrap_or_else(|err| panic!("{}: e{e}: {err}", f.display()));
@@ -75,8 +75,8 @@ fn main() {
                 panic!(
                     "{} e{e}: pixel mismatch ({:?} -> {:?})",
                     f.display(),
-                    d.pixels.spec(),
-                    back.pixels.spec()
+                    d.pixels.format(),
+                    back.pixels.format()
                 );
             }
             n += 1;
@@ -89,7 +89,7 @@ fn main() {
 /// Any gray/GA/RGB/RGBA 8- or 16-bit buffer as RGBA16 (8-bit scaled by 257).
 fn rgba16(px: &zenpixels::PixelBuf) -> Vec<u16> {
     use zenpixels::{ChannelOrder, SampleType};
-    let desc = px.spec();
+    let desc = px.format();
     let ch = desc.layout.order.channels();
     let wide = match desc.layout.sample {
         SampleType::U8 => false,

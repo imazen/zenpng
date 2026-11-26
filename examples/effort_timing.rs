@@ -28,7 +28,7 @@ fn main() {
     let decoded = zenpng::decode(&source, &zenpng::PngDecodeConfig::none(), &Unstoppable).unwrap();
 
     let (w, h) = (decoded.info.width as usize, decoded.info.height as usize);
-    let bpp = decoded.pixels.spec().layout.bytes_per_pixel();
+    let bpp = decoded.pixels.format().layout.bytes_per_pixel();
     let pixel_bytes = decoded
         .pixels
         .as_view()
@@ -252,7 +252,7 @@ fn main() {
         } else {
             2
         };
-        let desc = decoded.pixels.spec();
+        let desc = decoded.pixels.format();
         let mut size = 0;
         let t = Instant::now();
         for _ in 0..iters {
@@ -260,14 +260,14 @@ fn main() {
                 (ChannelOrder::Rgb, SampleType::U8) => {
                     let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
                         &decoded.pixels,
-                        zenpixels::ImageSpec::RGB8_SRGB,
+                        zenpixels::PixelFormat::RGB8_SRGB,
                     );
                     zenpng::encode_rgb8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
                 }
                 (ChannelOrder::Rgba, SampleType::U8) => {
                     let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
                         &decoded.pixels,
-                        zenpixels::ImageSpec::RGBA8_SRGB,
+                        zenpixels::PixelFormat::RGBA8_SRGB,
                     );
                     zenpng::encode_rgba8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
                 }

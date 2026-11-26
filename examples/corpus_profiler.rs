@@ -118,7 +118,7 @@ fn main() {
             continue;
         }
 
-        let desc = decoded.pixels.spec();
+        let desc = decoded.pixels.format();
         let (color_type, bpp) = match (desc.layout.order, desc.layout.sample) {
             (ChannelOrder::Gray, SampleType::U8) => ("gray8", 1),
             (ChannelOrder::Rgb, SampleType::U8) => ("rgb8", 3),
@@ -152,21 +152,21 @@ fn main() {
                 (ChannelOrder::Rgb, SampleType::U8) => {
                     let buf = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
                         &decoded.pixels,
-                        zenpixels::ImageSpec::RGB8_SRGB,
+                        zenpixels::PixelFormat::RGB8_SRGB,
                     );
                     zenpng::encode_rgb8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
                 }
                 (ChannelOrder::Rgba, SampleType::U8) => {
                     let buf = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
                         &decoded.pixels,
-                        zenpixels::ImageSpec::RGBA8_SRGB,
+                        zenpixels::PixelFormat::RGBA8_SRGB,
                     );
                     zenpng::encode_rgba8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
                 }
                 (ChannelOrder::Gray, SampleType::U8) => {
                     let buf = pixel_conversion::to_pixels::<rgb::Gray<u8>>(
                         &decoded.pixels,
-                        zenpixels::ImageSpec::GRAY8_SRGB,
+                        zenpixels::PixelFormat::GRAY8_SRGB,
                     );
                     zenpng::encode_gray8(buf.as_ref(), None, &config, &Unstoppable, &Unstoppable)
                 }

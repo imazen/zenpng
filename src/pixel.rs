@@ -2,12 +2,13 @@
 
 use whereat::{At, at};
 use zenpixels::{
-    AlphaMode, ColorSpace, ImageSpec, PixelType, PixelView, PixelViewMut, SampleLayout, SampleType,
+    AlphaMode, ColorSpace, PixelFormat, PixelType, PixelView, PixelViewMut, SampleLayout,
+    SampleType,
 };
 
 use crate::error::PngError;
 
-pub(crate) const fn default_spec(layout: SampleLayout) -> ImageSpec {
+pub(crate) const fn default_spec(layout: SampleLayout) -> PixelFormat {
     let alpha = if layout.order.has_alpha_slot() {
         AlphaMode::Straight
     } else if layout.order.has_padding_slot() {
@@ -25,7 +26,7 @@ pub(crate) const fn default_spec(layout: SampleLayout) -> ImageSpec {
         ColorSpace::Rgb { alpha: mode, .. } | ColorSpace::Gray { alpha: mode, .. } => *mode = alpha,
         _ => unreachable!(),
     }
-    ImageSpec::new(layout, color)
+    PixelFormat::new(layout, color)
 }
 
 pub(crate) fn view_from_imgref<P: PixelType>(
@@ -43,12 +44,12 @@ pub(crate) fn view_from_imgref<P: PixelType>(
                 "image stride overflows bytes".into()
             ))
         })?;
-    PixelView::new_with_spec_cow(
+    PixelView::new_with_format_cow(
         bytemuck::cast_slice(image.buf()),
         width,
         height,
         stride,
-        zenpixels::SpecCow::from_owned(default_spec(P::LAYOUT)),
+        zenpixels::FormatCow::from_owned(default_spec(P::LAYOUT)),
     )
     .map_err(|e| at!(PngError::InvalidBuffer(e.to_string())))
 }
@@ -68,12 +69,12 @@ pub(crate) fn view_from_imgref_mut<P: PixelType>(
                 "image stride overflows bytes".into()
             ))
         })?;
-    PixelViewMut::new_with_spec_cow(
+    PixelViewMut::new_with_format_cow(
         bytemuck::cast_slice_mut(image.into_buf()),
         width,
         height,
         stride,
-        zenpixels::SpecCow::from_owned(default_spec(P::LAYOUT)),
+        zenpixels::FormatCow::from_owned(default_spec(P::LAYOUT)),
     )
     .map_err(|e| at!(PngError::InvalidBuffer(e.to_string())))
 }

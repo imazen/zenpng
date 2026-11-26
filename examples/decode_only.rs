@@ -61,7 +61,7 @@ fn main() {
         } else {
             let d = zenpng::decode(data, &config, &Unstoppable).unwrap();
             std::hint::black_box(&d);
-            d.pixels.spec().layout.bytes_per_pixel()
+            d.pixels.format().layout.bytes_per_pixel()
                 * d.info.width as usize
                 * d.info.height as usize
         }
@@ -96,16 +96,16 @@ impl zencodec::decode::DecodeRowSink for VecSink {
         _y: u32,
         height: u32,
         width: u32,
-        descriptor: zenpixels::ImageSpec,
+        descriptor: zenpixels::PixelFormat,
     ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
         let stride = width as usize * descriptor.layout.bytes_per_pixel();
         self.0.resize(height as usize * stride, 0);
-        Ok(zenpixels::PixelViewMut::new_with_spec_cow(
+        Ok(zenpixels::PixelViewMut::new_with_format_cow(
             &mut self.0,
             width,
             height,
             stride,
-            zenpixels::SpecCow::from_owned(descriptor),
+            zenpixels::FormatCow::from_owned(descriptor),
         )
         .expect("sized"))
     }

@@ -408,16 +408,16 @@ impl zencodec::decode::DecodeRowSink for VecSink {
         _y: u32,
         height: u32,
         width: u32,
-        descriptor: zenpixels::ImageSpec,
+        descriptor: zenpixels::PixelFormat,
     ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
         let stride = width as usize * descriptor.layout.bytes_per_pixel();
         self.0.resize(height as usize * stride, 0);
-        Ok(zenpixels::PixelViewMut::new_with_spec_cow(
+        Ok(zenpixels::PixelViewMut::new_with_format_cow(
             &mut self.0,
             width,
             height,
             stride,
-            zenpixels::SpecCow::from_owned(descriptor),
+            zenpixels::FormatCow::from_owned(descriptor),
         )
         .expect("sized"))
     }
@@ -679,9 +679,9 @@ fn img_slice(img: Img, y: usize, rows: usize) -> zenpixels::PixelView<'static> {
     let bpp = if img.alpha { 4 } else { 3 };
     let stride = img.w * bpp;
     let desc = if img.alpha {
-        &zenpixels::specs::RGBA8_SRGB
+        &zenpixels::formats::RGBA8_SRGB
     } else {
-        &zenpixels::specs::RGB8_SRGB
+        &zenpixels::formats::RGB8_SRGB
     };
     zenpixels::PixelView::new(
         &img.px[y * stride..(y + rows) * stride],

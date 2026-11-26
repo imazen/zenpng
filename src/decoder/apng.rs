@@ -483,9 +483,9 @@ impl ApngCompositor {
         let is_16bit = ihdr.bit_depth == 16;
         config.validate(ihdr.width, ihdr.height, if is_16bit { 8 } else { 4 })?;
         let descriptor = if is_16bit {
-            zenpixels::ImageSpec::RGBA16_SRGB
+            zenpixels::PixelFormat::RGBA16_SRGB
         } else {
-            zenpixels::ImageSpec::RGBA8_SRGB
+            zenpixels::PixelFormat::RGBA8_SRGB
         };
         let canvas = PixelBuf::new(ihdr.width, ihdr.height, descriptor)
             .map_err(|e| at!(PngError::OutOfMemory(e.to_string())))?;
@@ -542,7 +542,7 @@ impl ApngCompositor {
         let mut output = PixelBuf::new(
             self.canvas.width(),
             self.canvas.height(),
-            self.canvas.spec().clone(),
+            self.canvas.format().clone(),
         )
         .map_err(|e| at!(PngError::OutOfMemory(e.to_string())))?;
         output
@@ -727,7 +727,7 @@ fn composite_frame(
     let x = fctl.x_offset as usize;
     let y = fctl.y_offset as usize;
     let width = fctl.width as usize;
-    let descriptor = pixels.spec();
+    let descriptor = pixels.format();
     let source_16 = match descriptor.layout.sample {
         SampleType::U8 => false,
         SampleType::U16 => true,

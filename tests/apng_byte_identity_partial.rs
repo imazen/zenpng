@@ -12,7 +12,7 @@
 
 use sha2::Digest;
 use zencodec::encode::{DynAnimationFrameEncoder, EncodeJob, EncoderConfig};
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::{PixelFormat, PixelView};
 use zenpng::{Compression, DowncastFlags, PngEncoderConfig};
 
 /// A small deterministic hash, for noise that does not depend on any crate.
@@ -168,7 +168,7 @@ const ANIMS: &[Anim] = &[
 
 /// The frames of `a` in `desc` (RGB8, RGBA8 or BGRA8), rows padded by
 /// `a.pad` pixels of junk.
-fn frames(a: &Anim, desc: ImageSpec) -> (Vec<Vec<u8>>, usize) {
+fn frames(a: &Anim, desc: PixelFormat) -> (Vec<Vec<u8>>, usize) {
     let bpp = desc.layout.bytes_per_pixel();
     let stride = (a.w + a.pad) as usize * bpp;
     let fs = (0..a.frames)
@@ -193,7 +193,7 @@ fn frames(a: &Anim, desc: ImageSpec) -> (Vec<Vec<u8>>, usize) {
     (fs, stride)
 }
 
-fn encode(cfg: &PngEncoderConfig, a: &Anim, desc: ImageSpec, begin: bool) -> Vec<u8> {
+fn encode(cfg: &PngEncoderConfig, a: &Anim, desc: PixelFormat, begin: bool) -> Vec<u8> {
     let (fs, stride) = frames(a, desc.clone());
     let mut enc: Box<dyn DynAnimationFrameEncoder> = cfg
         .clone()
@@ -247,9 +247,9 @@ fn run_matrix() -> MatrixRun {
     let mut ops = Vec::new();
     for a in ANIMS {
         for (dname, desc) in [
-            ("rgb8", ImageSpec::RGB8_SRGB),
-            ("rgba8", ImageSpec::RGBA8_SRGB),
-            ("bgra8", ImageSpec::BGRA8_SRGB),
+            ("rgb8", PixelFormat::RGB8_SRGB),
+            ("rgba8", PixelFormat::RGBA8_SRGB),
+            ("bgra8", PixelFormat::BGRA8_SRGB),
         ] {
             for effort in [None, Some(2), Some(3), Some(5), Some(7), Some(10)] {
                 for (cname, downcast) in [

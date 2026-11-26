@@ -6,7 +6,7 @@ use std::io::Cursor;
 
 use zencodec::encode::{AnimationFrameEncoder, EncodeJob, EncodePolicy, Encoder, EncoderConfig};
 use zencodec::{At, Cicp, CodecError, ErrorCategory, Metadata, MetadataPolicy, PolicyKind};
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::{PixelFormat, PixelView};
 use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, SynthesizedIcc};
 use zenpng::{DowncastFlags, PngEncoderConfig};
 
@@ -74,7 +74,7 @@ fn encode_with(
     policy: Option<EncodePolicy>,
 ) -> Result<Vec<u8>, At<CodecError>> {
     let data = samples();
-    let spec = ImageSpec::new(
+    let spec = PixelFormat::new(
         zenpixels::SampleLayout::RGBA8,
         zenpixels::ColorSpace::Untagged {
             channels: 4,

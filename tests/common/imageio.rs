@@ -39,7 +39,7 @@ pub fn to_imageio(
     bpp: usize,
     alpha_info: u32,
 ) -> Result<(Vec<u8>, Vec<bool>), String> {
-    let desc = px.spec();
+    let desc = px.format();
     let src_ch = desc.layout.order.channels();
     let src_bpc = match desc.layout.sample {
         SampleType::U8 => 8,

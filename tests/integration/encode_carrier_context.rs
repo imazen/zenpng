@@ -12,7 +12,7 @@ use zencodec::encode::{
     AnimationFrameEncoder, EncodeDeclaration, EncodeJob, EncodePolicy, Encoder, EncoderConfig,
 };
 use zencodec::{At, CodecError, ErrorCategory, Metadata, MetadataPolicy, PolicyKind};
-use zenpixels::{AlphaMode, Cicp, ColorSpace, IccColorSpace, ImageSpec, PixelView};
+use zenpixels::{AlphaMode, Cicp, ColorSpace, IccColorSpace, PixelFormat, PixelView};
 use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, SynthesizedIcc};
 use zenpng::{DowncastFlags, PngEncoderConfig};
 
@@ -52,7 +52,7 @@ fn encode(
     policy: Option<EncodePolicy>,
 ) -> Result<Vec<u8>, At<CodecError>> {
     let data = samples();
-    let spec = ImageSpec::new(
+    let spec = PixelFormat::new(
         zenpixels::SampleLayout::RGBA8,
         context.unwrap_or(ColorSpace::SRGB_ALPHA),
     );

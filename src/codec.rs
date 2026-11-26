@@ -17,7 +17,7 @@ use zencodec::decode::{AnimationFrame, DecodeCapabilities, DecodeOutput, OutputI
 use zencodec::encode::{EncodeCapabilities, EncodeOutput};
 use zencodec::{CodecError, ImageFormat, ImageInfo, Metadata, ResourceLimits};
 use zenpixels::{
-    AlphaMode, Cicp, ColorSpace, HlgMode, ImageSpec, PixelView, PixelViewMut, Primaries,
+    AlphaMode, Cicp, ColorSpace, HlgMode, PixelFormat, PixelView, PixelViewMut, Primaries,
     SampleLayout, SignalRange, Transfer,
 };
 
@@ -64,8 +64,8 @@ const fn rgb_spec(
     primaries: Primaries,
     transfer: Transfer,
     alpha: AlphaMode,
-) -> ImageSpec {
-    ImageSpec::new(
+) -> PixelFormat {
+    PixelFormat::new(
         layout,
         ColorSpace::Rgb {
             primaries,
@@ -77,62 +77,62 @@ const fn rgb_spec(
     )
 }
 
-const RGB16_P3_PQ: ImageSpec = rgb_spec(
+const RGB16_P3_PQ: PixelFormat = rgb_spec(
     SampleLayout::RGB16,
     Primaries::DisplayP3,
     Transfer::Pq,
     AlphaMode::None,
 );
-const RGB16_P3_HLG: ImageSpec = rgb_spec(
+const RGB16_P3_HLG: PixelFormat = rgb_spec(
     SampleLayout::RGB16,
     Primaries::DisplayP3,
     Transfer::Hlg(HlgMode::Scene),
     AlphaMode::None,
 );
-const RGBA16_BT2100_PQ: ImageSpec = rgb_spec(
+const RGBA16_BT2100_PQ: PixelFormat = rgb_spec(
     SampleLayout::RGBA16,
     Primaries::Bt2020,
     Transfer::Pq,
     AlphaMode::Straight,
 );
-const RGBA16_BT2100_HLG: ImageSpec = rgb_spec(
+const RGBA16_BT2100_HLG: PixelFormat = rgb_spec(
     SampleLayout::RGBA16,
     Primaries::Bt2020,
     Transfer::Hlg(HlgMode::Scene),
     AlphaMode::Straight,
 );
-const RGBA16_P3_PQ: ImageSpec = rgb_spec(
+const RGBA16_P3_PQ: PixelFormat = rgb_spec(
     SampleLayout::RGBA16,
     Primaries::DisplayP3,
     Transfer::Pq,
     AlphaMode::Straight,
 );
-const RGBA16_P3_HLG: ImageSpec = rgb_spec(
+const RGBA16_P3_HLG: PixelFormat = rgb_spec(
     SampleLayout::RGBA16,
     Primaries::DisplayP3,
     Transfer::Hlg(HlgMode::Scene),
     AlphaMode::Straight,
 );
-const RGB8_P3: ImageSpec = ImageSpec::new(SampleLayout::RGB8, ColorSpace::DISPLAY_P3);
-const RGBA8_P3: ImageSpec = ImageSpec::new(SampleLayout::RGBA8, ColorSpace::DISPLAY_P3_ALPHA);
+const RGB8_P3: PixelFormat = PixelFormat::new(SampleLayout::RGB8, ColorSpace::DISPLAY_P3);
+const RGBA8_P3: PixelFormat = PixelFormat::new(SampleLayout::RGBA8, ColorSpace::DISPLAY_P3_ALPHA);
 
-static ENCODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::GRAYA8_SRGB,
+static ENCODE_DESCRIPTORS: &[PixelFormat] = &[
+    PixelFormat::GRAYA8_SRGB,
     crate::pixel::default_spec(SampleLayout::GRAYA16),
-    ImageSpec::RGB8_SRGB,
-    ImageSpec::RGBA8_SRGB,
-    ImageSpec::GRAY8_SRGB,
-    ImageSpec::BGRA8_SRGB,
-    ImageSpec::RGBX8_SRGB,
-    ImageSpec::BGRX8_SRGB,
-    ImageSpec::RGB16_SRGB,
-    ImageSpec::RGBA16_SRGB,
-    ImageSpec::GRAY16_SRGB,
-    ImageSpec::RGBF32_LINEAR,
-    ImageSpec::RGBAF32_LINEAR,
-    ImageSpec::GRAYF32_LINEAR,
-    ImageSpec::RGB16_BT2100_PQ,
-    ImageSpec::RGB16_BT2100_HLG_SCENE,
+    PixelFormat::RGB8_SRGB,
+    PixelFormat::RGBA8_SRGB,
+    PixelFormat::GRAY8_SRGB,
+    PixelFormat::BGRA8_SRGB,
+    PixelFormat::RGBX8_SRGB,
+    PixelFormat::BGRX8_SRGB,
+    PixelFormat::RGB16_SRGB,
+    PixelFormat::RGBA16_SRGB,
+    PixelFormat::GRAY16_SRGB,
+    PixelFormat::RGBF32_LINEAR,
+    PixelFormat::RGBAF32_LINEAR,
+    PixelFormat::GRAYF32_LINEAR,
+    PixelFormat::RGB16_BT2100_PQ,
+    PixelFormat::RGB16_BT2100_HLG_SCENE,
     RGB16_P3_PQ,
     RGB16_P3_HLG,
     RGBA16_BT2100_PQ,
@@ -143,19 +143,19 @@ static ENCODE_DESCRIPTORS: &[ImageSpec] = &[
     RGBA8_P3,
 ];
 
-static DECODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::RGB8_SRGB,
-    ImageSpec::RGBA8_SRGB,
-    ImageSpec::GRAY8_SRGB,
-    ImageSpec::BGRA8_SRGB,
-    ImageSpec::RGB16_SRGB,
-    ImageSpec::RGBA16_SRGB,
-    ImageSpec::GRAY16_SRGB,
-    ImageSpec::RGBF32_LINEAR,
-    ImageSpec::RGBAF32_LINEAR,
-    ImageSpec::GRAYF32_LINEAR,
-    ImageSpec::RGB16_BT2100_PQ,
-    ImageSpec::RGB16_BT2100_HLG_SCENE,
+static DECODE_DESCRIPTORS: &[PixelFormat] = &[
+    PixelFormat::RGB8_SRGB,
+    PixelFormat::RGBA8_SRGB,
+    PixelFormat::GRAY8_SRGB,
+    PixelFormat::BGRA8_SRGB,
+    PixelFormat::RGB16_SRGB,
+    PixelFormat::RGBA16_SRGB,
+    PixelFormat::GRAY16_SRGB,
+    PixelFormat::RGBF32_LINEAR,
+    PixelFormat::RGBAF32_LINEAR,
+    PixelFormat::GRAYF32_LINEAR,
+    PixelFormat::RGB16_BT2100_PQ,
+    PixelFormat::RGB16_BT2100_HLG_SCENE,
     RGB16_P3_PQ,
     RGB16_P3_HLG,
     RGBA16_BT2100_PQ,
@@ -652,7 +652,7 @@ impl zencodec::encode::EncoderConfig for PngEncoderConfig {
         ImageFormat::Png
     }
 
-    fn supported_descriptors() -> &'static [ImageSpec] {
+    fn supported_descriptors() -> &'static [PixelFormat] {
         ENCODE_DESCRIPTORS
     }
 
@@ -1133,7 +1133,7 @@ pub struct PngEncoder {
     /// they are written: `pending_output` hands them out.
     stream_out: bool,
     /// The descriptor `begin` declared; rows must arrive in it.
-    declared: Option<zenpixels::ImageSpec>,
+    declared: Option<zenpixels::PixelFormat>,
     /// Bytes of the current output buffer already handed out.
     sent: usize,
     /// Bytes handed out and dropped from the buffer (for the output limit).
@@ -1495,7 +1495,7 @@ impl zencodec::encode::Encoder for PngEncoder {
         &mut self,
         width: u32,
         height: u32,
-        descriptor: zenpixels::ImageSpec,
+        descriptor: zenpixels::PixelFormat,
     ) -> Result<zencodec::encode::OutputTiming, At<CodecError>> {
         self.begin_inner(
             width,
@@ -1535,7 +1535,7 @@ impl zencodec::encode::Encoder for PngEncoder {
         &mut self,
         width: u32,
         height: u32,
-        descriptor: zenpixels::ImageSpec,
+        descriptor: zenpixels::PixelFormat,
         access: zencodec::output_patch::OutputAccess,
     ) -> Result<zencodec::encode::OutputTiming, At<CodecError>> {
         self.begin_inner(width, height, descriptor, access)
@@ -1622,7 +1622,7 @@ impl PngEncoder {
     /// f32 input is stored as 8-bit sRGB (`linear_to_srgb_u8_*`). A caller's
     /// cICP saying "linear" described the input, not the file: move its
     /// transfer to sRGB, keeping the primaries.
-    fn describe_stored_f32(&mut self, desc: &ImageSpec) {
+    fn describe_stored_f32(&mut self, desc: &PixelFormat) {
         if desc.layout.sample != zenpixels::SampleType::F32 {
             return;
         }
@@ -1639,7 +1639,7 @@ impl PngEncoder {
         }
     }
 
-    fn stored_color(spec: &ImageSpec) -> Result<StoredColor, At<PngError>> {
+    fn stored_color(spec: &PixelFormat) -> Result<StoredColor, At<PngError>> {
         let gray = spec.layout.order.is_gray_family();
         let float = spec.layout.sample == SampleType::F32;
         let refuse = |reason: &str| Err(at!(PngError::InvalidInput(reason.into())));
@@ -1747,7 +1747,7 @@ impl PngEncoder {
     }
 
     /// Bind color before any output bytes are written.
-    fn bind_color(&mut self, spec: &ImageSpec) -> Result<(), At<PngError>> {
+    fn bind_color(&mut self, spec: &PixelFormat) -> Result<(), At<PngError>> {
         spec.validate()
             .map_err(|e| at!(PngError::InvalidBuffer(e.to_string())))?;
         let stored = Self::stored_color(spec)?;
@@ -1800,9 +1800,9 @@ impl PngEncoder {
             ))));
         }
 
-        self.describe_stored_f32(pixels.spec());
-        self.bind_color(pixels.spec())?;
-        self.check_retained_color(Some(pixels.spec().layout.channels() as u8))?;
+        self.describe_stored_f32(pixels.format());
+        self.bind_color(pixels.format())?;
+        self.check_retained_color(Some(pixels.format().layout.channels() as u8))?;
 
         let w = pixels.width();
         let h = pixels.rows();
@@ -1811,13 +1811,13 @@ impl PngEncoder {
         let effective_meta = apply_encode_policy(
             self.metadata.as_ref(),
             self.policy.as_ref(),
-            Some(pixels.spec().layout.channels() as u8),
+            Some(pixels.format().layout.channels() as u8),
             self.config.config.cicp,
         )?;
         #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
         let meta_ref = effective_meta.as_ref();
 
-        match pixels.spec().layout {
+        match pixels.format().layout {
             SampleLayout::RGB8 => {
                 let bytes = contiguous_bytes(&pixels)?;
                 self.do_encode(&bytes, w, h, crate::encode::ColorType::Rgb)
@@ -2146,7 +2146,7 @@ impl PngEncoder {
         &mut self,
         width: u32,
         height: u32,
-        descriptor: zenpixels::ImageSpec,
+        descriptor: zenpixels::PixelFormat,
         access: zencodec::output_patch::OutputAccess,
     ) -> Result<zencodec::encode::OutputTiming, At<PngError>> {
         // PNG output is append-only: seek-back access permits nothing more.
@@ -2197,7 +2197,7 @@ impl PngEncoder {
         &mut self,
         width: u32,
         height: u32,
-        descriptor: zenpixels::ImageSpec,
+        descriptor: zenpixels::PixelFormat,
     ) -> Result<zencodec::encode::OutputTiming, At<PngError>> {
         use crate::encoder::compress::StripFraming;
         use zencodec::encode::OutputTiming;
@@ -2243,7 +2243,7 @@ impl PngEncoder {
         &mut self,
         width: u32,
         height: u32,
-        descriptor: zenpixels::ImageSpec,
+        descriptor: zenpixels::PixelFormat,
         access: zencodec::output_patch::OutputAccess,
     ) -> Result<zencodec::encode::OutputTiming, At<PngError>> {
         use crate::encoder::compress::StripFraming;
@@ -2319,7 +2319,7 @@ impl PngEncoder {
     /// push's row count.
     fn start_rows(
         &mut self,
-        descriptor: zenpixels::ImageSpec,
+        descriptor: zenpixels::PixelFormat,
         w: u32,
         h: u32,
         framing: crate::encoder::compress::StripFraming,
@@ -2414,14 +2414,14 @@ impl PngEncoder {
         // Initialize streaming state on first call.
         if self.streaming.is_none() {
             self.start_rows(
-                rows.spec().clone(),
+                rows.format().clone(),
                 w,
                 h,
                 crate::encoder::compress::StripFraming::Continuous,
             )?;
-            self.declared = Some(rows.spec().clone());
+            self.declared = Some(rows.format().clone());
         }
-        if self.declared.as_ref().is_some_and(|d| d != rows.spec()) {
+        if self.declared.as_ref().is_some_and(|d| d != rows.format()) {
             return Err(at!(PngError::InvalidState(
                 "push_rows: pixel format differs from the one declared at begin".into()
             )));
@@ -2436,7 +2436,7 @@ impl PngEncoder {
             ))));
         }
 
-        let format = rows.spec().layout;
+        let format = rows.format().layout;
         let mode = self.streaming.as_mut().unwrap();
 
         match mode {
@@ -2788,7 +2788,7 @@ pub struct PngAnimationFrameEncoder {
     /// Cumulative pixel data size across all accumulated frames.
     cumulative_pixel_bytes: u64,
     stop: Option<zencodec::SharedPulse>,
-    frame_descriptor: Option<ImageSpec>,
+    frame_descriptor: Option<PixelFormat>,
     policy: Option<zencodec::encode::EncodePolicy>,
     /// `begin` succeeded.
     begun: bool,
@@ -2808,7 +2808,7 @@ pub struct PngAnimationFrameEncoder {
 struct ApngStreaming {
     width: u32,
     height: u32,
-    descriptor: ImageSpec,
+    descriptor: PixelFormat,
     frame_count: u32,
     pushed: u32,
     /// Write RGB8 (every frame is opaque by its descriptor).
@@ -2824,7 +2824,7 @@ struct ApngStreaming {
 
 /// Whether a frame descriptor can be packed for APNG (as `pixels_to_rgba`
 /// does), and whether its alpha channel can carry transparency.
-fn apng_descriptor(desc: &ImageSpec) -> Option<bool> {
+fn apng_descriptor(desc: &PixelFormat) -> Option<bool> {
     use zenpixels::{AlphaMode, ChannelOrder, SampleType, SignalRange};
     if !matches!(desc.layout.sample, SampleType::U8 | SampleType::U16)
         || matches!(
@@ -2902,7 +2902,7 @@ impl PngAnimationFrameEncoder {
     }
 
     fn capture_first_frame(&mut self, pixels: &PixelView<'_>) -> Result<(), At<PngError>> {
-        let spec = pixels.spec();
+        let spec = pixels.format();
         let stored = PngEncoder::stored_color(spec)?;
         if matches!(stored, StoredColor::Icc(_)) && spec.layout.order.is_gray_family() {
             return Err(at!(PngError::InvalidInput(
@@ -2947,7 +2947,8 @@ impl PngAnimationFrameEncoder {
         cancel: &dyn enough::Stop,
     ) -> Result<(), At<PngError>> {
         let st = self.streaming.as_ref().expect("streaming");
-        if (pixels.width(), pixels.rows(), pixels.spec()) != (st.width, st.height, &st.descriptor) {
+        if (pixels.width(), pixels.rows(), pixels.format()) != (st.width, st.height, &st.descriptor)
+        {
             return Err(at!(PngError::InvalidInput(
                 "APNG frame differs from the canvas and descriptor declared at begin".into()
             )));
@@ -3055,7 +3056,7 @@ impl PngAnimationFrameEncoder {
         stop: &dyn enough::Stop,
     ) -> Result<(Vec<u8>, bool), At<PngError>> {
         use zenpixels::{AlphaMode, ChannelOrder, SampleType, SignalRange};
-        let desc = pixels.spec();
+        let desc = pixels.format();
         // The same admission rules `apng_descriptor` applies.
         if matches!(
             desc.color.alpha(),
@@ -3111,7 +3112,7 @@ impl PngAnimationFrameEncoder {
         stop: &dyn enough::Stop,
     ) -> Result<(Vec<u8>, bool), At<PngError>> {
         use zenpixels::{AlphaMode, ChannelOrder};
-        let desc = pixels.spec();
+        let desc = pixels.format();
         let layout = desc.layout.order;
         let opaque_alpha = desc.color.alpha() == AlphaMode::Opaque;
         let w = pixels.width() as usize;
@@ -3241,7 +3242,7 @@ impl PngAnimationFrameEncoder {
         stop: &dyn enough::Stop,
     ) -> Result<(Vec<u8>, bool), At<PngError>> {
         use zenpixels::{AlphaMode, ChannelOrder};
-        let desc = pixels.spec();
+        let desc = pixels.format();
         let len = npixels.checked_mul(8).ok_or_else(|| {
             at!(PngError::OutOfMemory(
                 "APNG frame exceeds address space".into()
@@ -3349,7 +3350,7 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
             )))));
         }
         let (width, height) = (pixels.width(), pixels.rows());
-        let descriptor = pixels.spec();
+        let descriptor = pixels.format();
         if let Some(first) = &self.frame_descriptor
             && (first.layout.sample != descriptor.layout.sample
                 || first.color.clone().with_alpha(AlphaMode::None)
@@ -3446,7 +3447,7 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
         &mut self,
         width: u32,
         height: u32,
-        descriptor: ImageSpec,
+        descriptor: PixelFormat,
         frame_count: Option<u32>,
     ) -> Result<zencodec::encode::AnimationOutputTiming, At<CodecError>> {
         use zencodec::encode::AnimationOutputTiming;
@@ -3845,7 +3846,7 @@ impl zencodec::decode::DecoderConfig for PngDecoderConfig {
         &[ImageFormat::Png]
     }
 
-    fn supported_descriptors() -> &'static [ImageSpec] {
+    fn supported_descriptors() -> &'static [PixelFormat] {
         DECODE_DESCRIPTORS
     }
 
@@ -4000,7 +4001,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
     fn decoder(
         self,
         data: Cow<'a, [u8]>,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
     ) -> Result<PngDecoder<'a>, At<CodecError>> {
         Ok(self.into_png_decoder(data, preferred))
     }
@@ -4008,7 +4009,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
     fn streaming_decoder(
         self,
         data: Cow<'a, [u8]>,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
     ) -> Result<PngStreamingDecoder<'a>, At<CodecError>> {
         PngStreamingDecoder::new(
             data,
@@ -4024,7 +4025,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
     fn animation_frame_decoder(
         self,
         data: Cow<'a, [u8]>,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
     ) -> Result<PngAnimationFrameDecoder, At<CodecError>> {
         // Reject animation when policy forbids it
         if let Some(ref policy) = self.policy
@@ -4056,7 +4057,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
         self,
         data: Cow<'a, [u8]>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
     ) -> Result<OutputInfo, At<CodecError>> {
         push_decoder_native(self, data, sink, preferred)
     }
@@ -4064,7 +4065,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
     #[cfg(feature = "controlled-decode")]
     fn dyn_controlled_decoder(
         self,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
         storage: zencodec::storage::StorageBudget,
     ) -> Result<
         alloc::boxed::Box<zencodec::decode::DynControlledDecoder>,
@@ -4078,7 +4079,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
     /// file is offered (zenflate's inflate cannot yet resume between inputs).
     fn dyn_incremental_decoder(
         self,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
     ) -> Result<
         alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
         zencodec::decode::BoxedError,
@@ -4095,7 +4096,11 @@ impl PngDecodeJob {
     /// (which returns the `At<CodecError>` envelope) and the codec's inherent
     /// `decode`/`decode_into_*` convenience API (which returns the rich
     /// `At<PngError>`).
-    fn into_png_decoder<'a>(self, data: Cow<'a, [u8]>, preferred: &[ImageSpec]) -> PngDecoder<'a> {
+    fn into_png_decoder<'a>(
+        self,
+        data: Cow<'a, [u8]>,
+        preferred: &[PixelFormat],
+    ) -> PngDecoder<'a> {
         PngDecoder {
             config: self.config,
             stop: self.stop,
@@ -4129,7 +4134,7 @@ pub struct PngDecoder<'a> {
     limits: Option<ResourceLimits>,
     policy: Option<zencodec::decode::DecodePolicy>,
     data: Cow<'a, [u8]>,
-    preferred: Vec<ImageSpec>,
+    preferred: Vec<PixelFormat>,
 }
 
 impl PngDecoder<'_> {
@@ -4195,7 +4200,7 @@ impl PngDecoder<'_> {
         let mut pixels = negotiate_and_convert(pixels, &self.preferred);
         // sBIT is a source claim. Measure the delivered integer samples independently.
         if matches!(
-            pixels.spec().layout.sample,
+            pixels.format().layout.sample,
             SampleType::U8 | SampleType::U16
         ) {
             let exact = zenpixels::sample::ExactDepth::measure(&pixels.as_view())
@@ -4213,35 +4218,39 @@ impl PngDecoder<'_> {
 
 // ── Native push_decoder ─────────────────────────────────────────────
 
-/// Determine the native output `ImageSpec` for a given PNG color
+/// Determine the native output `PixelFormat` for a given PNG color
 /// type, bit depth, and tRNS presence. Must match `build_pixel_data`.
-pub(crate) fn native_output_descriptor(color_type: u8, bit_depth: u8, has_trns: bool) -> ImageSpec {
+pub(crate) fn native_output_descriptor(
+    color_type: u8,
+    bit_depth: u8,
+    has_trns: bool,
+) -> PixelFormat {
     match (color_type, bit_depth, has_trns) {
-        (0, 16, false) => ImageSpec::GRAY16_SRGB,
+        (0, 16, false) => PixelFormat::GRAY16_SRGB,
         (0, 16, true) => crate::pixel::default_spec(SampleLayout::GRAYA16),
-        (0, _, false) => ImageSpec::GRAY8_SRGB,
-        (0, _, true) => ImageSpec::RGBA8_SRGB,
-        (2, 16, false) => ImageSpec::RGB16_SRGB,
-        (2, 16, true) => ImageSpec::RGBA16_SRGB,
-        (2, 8, false) => ImageSpec::RGB8_SRGB,
-        (2, 8, true) => ImageSpec::RGBA8_SRGB,
-        (3, _, true) => ImageSpec::RGBA8_SRGB,
-        (3, _, false) => ImageSpec::RGB8_SRGB,
+        (0, _, false) => PixelFormat::GRAY8_SRGB,
+        (0, _, true) => PixelFormat::RGBA8_SRGB,
+        (2, 16, false) => PixelFormat::RGB16_SRGB,
+        (2, 16, true) => PixelFormat::RGBA16_SRGB,
+        (2, 8, false) => PixelFormat::RGB8_SRGB,
+        (2, 8, true) => PixelFormat::RGBA8_SRGB,
+        (3, _, true) => PixelFormat::RGBA8_SRGB,
+        (3, _, false) => PixelFormat::RGB8_SRGB,
         (4, 16, _) => crate::pixel::default_spec(SampleLayout::GRAYA16),
-        (4, 8, _) => ImageSpec::RGBA8_SRGB,
-        (6, 16, _) => ImageSpec::RGBA16_SRGB,
-        (6, 8, _) => ImageSpec::RGBA8_SRGB,
-        _ => ImageSpec::RGBA8_SRGB, // fallback
+        (4, 8, _) => PixelFormat::RGBA8_SRGB,
+        (6, 16, _) => PixelFormat::RGBA16_SRGB,
+        (6, 8, _) => PixelFormat::RGBA8_SRGB,
+        _ => PixelFormat::RGBA8_SRGB, // fallback
     }
 }
 
 /// Resolve PNG's color chunks in reader precedence order, keeping the
 /// coded samples unchanged. Unprojectable CICP remains in the source metadata.
 fn decoded_spec(
-    mut spec: ImageSpec,
+    mut spec: PixelFormat,
     info: &crate::decode::PngInfo,
     icc: Option<&alloc::sync::Arc<[u8]>>,
-) -> ImageSpec {
+) -> PixelFormat {
     use zenpixels::{CustomPrimaries, Gamma, IccColorSpace, RenderingIntent};
     let gray = spec.layout.order.is_gray_family();
     let source_gray = matches!(info.color_type, 0 | 4);
@@ -4323,10 +4332,10 @@ fn decoded_spec(
 }
 
 fn decoded_spec_for_policy(
-    spec: ImageSpec,
+    spec: PixelFormat,
     info: &crate::decode::PngInfo,
     policy: Option<&zencodec::decode::DecodePolicy>,
-) -> ImageSpec {
+) -> PixelFormat {
     let icc = info
         .icc_profile
         .as_ref()
@@ -4369,11 +4378,11 @@ pub(crate) fn tag_decoded_pixels(
     info: &crate::decode::PngInfo,
     icc: Option<alloc::sync::Arc<[u8]>>,
 ) -> Result<PixelBuf, At<PngError>> {
-    let spec = decoded_spec(pixels.spec().clone(), info, icc.as_ref());
+    let spec = decoded_spec(pixels.format().clone(), info, icc.as_ref());
     let mut metadata = decoded_row_metadata(info, icc);
     metadata.facts = pixels.facts();
     pixels
-        .relabel_spec(spec)
+        .relabel_format(spec)
         .map(|pixels| metadata.attach_owned(pixels))
         .map_err(|e| at!(PngError::InvalidBuffer(e.to_string())))
 }
@@ -4388,7 +4397,7 @@ fn push_decoder_native<'a>(
     job: PngDecodeJob,
     data: Cow<'a, [u8]>,
     sink: &mut dyn zencodec::decode::DecodeRowSink,
-    preferred: &[ImageSpec],
+    preferred: &[PixelFormat],
 ) -> Result<OutputInfo, At<CodecError>> {
     // Check progressive and truncation policy before decoding
     check_progressive_policy(&data, job.policy.as_ref()).map_err(CodecError::of)?;
@@ -4622,7 +4631,7 @@ enum StreamRows<'a> {
 pub struct PngStreamingDecoder<'a> {
     rows: StreamRows<'a>,
     info: ImageInfo,
-    descriptor: ImageSpec,
+    descriptor: PixelFormat,
     /// Post-processed rows of one batch (`batch_rows` × `row_pitch`), reused
     /// across calls.
     row_buf: crate::decoder::postprocess::OutBuf,
@@ -4651,7 +4660,7 @@ impl<'a> PngStreamingDecoder<'a> {
         stop: Option<zencodec::SharedPulse>,
         limits: Option<&ResourceLimits>,
         policy: Option<&zencodec::decode::DecodePolicy>,
-        _preferred: &[ImageSpec],
+        _preferred: &[PixelFormat],
     ) -> Result<Self, At<PngError>> {
         // Check progressive and truncation policy before the structural
         // interlace rejection
@@ -4916,7 +4925,7 @@ pub struct PngAnimationFrameDecoder {
     /// Saved decoder state for O(1) resumption between frames.
     decoder_state: crate::decoder::apng::ApngDecoderState,
     /// Preferred output pixel formats for format negotiation.
-    preferred: Vec<ImageSpec>,
+    preferred: Vec<PixelFormat>,
     /// Internal canvas buffer holding the last rendered frame's pixels.
     canvas: Option<PixelBuf>,
     /// Cooperative cancellation token from the decode job.
@@ -4938,7 +4947,7 @@ impl PngAnimationFrameDecoder {
         limits: &ResourceLimits,
         stop: Option<zencodec::SharedPulse>,
         policy: Option<&zencodec::decode::DecodePolicy>,
-        preferred: &[ImageSpec],
+        preferred: &[PixelFormat],
         start_frame_index: u32,
     ) -> Result<Self, At<PngError>> {
         check_truncation_policy(&data, policy)?;
@@ -5090,7 +5099,7 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
 
             let icc = self.info.source_color.icc_profile.clone();
             let canvas = self.compositor.canvas();
-            let spec = decoded_spec(canvas.spec().clone(), &self.native_info, icc.as_ref());
+            let spec = decoded_spec(canvas.format().clone(), &self.native_info, icc.as_ref());
             self.canvas = if self.preferred.is_empty() || self.preferred.contains(&spec) {
                 None
             } else {
@@ -5103,12 +5112,12 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
                 canvas.as_view()
             } else {
                 let view = canvas.as_view();
-                let view = PixelView::new_with_spec_cow(
+                let view = PixelView::new_with_format_cow(
                     view.as_strided_bytes(),
                     view.width(),
                     view.rows(),
                     view.stride(),
-                    zenpixels::SpecCow::from_owned(spec),
+                    zenpixels::FormatCow::from_owned(spec),
                 )
                 .map_err(|e| CodecError::of(at!(PngError::InvalidBuffer(e.to_string()))))?;
                 self.row_metadata.attach(view)
@@ -5126,11 +5135,11 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
 use rgb::{Gray, Rgb, Rgba};
 use zenpixels::GrayAlpha16;
 use zenpixels::{ChannelOrder, PixelBuf, SampleType};
-fn negotiate_and_convert(pixels: PixelBuf, preferred: &[ImageSpec]) -> PixelBuf {
-    let Some(mut target) = decode_conversion_target(pixels.spec(), preferred) else {
+fn negotiate_and_convert(pixels: PixelBuf, preferred: &[PixelFormat]) -> PixelBuf {
+    let Some(mut target) = decode_conversion_target(pixels.format(), preferred) else {
         return pixels;
     };
-    let source = pixels.spec();
+    let source = pixels.format();
     let alpha = if target.layout.order.has_alpha_slot() && !source.layout.order.has_alpha_slot() {
         AlphaMode::Opaque
     } else {
@@ -5146,7 +5155,10 @@ fn negotiate_and_convert(pixels: PixelBuf, preferred: &[ImageSpec]) -> PixelBuf 
     convert_to(&pixels, target).unwrap_or(pixels)
 }
 
-fn decode_conversion_target(source: &ImageSpec, preferred: &[ImageSpec]) -> Option<ImageSpec> {
+fn decode_conversion_target(
+    source: &PixelFormat,
+    preferred: &[PixelFormat],
+) -> Option<PixelFormat> {
     if preferred.is_empty() || preferred.contains(source) {
         return None;
     }
@@ -5156,7 +5168,7 @@ fn decode_conversion_target(source: &ImageSpec, preferred: &[ImageSpec]) -> Opti
 
 fn convert_to(
     pixels: &PixelBuf,
-    spec: ImageSpec,
+    spec: PixelFormat,
 ) -> Result<PixelBuf, At<zenpixels_convert::ConvertError>> {
     let policy = zenpixels_convert::ConvertPolicy::permissive();
     zenpixels_convert::convert_to_buf_with_peak(
@@ -5168,29 +5180,29 @@ fn convert_to(
 }
 
 fn to_rgb8(pixels: PixelBuf) -> imgref::ImgVec<Rgb<u8>> {
-    to_imgvec(pixels, ImageSpec::RGB8_SRGB)
+    to_imgvec(pixels, PixelFormat::RGB8_SRGB)
 }
 
 fn to_rgba8(pixels: PixelBuf) -> imgref::ImgVec<Rgba<u8>> {
-    to_imgvec(pixels, ImageSpec::RGBA8_SRGB)
+    to_imgvec(pixels, PixelFormat::RGBA8_SRGB)
 }
 
 fn to_gray8(pixels: PixelBuf) -> imgref::ImgVec<Gray<u8>> {
-    to_imgvec(pixels, ImageSpec::GRAY8_SRGB)
+    to_imgvec(pixels, PixelFormat::GRAY8_SRGB)
 }
 
 fn to_bgra8(pixels: PixelBuf) -> imgref::ImgVec<rgb::alt::BGRA<u8>> {
-    to_imgvec(pixels, ImageSpec::BGRA8_SRGB)
+    to_imgvec(pixels, PixelFormat::BGRA8_SRGB)
 }
 
-fn to_imgvec<P: zenpixels::PixelType>(pixels: PixelBuf, spec: ImageSpec) -> imgref::ImgVec<P> {
-    let pixels = if pixels.spec().layout == spec.layout {
+fn to_imgvec<P: zenpixels::PixelType>(pixels: PixelBuf, spec: PixelFormat) -> imgref::ImgVec<P> {
+    let pixels = if pixels.format().layout == spec.layout {
         pixels
     } else {
         // These typed convenience methods return numeric samples without a
         // color descriptor. Work on the existing codes in the native layout.
-        let input = crate::pixel::default_spec(pixels.spec().layout);
-        let pixels = pixels.relabel_spec(input).expect("same native layout");
+        let input = crate::pixel::default_spec(pixels.format().layout);
+        let pixels = pixels.relabel_format(input).expect("same native layout");
         convert_to(&pixels, spec).expect("native PNG layout conversion")
     };
     pixels.into_imgvec().expect("converted PNG layout")
@@ -5659,7 +5671,7 @@ fn append_png_rows(
 ) -> Result<(), At<PngError>> {
     use linear_srgb::default::{linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice};
     use zenpixels::SampleLayout;
-    let format = rows.spec().layout;
+    let format = rows.format().layout;
     let h = rows.rows();
     for y in 0..h {
         let src = rows.row(y);
@@ -6223,7 +6235,7 @@ fn native_to_be_16(native: &[u8]) -> Vec<u8> {
 
 /// Convert any PixelBuf to Rgb<u16>. Upscales 8-bit by v*257.
 fn to_rgb16(pixels: PixelBuf) -> imgref::ImgVec<Rgb<u16>> {
-    let desc = pixels.spec();
+    let desc = pixels.format();
     let w = pixels.width() as usize;
     let h = pixels.height() as usize;
     match (desc.layout.sample, desc.layout.order) {
@@ -6285,7 +6297,7 @@ fn to_rgb16(pixels: PixelBuf) -> imgref::ImgVec<Rgb<u16>> {
 
 /// Convert any PixelBuf to Rgba<u16>. Upscales 8-bit by v*257.
 fn to_rgba16(pixels: PixelBuf) -> imgref::ImgVec<Rgba<u16>> {
-    let desc = pixels.spec();
+    let desc = pixels.format();
     let w = pixels.width() as usize;
     let h = pixels.height() as usize;
     match (desc.layout.sample, desc.layout.order) {
@@ -6356,7 +6368,7 @@ fn to_rgba16(pixels: PixelBuf) -> imgref::ImgVec<Rgba<u16>> {
 
 /// Convert any PixelBuf to Gray<u16>. Upscales 8-bit by v*257.
 fn to_gray16(pixels: PixelBuf) -> imgref::ImgVec<Gray<u16>> {
-    let desc = pixels.spec();
+    let desc = pixels.format();
     let w = pixels.width() as usize;
     let h = pixels.height() as usize;
     match (desc.layout.sample, desc.layout.order) {
@@ -6462,9 +6474,9 @@ fn decode_into_gray16(pixels: PixelBuf, dst: &mut PixelViewMut<'_>) {
 
 // ── decode_rows helpers ──────────────────────────────────────────────
 
-/// Get the ImageSpec for decoded PixelBuf.
-fn pixel_descriptor_for_data(pixels: &PixelBuf) -> ImageSpec {
-    pixels.spec().clone()
+/// Get the PixelFormat for decoded PixelBuf.
+fn pixel_descriptor_for_data(pixels: &PixelBuf) -> PixelFormat {
+    pixels.format().clone()
 }
 
 /// Get raw pixel bytes from PixelBuf (copies to contiguous bytes).
@@ -6693,11 +6705,11 @@ mod tests {
         use zencodec::encode::EncoderConfig;
         let desc = PngEncoderConfig::supported_descriptors();
         assert!(
-            desc.contains(&zenpixels::specs::RGBX8_SRGB),
+            desc.contains(&zenpixels::formats::RGBX8_SRGB),
             "RGBX8_SRGB must be in supported_descriptors"
         );
         assert!(
-            desc.contains(&zenpixels::specs::BGRX8_SRGB),
+            desc.contains(&zenpixels::formats::BGRX8_SRGB),
             "BGRX8_SRGB must be in supported_descriptors"
         );
     }
@@ -6749,7 +6761,7 @@ mod tests {
             buf.extend_from_slice(&[255, 128, 0, 0x13]);
         }
         let stride = (w * 4) as usize;
-        let slice = PixelView::new(&buf, w, h, stride, &zenpixels::specs::RGBX8_SRGB).unwrap();
+        let slice = PixelView::new(&buf, w, h, stride, &zenpixels::formats::RGBX8_SRGB).unwrap();
 
         let output = PngEncoderConfig::new()
             .job()
@@ -6787,7 +6799,7 @@ mod tests {
             buf.extend_from_slice(&[0, 128, 255, 0x42]);
         }
         let stride = (w * 4) as usize;
-        let slice = PixelView::new(&buf, w, h, stride, &zenpixels::specs::BGRX8_SRGB).unwrap();
+        let slice = PixelView::new(&buf, w, h, stride, &zenpixels::formats::BGRX8_SRGB).unwrap();
 
         let output = PngEncoderConfig::new()
             .job()
@@ -6831,10 +6843,16 @@ mod tests {
             rgb.extend_from_slice(&[r, g, b]);
         }
 
-        let rgbx_slice =
-            PixelView::new(&rgbx, w, h, (w * 4) as usize, &zenpixels::specs::RGBX8_SRGB).unwrap();
+        let rgbx_slice = PixelView::new(
+            &rgbx,
+            w,
+            h,
+            (w * 4) as usize,
+            &zenpixels::formats::RGBX8_SRGB,
+        )
+        .unwrap();
         let rgb_slice =
-            PixelView::new(&rgb, w, h, (w * 3) as usize, &zenpixels::specs::RGB8_SRGB).unwrap();
+            PixelView::new(&rgb, w, h, (w * 3) as usize, &zenpixels::formats::RGB8_SRGB).unwrap();
 
         let rgbx_out = PngEncoderConfig::new()
             .job()
@@ -6945,7 +6963,7 @@ mod tests {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         for (desc, name) in [
-            (ImageSpec::RGB16_BT2100_PQ, "BT.2100 PQ"),
+            (PixelFormat::RGB16_BT2100_PQ, "BT.2100 PQ"),
             (RGB16_P3_PQ, "Display-P3 PQ"),
             (RGB8_P3, "Display-P3 sRGB 8-bit"),
             (RGBA16_BT2100_PQ, "BT.2100 PQ with alpha"),
@@ -6987,7 +7005,7 @@ mod tests {
                 .decode()
                 .unwrap();
             let got = out.into_buffer();
-            assert_eq!(got.spec().color, desc.color, "{name}: color changed");
+            assert_eq!(got.format().color, desc.color, "{name}: color changed");
             assert_eq!(
                 got.as_view().as_strided_bytes(),
                 &bytes[..],
@@ -7004,7 +7022,7 @@ mod tests {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
         let bytes = vec![9u8; 4 * 2 * 3];
-        let src = PixelView::new(&bytes, 4, 2, 4 * 3, &zenpixels::specs::RGB8_SRGB).unwrap();
+        let src = PixelView::new(&bytes, 4, 2, 4 * 3, &zenpixels::formats::RGB8_SRGB).unwrap();
         let png = PngEncoderConfig::new()
             .job()
             .encoder()
@@ -8629,7 +8647,7 @@ mod tests {
             .pixels
             .as_view()
             .as_imgref::<Rgb<u8>>()
-            .unwrap_or_else(|_| panic!("expected Rgb8, got {:?}", decoded.pixels.spec()));
+            .unwrap_or_else(|_| panic!("expected Rgb8, got {:?}", decoded.pixels.format()));
 
         for (name, comp) in [
             ("Fastest", crate::Compression::Fastest),
@@ -8694,7 +8712,7 @@ mod tests {
             .pixels
             .as_view()
             .as_imgref::<Rgb<u8>>()
-            .unwrap_or_else(|_| panic!("expected Rgb8, got {:?}", decoded.pixels.spec()));
+            .unwrap_or_else(|_| panic!("expected Rgb8, got {:?}", decoded.pixels.format()));
         assert_eq!(dec_img.width(), width);
         assert_eq!(dec_img.height(), height);
     }
@@ -9285,8 +9303,8 @@ mod tests {
     fn encoder_supported_descriptors() {
         let descs = <PngEncoderConfig as EncoderConfig>::supported_descriptors();
         assert!(!descs.is_empty());
-        assert!(descs.contains(&zenpixels::specs::RGB8_SRGB));
-        assert!(descs.contains(&zenpixels::specs::RGBA8_SRGB));
+        assert!(descs.contains(&zenpixels::formats::RGB8_SRGB));
+        assert!(descs.contains(&zenpixels::formats::RGBA8_SRGB));
     }
 
     #[test]
@@ -10762,7 +10780,7 @@ mod tests {
         assert_eq!(info.height, 4);
         assert_eq!(
             info.native_format,
-            ImageSpec::GRAY8_SRGB,
+            PixelFormat::GRAY8_SRGB,
             "grayscale PNG should report GRAY8_SRGB, not {:?}",
             info.native_format
         );
@@ -10782,7 +10800,7 @@ mod tests {
         let info = dec.job().output_info(output.data()).unwrap();
         assert_eq!(
             info.native_format,
-            ImageSpec::GRAY16_SRGB,
+            PixelFormat::GRAY16_SRGB,
             "16-bit grayscale PNG should report GRAY16_SRGB, not {:?}",
             info.native_format
         );
@@ -10807,7 +10825,7 @@ mod tests {
         let info = dec.job().output_info(output.data()).unwrap();
         assert_eq!(
             info.native_format,
-            ImageSpec::RGB8_SRGB,
+            PixelFormat::RGB8_SRGB,
             "RGB PNG should report RGB8_SRGB, not {:?}",
             info.native_format
         );
@@ -10832,7 +10850,7 @@ mod tests {
         let info = dec.job().output_info(output.data()).unwrap();
         assert_eq!(
             info.native_format,
-            ImageSpec::RGBA8_SRGB,
+            PixelFormat::RGBA8_SRGB,
             "RGBA PNG should report RGBA8_SRGB, not {:?}",
             info.native_format
         );
@@ -11041,14 +11059,14 @@ mod tests {
         let decoder = job
             .decoder(
                 alloc::borrow::Cow::Borrowed(encoded.data()),
-                &[ImageSpec::BGRA8_SRGB],
+                &[PixelFormat::BGRA8_SRGB],
             )
             .unwrap();
         let out = decoder.decode().unwrap();
         assert!(!out.info().has_alpha, "container reports no alpha source");
-        let desc = out.into_buffer().spec().clone();
+        let desc = out.into_buffer().format().clone();
         assert_eq!(desc.color.alpha(), AlphaMode::Opaque);
-        assert_eq!(desc.layout, ImageSpec::BGRA8_SRGB.layout);
+        assert_eq!(desc.layout, PixelFormat::BGRA8_SRGB.layout);
     }
 
     /// A cICP BT.2100-PQ source re-tags the decode descriptor: PQ transfer +
@@ -11119,7 +11137,7 @@ mod tests {
             .unwrap()
             .decode()
             .unwrap();
-        let desc = out.into_buffer().spec().clone();
+        let desc = out.into_buffer().format().clone();
         assert!(matches!(
             desc.color,
             ColorSpace::Rgb {
@@ -11136,12 +11154,12 @@ mod tests {
             .job()
             .decoder(
                 alloc::borrow::Cow::Borrowed(encoded.as_slice()),
-                &[ImageSpec::RGBA16_SRGB],
+                &[PixelFormat::RGBA16_SRGB],
             )
             .unwrap()
             .decode()
             .unwrap();
-        let desc = out.into_buffer().spec().clone();
+        let desc = out.into_buffer().format().clone();
         assert!(matches!(
             desc.color,
             ColorSpace::Rgb {
@@ -11209,12 +11227,15 @@ mod tests {
         let decoder = job
             .decoder(
                 alloc::borrow::Cow::Borrowed(encoded.data()),
-                &[ImageSpec::BGRA8_SRGB],
+                &[PixelFormat::BGRA8_SRGB],
             )
             .unwrap();
         let out = decoder.decode().unwrap();
         assert!(out.info().has_alpha);
-        assert_eq!(out.into_buffer().spec().color.alpha(), AlphaMode::Straight,);
+        assert_eq!(
+            out.into_buffer().format().color.alpha(),
+            AlphaMode::Straight,
+        );
     }
 }
 
@@ -11228,7 +11249,7 @@ mod strip_stream_tests {
     use crate::Compression;
     use zencodec::ThreadingPolicy;
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-    use zenpixels::{ImageSpec, PixelView};
+    use zenpixels::{PixelFormat, PixelView};
 
     /// Deterministic content with smooth areas, edges and noise, so screening
     /// picks different filters in different strips.
@@ -11280,7 +11301,7 @@ mod strip_stream_tests {
         data: &[u8],
         w: u32,
         h: u32,
-        desc: ImageSpec,
+        desc: PixelFormat,
         chunk: u32,
     ) -> Vec<u8> {
         let stride = w as usize * desc.layout.bytes_per_pixel();
@@ -11309,7 +11330,14 @@ mod strip_stream_tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn check(name: &str, data: &[u8], w: u32, h: u32, desc: ImageSpec, expect_rgb8: Option<&[u8]>) {
+    fn check(
+        name: &str,
+        data: &[u8],
+        w: u32,
+        h: u32,
+        desc: PixelFormat,
+        expect_rgb8: Option<&[u8]>,
+    ) {
         use crate::decode::PngDecodeConfig;
         use enough::Unstoppable;
         let stride = w as usize * desc.layout.bytes_per_pixel();
@@ -11356,7 +11384,7 @@ mod strip_stream_tests {
         // 1024 wide RGB8: 3072-byte rows, 700 rows = 4 strips of ~512 KiB.
         let (w, h) = (1024u32, 700u32);
         let rgb = pixels(w as usize, h as usize, 3, 1);
-        check("rgb8", &rgb, w, h, ImageSpec::RGB8_SRGB, Some(&rgb));
+        check("rgb8", &rgb, w, h, PixelFormat::RGB8_SRGB, Some(&rgb));
 
         // RGBA8 with fully transparent runs: RGB under alpha 0 is zeroed in both.
         let mut rgba = pixels(w as usize, h as usize, 4, 2);
@@ -11365,7 +11393,7 @@ mod strip_stream_tests {
                 px[3] = 0;
             }
         }
-        check("rgba8", &rgba, w, h, ImageSpec::RGBA8_SRGB, None);
+        check("rgba8", &rgba, w, h, PixelFormat::RGBA8_SRGB, None);
 
         let gray = pixels(2048, 600, 1, 3);
         check(
@@ -11373,17 +11401,17 @@ mod strip_stream_tests {
             &gray,
             2048,
             600,
-            ImageSpec::GRAY8_SRGB,
+            PixelFormat::GRAY8_SRGB,
             Some(&gray),
         );
 
         // 16-bit input is written big-endian by both paths.
         let rgb16 = pixels(512, 400, 6, 4);
-        check("rgb16", &rgb16, 512, 400, ImageSpec::RGB16_SRGB, None);
+        check("rgb16", &rgb16, 512, 400, PixelFormat::RGB16_SRGB, None);
 
         // BGRA8 is reordered to RGBA by both paths.
         let bgra = pixels(1024, 300, 4, 5);
-        check("bgra8", &bgra, 1024, 300, ImageSpec::BGRA8_SRGB, None);
+        check("bgra8", &bgra, 1024, 300, PixelFormat::BGRA8_SRGB, None);
     }
 
     /// Every `push_rows` mode writes the same header as the one-shot encoder,
@@ -11393,7 +11421,7 @@ mod strip_stream_tests {
     fn streaming_header_matches_oneshot_with_cicp() {
         let (w, h) = (64u32, 40u32);
         let px = pixels(w as usize, h as usize, 3, 9);
-        let desc = ImageSpec::RGB8_SRGB
+        let desc = PixelFormat::RGB8_SRGB
             .with_primaries(zenpixels::Primaries::Bt2020)
             .with_transfer(zenpixels::Transfer::Pq);
         let stride = w as usize * 3;
@@ -11451,7 +11479,7 @@ mod strip_stream_tests {
                 .encoder()
                 .unwrap();
             let pushed = enc.push_rows(
-                PixelView::new(&px, w, h, stride, &zenpixels::specs::RGB8_SRGB).unwrap(),
+                PixelView::new(&px, w, h, stride, &zenpixels::formats::RGB8_SRGB).unwrap(),
             );
             let res = pushed.and_then(|()| enc.finish().map(|_| ()));
             assert!(

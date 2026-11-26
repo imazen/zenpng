@@ -11,7 +11,7 @@ use std::hint::black_box;
 use zencodec::encode::{EncodeDeclaration, EncodeJob as _, Encoder as _, EncoderConfig as _};
 use zencodec::output_patch::OutputAccess;
 use zencodec::{ResourceLimits, ThreadingPolicy};
-use zenpixels::{ColorSpace, ImageSpec, Primaries};
+use zenpixels::{ColorSpace, PixelFormat, Primaries};
 use zenpng::{Compression, DowncastFlags, PngEncoderConfig};
 
 const WIDTH: u32 = 2048;
@@ -59,9 +59,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             return Err("expected stored, prefiltered, strips, strips-parallel or buffered".into());
         }
     };
-    let p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
+    let p3 = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let (descriptor, context) = match colour.as_str() {
-        "srgb" => (ImageSpec::RGB8_SRGB, None),
+        "srgb" => (PixelFormat::RGB8_SRGB, None),
         "p3-icc" => (
             p3,
             Some(ColorSpace::Icc {

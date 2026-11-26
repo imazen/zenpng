@@ -89,7 +89,7 @@ fn legacy_gamma_and_chromaticities_preserve_code_values_and_wire_units() {
         assert_eq!(pixels_from_oracle(&file), row);
         let native = zenpng::decode(&file, &PngDecodeConfig::strict(), &Unstoppable).unwrap();
         assert_eq!(native.pixels.origin().kind, OriginKind::GamaChrm);
-        let spec = native.pixels.spec();
+        let spec = native.pixels.format();
         assert!(matches!(spec.color, ColorSpace::Rgb {
             transfer: Transfer::Gamma(g), primaries: Primaries::Custom(_), ..
         } if g == zenpixels::Gamma::from_encoding_gamma(gamma as f32 / 100_000.0).unwrap()));
@@ -99,7 +99,7 @@ fn legacy_gamma_and_chromaticities_preserve_code_values_and_wire_units() {
             .unwrap()
             .decode()
             .unwrap();
-        assert_eq!(decoded.pixels().spec(), spec);
+        assert_eq!(decoded.pixels().format(), spec);
         let cfg = PngEncoderConfig::new()
             .with_compression(Compression::None)
             .with_downcast(DowncastFlags::none());
@@ -127,7 +127,7 @@ fn legacy_gamma_and_chromaticities_preserve_code_values_and_wire_units() {
     let file = fixture(2, 8, &row, &[]);
     let native = zenpng::decode(&file, &PngDecodeConfig::strict(), &Unstoppable).unwrap();
     assert_eq!(native.pixels.origin().kind, OriginKind::Assumed);
-    assert_eq!(native.pixels.spec().color, ColorSpace::SRGB);
+    assert_eq!(native.pixels.format().color, ColorSpace::SRGB);
 }
 
 #[test]
@@ -141,16 +141,16 @@ fn color_chunk_precedence_retains_raw_companion() {
         assert_eq!(pixels_from_oracle(&file), row);
         zenpng::decode(&file, &PngDecodeConfig::strict(), &Unstoppable).unwrap()
     };
-    assert_eq!(decode(&carriers).pixels.spec().color, ColorSpace::SRGB);
+    assert_eq!(decode(&carriers).pixels.format().color, ColorSpace::SRGB);
     carriers.push((b"iCCP", &iccp));
     let icc = decode(&carriers);
     assert!(
-        matches!(&icc.pixels.spec().color, ColorSpace::Icc { profile, .. } if profile.as_ref() == DISPLAY_P3_V4)
+        matches!(&icc.pixels.format().color, ColorSpace::Icc { profile, .. } if profile.as_ref() == DISPLAY_P3_V4)
     );
     carriers.remove(1);
     carriers.push((b"cICP", &[12, 13, 0, 1]));
     let dual = decode(&carriers);
-    assert_eq!(dual.pixels.spec().color, ColorSpace::DISPLAY_P3);
+    assert_eq!(dual.pixels.format().color, ColorSpace::DISPLAY_P3);
     assert_eq!(dual.pixels.origin().kind, OriginKind::IccAndCicp);
     assert_eq!(dual.pixels.origin().icc.as_deref(), Some(DISPLAY_P3_V4));
 }
@@ -178,7 +178,7 @@ fn native_p3_pq_hlg_and_gray_keep_samples_without_icc_synthesis() {
         assert_eq!(pixels_from_oracle(&file), coded);
         let decoded = zenpng::decode(&file, &PngDecodeConfig::strict(), &Unstoppable).unwrap();
         let transfer = Transfer::from_cicp(cicp[1]).unwrap();
-        match decoded.pixels.spec().color {
+        match decoded.pixels.format().color {
             ColorSpace::Rgb {
                 transfer: actual, ..
             }
@@ -228,7 +228,7 @@ fn grayscale_icc_keeps_gray_profile_and_samples() {
     let file = fixture(0, 16, &row, &[(b"iCCP", &iccp)]);
     let output = zenpng::decode(&file, &PngDecodeConfig::strict(), &Unstoppable).unwrap();
     assert!(
-        matches!(&output.pixels.spec().color, ColorSpace::Icc { profile: active, channels: 1, .. } if active.as_ref() == profile.as_ref())
+        matches!(&output.pixels.format().color, ColorSpace::Icc { profile: active, channels: 1, .. } if active.as_ref() == profile.as_ref())
     );
     let encoded = PngEncoderConfig::new()
         .with_compression(Compression::None)
@@ -251,7 +251,7 @@ fn grayscale_icc_keeps_gray_profile_and_samples() {
 #[test]
 fn baking_hdr_orientation_preserves_color_and_raw_signaling() {
     use zencodec::Orientation;
-    use zenpixels::{AlphaMode, ImageSpec, SampleLayout};
+    use zenpixels::{AlphaMode, PixelFormat, SampleLayout};
 
     let cicp = [9, 16, 0, 1];
     let cll = [9_999_999u32, 123_456];
@@ -298,12 +298,12 @@ fn baking_hdr_orientation_preserves_color_and_raw_signaling() {
     };
     let decoded = decode(&file);
     assert_eq!(decoded.info().orientation, Orientation::Rotate90);
-    let spec = ImageSpec::new(
+    let spec = PixelFormat::new(
         SampleLayout::RGB16,
         Cicp::BT2100_PQ_RGB.to_color_space(AlphaMode::None).unwrap(),
     );
     let pixels = decoded.pixels();
-    assert_eq!(pixels.spec(), &spec);
+    assert_eq!(pixels.format(), &spec);
     let origin = pixels.origin().unwrap().clone();
     assert_eq!(origin.kind, OriginKind::Cicp);
     assert_eq!(origin.cicp, Some(Cicp::BT2100_PQ_RGB));
@@ -315,7 +315,7 @@ fn baking_hdr_orientation_preserves_color_and_raw_signaling() {
     let oriented =
         zenpixels_convert::apply_orientation(&pixels, decoded.info().orientation).unwrap();
     assert_eq!((oriented.width(), oriented.height()), (3, 2));
-    assert_eq!(oriented.spec(), &spec);
+    assert_eq!(oriented.format(), &spec);
     assert_eq!(oriented.origin(), &origin);
     assert_eq!(oriented.hdr(), hdr);
     assert_eq!(oriented.facts(), facts);
@@ -375,19 +375,19 @@ fn baking_hdr_orientation_preserves_color_and_raw_signaling() {
     assert_eq!(found, 7);
     let roundtrip = decode(output);
     assert_eq!(roundtrip.info().orientation, Orientation::Identity);
-    assert_eq!(roundtrip.pixels().spec(), &spec);
+    assert_eq!(roundtrip.pixels().format(), &spec);
     assert_eq!(roundtrip.pixels().origin(), Some(&origin));
     assert_eq!(roundtrip.pixels().hdr(), hdr);
 }
 
 #[test]
 fn exact_cicp_retention_keeps_the_original_transfer_code() {
-    use zenpixels::{ImageSpec, PixelView};
+    use zenpixels::{PixelFormat, PixelView};
 
     // Transfer::Bt709 projects back to code 1, including when the source
     // signaled code 14. Exact retention must carry the original code.
     let source = Cicp::new(9, 14, 0, true);
-    let spec = ImageSpec::RGB8_SRGB
+    let spec = PixelFormat::RGB8_SRGB
         .with_primaries(Primaries::Bt2020)
         .with_transfer(Transfer::Bt709);
     let samples = [7, 19, 43];
@@ -421,10 +421,10 @@ fn exact_cicp_retention_keeps_the_original_transfer_code() {
 #[test]
 fn gray_pq_metadata_gets_a_gray_companion_profile() {
     use zencodec::encode::EncodePolicy;
-    use zenpixels::{ImageSpec, PixelView};
+    use zenpixels::{PixelFormat, PixelView};
 
     let coded = [0x1234u16, 0x4321];
-    let spec = ImageSpec::GRAY16_SRGB.with_transfer(Transfer::Pq);
+    let spec = PixelFormat::GRAY16_SRGB.with_transfer(Transfer::Pq);
     #[allow(deprecated)] // Balanced ICC emission is a legacy policy option.
     let job = PngEncoderConfig::new()
         .with_compression(Compression::None)
@@ -452,6 +452,6 @@ fn malformed_cicp_range_flag_does_not_become_active_color() {
     let file = fixture(2, 8, &row, &[(b"cICP", &[9, 16, 0, 2])]);
     let decoded = zenpng::decode(&file, &PngDecodeConfig::strict(), &Unstoppable).unwrap();
     assert_eq!(decoded.info.cicp, None);
-    assert_eq!(decoded.pixels.spec().color, ColorSpace::SRGB);
+    assert_eq!(decoded.pixels.format().color, ColorSpace::SRGB);
     assert_eq!(decoded.pixels.as_view().row(0), row);
 }

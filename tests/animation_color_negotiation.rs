@@ -4,7 +4,7 @@ use zencodec::{
     decode::{AnimationFrameDecoder, DecodeJob, DecoderConfig},
     encode::{AnimationFrameEncoder, EncodeJob, EncoderConfig},
 };
-use zenpixels::{Cicp, ColorSpace, ImageSpec, PixelBuf, Primaries, Transfer};
+use zenpixels::{Cicp, ColorSpace, PixelBuf, PixelFormat, Primaries, Transfer};
 
 #[test]
 fn exact_native_color_preference_never_converts_the_animation() {
@@ -13,7 +13,7 @@ fn exact_native_color_preference_never_converts_the_animation() {
         (Primaries::Bt2020, Transfer::Pq),
         (Primaries::Bt2020, Transfer::Hlg(zenpixels::HlgMode::Scene)),
     ] {
-        let descriptor = ImageSpec::RGBA16_SRGB
+        let descriptor = PixelFormat::RGBA16_SRGB
             .with_primaries(primaries)
             .with_transfer(transfer);
         let color = Cicp::new(
@@ -53,8 +53,8 @@ fn exact_native_color_preference_never_converts_the_animation() {
             for _ in 0..3 {
                 let frame = decoder.render_next_frame(None).unwrap().unwrap();
                 let pixels = frame.pixels();
-                assert_eq!(pixels.spec(), &descriptor, "{transfer:?} {preference:?}");
-                assert_eq!(pixels.spec().color.to_cicp(), Some(color));
+                assert_eq!(pixels.format(), &descriptor, "{transfer:?} {preference:?}");
+                assert_eq!(pixels.format().color.to_cicp(), Some(color));
                 for y in 0..13 {
                     assert_eq!(pixels.row(y), input.as_view().row(y));
                 }
@@ -65,7 +65,8 @@ fn exact_native_color_preference_never_converts_the_animation() {
 
 #[test]
 fn unrecognized_cicp_does_not_claim_srgb() {
-    let input = PixelBuf::from_bytes(vec![127, 37, 83, 255], 1, 1, ImageSpec::RGBA8_SRGB).unwrap();
+    let input =
+        PixelBuf::from_bytes(vec![127, 37, 83, 255], 1, 1, PixelFormat::RGBA8_SRGB).unwrap();
     let mut encoder = zenpng::PngEncoderConfig::new()
         .with_cicp(Some(Cicp::SRGB))
         .job()
@@ -95,7 +96,7 @@ fn unrecognized_cicp_does_not_claim_srgb() {
         .unwrap();
     let frame = decoder.render_next_frame(None).unwrap().unwrap();
     assert!(matches!(
-        frame.pixels().spec().color,
+        frame.pixels().format().color,
         ColorSpace::Rgb {
             transfer: Transfer::Unknown,
             primaries: Primaries::Unknown,

@@ -78,11 +78,11 @@ fn compare(a_path: &str, b_path: &str) -> Result<(), String> {
         // go through the identical conversion so any real pixel difference shows.
         let ai = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
             &a.pixels,
-            zenpixels::ImageSpec::RGBA8_SRGB,
+            zenpixels::PixelFormat::RGBA8_SRGB,
         );
         let bi = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
             &b.pixels,
-            zenpixels::ImageSpec::RGBA8_SRGB,
+            zenpixels::PixelFormat::RGBA8_SRGB,
         );
         let ap: Vec<Rgba<u8>> = ai.as_ref().pixels().collect();
         let bp: Vec<Rgba<u8>> = bi.as_ref().pixels().collect();
@@ -128,7 +128,7 @@ fn run(input: &str, output: &str, side: Option<u32>) -> Result<(), String> {
     let png = if out.info.has_alpha {
         let img = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
             &out.pixels,
-            zenpixels::ImageSpec::RGBA8_SRGB,
+            zenpixels::PixelFormat::RGBA8_SRGB,
         );
         let src = img.as_ref();
         let (x, y, w, h) = crop_box(src.width(), src.height());
@@ -143,7 +143,7 @@ fn run(input: &str, output: &str, side: Option<u32>) -> Result<(), String> {
     } else if out.info.color_type == 0 {
         let img = pixel_conversion::to_pixels::<rgb::Gray<u8>>(
             &out.pixels,
-            zenpixels::ImageSpec::GRAY8_SRGB,
+            zenpixels::PixelFormat::GRAY8_SRGB,
         );
         let src = img.as_ref();
         let (x, y, w, h) = crop_box(src.width(), src.height());
@@ -158,7 +158,7 @@ fn run(input: &str, output: &str, side: Option<u32>) -> Result<(), String> {
     } else {
         let img = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
             &out.pixels,
-            zenpixels::ImageSpec::RGB8_SRGB,
+            zenpixels::PixelFormat::RGB8_SRGB,
         );
         let src = img.as_ref();
         let (x, y, w, h) = crop_box(src.width(), src.height());

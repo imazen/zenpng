@@ -104,7 +104,7 @@ fn load_corpus() -> Vec<DecodedApng> {
             .map(|f| {
                 let rgba = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
                     &f.pixels,
-                    zenpixels::ImageSpec::RGBA8_SRGB,
+                    zenpixels::PixelFormat::RGBA8_SRGB,
                 );
                 let imgref = rgba.as_ref();
                 let pixels = *imgref.buf();

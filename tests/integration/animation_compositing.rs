@@ -3,7 +3,7 @@
 use enough::Unstoppable;
 use std::borrow::Cow;
 use zencodec::decode::{AnimationFrameDecoder, DecodeJob, DecoderConfig};
-use zenpixels::ImageSpec;
+use zenpixels::PixelFormat;
 use zenpng::{DowncastFlags, EncodeConfig, PngDecoderConfig};
 
 fn chunk(output: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
@@ -147,11 +147,11 @@ fn subframes_blend_dispose_and_skip_at_both_precisions() {
                         let pixels = frame.pixels();
                         assert_eq!((pixels.width(), pixels.rows()), (3, 2));
                         assert_eq!(
-                            *pixels.spec(),
+                            *pixels.format(),
                             if depth == 16 {
-                                ImageSpec::RGBA16_SRGB
+                                PixelFormat::RGBA16_SRGB
                             } else {
-                                ImageSpec::RGBA8_SRGB
+                                PixelFormat::RGBA8_SRGB
                             }
                         );
                         let actual: Vec<u16> = (0..2)
@@ -213,7 +213,7 @@ fn sink_completion_carries_exact_displayed_frame_timing() {
         assert_eq!(timing.duration, duration);
         assert_eq!(timing.pts, None);
         assert_eq!((completion.width, completion.height), (3, 2));
-        assert_eq!(completion.native_format, ImageSpec::RGBA8_SRGB);
+        assert_eq!(completion.native_format, PixelFormat::RGBA8_SRGB);
         assert_eq!(
             sink.bytes(),
             expected.iter().map(|&v| v as u8).collect::<Vec<_>>()

@@ -57,7 +57,7 @@ impl From<At<PngError>> for ControlledError {
 
 pub(super) fn start(
     job: PngDecodeJob,
-    _preferred: &[ImageSpec],
+    _preferred: &[PixelFormat],
     storage: StorageBudget,
 ) -> Result<Box<DynControlledDecoder>, BoxedError> {
     if job.start_frame_index != 0 {
@@ -140,7 +140,7 @@ pub(super) fn start(
             check_stop()?;
             if interlaced {
                 let image = job.decoder(Cow::Borrowed(data), &[])?.decode()?;
-                if image.pixels().spec() != &output.native_format {
+                if image.pixels().format() != &output.native_format {
                     return Err(at!(PngError::InvalidInput(
                         "controlled PNG output descriptor changed".into()
                     ))
@@ -157,7 +157,7 @@ pub(super) fn start(
             } else {
                 let mut native = job.streaming_decoder(Cow::Borrowed(data), &[])?;
                 while let Some((y, rows)) = native.next_batch()? {
-                    if rows.spec() != &output.native_format {
+                    if rows.format() != &output.native_format {
                         return Err(at!(PngError::InvalidInput(
                             "controlled PNG row descriptor changed".into()
                         ))

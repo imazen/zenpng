@@ -5,7 +5,7 @@
 
 use enough::Unstoppable;
 use zencodec::decode::{DecodeJob, DecodeRowSink, DecoderConfig, SinkError, StreamingDecode};
-use zenpixels::{ImageSpec, PixelViewMut};
+use zenpixels::{PixelFormat, PixelViewMut};
 use zenpng::{PngDecodeConfig, PngDecoderConfig, decode};
 
 struct CollectSink(Vec<u8>);
@@ -16,16 +16,16 @@ impl DecodeRowSink for CollectSink {
         _y: u32,
         height: u32,
         width: u32,
-        descriptor: ImageSpec,
+        descriptor: PixelFormat,
     ) -> Result<PixelViewMut<'_>, SinkError> {
         let stride = width as usize * descriptor.layout.bytes_per_pixel();
         self.0.resize(height as usize * stride, 0);
-        Ok(PixelViewMut::new_with_spec_cow(
+        Ok(PixelViewMut::new_with_format_cow(
             &mut self.0,
             width,
             height,
             stride,
-            zenpixels::SpecCow::from_owned(descriptor),
+            zenpixels::FormatCow::from_owned(descriptor),
         )
         .expect("sized"))
     }
@@ -240,7 +240,7 @@ fn push_respects_bounded_loans_and_preserves_color_metadata() {
         next_y: u32,
     }
     impl DecodeRowSink for Bounded {
-        fn begin(&mut self, w: u32, h: u32, spec: ImageSpec) -> Result<(), SinkError> {
+        fn begin(&mut self, w: u32, h: u32, spec: PixelFormat) -> Result<(), SinkError> {
             self.output.begin(w, h, spec)
         }
 
@@ -253,7 +253,7 @@ fn push_respects_bounded_loans_and_preserves_color_metadata() {
             _y: u32,
             _h: u32,
             _w: u32,
-            _spec: ImageSpec,
+            _spec: PixelFormat,
         ) -> Result<PixelViewMut<'_>, SinkError> {
             Err("the decoder omitted row metadata".into())
         }
@@ -263,7 +263,7 @@ fn push_respects_bounded_loans_and_preserves_color_metadata() {
             batch: BatchMeta,
             h: u32,
             w: u32,
-            spec: ImageSpec,
+            spec: PixelFormat,
             metadata: &RowMetadata,
         ) -> Result<PixelViewMut<'_>, SinkError> {
             assert!(batch.is_final);
@@ -327,7 +327,7 @@ fn push_respects_bounded_loans_and_preserves_color_metadata() {
             .unwrap();
         let (_, first) = pull.next_batch().unwrap().unwrap();
         let pixels = sink.output.into_buffer().unwrap();
-        assert_eq!(pixels.spec(), &output.native_format);
+        assert_eq!(pixels.format(), &output.native_format);
         assert_eq!(
             pixels.as_view().contiguous_bytes().unwrap().as_ref(),
             expected
@@ -343,13 +343,13 @@ fn push_respects_bounded_loans_and_preserves_color_metadata() {
                 .push_decoder(
                     file.as_slice().into(),
                     &mut converted,
-                    &[ImageSpec::RGBA8_SRGB],
+                    &[PixelFormat::RGBA8_SRGB],
                 )
                 .unwrap();
             let pixels = converted.output.into_buffer().unwrap();
-            assert_eq!(output.native_format, *pixels.spec());
-            assert_eq!(pixels.spec().layout, ImageSpec::RGBA8_SRGB.layout);
-            assert_eq!(pixels.spec().color.alpha(), zenpixels::AlphaMode::Opaque);
+            assert_eq!(output.native_format, *pixels.format());
+            assert_eq!(pixels.format().layout, PixelFormat::RGBA8_SRGB.layout);
+            assert_eq!(pixels.format().color.alpha(), zenpixels::AlphaMode::Opaque);
             assert!(output.has_alpha);
             let rgba: Vec<_> = expected
                 .as_chunks::<3>()

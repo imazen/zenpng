@@ -24,7 +24,7 @@ fn main() {
     let decoded = zenpng::decode(&source, &zenpng::PngDecodeConfig::none(), &Unstoppable).unwrap();
     let (w, h) = (decoded.info.width as usize, decoded.info.height as usize);
 
-    let bpp = decoded.pixels.spec().layout.bytes_per_pixel();
+    let bpp = decoded.pixels.format().layout.bytes_per_pixel();
     let pixel_bytes = decoded
         .pixels
         .as_view()

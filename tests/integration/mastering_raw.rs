@@ -2,7 +2,7 @@
 use enough::Unstoppable;
 use imgref::ImgRef;
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::{PixelFormat, PixelView};
 use zenpng::{ApngEncodeConfig, ApngFrameInput, Compression, DowncastFlags, EncodeConfig};
 
 fn payload() -> [u8; 24] {
@@ -138,7 +138,7 @@ fn raw_mastering_still_animation_and_row_routes() {
                         2,
                         1,
                         8,
-                        &ImageSpec::new(
+                        &PixelFormat::new(
                             zenpixels::SampleLayout::RGBA8,
                             zenpixels::Cicp::BT2100_PQ_RGB
                                 .to_color_space(zenpixels::AlphaMode::Straight)
@@ -197,7 +197,7 @@ fn raw_mastering_still_animation_and_row_routes() {
 fn checked_matrix_nine_retention_refuses_before_output() {
     let cfg = zenpng::PngEncoderConfig::new().with_compression(Compression::None);
     let pixels = [7, 19, 43];
-    let spec = ImageSpec::new(
+    let spec = PixelFormat::new(
         zenpixels::SampleLayout::RGB8,
         zenpixels::Cicp::BT2100_PQ_RGB
             .to_color_space(zenpixels::AlphaMode::None)

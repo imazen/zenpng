@@ -5,13 +5,13 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 
 use zencodec::decode::{Decode, DecodeJob, DecodeRowSink, DecoderConfig, SinkError};
-use zenpixels::{ImageSpec, PixelViewMut};
+use zenpixels::{PixelFormat, PixelViewMut};
 use zenpng::PngDecoderConfig;
 
 #[derive(Default)]
 struct Rows {
     width: u32,
-    desc: Option<ImageSpec>,
+    desc: Option<PixelFormat>,
     rows: Vec<u8>,
     strip: Vec<u8>,
     strip_rows: u32,
@@ -29,7 +29,7 @@ impl Rows {
 }
 
 impl DecodeRowSink for Rows {
-    fn begin(&mut self, w: u32, _h: u32, d: ImageSpec) -> Result<(), SinkError> {
+    fn begin(&mut self, w: u32, _h: u32, d: PixelFormat) -> Result<(), SinkError> {
         self.width = w;
         self.desc = Some(d);
         Ok(())
@@ -39,19 +39,19 @@ impl DecodeRowSink for Rows {
         _y: u32,
         height: u32,
         width: u32,
-        descriptor: ImageSpec,
+        descriptor: PixelFormat,
     ) -> Result<PixelViewMut<'_>, SinkError> {
         self.ship();
         let row = width as usize * descriptor.layout.bytes_per_pixel();
         self.strip.clear();
         self.strip.resize(row * height as usize, 0);
         self.strip_rows = height;
-        Ok(PixelViewMut::new_with_spec_cow(
+        Ok(PixelViewMut::new_with_format_cow(
             &mut self.strip,
             width,
             height,
             row,
-            zenpixels::SpecCow::from_owned(descriptor),
+            zenpixels::FormatCow::from_owned(descriptor),
         )
         .unwrap())
     }
@@ -112,15 +112,15 @@ fn push_decoder_matches_one_shot_descriptor_and_pixels() {
             continue;
         };
         let s = out.pixels();
-        let row = s.width() as usize * s.spec().layout.bytes_per_pixel();
+        let row = s.width() as usize * s.format().layout.bytes_per_pixel();
         let want: Vec<u8> = (0..s.rows())
             .flat_map(|y| s.row(y)[..row].to_vec())
             .collect();
-        if sink.desc.as_ref() != Some(s.spec()) {
+        if sink.desc.as_ref() != Some(s.format()) {
             mismatches.push(format!(
                 "{name}: push {:?} vs one-shot {:?}",
                 sink.desc,
-                s.spec()
+                s.format()
             ));
         } else if sink.rows != want {
             mismatches.push(format!("{name}: pixels differ"));
