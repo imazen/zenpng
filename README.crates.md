@@ -13,18 +13,18 @@ reduction by [zenquant](https://github.com/imazen/zenquant).
 
 ```toml
 [dependencies]
-zenpng = "0.1"
-zenpixels-convert = { version = "0.2", features = ["rgb", "imgref"] } # .to_rgba8(), .as_imgref()
+zenpng = "0.2"
+zenpixels-convert = { version = "0.5", features = ["imgref"] }
 imgref = "1"     # ImgRef for encode input
 rgb = "0.8"      # rgb::Rgba<u8> + FromSlice::as_rgba
 enough = "0.4"   # Unstoppable / cancellation tokens
-zencodec = "0.1" # zencodec::Metadata, for the `metadata` encode arg (see "Metadata")
+zencodec = "0.3" # zencodec::Metadata, for the `metadata` encode arg (see "Metadata")
 ```
 
 ```rust
 use zenpng::{decode, encode_rgba8, EncodeConfig, Compression, PngDecodeConfig};
 use enough::Unstoppable;
-use zenpixels_convert::PixelBufferConvertTypedExt; // brings `.to_rgba8()` onto PixelBuffer
+use zenpixels_convert::{ConvertPolicy, PeakSource, PixelFormat, convert_to_buf_with_peak};
 
 // Decode
 // --- Decode to packed RGBA8 ---
@@ -32,24 +32,27 @@ let png_bytes: &[u8] = &[/* ... */];
 let output = decode(png_bytes, &PngDecodeConfig::default(), &Unstoppable)?;
 println!("{}x{}, alpha={}", output.info.width, output.info.height, output.info.has_alpha);
 
-// `output.pixels` is a `zenpixels::PixelBuffer` in the file's NATIVE color type
-// (grayscale / indexed / RGB / 16-bit ...). Normalize to RGBA8 with the
-// the `PixelBufferConvertTypedExt` trait imported above (from `zenpixels-convert`):
-let rgba = output.pixels.to_rgba8();                        // PixelBuffer<rgb::Rgba<u8>>
-let rgba_bytes: Vec<u8> = rgba.copy_to_contiguous_bytes();  // width*height*4, packed R,G,B,A
+// Convert the owned native PixelBuf to packed sRGB RGBA8.
+let rgba = convert_to_buf_with_peak(
+    &output.pixels.as_view(),
+    PixelFormat::RGBA8_SRGB,
+    &ConvertPolicy::permissive(),
+    PeakSource::Declared,
+)?;
+let rgba_pixels = rgba.as_view().try_as_imgref::<rgb::Rgba<u8>>()?;
 
 // --- Encode RGBA8 back to PNG ---
 // 2nd arg is `metadata: Option<&zencodec::Metadata>`: pass `Some(&meta)` to embed
 // ICC / EXIF / XMP / HDR chunks; `None` writes NO such metadata (see "Metadata" below).
 // The two trailing args are the cancellation token and the deadline; pass
-// `&Unstoppable` for both to opt out. `rgba.as_imgref()` reuses the buffer above;
+// `&Unstoppable` for both to opt out. `rgba_pixels` borrows the converted buffer;
 // to encode your OWN flat RGBA bytes, use `imgref::ImgRef::new(rgb::FromSlice::as_rgba(&bytes), w, h)`.
-let encoded = encode_rgba8(rgba.as_imgref(), None, &EncodeConfig::default(), &Unstoppable, &Unstoppable)?;
+let encoded = encode_rgba8(rgba_pixels, None, &EncodeConfig::default(), &Unstoppable, &Unstoppable)?;
 //                                            ^^^^ None drops all ICC/EXIF/XMP — pass Some(&meta) to keep them.
 
 // Encode with a specific preset
 let config = EncodeConfig::default().with_compression(Compression::High);
-let smaller = encode_rgba8(rgba.as_imgref(), None, &config, &Unstoppable, &Unstoppable)?;
+let smaller = encode_rgba8(rgba_pixels, None, &config, &Unstoppable, &Unstoppable)?;
 ```
 
 The `encode_*` family covers every native pixel type: `encode_rgba8`,
@@ -270,22 +273,30 @@ interlaced and non-interlaced PNGs.
 
 ## Multi-threaded encode and decode
 
-**Decode.** With threads allowed (`max_threads` 0, the default), an image with
-at least 512 KiB of row data decodes on two threads: one inflates while the
-other unfilters the rows before it. The output is byte-identical to a
-single-threaded decode. Single runs on a Core Ultra 7 265K: 1024 px RGB 1.3–1.5×
-faster, 4096 px RGB 1.7–1.9×. Files with an `iDOT` table go further (below).
+**Decode.** With threads allowed (`max_threads` 0, the default), a large
+image (not palette or sub-byte gray) decodes on two threads: one inflates
+while the other unfilters the rows before it. The output is byte-identical to
+a single-threaded decode. It turns on where it was measured to be at least 1.3× faster: on x86_64 from about
+1.7 MiB of row data for gray, 2.3 MiB for RGB, 3 MiB for RGBA and 10 MiB for
+16-bit (roughly 1–1.5 megapixels); on other targets from 6.75–28 MiB
+(`benchmarks/decode_pipeline_crossover_2026-10-08.md`). On a Core Ultra 7
+265K 1024 px RGB decodes 1.45× faster, 4096 px RGB 1.7×. Files with an
+`iDOT` table go further (below).
 
-**Encode.** `EncodeConfig::with_parallel(true)` splits the image into strips
-of about 512 KiB of row data, filtered and compressed on all allowed cores, at
-every effort without a brute-force or recompress phase (1–15). The
-strips join into one ordinary zlib stream, so every decoder reads the file, and
-the output does not depend on the thread count. On 4096 px images with 8
-cores: effort 1 is about 5.5× faster and effort 5 about 7× faster, with sizes
-within −0.4% to +0.25% of a single-threaded encode. Native encoding uses
-parallel workers by default; `max_threads` caps the thread count. For the
-zencodec adapter, use `PngEncoderConfig::with_threading(ThreadingPolicy::Sequential)`
-to disable workers or `with_max_threads(n)` to cap them.
+**Encode.** Efforts 1–15 split the image into strips of about 512 KiB of row
+data and compress them independently, joined into one ordinary zlib stream
+that every decoder reads. The strips are the same with or without threads,
+so **the output never depends on the thread count**. Threads are on by
+default (`EncodeConfig::parallel`, capped by `max_threads`) wherever they
+were measured to make the encode at least 1.5× faster at half the ideal
+efficiency: on 8 cores of a Core Ultra 7 265K, 4096 px RGB8 encodes 5.6×
+faster at effort 2 and 7× at effort 13; 1024 px RGB8 2.4–3× from effort 5.
+Efforts 20–23 use up to 3 threads (about 2×); efforts 16–19 and 24+, and
+images under 512 KiB of row data, run on one thread. Against one whole-image
+stream the strips cost −0.75% to +0.19% in size on average
+(`benchmarks/strip_layout_sizes_2026-10-08.md`,
+`benchmarks/encode_threads_2026-10-08.md`). `with_parallel(false)` or
+`max_threads = 1` forces a single thread.
 
 ## Multi-threaded decode of `iDOT` PNGs
 
@@ -339,10 +350,10 @@ drops them. To preserve metadata across a decode → encode roundtrip, build a
 `Metadata` from the decode `output.info` and pass `Some(&meta)`:
 
 ```rust
-use zenpng::{EncodeConfig, PngDecodeConfig};
-use zencodec::Metadata;
+use zenpng::{PngEncoderConfig, PngDecodeConfig};
+use zencodec::{ColorEmitPolicy, Metadata, MetadataPolicy};
+use zencodec::encode::{EncodeJob, EncodePolicy, Encoder, EncoderConfig};
 use enough::Unstoppable;
-use zenpixels_convert::PixelBufferConvertTypedExt; // .to_rgba8()
 
 let output = zenpng::decode(png_bytes, &PngDecodeConfig::default(), &Unstoppable)?;
 
@@ -354,14 +365,10 @@ if let Some(exif) = output.info.exif        { meta = meta.with_exif(exif); }
 if let Some(xmp)  = output.info.xmp         { meta = meta.with_xmp(xmp); }
 if let Some(cicp) = output.info.cicp        { meta = meta.with_cicp(cicp); }
 
-let rgba = output.pixels.to_rgba8();
-let encoded = zenpng::encode_rgba8(
-    rgba.as_imgref(),
-    Some(&meta),                  // <-- carries ICC/EXIF/XMP through; `None` would drop them
-    &EncodeConfig::default(),
-    &Unstoppable,
-    &Unstoppable,
-)?;
+let mut job = PngEncoderConfig::new().job();
+job.try_set_policy(EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim))?;
+job.try_set_metadata_policy(meta, MetadataPolicy::PreserveExact)?;
+let encoded = job.encoder()?.encode(output.pixels.as_view())?;
 ```
 
 The PNG color-space chunks gAMA, sRGB, and cHRM are set on `EncodeConfig` instead
@@ -572,3 +579,21 @@ See [LICENSE-COMMERCIAL](https://github.com/imazen/zenpng/blob/main/LICENSE-COMM
 [imageflow-dotnet]: https://github.com/imazen/imageflow-dotnet
 [imageflow-node]: https://github.com/imazen/imageflow-node
 [imageflow-go]: https://github.com/imazen/imageflow-go
+
+### Exact HDR content-light metadata
+
+`PngInfo::content_light_level_raw` exposes PNG's `[MaxCLL, MaxFALL]` as two
+`u32` values in 0.0001 cd/m² units. Pass it to
+`EncodeConfig::with_content_light_level_raw` (or the codec configuration method)
+to preserve fractional nits and the full range. Zero means unknown. Raw values
+override the whole-nit compatibility field; calling `with_content_light_level`
+clears that raw override. The generic zencodec whole-nit view remains unchanged.
+See [PNG third-edition cLLI](https://www.w3.org/TR/png-3/#11cLLI).
+
+`PngInfo::mastering_display_raw` retains the exact 24-byte `mDCV` payload.
+Pass it to `EncodeConfig::with_mastering_display_raw` (or the codec configuration)
+for output without a float roundtrip. Raw data overrides the floating-point view;
+setting the typed value clears the raw override. PNG requires accompanying cICP,
+so no mDCV is emitted without it.
+
+Development tools: [profiling and strict format checks](docs/development-profiling.md).

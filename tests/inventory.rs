@@ -314,12 +314,12 @@ fn top(inv: &Inventory) -> Vec<Row> {
 // ── Tests ────────────────────────────────────────────────────────────
 
 /// Encode a small image through the zencodec encode path.
-fn encode(w: u32, h: u32, desc: zenpixels::PixelDescriptor, bpp: usize) -> Vec<u8> {
+fn encode(w: u32, h: u32, desc: zenpixels::PixelFormat, bpp: usize) -> Vec<u8> {
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
     let bytes: Vec<u8> = (0..w as usize * h as usize * bpp)
         .map(|i| (i * 7 % 251) as u8 | 1)
         .collect();
-    let slice = zenpixels::PixelSlice::new(&bytes, w, h, w as usize * bpp, desc).unwrap();
+    let slice = zenpixels::PixelView::new(&bytes, w, h, w as usize * bpp, &desc).unwrap();
     PngEncoderConfig::new()
         .job()
         .encoder()
@@ -335,7 +335,7 @@ fn encode(w: u32, h: u32, desc: zenpixels::PixelDescriptor, bpp: usize) -> Vec<u
 /// same kind of encoder output directly.
 #[test]
 fn conformance_with_encoder_output() {
-    use zenpixels::PixelDescriptor as P;
+    use zenpixels::PixelFormat as P;
     for (w, h, desc, bpp) in [
         (40, 24, P::RGBA8_SRGB, 4),
         (40, 24, P::RGB8_SRGB, 3),
@@ -893,11 +893,11 @@ fn metadata_dispositions_match_decoded_image_info() {
     assert!(info.sequence.is_animation());
 }
 
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn run_with(bytes: &[u8], policy: zencodec::decode::DecodePolicy) -> Inventory {
     let inv = PngDecoderConfig::new()
         .job()
-        .with_policy(policy)
+        .try_with_policy(policy)
+        .unwrap()
         .inventory(bytes)
         .unwrap();
     inv.validate().unwrap();
@@ -908,7 +908,6 @@ fn run_with(bytes: &[u8], policy: zencodec::decode::DecodePolicy) -> Inventory {
 /// inventory says Dropped and the decode agrees (no EXIF in `ImageInfo`), while the
 /// default policy still reads the chunk.
 #[test]
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn strict_policy_drops_bad_crc_ancillary_chunks() {
     use zencodec::decode::{Decode, DecodePolicy};
     let exif = chunk(b"eXIf", b"II*\0\x08\0\0\0\0\0");
@@ -944,7 +943,7 @@ fn strict_policy_drops_bad_crc_ancillary_chunks() {
     ] {
         let mut job = PngDecoderConfig::new().job();
         if let Some(p) = policy {
-            job = job.with_policy(p);
+            job = job.try_with_policy(p).unwrap();
         }
         let out = job
             .decoder(png.as_slice().into(), &[])

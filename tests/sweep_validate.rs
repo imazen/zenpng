@@ -161,7 +161,12 @@ fn sweep_cells_decode_exactly_and_steps_are_live() {
             // construction, so the exact gate does not apply to them —
             // they only need to decode (above) and be live (below).
             if !is_lossy {
-                let decoded = out.pixels.copy_to_contiguous_bytes();
+                let decoded = out
+                    .pixels
+                    .as_view()
+                    .to_contiguous_bytes()
+                    .unwrap()
+                    .into_owned();
                 if decoded != img.rgb {
                     failures.push(format!(
                         "LOSSLESS ROUNDTRIP MISMATCH: {} on {}",

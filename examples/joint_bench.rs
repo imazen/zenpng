@@ -10,7 +10,6 @@ use std::time::Instant;
 use imgref::ImgVec;
 use rgb::Rgba;
 
-use zenpixels_convert::PixelBufferConvertTypedExt;
 use zenpng::{EncodeConfig, PngDecodeConfig, ZenquantQuantizer, decode, encode_indexed};
 
 use zenquant::{OutputFormat, Quality, QuantizeConfig};
@@ -20,9 +19,12 @@ fn load_png_as_rgba(path: &Path) -> Option<ImgVec<Rgba<u8>>> {
     let decoded = decode(&data, &PngDecodeConfig::none(), &enough::Unstoppable).ok()?;
     let w = decoded.info.width as usize;
     let h = decoded.info.height as usize;
-    let rgba_img = decoded.pixels.to_rgba8();
+    let rgba_img = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+        &decoded.pixels,
+        zenpixels::PixelFormat::RGBA8_SRGB,
+    );
     let pixels: Vec<Rgba<u8>> = rgba_img
-        .as_imgref()
+        .as_ref()
         .buf()
         .iter()
         .map(|c| Rgba {
@@ -550,3 +552,6 @@ fn fmt_mpe(mpe: Option<f32>) -> String {
 fn fmt_ss2(ss2: Option<f32>) -> String {
     ss2.map_or("  n/a".into(), |v| format!("{:.1}", v))
 }
+
+#[path = "support/pixels.rs"]
+mod pixel_conversion;

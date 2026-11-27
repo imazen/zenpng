@@ -24,7 +24,7 @@
 use enough::Unstoppable;
 use imgref::ImgVec;
 use rgb::{Rgb, Rgba};
-use zenpixels_convert::PixelBufferConvertTypedExt as _;
+
 use zenpng::{EncodeConfig, PngDecodeConfig, decode, encode_gray8, encode_rgb8, encode_rgba8};
 
 fn main() {
@@ -76,10 +76,16 @@ fn compare(a_path: &str, b_path: &str) -> Result<(), String> {
     } else {
         // Compare in canonical RGBA8 — exact for 8-bit content, and both sides
         // go through the identical conversion so any real pixel difference shows.
-        let ai = a.pixels.to_rgba8();
-        let bi = b.pixels.to_rgba8();
-        let ap: Vec<Rgba<u8>> = ai.as_imgref().pixels().collect();
-        let bp: Vec<Rgba<u8>> = bi.as_imgref().pixels().collect();
+        let ai = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+            &a.pixels,
+            zenpixels::PixelFormat::RGBA8_SRGB,
+        );
+        let bi = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+            &b.pixels,
+            zenpixels::PixelFormat::RGBA8_SRGB,
+        );
+        let ap: Vec<Rgba<u8>> = ai.as_ref().pixels().collect();
+        let bp: Vec<Rgba<u8>> = bi.as_ref().pixels().collect();
         if ap == bp {
             "EXACT".to_string()
         } else {
@@ -120,8 +126,11 @@ fn run(input: &str, output: &str, side: Option<u32>) -> Result<(), String> {
     };
 
     let png = if out.info.has_alpha {
-        let img = out.pixels.to_rgba8();
-        let src = img.as_imgref();
+        let img = pixel_conversion::to_pixels::<rgb::Rgba<u8>>(
+            &out.pixels,
+            zenpixels::PixelFormat::RGBA8_SRGB,
+        );
+        let src = img.as_ref();
         let (x, y, w, h) = crop_box(src.width(), src.height());
         let buf: Vec<Rgba<u8>> = src.sub_image(x, y, w, h).pixels().collect();
         encode_rgba8(
@@ -132,8 +141,11 @@ fn run(input: &str, output: &str, side: Option<u32>) -> Result<(), String> {
             &Unstoppable,
         )
     } else if out.info.color_type == 0 {
-        let img = out.pixels.to_gray8();
-        let src = img.as_imgref();
+        let img = pixel_conversion::to_pixels::<rgb::Gray<u8>>(
+            &out.pixels,
+            zenpixels::PixelFormat::GRAY8_SRGB,
+        );
+        let src = img.as_ref();
         let (x, y, w, h) = crop_box(src.width(), src.height());
         let buf: Vec<_> = src.sub_image(x, y, w, h).pixels().collect();
         encode_gray8(
@@ -144,8 +156,11 @@ fn run(input: &str, output: &str, side: Option<u32>) -> Result<(), String> {
             &Unstoppable,
         )
     } else {
-        let img = out.pixels.to_rgb8();
-        let src = img.as_imgref();
+        let img = pixel_conversion::to_pixels::<rgb::Rgb<u8>>(
+            &out.pixels,
+            zenpixels::PixelFormat::RGB8_SRGB,
+        );
+        let src = img.as_ref();
         let (x, y, w, h) = crop_box(src.width(), src.height());
         let buf: Vec<Rgb<u8>> = src.sub_image(x, y, w, h).pixels().collect();
         encode_rgb8(
@@ -161,3 +176,6 @@ fn run(input: &str, output: &str, side: Option<u32>) -> Result<(), String> {
     std::fs::write(output, png).map_err(|e| format!("write {output}: {e}"))?;
     Ok(())
 }
+
+#[path = "../../examples/support/pixels.rs"]
+mod pixel_conversion;

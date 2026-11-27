@@ -1,10 +1,11 @@
 # Checked color handoff
 
 The `EncodeJob::try_set_policy` implementation accepts the all-default no-op
-and `EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim)`.
-Other explicit fields currently return `UnsupportedOperation::EncodePolicy`
-without mutating the job. This is deliberately narrower than the legacy
-best-effort setter; acceptance qualifies an effect, not just a stored value.
+and any combination of `color`, `embed_icc`, `embed_exif`, and `embed_xmp`
+(including `EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim)`).
+Other explicit fields (`strict` or future fields) return
+`UnsupportedOperation::EncodePolicy` without mutating the job. Acceptance
+qualifies an effect, not just a stored value.
 
 This lets an adapter pass its already-prepared ICC signaling through PNG
 without deriving a cICP carrier from that profile. Deriving cICP can change

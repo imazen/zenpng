@@ -9,26 +9,21 @@ use std::io::Cursor;
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zencodec::encode::{EncodeJob, EncodePolicy, Encoder, EncoderConfig};
 use zencodec::{At, CodecError, ErrorCategory, Metadata, MetadataPolicy, Orientation, PolicyKind};
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::PixelView;
 use zenpng::{PngDecoderConfig, PngEncoderConfig};
 
 const W: u32 = 9;
 const H: u32 = 5;
 
-#[allow(deprecated)] // Exercises the published best-effort job setters.
 fn encode(meta: Metadata, policy: Option<EncodePolicy>) -> Result<Vec<u8>, At<CodecError>> {
     let data: Vec<u8> = (0..W * H * 3).map(|i| (i * 17 % 251) as u8).collect();
-    let pixels = PixelSlice::new(&data, W, H, W as usize * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let pixels =
+        PixelView::new(&data, W, H, W as usize * 3, &zenpixels::formats::RGB8_SRGB).unwrap();
     let mut job = PngEncoderConfig::new()
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact);
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact));
     if let Some(policy) = policy {
-        // zenpng's checked setter qualifies colour only; EXIF embedding is
-        // still configured through the legacy setter.
-        #[allow(deprecated)]
-        {
-            job = job.with_policy(policy);
-        }
+        job = job.try_with_policy(policy).unwrap();
     }
     Ok(job.encoder()?.encode(pixels)?.into_vec())
 }

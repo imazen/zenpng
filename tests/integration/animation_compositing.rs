@@ -3,7 +3,7 @@
 use enough::Unstoppable;
 use std::borrow::Cow;
 use zencodec::decode::{AnimationFrameDecoder, DecodeJob, DecoderConfig};
-use zenpixels::PixelDescriptor;
+use zenpixels::PixelFormat;
 use zenpng::{DowncastFlags, EncodeConfig, PngDecoderConfig};
 
 fn chunk(output: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
@@ -145,13 +145,13 @@ fn subframes_blend_dispose_and_skip_at_both_precisions() {
                     {
                         let frame = decoder.render_next_frame(None).unwrap().unwrap();
                         let pixels = frame.pixels();
-                        assert_eq!((pixels.width(), pixels.rows()), (3, 2));
+                        assert_eq!((pixels.width(), pixels.height()), (3, 2));
                         assert_eq!(
-                            pixels.descriptor(),
+                            *pixels.format(),
                             if depth == 16 {
-                                PixelDescriptor::RGBA16_SRGB
+                                PixelFormat::RGBA16_SRGB
                             } else {
-                                PixelDescriptor::RGBA8_SRGB
+                                PixelFormat::RGBA8_SRGB
                             }
                         );
                         let actual: Vec<u16> = (0..2)
@@ -174,7 +174,7 @@ fn subframes_blend_dispose_and_skip_at_both_precisions() {
                             "depth={depth} disposal={disposal} excluded={excluded_default} start={start} index={index}"
                         );
                         for y in 0..2 {
-                            assert_eq!(pixels.row(y), whole.frames[index].pixels.as_slice().row(y));
+                            assert_eq!(pixels.row(y), whole.frames[index].pixels.as_view().row(y));
                         }
                     }
                     assert!(decoder.render_next_frame(None).unwrap().is_none());
@@ -182,4 +182,60 @@ fn subframes_blend_dispose_and_skip_at_both_precisions() {
             }
         }
     }
+}
+
+#[test]
+fn sink_completion_carries_exact_displayed_frame_timing() {
+    use zencodec::animation::FrameDuration;
+
+    let (bytes, expected) = fixture(8, 2, true);
+    let config = PngDecoderConfig::new();
+    let mut sink_decoder = config
+        .clone()
+        .job()
+        .with_start_frame_index(1)
+        .animation_frame_decoder(Cow::Borrowed(&bytes), &[])
+        .unwrap();
+    let mut owned_decoder = config
+        .job()
+        .with_start_frame_index(1)
+        .animation_frame_decoder(Cow::Borrowed(&bytes), &[])
+        .unwrap();
+    let duration = FrameDuration::new(1001, 30000).unwrap();
+    for (index, expected) in expected.iter().enumerate().skip(1) {
+        let mut sink = zencodec_io::CollectSink::new();
+        let completion = sink_decoder
+            .render_next_frame_to_sink(None, &mut sink)
+            .unwrap()
+            .unwrap();
+        let timing = completion.frame.unwrap();
+        assert_eq!(timing.frame_index, index as u32);
+        assert_eq!(timing.duration, duration);
+        assert_eq!(timing.pts, None);
+        assert_eq!((completion.width, completion.height), (3, 2));
+        assert_eq!(completion.native_format, PixelFormat::RGBA8_SRGB);
+        assert_eq!(
+            sink.bytes(),
+            expected.iter().map(|&v| v as u8).collect::<Vec<_>>()
+        );
+
+        let owned = owned_decoder
+            .render_next_frame(None)
+            .unwrap()
+            .unwrap()
+            .try_to_owned_frame()
+            .unwrap();
+        assert_eq!(owned.duration(), duration);
+        assert_eq!(owned.frame_index(), index as u32);
+        assert_eq!(
+            owned.pixels().to_contiguous_bytes().unwrap().as_ref(),
+            sink.bytes()
+        );
+    }
+    assert!(
+        sink_decoder
+            .render_next_frame_to_sink(None, &mut zencodec_io::CollectSink::new())
+            .unwrap()
+            .is_none()
+    );
 }

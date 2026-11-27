@@ -6,7 +6,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use enough::Stop;
-use zenpixels::{ChannelLayout, ChannelType, PixelBuffer};
+use zenpixels::{ChannelOrder, PixelBuf, SampleType};
 
 use crate::chunk::PNG_SIGNATURE;
 use crate::chunk::ancillary::{FrameControl, PngAncillary};
@@ -23,7 +23,7 @@ use super::row::{ChunkSource, unfilter_row};
 
 /// A single decoded APNG subframe (raw pixels, not composited to canvas).
 pub(crate) struct RawFrame {
-    pub pixels: PixelBuffer,
+    pub pixels: PixelBuf,
     pub fctl: FrameControl,
 }
 
@@ -262,7 +262,7 @@ impl<'a> ApngDecoder<'a> {
         &self,
         fctl: &FrameControl,
         cancel: &dyn Stop,
-    ) -> crate::error::Result<PixelBuffer> {
+    ) -> crate::error::Result<PixelBuf> {
         // For frame 0, the IDAT data covers the full canvas (IHDR dimensions).
         // The fcTL for frame 0 must have the same dimensions as IHDR.
         let frame_ihdr = Ihdr {
@@ -379,7 +379,7 @@ impl<'a> ApngDecoder<'a> {
         &mut self,
         fctl: &FrameControl,
         cancel: &dyn Stop,
-    ) -> crate::error::Result<PixelBuffer> {
+    ) -> crate::error::Result<PixelBuf> {
         let frame_ihdr = Ihdr {
             width: fctl.width,
             height: fctl.height,
@@ -471,7 +471,7 @@ impl<'a> ApngDecoder<'a> {
 
 /// The single compositor used by both whole-animation and incremental decode.
 pub(crate) struct ApngCompositor {
-    canvas: PixelBuffer,
+    canvas: PixelBuf,
     saved_region: Option<SavedRegion>,
     previous: Option<FrameControl>,
     is_16bit: bool,
@@ -483,11 +483,11 @@ impl ApngCompositor {
         let is_16bit = ihdr.bit_depth == 16;
         config.validate(ihdr.width, ihdr.height, if is_16bit { 8 } else { 4 })?;
         let descriptor = if is_16bit {
-            zenpixels::PixelDescriptor::RGBA16_SRGB
+            zenpixels::PixelFormat::RGBA16_SRGB
         } else {
-            zenpixels::PixelDescriptor::RGBA8_SRGB
+            zenpixels::PixelFormat::RGBA8_SRGB
         };
-        let canvas = PixelBuffer::try_new(ihdr.width, ihdr.height, descriptor)
+        let canvas = PixelBuf::new(ihdr.width, ihdr.height, descriptor)
             .map_err(|e| at!(PngError::OutOfMemory(e.to_string())))?;
         Ok(Self {
             canvas,
@@ -505,7 +505,7 @@ impl ApngCompositor {
     ) -> crate::error::Result<()> {
         cancel.check().map_err(|e| at!(PngError::from(e)))?;
         let width = self.canvas.width() as usize;
-        let mut canvas = self.canvas.as_slice_mut();
+        let mut canvas = self.canvas.as_view_mut();
         let bytes = canvas.as_strided_bytes_mut();
         if let Some(previous) = self.previous {
             apply_dispose_op(&previous, bytes, &self.saved_region, width, self.is_16bit);
@@ -534,21 +534,21 @@ impl ApngCompositor {
         Ok(())
     }
 
-    pub(crate) fn canvas(&self) -> &PixelBuffer {
+    pub(crate) fn canvas(&self) -> &PixelBuf {
         &self.canvas
     }
 
-    pub(crate) fn copy_canvas(&self) -> crate::error::Result<PixelBuffer> {
-        let mut output = PixelBuffer::try_new(
+    pub(crate) fn copy_canvas(&self) -> crate::error::Result<PixelBuf> {
+        let mut output = PixelBuf::new(
             self.canvas.width(),
             self.canvas.height(),
-            self.canvas.descriptor(),
+            self.canvas.format().clone(),
         )
         .map_err(|e| at!(PngError::OutOfMemory(e.to_string())))?;
         output
-            .as_slice_mut()
+            .as_view_mut()
             .as_strided_bytes_mut()
-            .copy_from_slice(self.canvas.as_slice().as_strided_bytes());
+            .copy_from_slice(self.canvas.as_view().as_strided_bytes());
         Ok(output)
     }
 }
@@ -564,7 +564,7 @@ pub(crate) struct ComposedApng {
 
 /// Decode an APNG with full compositing, producing canvas-sized RGBA frames.
 ///
-/// Builds `PixelBuffer` directly from the canvas to avoid double-copying.
+/// Builds `PixelBuf` directly from the canvas to avoid double-copying.
 pub(crate) fn decode_apng_composed(
     data: &[u8],
     config: &PngDecodeConfig,
@@ -582,7 +582,7 @@ pub(crate) fn decode_apng_composed(
     // with up to 65535 frames at canvas-sized RGBA can request many TiB of
     // heap via `frames.push` (each frame is a full canvas-sized pixel copy).
     // Apply the same `max_memory_bytes` budget to the cumulative `frames` Vec.
-    let per_frame_bytes = compositor.canvas().as_slice().as_strided_bytes().len() as u64;
+    let per_frame_bytes = compositor.canvas().as_view().as_strided_bytes().len() as u64;
     let mut total_frame_bytes: u64 = 0;
 
     while let Some(frame) = decoder.next_frame(cancel)? {
@@ -602,7 +602,7 @@ pub(crate) fn decode_apng_composed(
             }
         }
 
-        // Build PixelBuffer directly from canvas (single copy, no intermediate Vec)
+        // Build PixelBuf directly from canvas (single copy, no intermediate Vec)
         let pixels = compositor.copy_canvas()?;
         frames.push(crate::decode::ApngFrame {
             pixels,
@@ -717,7 +717,7 @@ fn apply_dispose_op(
 /// Composite one subframe, converting only one row of scratch at a time.
 fn composite_frame(
     fctl: &FrameControl,
-    pixels: &PixelBuffer,
+    pixels: &PixelBuf,
     canvas: &mut [u8],
     canvas_w: usize,
     is_16bit: bool,
@@ -727,10 +727,10 @@ fn composite_frame(
     let x = fctl.x_offset as usize;
     let y = fctl.y_offset as usize;
     let width = fctl.width as usize;
-    let descriptor = pixels.descriptor();
-    let source_16 = match descriptor.channel_type() {
-        ChannelType::U8 => false,
-        ChannelType::U16 => true,
+    let descriptor = pixels.format();
+    let source_16 = match descriptor.layout.sample {
+        SampleType::U8 => false,
+        SampleType::U16 => true,
         _ => {
             return Err(at!(PngError::Internal(
                 zencodec::InternalKind::Bug,
@@ -738,11 +738,11 @@ fn composite_frame(
             )));
         }
     };
-    let channels = match descriptor.layout() {
-        ChannelLayout::Gray => 1,
-        ChannelLayout::GrayAlpha => 2,
-        ChannelLayout::Rgb => 3,
-        ChannelLayout::Rgba => 4,
+    let channels = match descriptor.layout.order {
+        ChannelOrder::Gray => 1,
+        ChannelOrder::GrayAlpha => 2,
+        ChannelOrder::Rgb => 3,
+        ChannelOrder::Rgba => 4,
         _ => {
             return Err(at!(PngError::Internal(
                 zencodec::InternalKind::Bug,
@@ -760,7 +760,7 @@ fn composite_frame(
             width * bpp,
         )?
     };
-    let view = pixels.as_slice();
+    let view = pixels.as_view();
     for row in 0..fctl.height {
         cancel.check().map_err(|e| at!(PngError::from(e)))?;
         let source = view.row(row);
@@ -1319,20 +1319,20 @@ mod tests {
         Ok(frames)
     }
 
-    /// Extract RGBA8 bytes from PixelBuffer for comparison.
-    fn pixel_data_to_rgba8_bytes(pixels: &PixelBuffer) -> Vec<u8> {
+    /// Extract RGBA8 bytes from PixelBuf for comparison.
+    fn pixel_data_to_rgba8_bytes(pixels: &PixelBuf) -> Vec<u8> {
         use rgb::ComponentBytes;
-        if let Some(img) = pixels.try_as_imgref::<rgb::Rgba<u8>>() {
+        if let Ok(img) = pixels.as_view().as_imgref::<rgb::Rgba<u8>>() {
             return img.buf().as_bytes().to_vec();
         }
-        if let Some(img) = pixels.try_as_imgref::<rgb::Rgb<u8>>() {
+        if let Ok(img) = pixels.as_view().as_imgref::<rgb::Rgb<u8>>() {
             let mut out = Vec::with_capacity(img.buf().len() * 4);
             for p in *img.buf() {
                 out.extend_from_slice(&[p.r, p.g, p.b, 255]);
             }
             return out;
         }
-        if let Some(img) = pixels.try_as_imgref::<rgb::Rgba<u16>>() {
+        if let Ok(img) = pixels.as_view().as_imgref::<rgb::Rgba<u16>>() {
             let mut out = Vec::with_capacity(img.buf().len() * 4);
             for p in *img.buf() {
                 out.extend_from_slice(&[

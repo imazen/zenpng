@@ -4,16 +4,16 @@ use zencodec::{
     decode::{AnimationFrameDecoder, DecodeJob, DecoderConfig},
     encode::{AnimationFrameEncoder, EncodeJob, EncoderConfig},
 };
-use zenpixels::{Cicp, ColorPrimaries, PixelBuffer, PixelDescriptor, TransferFunction};
+use zenpixels::{Cicp, ColorSpace, PixelBuf, PixelFormat, Primaries, Transfer};
 
 #[test]
 fn exact_native_color_preference_never_converts_the_animation() {
     for (primaries, transfer) in [
-        (ColorPrimaries::Bt709, TransferFunction::Linear),
-        (ColorPrimaries::Bt2020, TransferFunction::Pq),
-        (ColorPrimaries::Bt2020, TransferFunction::Hlg),
+        (Primaries::Bt709, Transfer::Linear),
+        (Primaries::Bt2020, Transfer::Pq),
+        (Primaries::Bt2020, Transfer::Hlg(zenpixels::HlgMode::Scene)),
     ] {
-        let descriptor = PixelDescriptor::RGBA16_SRGB
+        let descriptor = PixelFormat::RGBA16_SRGB
             .with_primaries(primaries)
             .with_transfer(transfer);
         let color = Cicp::new(
@@ -22,16 +22,15 @@ fn exact_native_color_preference_never_converts_the_animation() {
             0,
             true,
         );
-        let input = PixelBuffer::from_vec(
+        let input = PixelBuf::from_bytes(
             (0..17 * 13 * 4)
                 .flat_map(|i| ((i * 173 + 32769) as u16).to_ne_bytes())
                 .collect(),
             17,
             13,
-            descriptor,
+            descriptor.clone(),
         )
-        .unwrap()
-        .with_cicp(color);
+        .unwrap();
         let mut encoder = zenpng::PngEncoderConfig::new()
             .job()
             .animation_frame_encoder()
@@ -39,14 +38,14 @@ fn exact_native_color_preference_never_converts_the_animation() {
         for _ in 0..3 {
             encoder
                 .push_frame_timed(
-                    input.as_slice(),
+                    input.as_view(),
                     FrameDuration::new(1001, 30000).unwrap(),
                     None,
                 )
                 .unwrap();
         }
         let bytes = encoder.finish(None).unwrap();
-        for preference in [vec![], vec![descriptor]] {
+        for preference in [vec![], vec![descriptor.clone()]] {
             let mut decoder = zenpng::PngDecoderConfig::new()
                 .job()
                 .animation_frame_decoder(Cow::Borrowed(bytes.data()), &preference)
@@ -54,14 +53,10 @@ fn exact_native_color_preference_never_converts_the_animation() {
             for _ in 0..3 {
                 let frame = decoder.render_next_frame(None).unwrap().unwrap();
                 let pixels = frame.pixels();
-                assert_eq!(
-                    pixels.descriptor(),
-                    descriptor,
-                    "{transfer:?} {preference:?}"
-                );
-                assert_eq!(pixels.color_context().unwrap().cicp, Some(color));
+                assert_eq!(pixels.format(), &descriptor, "{transfer:?} {preference:?}");
+                assert_eq!(pixels.format().color.to_cicp_lossy(), Some(color));
                 for y in 0..13 {
-                    assert_eq!(pixels.row(y), input.as_slice().row(y));
+                    assert_eq!(pixels.row(y), input.as_view().row(y));
                 }
             }
         }
@@ -71,7 +66,7 @@ fn exact_native_color_preference_never_converts_the_animation() {
 #[test]
 fn unrecognized_cicp_does_not_claim_srgb() {
     let input =
-        PixelBuffer::from_vec(vec![127, 37, 83, 255], 1, 1, PixelDescriptor::RGBA8_SRGB).unwrap();
+        PixelBuf::from_bytes(vec![127, 37, 83, 255], 1, 1, PixelFormat::RGBA8_SRGB).unwrap();
     let mut encoder = zenpng::PngEncoderConfig::new()
         .with_cicp(Some(Cicp::SRGB))
         .job()
@@ -79,7 +74,7 @@ fn unrecognized_cicp_does_not_claim_srgb() {
         .unwrap();
     for _ in 0..2 {
         encoder
-            .push_frame_timed(input.as_slice(), FrameDuration::new(1, 100).unwrap(), None)
+            .push_frame_timed(input.as_view(), FrameDuration::new(1, 100).unwrap(), None)
             .unwrap();
     }
     let mut bytes = encoder.finish(None).unwrap().into_vec();
@@ -100,17 +95,17 @@ fn unrecognized_cicp_does_not_claim_srgb() {
         .animation_frame_decoder(Cow::Owned(bytes), &[])
         .unwrap();
     let frame = decoder.render_next_frame(None).unwrap().unwrap();
+    assert!(matches!(
+        frame.pixels().format().color,
+        ColorSpace::Rgb {
+            transfer: Transfer::Unknown,
+            primaries: Primaries::Unknown,
+            ..
+        },
+    ));
+    assert_eq!(frame.pixels().row(0), &[127, 37, 83, 255]);
     assert_eq!(
-        frame.pixels().descriptor().transfer(),
-        TransferFunction::Unknown
-    );
-    assert_eq!(
-        frame.pixels().descriptor().primaries,
-        ColorPrimaries::Unknown
-    );
-    assert_eq!(
-        frame.pixels().color_context().unwrap().cicp,
+        decoder.info().source_color.cicp,
         Some(Cicp::new(222, 223, 0, true))
     );
-    assert_eq!(frame.pixels().row(0), &[127, 37, 83, 255]);
 }

@@ -1,7 +1,7 @@
 //! Exact transparent samples and explicit ICC authority for codec consumers.
 use std::io::Cursor;
 use zencodec::encode::{AnimationFrameEncoder, EncodeJob, Encoder, EncoderConfig};
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{PixelFormat, PixelView};
 use zenpng::{Compression, DowncastFlags, PngEncoderConfig};
 
 fn config(effort: u32) -> PngEncoderConfig {
@@ -40,7 +40,8 @@ fn hidden_rgb_survives_buffered_strip_and_segmented_output() {
         }
     }
     for effort in [1, 7] {
-        let pixels = PixelSlice::new(&padded, w, h, stride, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let pixels =
+            PixelView::new(&padded, w, h, stride, &zenpixels::formats::RGBA8_SRGB).unwrap();
         let out = config(effort)
             .job()
             .encoder()
@@ -55,7 +56,7 @@ fn hidden_rgb_survives_buffered_strip_and_segmented_output() {
             .unwrap();
         for row in padded.chunks_exact(stride) {
             rows.push_rows(
-                PixelSlice::new(row, w, 1, stride, PixelDescriptor::RGBA8_SRGB).unwrap(),
+                PixelView::new(row, w, 1, stride, &zenpixels::formats::RGBA8_SRGB).unwrap(),
             )
             .unwrap();
         }
@@ -103,7 +104,8 @@ fn hidden_rgb_animation_uses_exact_source_deltas() {
     for frame in &frames {
         encoder
             .push_frame(
-                PixelSlice::new(frame, w, h, w as usize * 4, PixelDescriptor::RGBA8_SRGB).unwrap(),
+                PixelView::new(frame, w, h, w as usize * 4, &zenpixels::formats::RGBA8_SRGB)
+                    .unwrap(),
                 17,
                 None,
             )
@@ -132,39 +134,96 @@ fn hidden_rgb_animation_uses_exact_source_deltas() {
 }
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn explicit_icc_is_not_overridden_by_descriptor_derived_cicp() {
     let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     let meta = zencodec::Metadata::none().with_icc(icc);
-    let mut desc = PixelDescriptor::RGB8_SRGB;
-    desc.primaries = zenpixels::ColorPrimaries::Bt2020;
+    let desc = PixelFormat::new(
+        zenpixels::SampleLayout::RGB8,
+        zenpixels::ColorSpace::DISPLAY_P3,
+    );
     let px = [7u8, 19, 43];
     let out = config(1)
         .job()
-        .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
-        .with_policy(
-            zencodec::encode::EncodePolicy::none().with_color(zencodec::ColorEmitPolicy::Verbatim),
-        )
+        .try_with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+        .unwrap()
         .encoder()
         .unwrap()
-        .encode(PixelSlice::new(&px, 1, 1, 3, desc).unwrap())
+        .encode(PixelView::new(&px, 1, 1, 3, &desc).unwrap())
         .unwrap();
     let info = zenpng::probe(out.data()).unwrap();
     assert_eq!(info.icc_profile.as_deref(), Some(icc));
     assert!(info.cicp.is_none());
-    let oracle = png::Decoder::new(Cursor::new(out.data()))
+    let mut oracle = png::Decoder::new(Cursor::new(out.data()))
         .read_info()
         .unwrap();
     assert_eq!(oracle.info().icc_profile.as_deref(), Some(icc));
     assert!(oracle.info().coding_independent_code_points.is_none());
+    let mut decoded = [0; 3];
+    let frame = oracle.next_frame(&mut decoded).unwrap();
+    assert_eq!(frame.color_type, png::ColorType::Rgb);
+    assert_eq!(frame.bit_depth, png::BitDepth::Eight);
+    assert_eq!(decoded, px);
+}
+
+#[test]
+fn required_p3_icc_refuses_bt2020_samples_before_writing_header() {
+    let meta = zencodec::Metadata::none().with_icc(zenpixels_convert::icc_profiles::DISPLAY_P3_V4);
+    let make = || {
+        config(0)
+            .job()
+            .with_canvas_size(1, 1)
+            .try_with_metadata_policy(meta.clone(), zencodec::MetadataPolicy::PreserveExact)
+            .unwrap()
+            .encoder()
+            .unwrap()
+    };
+    let bt2020 = PixelFormat::RGB8_SRGB.with_primaries(zenpixels::Primaries::Bt2020);
+    let px = [7u8, 19, 43];
+    let pixels = PixelView::new(&px, 1, 1, 3, &bt2020).unwrap();
+    let check_conflict = |err: whereat::At<zencodec::CodecError>| {
+        assert!(
+            matches!(err.error().detail().and_then(|detail| detail.downcast_ref::<zenpng::PngError>()),
+            Some(zenpng::PngError::InvalidInput(reason)) if reason.contains("contradicts"))
+        );
+    };
+    check_conflict(make().encode(pixels.clone()).unwrap_err());
+    let legacy = config(0)
+        .job()
+        .with_unfiltered_metadata(
+            meta.clone()
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
+        )
+        .try_with_policy(
+            zencodec::encode::EncodePolicy::none().with_color(zencodec::ColorEmitPolicy::Verbatim),
+        )
+        .unwrap()
+        .encoder()
+        .unwrap();
+    check_conflict(legacy.encode(pixels).unwrap_err());
+    let mut rows = make();
+    check_conflict(rows.begin(1, 1, bt2020).unwrap_err());
+    assert!(rows.pending_output().is_empty());
+    let p3 = PixelFormat::new(
+        zenpixels::SampleLayout::RGB8,
+        zenpixels::ColorSpace::DISPLAY_P3,
+    );
+    let mut correct = make();
+    correct.begin(1, 1, p3).unwrap();
+    assert!(correct.pending_output().starts_with(b"\x89PNG"));
 }
 
 #[test]
 fn gray_alpha_native_depth_and_strided_rows() {
-    for descriptor in [PixelDescriptor::GRAYA8_SRGB, PixelDescriptor::GRAYA16_SRGB] {
-        assert!(PngEncoderConfig::supported_descriptors().contains(&descriptor));
+    for descriptor in [
+        PixelFormat::GRAYA8_SRGB,
+        PixelFormat::new(
+            zenpixels::SampleLayout::GRAYA16,
+            zenpixels::PixelFormat::GRAYA8_SRGB.color,
+        ),
+    ] {
+        assert!(PngEncoderConfig::supported_pixel_formats().contains(&descriptor));
         let (w, h) = (1024u32, 600u32);
-        let bytes = descriptor.bytes_per_pixel();
+        let bytes = descriptor.layout.bytes_per_pixel();
         let row_bytes = w as usize * bytes;
         let stride = row_bytes + 12;
         let mut padded = vec![0xee; stride * h as usize];
@@ -186,7 +245,7 @@ fn gray_alpha_native_depth_and_strided_rows() {
             }
         }
         for effort in [0, 1, 7] {
-            let pixels = PixelSlice::new(&padded, w, h, stride, descriptor).unwrap();
+            let pixels = PixelView::new(&padded, w, h, stride, &descriptor).unwrap();
             let whole = config(effort)
                 .job()
                 .encoder()
@@ -199,7 +258,7 @@ fn gray_alpha_native_depth_and_strided_rows() {
                 .encoder()
                 .unwrap();
             for row in padded.chunks_exact(stride) {
-                rows.push_rows(PixelSlice::new(row, w, 1, stride, descriptor).unwrap())
+                rows.push_rows(PixelView::new(row, w, 1, stride, &descriptor).unwrap())
                     .unwrap();
             }
             for output in [whole, rows.finish().unwrap()] {

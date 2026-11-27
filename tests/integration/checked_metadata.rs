@@ -4,7 +4,7 @@ use zencodec::{
     encode::{EncodeJob, Encoder, EncoderConfig},
 };
 use zenpixels::{
-    PixelDescriptor, PixelSlice,
+    PixelFormat, PixelView,
     hdr::{ContentLightLevel, MasteringDisplay},
 };
 use zenpng::{Compression, DowncastFlags, PngEncoderConfig};
@@ -18,19 +18,19 @@ fn config() -> PngEncoderConfig {
 fn encode(job: zenpng::PngEncodeJob) -> Vec<u8> {
     let data = [7, 19, 43, 255];
     let enc = job.encoder().unwrap();
-    enc.encode(PixelSlice::new(&data, 1, 1, 4, PixelDescriptor::RGBA8_SRGB).unwrap())
+    enc.encode(PixelView::new(&data, 1, 1, 4, &zenpixels::formats::RGBA8_SRGB).unwrap())
         .unwrap()
         .into_vec()
 }
 
 fn encode_hdr(job: zenpng::PngEncodeJob) -> Vec<u8> {
     let data = [7, 19, 43, 255];
-    let descriptor = PixelDescriptor::RGBA8_SRGB
-        .with_primaries(zenpixels::ColorPrimaries::Bt2020)
-        .with_transfer(zenpixels::TransferFunction::Pq);
+    let descriptor = PixelFormat::RGBA8_SRGB
+        .with_primaries(zenpixels::Primaries::Bt2020)
+        .with_transfer(zenpixels::Transfer::Pq);
     job.encoder()
         .unwrap()
-        .encode(PixelSlice::new(&data, 1, 1, 4, descriptor).unwrap())
+        .encode(PixelView::new(&data, 1, 1, 4, &descriptor).unwrap())
         .unwrap()
         .into_vec()
 }
@@ -42,16 +42,23 @@ struct PullSource {
 impl zencodec_io::row_encode::Source for PullSource {
     type Error = std::convert::Infallible;
     fn description(&self) -> zencodec_io::row_encode::Description {
-        zencodec_io::row_encode::Description::new(1, 1, PixelDescriptor::RGBA8_SRGB)
+        zencodec_io::row_encode::Description::new(
+            1,
+            1,
+            PixelFormat::new(
+                zenpixels::SampleLayout::RGBA8,
+                zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
+            ),
+        )
     }
     fn read_rows(
         &mut self,
         first: u32,
-        mut rows: zenpixels::PixelSliceMut<'_>,
+        mut rows: zenpixels::PixelViewMut<'_>,
         _pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<(), Self::Error> {
         assert_eq!(first, 0);
-        assert_eq!(rows.rows(), 1);
+        assert_eq!(rows.height(), 1);
         rows.row_mut(0).copy_from_slice(&self.data);
         self.reads.set(self.reads.get() + 1);
         Ok(())
@@ -194,7 +201,11 @@ fn checked_carriers_survive_still_rows_pull_apng_and_erasure() {
         .with_icc(zenpixels_convert::icc_profiles::DISPLAY_P3_V4)
         .with_content_light_level(ContentLightLevel::new(1000, 400));
     let data = [7, 19, 43, 255];
-    let pixels = || PixelSlice::new(&data, 1, 1, 4, PixelDescriptor::RGBA8_SRGB).unwrap();
+    let p3_rgba8 = PixelFormat::new(
+        zenpixels::SampleLayout::RGBA8,
+        zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
+    );
+    let pixels = || PixelView::new(&data, 1, 1, 4, &p3_rgba8).unwrap();
     let job = || {
         config()
             .job()
@@ -204,7 +215,15 @@ fn checked_carriers_survive_still_rows_pull_apng_and_erasure() {
     let direct = job().encoder().unwrap().encode(pixels()).unwrap();
     assert_readback(direct.data(), &expected, &data);
     let mut rows = job().with_canvas_size(1, 1).encoder().unwrap();
-    rows.begin(1, 1, PixelDescriptor::RGBA8_SRGB).unwrap();
+    rows.begin(
+        1,
+        1,
+        PixelFormat::new(
+            zenpixels::SampleLayout::RGBA8,
+            zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
+        ),
+    )
+    .unwrap();
     rows.push_rows(pixels()).unwrap();
     let result = rows.finish().unwrap();
     assert_readback(result.data(), &expected, &data);
@@ -283,7 +302,6 @@ fn representable_mastering_and_cicp_round_trip_and_quantized_values_refuse() {
 }
 
 #[test]
-#[allow(deprecated)] // These controls deliberately exercise legacy setters after admission.
 fn conflicting_legacy_setters_refuse_before_encoder_or_header() {
     use zencodec::encode::EncodePolicy;
     let expected = Metadata::none().with_xmp(b"<checked/>".as_slice());
@@ -293,10 +311,16 @@ fn conflicting_legacy_setters_refuse_before_encoder_or_header() {
             .try_with_metadata_policy(expected.clone(), MetadataPolicy::PreserveExact)
             .unwrap()
     };
-    assert!(make().with_metadata(Metadata::none()).encoder().is_err());
     assert!(
         make()
-            .with_policy(EncodePolicy::none().with_embed_xmp(false))
+            .with_unfiltered_metadata(Metadata::none())
+            .encoder()
+            .is_err()
+    );
+    assert!(
+        make()
+            .try_with_policy(EncodePolicy::none().with_embed_xmp(false))
+            .unwrap()
             .encoder()
             .is_err()
     );
@@ -310,7 +334,7 @@ fn unsupported_and_native_conflicts_refuse_atomically() {
     job.try_set_metadata_policy(good.clone(), MetadataPolicy::PreserveExact)
         .unwrap();
     for bad in [
-        Metadata::none().with_diffuse_white(DiffuseWhite::new(203.0)),
+        Metadata::none().with_diffuse_white(DiffuseWhite::new(203.0).unwrap()),
         Metadata::none().with_xmp(&b"\xff"[..]),
         Metadata::none().with_xmp(&b"x\0y"[..]),
         Metadata::none().with_xmp(&b""[..]),
@@ -346,7 +370,7 @@ fn ordinary_erased_job_owns_checked_metadata() {
     job.try_set_metadata_policy(metadata.clone(), MetadataPolicy::PreserveExact)
         .unwrap();
     let data = [7, 19, 43, 255];
-    let pixels = PixelSlice::new(&data, 1, 1, 4, PixelDescriptor::RGBA8_SRGB).unwrap();
+    let pixels = PixelView::new(&data, 1, 1, 4, &zenpixels::formats::RGBA8_SRGB).unwrap();
     let output = job.into_encoder().unwrap().encode(pixels).unwrap();
     assert_readback(output.data(), &metadata, &data);
 }
@@ -360,12 +384,12 @@ fn field_orientation_and_float_color_cannot_be_silently_rewritten() {
         .try_with_metadata_policy(oriented.clone(), MetadataPolicy::PreserveExact)
         .unwrap();
     assert_readback(&encode(job), &oriented, &[7, 19, 43, 255]);
-    #[allow(deprecated)]
     let conflict = config()
         .job()
         .try_with_metadata_policy(oriented, MetadataPolicy::PreserveExact)
         .unwrap()
-        .with_policy(EncodePolicy::none().with_embed_exif(false));
+        .try_with_policy(EncodePolicy::none().with_embed_exif(false))
+        .unwrap();
     assert!(conflict.encoder().is_err());
     let linear = zenpixels::Cicp::new(1, 8, 0, true);
     let job = config()
@@ -377,10 +401,10 @@ fn field_orientation_and_float_color_cannot_be_silently_rewritten() {
         .unwrap();
     let data = [0.5_f32, 0.5, 0.5];
     let bytes: &[u8] = bytemuck::cast_slice(&data);
-    let pixels = PixelSlice::new(bytes, 1, 1, 12, PixelDescriptor::RGBF32_LINEAR).unwrap();
+    let pixels = PixelView::new(bytes, 1, 1, 12, &zenpixels::formats::RGBF32_LINEAR).unwrap();
     assert!(job.clone().encoder().unwrap().encode(pixels).is_err());
     let mut rows = job.with_canvas_size(1, 1).encoder().unwrap();
-    assert!(rows.begin(1, 1, PixelDescriptor::RGBF32_LINEAR).is_err());
+    assert!(rows.begin(1, 1, PixelFormat::RGBF32_LINEAR).is_err());
     assert!(rows.pending_output().is_empty());
 }
 
@@ -400,21 +424,28 @@ fn discarding_policy_cannot_leave_native_hdr_from_before_replacement() {
 }
 
 #[test]
-#[allow(deprecated)] // Exercise the published policy setter after checked admission.
 fn explicit_color_policy_cannot_substitute_retained_icc() {
     let meta = Metadata::none().with_icc(zenpixels_convert::icc_profiles::DISPLAY_P3_V4);
     let job = config()
         .job()
         .try_with_metadata_policy(meta.clone(), MetadataPolicy::PreserveExact)
         .unwrap();
-    assert_readback(&encode(job.clone()), &meta, &[7, 19, 43, 255]);
-    let conflict = job.with_policy(zencodec::encode::EncodePolicy::none().with_embed_icc(false));
+    let data = [7, 19, 43, 255];
+    let spec = PixelFormat::new(
+        zenpixels::SampleLayout::RGBA8,
+        zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
+    );
+    let pixels = PixelView::from_bytes(&data, 1, 1, &spec).unwrap();
+    let output = job.clone().encoder().unwrap().encode(pixels).unwrap();
+    assert_readback(output.data(), &meta, &data);
+    let conflict = job
+        .try_with_policy(zencodec::encode::EncodePolicy::none().with_embed_icc(false))
+        .unwrap();
     assert!(conflict.encoder().is_err());
 }
 
 #[test]
 fn streaming_animation_preserves_checked_record_and_refuses_conflicting_context_before_header() {
-    use std::sync::Arc;
     use zencodec::encode::AnimationFrameEncoder;
     let metadata = Metadata::none()
         .with_icc(zenpixels_convert::icc_profiles::DISPLAY_P3_V4)
@@ -427,23 +458,46 @@ fn streaming_animation_preserves_checked_record_and_refuses_conflicting_context_
             .with_canvas_size(1, 1)
     };
     let data = [7, 19, 43, 255];
-    let make_pixels = || PixelSlice::new(&data, 1, 1, 4, PixelDescriptor::RGBA8_SRGB).unwrap();
+    let p3_rgba8 = PixelFormat::new(
+        zenpixels::SampleLayout::RGBA8,
+        zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
+    );
+    let make_pixels = || PixelView::new(&data, 1, 1, 4, &p3_rgba8).unwrap();
     let mut rejected = job().animation_frame_encoder().unwrap();
     rejected
-        .begin(1, 1, PixelDescriptor::RGBA8_SRGB, Some(1))
+        .begin(
+            1,
+            1,
+            PixelFormat::new(
+                zenpixels::SampleLayout::RGBA8,
+                zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
+            ),
+            Some(1),
+        )
         .unwrap();
-    let context = Arc::new(zenpixels::ColorContext::from_cicp(zenpixels::Cicp::new(
-        9, 16, 0, true,
-    )));
+    let pq = PixelFormat::new(
+        zenpixels::SampleLayout::RGBA8,
+        zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
+    )
+    .with_primaries(zenpixels::Primaries::Bt2020)
+    .with_transfer(zenpixels::Transfer::Pq);
     assert!(
         rejected
-            .push_frame(make_pixels().with_color_context(context), 20, None)
+            .push_frame(PixelView::from_bytes(&data, 1, 1, &pq).unwrap(), 20, None)
             .is_err()
     );
     assert!(rejected.pending_output().is_empty());
     let mut animation = job().animation_frame_encoder().unwrap();
     animation
-        .begin(1, 1, PixelDescriptor::RGBA8_SRGB, Some(1))
+        .begin(
+            1,
+            1,
+            PixelFormat::new(
+                zenpixels::SampleLayout::RGBA8,
+                zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
+            ),
+            Some(1),
+        )
         .unwrap();
     animation.push_frame(make_pixels(), 20, None).unwrap();
     let mut result = Vec::new();
@@ -453,7 +507,6 @@ fn streaming_animation_preserves_checked_record_and_refuses_conflicting_context_
 }
 
 #[test]
-#[allow(deprecated)] // Exercise reinsertion through the legacy job setter.
 fn discarded_or_cleared_metadata_cannot_be_reinserted_by_legacy_setters() {
     let original = Metadata::none().with_xmp(b"<private/>".as_slice());
     let mut job = config().job();
@@ -463,17 +516,17 @@ fn discarded_or_cleared_metadata_cannot_be_reinserted_by_legacy_setters() {
     assert!(zenpng::probe(&output).unwrap().xmp.is_none());
     assert!(
         job.clone()
-            .with_metadata(original.clone())
+            .with_unfiltered_metadata(original.clone())
             .encoder()
             .is_err()
     );
     assert!(
         job.clone()
-            .with_metadata(original.clone())
+            .with_unfiltered_metadata(original.clone())
             .animation_frame_encoder()
             .is_err()
     );
     job.try_set_metadata_policy(Metadata::none(), MetadataPolicy::PreserveExact)
         .unwrap();
-    assert!(job.with_metadata(original).encoder().is_err());
+    assert!(job.with_unfiltered_metadata(original).encoder().is_err());
 }

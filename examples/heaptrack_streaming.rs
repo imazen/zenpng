@@ -28,28 +28,28 @@
 use enough::Unstoppable;
 use zencodec::decode::{DecodeJob, DecodeRowSink, DecoderConfig, SinkError, StreamingDecode};
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-use zenpixels::{PixelDescriptor, PixelSlice, PixelSliceMut};
+use zenpixels::{PixelFormat, PixelView, PixelViewMut};
 use zenpng::{Compression, PngDecoderConfig, PngEncoderConfig};
 
 struct Pixels {
     data: Vec<u8>,
     w: usize,
     h: usize,
-    desc: PixelDescriptor,
+    desc: PixelFormat,
 }
 
 impl Pixels {
     fn bpp(&self) -> usize {
-        self.desc.bytes_per_pixel()
+        self.desc.layout.bytes_per_pixel()
     }
-    fn rows(&self, y: usize, n: usize) -> PixelSlice<'_> {
+    fn rows(&self, y: usize, n: usize) -> PixelView<'_> {
         let stride = self.w * self.bpp();
-        PixelSlice::new(
+        PixelView::new(
             &self.data[y * stride..(y + n) * stride],
             self.w as u32,
             n as u32,
             stride,
-            self.desc,
+            &self.desc,
         )
         .unwrap()
     }
@@ -63,7 +63,7 @@ fn synthetic(w: usize, h: usize) -> Pixels {
         data,
         w,
         h,
-        desc: PixelDescriptor::RGBA8_SRGB,
+        desc: PixelFormat::RGBA8_SRGB,
     }
 }
 
@@ -81,7 +81,7 @@ fn load(file: &[u8]) -> Pixels {
     let (w, h) = (dec.info().width as usize, dec.info().height as usize);
     let mut data = Vec::new();
     while let Some((_, rows)) = dec.next_batch().unwrap() {
-        for y in 0..rows.rows() {
+        for y in 0..rows.height() {
             let row = rows.row(y);
             if data.capacity() == 0 {
                 data.reserve_exact(row.len() * h);
@@ -90,13 +90,13 @@ fn load(file: &[u8]) -> Pixels {
         }
     }
     let desc = match data.len() / (w * h) {
-        3 => PixelDescriptor::RGB8_SRGB,
-        4 => PixelDescriptor::RGBA8_SRGB,
+        3 => PixelFormat::RGB8_SRGB,
+        4 => PixelFormat::RGBA8_SRGB,
         n => panic!("expected an RGB8 or RGBA8 PNG, got {n} bytes/pixel"),
     };
     // ALPHA=1: give an RGB8 input a horizontal alpha ramp (the left 1/16
     // fully transparent), for RGBA8 measurements on real content.
-    if desc == PixelDescriptor::RGB8_SRGB && std::env::var_os("ALPHA").is_some_and(|v| v == "1") {
+    if desc == PixelFormat::RGB8_SRGB && std::env::var_os("ALPHA").is_some_and(|v| v == "1") {
         let mut rgba = Vec::with_capacity(w * h * 4);
         for (i, px) in data.as_chunks::<3>().0.iter().enumerate() {
             let x = i % w;
@@ -107,7 +107,7 @@ fn load(file: &[u8]) -> Pixels {
             data: rgba,
             w,
             h,
-            desc: PixelDescriptor::RGBA8_SRGB,
+            desc: PixelFormat::RGBA8_SRGB,
         };
     }
     Pixels { data, w, h, desc }
@@ -164,14 +164,19 @@ struct VecSink(Vec<u8>);
 impl DecodeRowSink for VecSink {
     fn provide_next_buffer(
         &mut self,
-        _y: u32,
-        height: u32,
-        width: u32,
-        descriptor: PixelDescriptor,
-    ) -> Result<PixelSliceMut<'_>, SinkError> {
-        let stride = width as usize * descriptor.bytes_per_pixel();
-        self.0.resize(height as usize * stride, 0);
-        Ok(PixelSliceMut::new(&mut self.0, width, height, stride, descriptor).expect("sized"))
+        strip: zencodec::decode::RowStrip,
+        descriptor: PixelFormat,
+    ) -> Result<PixelViewMut<'_>, SinkError> {
+        let stride = strip.width as usize * descriptor.layout.bytes_per_pixel();
+        self.0.resize(strip.height as usize * stride, 0);
+        Ok(PixelViewMut::new_with_format_cow(
+            &mut self.0,
+            strip.width,
+            strip.height,
+            stride,
+            zenpixels::FormatCow::from_owned(descriptor),
+        )
+        .expect("sized"))
     }
 }
 
@@ -190,7 +195,7 @@ fn main() {
                 let threads = usize::from(mode == "dec_whole");
                 let cfg = zenpng::PngDecodeConfig::default().with_max_threads(threads);
                 let d = zenpng::decode(file, &cfg, &Unstoppable).unwrap();
-                d.pixels.descriptor().bytes_per_pixel()
+                d.pixels.format().layout.bytes_per_pixel()
                     * d.info.width as usize
                     * d.info.height as usize
             }
@@ -209,7 +214,7 @@ fn main() {
                     .unwrap();
                 let mut sum = 0usize;
                 while let Some((_, rows)) = dec.next_batch().unwrap() {
-                    for y in 0..rows.rows() {
+                    for y in 0..rows.height() {
                         sum += rows.row(y).len();
                     }
                 }

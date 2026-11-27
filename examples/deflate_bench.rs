@@ -106,7 +106,12 @@ fn prepare_filtered_idat(path: &Path) -> Option<Vec<u8>> {
     let w = info.width as usize;
     let h = info.height as usize;
 
-    let raw_pixels = decoded.pixels.copy_to_contiguous_bytes();
+    let raw_pixels = decoded
+        .pixels
+        .as_view()
+        .to_contiguous_bytes()
+        .unwrap()
+        .into_owned();
 
     let bpp = raw_pixels.len() / (w * h);
     let row_bytes = w * bpp;

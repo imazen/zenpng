@@ -156,8 +156,23 @@ fn segmented_output_roundtrips_everywhere() {
                 &Unstoppable,
             )
             .unwrap();
-            assert_eq!(serial.pixels.copy_to_contiguous_bytes(), src);
-            assert_eq!(par.pixels.copy_to_contiguous_bytes(), src);
+            assert_eq!(
+                serial
+                    .pixels
+                    .as_view()
+                    .to_contiguous_bytes()
+                    .unwrap()
+                    .into_owned(),
+                src
+            );
+            assert_eq!(
+                par.pixels
+                    .as_view()
+                    .to_contiguous_bytes()
+                    .unwrap()
+                    .into_owned(),
+                src
+            );
             assert_eq!(serial.warnings, par.warnings);
             #[cfg(feature = "_dev")]
             if std::thread::available_parallelism().map_or(1, |n| n.get()) >= 2 {
@@ -211,7 +226,11 @@ fn parallel_strip_segments_roundtrip_everywhere() {
                 )
                 .unwrap();
                 assert_eq!(
-                    d.pixels.copy_to_contiguous_bytes(),
+                    d.pixels
+                        .as_view()
+                        .to_contiguous_bytes()
+                        .unwrap()
+                        .into_owned(),
                     src,
                     "zenpng {t}, e{effort}"
                 );

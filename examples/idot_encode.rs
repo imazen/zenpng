@@ -26,7 +26,12 @@ fn main() {
         .unwrap();
         let w = dec.info.width as usize;
         let h = dec.info.height as usize;
-        let bytes = dec.pixels.copy_to_contiguous_bytes();
+        let bytes = dec
+            .pixels
+            .as_view()
+            .to_contiguous_bytes()
+            .unwrap()
+            .into_owned();
         if bytes.len() != w * h * 4 {
             eprintln!("{path}: not RGBA8, skipped");
             continue;
@@ -69,7 +74,12 @@ fn main() {
             let back = decode(&png, &PngDecodeConfig::default(), &Unstoppable).unwrap();
             // The encoder may downcast (e.g. opaque RGBA -> RGB), so compare
             // every segment count against the unsegmented encode's decode.
-            let px = back.pixels.copy_to_contiguous_bytes();
+            let px = back
+                .pixels
+                .as_view()
+                .to_contiguous_bytes()
+                .unwrap()
+                .into_owned();
             if n == 1 {
                 base_pixels = px.clone();
             }

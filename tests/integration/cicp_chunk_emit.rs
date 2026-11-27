@@ -1,13 +1,13 @@
 //! `PngEncoderConfig::with_cicp` / `with_content_light_level` emit the PNG
 //! `cICP` / `cLLI` chunks directly (cICP-only, no ICC synthesis) through the
-//! trait `Encoder::encode(PixelSlice)` path — the byte-faithful,
-//! PixelBuffer-native route for HDR renditions (`RGB16_BT2100_PQ`/HLG)
+//! trait `Encoder::encode(PixelView)` path — the byte-faithful,
+//! PixelBuf-native route for HDR renditions (`RGB16_BT2100_PQ`/HLG)
 //! where cICP is the canonical color signal.
 
 use zencodec::Cicp;
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 use zenpixels::hdr::ContentLightLevel;
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{PixelFormat, PixelView};
 use zenpng::{Compression, PngEncoderConfig};
 
 /// Find a PNG chunk's payload by 4-byte type (IHDR is the first chunk after
@@ -29,8 +29,10 @@ fn with_cicp_and_cll_emit_chunks_through_trait_encode() {
     let (w, h) = (4u32, 2u32);
     // RGB16: 6 bytes/pixel, tightly packed. Content is irrelevant to chunks.
     let bytes = vec![0x11u8; (w * h * 6) as usize];
-    let slice = PixelSlice::new(&bytes, w, h, (w * 6) as usize, PixelDescriptor::RGB16_SRGB)
-        .expect("rgb16 slice");
+    let spec = PixelFormat::RGB16_SRGB
+        .with_primaries(zenpixels::Primaries::DisplayP3)
+        .with_transfer(zenpixels::Transfer::Pq);
+    let slice = PixelView::new(&bytes, w, h, (w * 6) as usize, &spec).expect("rgb16 slice");
 
     let out = PngEncoderConfig::new()
         .with_compression(Compression::Fast)
@@ -69,8 +71,8 @@ fn a_linear_cicp_on_f32_input_is_written_as_srgb() {
     let (w, h) = (3u32, 2u32);
     let floats: Vec<f32> = (0..w * h * 3).map(|i| (i as f32) / 20.0).collect();
     let bytes: Vec<u8> = floats.iter().flat_map(|f| f.to_ne_bytes()).collect();
-    let desc = PixelDescriptor::RGBF32_LINEAR;
-    let slice = || PixelSlice::new(&bytes, w, h, (w * 12) as usize, desc).unwrap();
+    let desc = PixelFormat::RGBF32_LINEAR.with_primaries(zenpixels::Primaries::DisplayP3);
+    let slice = || PixelView::new(&bytes, w, h, (w * 12) as usize, &desc).unwrap();
     let p3_linear = Cicp::new(12, 8, 0, true);
 
     let via_config = PngEncoderConfig::new()
@@ -82,9 +84,10 @@ fn a_linear_cicp_on_f32_input_is_written_as_srgb() {
         .unwrap();
     let via_metadata = PngEncoderConfig::new()
         .job()
-        .with_metadata_policy(
-            zencodec::Metadata::none().with_cicp(p3_linear),
-            zencodec::MetadataPolicy::PreserveExact,
+        .with_unfiltered_metadata(
+            zencodec::Metadata::none()
+                .with_cicp(p3_linear)
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
         )
         .encoder()
         .unwrap()
@@ -92,9 +95,10 @@ fn a_linear_cicp_on_f32_input_is_written_as_srgb() {
         .unwrap();
     let mut streaming = PngEncoderConfig::new()
         .job()
-        .with_metadata_policy(
-            zencodec::Metadata::none().with_cicp(p3_linear),
-            zencodec::MetadataPolicy::PreserveExact,
+        .with_unfiltered_metadata(
+            zencodec::Metadata::none()
+                .with_cicp(p3_linear)
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
         )
         .encoder()
         .unwrap();
@@ -126,8 +130,16 @@ fn colour_type(png: &[u8]) -> u8 {
 fn grey_pixels_with_an_rgb_icc_stay_rgb() {
     let (w, h) = (4u32, 4u32);
     let bytes: Vec<u8> = (0..w * h).flat_map(|i| [(i * 9) as u8; 3]).collect();
-    let slice =
-        || PixelSlice::new(&bytes, w, h, (w * 3) as usize, PixelDescriptor::RGB8_SRGB).unwrap();
+    let slice = || {
+        PixelView::new(
+            &bytes,
+            w,
+            h,
+            (w * 3) as usize,
+            &zenpixels::formats::RGB8_SRGB,
+        )
+        .unwrap()
+    };
     let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4.to_vec();
     assert_eq!(&icc[16..20], b"RGB ");
 
@@ -141,13 +153,25 @@ fn grey_pixels_with_an_rgb_icc_stay_rgb() {
 
     let with_icc = PngEncoderConfig::new()
         .job()
-        .with_metadata_policy(
-            zencodec::Metadata::none().with_icc(icc),
-            zencodec::MetadataPolicy::PreserveExact,
+        .with_unfiltered_metadata(
+            zencodec::Metadata::none()
+                .with_icc(icc)
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
         )
         .encoder()
         .unwrap()
-        .encode(slice())
+        .encode(
+            PixelView::from_bytes(
+                &bytes,
+                w,
+                h,
+                &PixelFormat::new(
+                    zenpixels::SampleLayout::RGB8,
+                    zenpixels::ColorSpace::DISPLAY_P3,
+                ),
+            )
+            .unwrap(),
+        )
         .unwrap();
     assert_eq!(colour_type(with_icc.data()), 2, "RGB profile: stays RGB");
     assert!(
@@ -161,33 +185,31 @@ fn grey_pixels_with_an_rgb_icc_stay_rgb() {
 /// decoder reads them (issue #53).
 #[test]
 fn translucent_hdr_keeps_alpha_through_negotiation() {
-    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, TransferFunction};
+    use zenpixels::{AlphaMode, ChannelOrder, Primaries, SampleType, Transfer};
 
     for (transfer, primaries, cicp) in [
+        (Transfer::Pq, Primaries::Bt2020, [9u8, 16, 0, 1]),
         (
-            TransferFunction::Pq,
-            ColorPrimaries::Bt2020,
-            [9u8, 16, 0, 1],
+            Transfer::Hlg(zenpixels::HlgMode::Scene),
+            Primaries::Bt2020,
+            [9, 18, 0, 1],
         ),
-        (TransferFunction::Hlg, ColorPrimaries::Bt2020, [9, 18, 0, 1]),
+        (Transfer::Pq, Primaries::DisplayP3, [12, 16, 0, 1]),
         (
-            TransferFunction::Pq,
-            ColorPrimaries::DisplayP3,
-            [12, 16, 0, 1],
-        ),
-        (
-            TransferFunction::Hlg,
-            ColorPrimaries::DisplayP3,
+            Transfer::Hlg(zenpixels::HlgMode::Scene),
+            Primaries::DisplayP3,
             [12, 18, 0, 1],
         ),
     ] {
-        let descriptor = PixelDescriptor::new_full(
-            ChannelType::U16,
-            ChannelLayout::Rgba,
-            Some(AlphaMode::Straight),
-            transfer,
-            primaries,
+        let descriptor = PixelFormat::new(
+            zenpixels::SampleLayout::new(SampleType::U16, ChannelOrder::Rgba),
+            zenpixels::Cicp::new(cicp[0], cicp[1], cicp[2], cicp[3] == 1)
+                .to_color_space(AlphaMode::Straight)
+                .unwrap(),
         );
+        assert!(matches!(descriptor.color, zenpixels::ColorSpace::Rgb {
+            primaries: actual_primaries, transfer: actual_transfer, ..
+        } if actual_primaries == primaries && actual_transfer == transfer));
         let (w, h) = (5u32, 3u32);
         let samples: Vec<u16> = (0..w * h)
             .flat_map(|i| {
@@ -202,20 +224,13 @@ fn translucent_hdr_keeps_alpha_through_negotiation() {
             .collect();
         let bytes: &[u8] = bytemuck::cast_slice(&samples);
         let stride = w as usize * 8;
-        let supported = PngEncoderConfig::supported_descriptors();
-        let adapted = zenpixels_convert::adapt::adapt_raw_rows_for_encode(
-            bytes,
-            descriptor,
-            w,
-            h,
-            stride,
-            supported,
-            &zenpixels::ConvertOptions::permissive()
-                .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked),
-        )
-        .unwrap();
-        let slice = adapted.as_slice();
-        assert_eq!(slice.descriptor(), descriptor, "{cicp:?}: negotiated away");
+        let supported = PngEncoderConfig::supported_pixel_formats();
+        let policy = zenpixels_convert::ConvertPolicy::permissive()
+            .with_alpha(zenpixels_convert::AlphaPolicy::DiscardUnchecked);
+        let selected =
+            zenpixels_convert::Negotiate::select(&descriptor, supported, &policy).unwrap();
+        assert_eq!(selected.format, descriptor, "{cicp:?}: negotiated away");
+        let slice = PixelView::new(bytes, w, h, stride, &selected.format).unwrap();
 
         let out = PngEncoderConfig::new()
             .with_compression(Compression::Fast)

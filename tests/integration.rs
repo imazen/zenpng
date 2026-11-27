@@ -62,3 +62,8 @@ mod controlled_decode;
 
 #[path = "integration/checked_metadata.rs"]
 mod checked_metadata;
+
+whereat::define_at_crate_info!(path = "zenpng/tests/");
+
+#[path = "integration/zenpixels_color.rs"]
+mod zenpixels_color;

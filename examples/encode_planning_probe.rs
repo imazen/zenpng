@@ -11,7 +11,7 @@ use std::hint::black_box;
 use zencodec::encode::{EncodeDeclaration, EncodeJob as _, Encoder as _, EncoderConfig as _};
 use zencodec::output_patch::OutputAccess;
 use zencodec::{ResourceLimits, ThreadingPolicy};
-use zenpixels::{ColorContext, ColorPrimaries, PixelDescriptor};
+use zenpixels::{ColorSpace, PixelFormat, Primaries};
 use zenpng::{Compression, DowncastFlags, PngEncoderConfig};
 
 const WIDTH: u32 = 2048;
@@ -59,14 +59,17 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             return Err("expected stored, prefiltered, strips, strips-parallel or buffered".into());
         }
     };
-    let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+    let p3 = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let (descriptor, context) = match colour.as_str() {
-        "srgb" => (PixelDescriptor::RGB8_SRGB, None),
+        "srgb" => (PixelFormat::RGB8_SRGB, None),
         "p3-icc" => (
             p3,
-            Some(ColorContext::from_icc(
-                zenpixels_convert::icc_profiles::DISPLAY_P3_V4,
-            )),
+            Some(ColorSpace::Icc {
+                profile: std::sync::Arc::from(zenpixels_convert::icc_profiles::DISPLAY_P3_V4),
+                color_channels: 3,
+                alpha: zenpixels::AlphaMode::None,
+                intent: zenpixels::RenderingIntent::default(),
+            }),
         ),
         "p3-descriptor" => (p3, None),
         _ => return Err("expected srgb, p3-icc or p3-descriptor".into()),
@@ -74,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let declaration =
         EncodeDeclaration::new(WIDTH, HEIGHT, descriptor).with_access(OutputAccess::Forward);
     let declaration = match &context {
-        Some(context) => declaration.with_color(context),
+        Some(context) => declaration.with_color(context.clone()),
         None => declaration,
     };
     let limits = ResourceLimits::none().with_threading(threading);

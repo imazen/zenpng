@@ -18,29 +18,31 @@ include = [
 ]
 
 [dependencies]
-# The zencodec 0.2 family: version edges, resolved by each root's own
+# The zencodec 0.3 family: version edges, resolved by each root's own
 # [patch.crates-io] (dependency patch tables do not propagate).
-zencodec-coroutine = { version = "0.1.0", optional = true }
-zenmeta = { version = "0.1.0", default-features = false, features = ["rewrite"], optional = true }
+zencodec-coroutine = { version = "0.2.0", optional = true }
+zenmeta = { version = "0.2.0", default-features = false, features = ["rewrite"], optional = true }
 thiserror = { version = "2.0.21", default-features = false }
 rgb = { version = "0.8.53", default-features = false, features = ["as-bytes"] }
 imgref = "1.12.3"
 bytemuck = { version = "1.25.2", default-features = false, features = ["extern_crate_alloc"] }
 enough = "0.4.5"
-zencodec = { version = ">=0.1.27, <0.3.0" }
-zenpixels = { version = ">=0.3.1, <0.4.0", default-features = false, features = ["imgref"] }
-zenpixels-convert = { version = ">=0.3.1, <0.4.0", features = ["imgref", "rgb"] }
+zencodec = { version = ">=0.3.0, <0.5.0" }
+zenpixels = { version = ">=0.5.0, <0.6.0", default-features = false, features = ["icc", "imgref"] }
+# Balanced PNG emission has supplied PQ ICC companions even without `cms`.
+# In 0.5 the profile database is opt-in, so preserve that contract explicitly.
+zenpixels-convert = { version = ">=0.5.0, <0.6.0", features = ["icc-db", "imgref", "rgb"] }
 zenquant = { version = "0.1.3", optional = true }
 imagequant = { version = "4", optional = true }
 quantette = { version = "0.6.0", optional = true, default-features = false, features = ["kmeans", "std"] }
 whereat = "0.1.5"
 zenflate = { version = "0.4.1" }
 memchr = { version = "2.8.0", default-features = false }
-garb = { version = "0.2.8" }
+garb = { version = "0.2.9" }
 archmage = { version = "0.9.33", default-features = false, features = ["macros", "std", "avx512"] }
 magetypes = { version = "0.9.33", default-features = false, features = ["std", "w512", "avx512"] }
 safe_unaligned_simd = { version = "0.2.5", default-features = false }
-linear-srgb = "0.6.12"
+linear-srgb = "0.6.13"
 zenzop = { version = "0.4.2", optional = true, default-features = false, features = ["zlib", "std"] }
 # zennode = { git = "https://github.com/imazen/zennode.git", optional = true, default-features = false, features = ["derive"] }
 almost-enough = { version = "0.4.5", features = ["std"] }
@@ -50,7 +52,7 @@ almost-enough = { version = "0.4.5", features = ["std"] }
 rustix = { version = "1.1.5", default-features = false, features = ["std", "thread"] }
 
 [dev-dependencies]
-zencodec-io = { version = "0.1.0", features = ["std"] }
+zencodec-io = { version = "0.2.0", features = ["std"] }
 png = "0.18"
 # image-rs/image-png main, for benches/vs_png.rs (pinned commit; 2026-10-05).
 png_main = { package = "png", git = "https://github.com/image-rs/image-png", rev = "b2f10c6a7e3127d4aaf231f3eae731a33e6eb0bc" }
@@ -62,14 +64,12 @@ fdeflate = "0.3.7"
 zopfli = "0.8"
 lodepng = "3.12.2"
 # The root patch keeps the conformance harness and codec on one trait source.
-zencodec-testkit = ">=0.2.0, <0.3.0"
+zencodec-testkit = ">=0.3.0, <0.5.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 codec-corpus = "1.0.2"
 libdeflater = "1.25"
 zenbench = "0.1.11"
-# Bench-input generation only (examples/gen_bench_inputs.rs).
-zenresize = "0.3.1"
 # Pareto-bench competitors (benches/pareto.rs only).
 zune-png = "0.5.2"
 zune-core = "0.5.3"
@@ -102,11 +102,7 @@ zopfli = ["dep:zenzop"]
 # instead of hard-erroring with "Package 'zenpng' does not have feature
 # 'zencodec'". Remove once those consumers drop the explicit feature request.
 zencodec = []
-# ICC synthesis for the zencodec color-emit path, via zenpixels-convert's
-# `icc-db` feature: a bundled LZ4 profile blob + pure-Rust lz4_flex decoder —
-# no moxcms. Covers the full ITU-T H.273 grid incl PQ/HLG (without it, only
-# the bundled Display-P3 / SDR BT.2020 / AdobeRGB consts synthesize, and an
-# off-grid CICP is an encode error — never a silently mislabeled image).
+# Compatibility feature for the now-unconditional ICC companion database.
 cms = ["zenpixels-convert/icc-db"]
 # zennode = ["dep:zennode"]
 # Expert-only cross-codec uniformity knobs. Pure visibility gate (no deps):
@@ -196,19 +192,17 @@ name = "stream_and_apng"
 harness = false
 
 [patch.crates-io]
-# Coordinated exact animation timing series; one source for shared types.
-# The zencodec 0.2 family, all from one core revision (ideal-api a15c28fd):
-# the Pulse contract and the shared plan_encode / begin_declared hooks this
-# adapter implements. zencodec-io, zencodec-coroutine and zenmeta are not on
-# crates.io: these patches resolve them for local builds; releases stay gated
-# on publishing them.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1fb997bb88e7405e6a315bf1f0b22f71e99be272" }
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "7badb1478ec27888a51a2f1a403630a1560aa7a1" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "7badb1478ec27888a51a2f1a403630a1560aa7a1" }
+# One zencodec family revision for the zenpixels 0.5 interchange types.
+# These patches also resolve the unpublished I/O, coroutine and metadata crates.
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "5d4f6c473404c09c95f404543f8a16a1e3cb8477" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "5d4f6c473404c09c95f404543f8a16a1e3cb8477" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "5d4f6c473404c09c95f404543f8a16a1e3cb8477" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "5d4f6c473404c09c95f404543f8a16a1e3cb8477" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "5d4f6c473404c09c95f404543f8a16a1e3cb8477" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "7fa068834f8074c2630a352b25f355f7c90751f8" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "7fa068834f8074c2630a352b25f355f7c90751f8" }
+garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
 # Retain main's strip-compression API source.
 zenflate = { git = "https://github.com/imazen/zenflate", rev = "7270e38faca9cdbae793938fa229d40ac4fe4c39" }
 

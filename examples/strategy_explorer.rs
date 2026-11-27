@@ -27,8 +27,13 @@ fn main() {
         .expect("failed to decode");
     let (w, h) = (decoded.info.width as usize, decoded.info.height as usize);
 
-    let bpp = decoded.pixels.descriptor().bytes_per_pixel();
-    let pixel_bytes = decoded.pixels.copy_to_contiguous_bytes();
+    let bpp = decoded.pixels.format().layout.bytes_per_pixel();
+    let pixel_bytes = decoded
+        .pixels
+        .as_view()
+        .to_contiguous_bytes()
+        .unwrap()
+        .into_owned();
     let row_bytes = w * bpp;
 
     let fname = Path::new(&path).file_name().unwrap().to_string_lossy();

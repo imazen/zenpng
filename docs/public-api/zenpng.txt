@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpng.txt 472 lines (supported surface) | zenpng.features.txt 25 added (features: avx512,cms,controlled-decode,imagequant,inventory,joint,metadata-rewrite,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 99 lines (119 hidden + 34 excluded-feature)
+# files: zenpng.txt 475 lines (supported surface) | zenpng.features.txt 25 added (features: avx512,cms,controlled-decode,imagequant,inventory,joint,metadata-rewrite,quantette,quantize,unchecked,zencodec,zopfli) | zenpng.internal.txt 99 lines (119 hidden + 34 excluded-feature)
 
 ## summary
 #
@@ -18,8 +18,8 @@
 #   struct fields                             167
 #   enum variants                              69
 #   trait roster entries (type × trait)       179
-#   auto-trait-complete types                  44
-#   auto-trait exceptions                       7
+#   auto-trait-complete types                  41
+#   auto-trait exceptions                      10
 #
 # per-module pub lines:
 #   (root)                          326
@@ -212,7 +212,7 @@ pub ApngEncodeParams::metadata: core::option::Option<&'a zencodec::metadata::Met
 pub ApngEncodeParams::quantizer: &'a dyn Quantizer
 #[non_exhaustive] pub struct ApngFrame
 pub ApngFrame::frame_info: ApngFrameInfo
-pub ApngFrame::pixels: zenpixels::buffer::PixelBuffer
+pub ApngFrame::pixels: zenpixels::buffer::PixelBuf
 #[non_exhaustive] pub struct ApngFrameInfo
 pub ApngFrameInfo::delay_den: u16
 pub ApngFrameInfo::delay_num: u16
@@ -322,7 +322,7 @@ pub const fn PngDecodeConfig::with_skip_decompression_checksum(self, bool) -> Se
 pub struct PngDecodeJob
 #[non_exhaustive] pub struct PngDecodeOutput
 pub PngDecodeOutput::info: PngInfo
-pub PngDecodeOutput::pixels: zenpixels::buffer::PixelBuffer
+pub PngDecodeOutput::pixels: zenpixels::buffer::PixelBuf
 pub PngDecodeOutput::warnings: alloc::vec::Vec<PngWarning>
 pub struct PngDecoder<'a>
 pub struct PngDecoderConfig
@@ -499,11 +499,14 @@ whereat::at::At<zencodec::error::CodecError>: From<PngError>
 
 ## auto traits
 
-44 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+41 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+ApngDecodeOutput: !RefUnwindSafe !UnwindSafe
 ApngEncodeParams<'a>: !RefUnwindSafe !UnwindSafe
+ApngFrame: !RefUnwindSafe !UnwindSafe
 PngAnimationFrameDecoder: !RefUnwindSafe !UnwindSafe
 PngAnimationFrameEncoder: !RefUnwindSafe !UnwindSafe
 PngDecodeJob: !RefUnwindSafe !UnwindSafe
+PngDecodeOutput: !RefUnwindSafe !UnwindSafe
 PngDecoder<'a>: !RefUnwindSafe !UnwindSafe
 PngEncodeJob: !RefUnwindSafe !UnwindSafe
 PngEncoder: !RefUnwindSafe !Sync !UnwindSafe

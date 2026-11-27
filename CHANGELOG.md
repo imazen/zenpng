@@ -16,6 +16,11 @@ All notable changes to zenpng are documented here.
 
 ### QUEUED BREAKING CHANGES
 
+- Native decode returns zenpixels 0.5 `PixelBuf`. The zencodec adapters
+  accept `PixelView` and declare `ImageSpec`. Use `as_view().try_as_imgref()`
+  for a typed borrow and keep `PngInfo` for exact color chunk values.
+
+
 - The zencodec adapter implements zencodec's Pulse controls (review revision
   `f73a7e0e`): jobs implement `with_pulse` and retain a `SharedPulse`, the
   animation encoder and decoder take `Option<&dyn Pulse>`, and
@@ -28,6 +33,11 @@ All notable changes to zenpng are documented here.
   `finish`.
 
 ### Changed
+
+- Align the root, fuzz, and benchmark input packages with zencodec 0.3
+  (`093211c2`) and zenpixels 0.5 (`e0dba005`). Push decodes honor the
+  sink's maximum row loan and carry HDR and color origin on the delivered
+  rows. APNG sink completion includes the encoded frame duration and index.
 
 - Upgrade `archmage` and `magetypes` to `0.9.33`, advance root and fuzz `zenflate` (`7270e38f`) and `zenpixels` / `zenpixels-convert` (`7badb147`) patches, and refresh `fuzz/Cargo.lock`.
 
@@ -52,6 +62,10 @@ All notable changes to zenpng are documented here.
   crates.io, so releases stay gated on publishing them.
 
 ### Fixed
+
+- Still encodes reject verbatim ICC metadata that contradicts the active
+  samples before writing a header. Exact PNG cICP retention preserves the
+  original transfer code when multiple codes share a pixel interpretation.
 
 - Use `zenpixels::icc::IccIdentification::from_icc` in encode metadata/context identification (`identify`, `stored_color`, `bind_color`) so bundle-synthesized `MetadataOnly` profiles (such as linear P3 and Rec. 2020) are recognized consistently; align `PngAnimationFrameEncoder::capture_first_frame` with `PngEncoder::bind_color` by placing frame `ColorContext` CICP code points in `config.cicp` (keeping default sRGB untagged and letting BT.2100 HLG animation frames write `cICP` without forcing ICC synthesis); update integration tests to public `zenpixels` / `zenpixels-convert` ICC facades.
 

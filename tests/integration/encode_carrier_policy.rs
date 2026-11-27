@@ -6,7 +6,7 @@ use std::io::Cursor;
 
 use zencodec::encode::{AnimationFrameEncoder, EncodeJob, EncodePolicy, Encoder, EncoderConfig};
 use zencodec::{At, Cicp, CodecError, ErrorCategory, Metadata, MetadataPolicy, PolicyKind};
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{PixelFormat, PixelView};
 use zenpixels_convert::icc_profiles::{DISPLAY_P3_V4, SynthesizedIcc};
 use zenpng::{DowncastFlags, PngEncoderConfig};
 
@@ -34,14 +34,10 @@ fn unidentified() -> Vec<u8> {
     let mut profile = DISPLAY_P3_V4.to_vec();
     let last = profile.len() - 1;
     profile[last] ^= 1;
-    assert!(
-        zenpixels::ColorProfileSource::Icc(&profile)
-            .resolve()
-            .is_none()
-    );
+    assert!(zenpixels::icc::IccIdentification::from_icc(&profile).is_none());
     assert_eq!(
-        zenpixels::ColorModel::from_icc(&profile),
-        Some(zenpixels::ColorModel::Rgb)
+        zenpixels::icc::profile_color_space(&profile),
+        Some(zenpixels::IccColorSpace::Rgb)
     );
     profile
 }
@@ -70,7 +66,6 @@ fn encode(route: Route, meta: Metadata, native: Option<Cicp>) -> Result<Vec<u8>,
     )
 }
 
-#[allow(deprecated)] // Exercises the published best-effort job setters.
 fn encode_with(
     route: Route,
     meta: Metadata,
@@ -78,27 +73,28 @@ fn encode_with(
     policy: Option<EncodePolicy>,
 ) -> Result<Vec<u8>, At<CodecError>> {
     let data = samples();
-    let pixels =
-        || PixelSlice::new(&data, W, H, W as usize * 4, PixelDescriptor::RGBA8_SRGB).unwrap();
+    let spec = PixelFormat::new(
+        zenpixels::SampleLayout::RGBA8,
+        zenpixels::ColorSpace::Untagged {
+            total_channels: 4,
+            alpha: zenpixels::AlphaMode::Straight,
+        },
+    );
+    let pixels = || PixelView::new(&data, W, H, W as usize * 4, &spec).unwrap();
     let mut job = PngEncoderConfig::new()
         .with_downcast(DowncastFlags::none())
         .with_cicp(native)
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
         .with_canvas_size(W, H);
-    // The checked setter does not admit embed_icc yet; this is the legacy
-    // setter's effect, which the checked one will reuse.
     if let Some(policy) = policy {
-        #[allow(deprecated)]
-        {
-            job = job.with_policy(policy);
-        }
+        job = job.try_with_policy(policy).unwrap();
     }
     Ok(match route {
         Route::OneShot => job.encoder()?.encode(pixels())?.into_vec(),
         Route::Rows => {
             let mut encoder = job.encoder()?;
-            encoder.begin(W, H, PixelDescriptor::RGBA8_SRGB)?;
+            encoder.begin(W, H, spec.clone())?;
             encoder.push_rows(pixels())?;
             encoder.finish()?.into_vec()
         }

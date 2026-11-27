@@ -8,36 +8,7 @@ use crate::error::PngError;
 #[allow(unused_imports)]
 use whereat::at;
 
-use imgref::ImgVec;
-use rgb::{Gray, Rgb, Rgba};
-use zenpixels::{GrayAlpha16, Pixel, PixelBuffer};
-
-/// Reinterpret `Vec<u8>` as `Vec<T>` without copying when possible.
-/// Falls back to per-element construction only if alignment prevents zero-copy.
-pub(crate) fn bytes_to_rgba16_vec(bytes: &[u8]) -> Vec<Rgba<u16>> {
-    bytes
-        .as_chunks::<8>()
-        .0
-        .iter()
-        .map(|c| Rgba {
-            r: u16::from_ne_bytes([c[0], c[1]]),
-            g: u16::from_ne_bytes([c[2], c[3]]),
-            b: u16::from_ne_bytes([c[4], c[5]]),
-            a: u16::from_ne_bytes([c[6], c[7]]),
-        })
-        .collect()
-}
-
-fn try_cast_vec_or<T: bytemuck::AnyBitPattern + bytemuck::NoUninit>(
-    pixels: Vec<u8>,
-    fallback: fn(&[u8]) -> Vec<T>,
-) -> Vec<T> {
-    match bytemuck::try_cast_vec(pixels) {
-        Ok(v) => v,
-        Err((bytemuck::PodCastError::AlignmentMismatch, bytes)) => fallback(&bytes),
-        Err((e, _)) => panic!("unexpected cast error: {e:?}"),
-    }
-}
+use zenpixels::PixelBuf;
 
 // ── Post-processing ─────────────────────────────────────────────────
 
@@ -470,7 +441,7 @@ fn sub_byte(raw: &[u8], x: usize, bits: u8) -> Option<u8> {
 }
 
 /// A decoded image buffer, typed by sample width so 16-bit output can be
-/// handed to `PixelBuffer` without the realignment copy a `Vec<u8>` needs.
+/// handed to `PixelBuf` without the realignment copy a `Vec<u8>` needs.
 pub(crate) enum OutBuf {
     U8(Vec<u8>),
     U16(Vec<u16>),
@@ -502,7 +473,7 @@ impl OutBuf {
     }
 }
 
-/// Wrap a decoded buffer (rows from [`RowExpander`]) as a `PixelBuffer`,
+/// Wrap a decoded buffer (rows from [`RowExpander`]) as a `PixelBuf`,
 /// without copying.
 pub(crate) fn build_pixel_buffer(
     ihdr: &Ihdr,
@@ -510,45 +481,17 @@ pub(crate) fn build_pixel_buffer(
     buf: OutBuf,
     w: usize,
     h: usize,
-) -> crate::error::Result<PixelBuffer> {
-    let erased = |r: Result<PixelBuffer, whereat::At<zenpixels::BufferError>>| -> crate::error::Result<PixelBuffer> {
-        r.map_err(|e: whereat::At<zenpixels::BufferError>| at!(PngError::Decode(alloc::format!("{e}"))))
+) -> crate::error::Result<PixelBuf> {
+    let spec = crate::codec::native_output_descriptor(
+        ihdr.color_type,
+        ihdr.bit_depth,
+        ancillary.trns.is_some(),
+    );
+    let pixels = match buf {
+        OutBuf::U8(v) => PixelBuf::from_bytes(v, w as u32, h as u32, spec),
+        OutBuf::U16(v) => PixelBuf::from_typed(v, w as u32, h as u32, spec),
     };
-    let (w32, h32) = (w as u32, h as u32);
-    let trns = ancillary.trns.is_some();
-    match buf {
-        OutBuf::U16(v) => match (ihdr.color_type, trns) {
-            (0, false) => erased(PixelBuffer::from_pixels_erased(
-                bytemuck::cast_vec::<u16, Gray<u16>>(v),
-                w32,
-                h32,
-            )),
-            (0, true) | (4, _) => erased(PixelBuffer::from_pixels_erased(
-                bytemuck::cast_vec::<u16, GrayAlpha16>(v),
-                w32,
-                h32,
-            )),
-            (2, false) => erased(PixelBuffer::from_pixels_erased(
-                bytemuck::cast_vec::<u16, Rgb<u16>>(v),
-                w32,
-                h32,
-            )),
-            (2, true) | (6, _) => erased(PixelBuffer::from_pixels_erased(
-                bytemuck::cast_vec::<u16, Rgba<u16>>(v),
-                w32,
-                h32,
-            )),
-            _ => build_pixel_data(ihdr, ancillary, bytemuck::cast_slice(&v).to_vec(), w, h),
-        },
-        OutBuf::U8(v) => match (ihdr.color_type, trns) {
-            (0, false) => erased(PixelBuffer::from_pixels_erased(
-                bytemuck::cast_vec::<u8, Gray<u8>>(v),
-                w32,
-                h32,
-            )),
-            _ => build_pixel_data(ihdr, ancillary, v, w, h),
-        },
-    }
+    pixels.map_err(|e| at!(PngError::Decode(e.to_string())))
 }
 
 /// Determine the output PixelData variant info for `PngInfo` construction.
@@ -661,114 +604,25 @@ impl OutputFormat {
     }
 }
 
-/// Build PixelBuffer from the fully assembled pixel bytes.
+/// Build PixelBuf from the fully assembled pixel bytes.
 pub(crate) fn build_pixel_data(
     ihdr: &Ihdr,
     ancillary: &PngAncillary,
     pixels: Vec<u8>,
     w: usize,
     h: usize,
-) -> crate::error::Result<PixelBuffer> {
-    let w32 = w as u32;
-    let h32 = h as u32;
-    match (ihdr.color_type, ihdr.bit_depth, ancillary.trns.is_some()) {
-        // Grayscale
-        (0, 16, false) => {
-            let gray = try_cast_vec_or(pixels, |b| {
-                b.as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|c| Gray(u16::from_ne_bytes([c[0], c[1]])))
-                    .collect()
-            });
-            Ok(PixelBuffer::from_imgvec(ImgVec::new(gray, w, h)).into())
-        }
-        (0, 16, true) => {
-            // Gray16 + tRNS → GrayAlpha16 (already processed to native u16 pairs)
-            // GrayAlpha16 now impls Pod; construct via raw bytes
-            let ga_bytes: Vec<u8> = pixels;
-            PixelBuffer::from_vec(ga_bytes, w as u32, h as u32, GrayAlpha16::DESCRIPTOR)
-                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))
-        }
-        (0, _, false) if ihdr.bit_depth <= 8 => {
-            let gray: Vec<Gray<u8>> = bytemuck::cast_vec(pixels);
-            Ok(PixelBuffer::from_imgvec(ImgVec::new(gray, w, h)).into())
-        }
-        (0, _, true) if ihdr.bit_depth <= 8 => {
-            // Gray + tRNS → RGBA8
-            let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);
-            Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
-                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))?)
-        }
-        // RGB
-        (2, 16, false) => {
-            let rgb = try_cast_vec_or(pixels, |b| {
-                b.as_chunks::<6>()
-                    .0
-                    .iter()
-                    .map(|c| Rgb {
-                        r: u16::from_ne_bytes([c[0], c[1]]),
-                        g: u16::from_ne_bytes([c[2], c[3]]),
-                        b: u16::from_ne_bytes([c[4], c[5]]),
-                    })
-                    .collect()
-            });
-            Ok(PixelBuffer::from_imgvec(ImgVec::new(rgb, w, h)).into())
-        }
-        (2, 16, true) => {
-            let rgba = try_cast_vec_or(pixels, bytes_to_rgba16_vec);
-            Ok(PixelBuffer::from_imgvec(ImgVec::new(rgba, w, h)).into())
-        }
-        (2, 8, false) => {
-            let rgb: Vec<Rgb<u8>> = bytemuck::cast_vec(pixels);
-            Ok(PixelBuffer::from_pixels_erased(rgb, w32, h32)
-                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))?)
-        }
-        (2, 8, true) => {
-            let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);
-            Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
-                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))?)
-        }
-        // Indexed
-        (3, _, true) => {
-            let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);
-            Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
-                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))?)
-        }
-        (3, _, false) => {
-            let rgb: Vec<Rgb<u8>> = bytemuck::cast_vec(pixels);
-            Ok(PixelBuffer::from_pixels_erased(rgb, w32, h32)
-                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))?)
-        }
-        // GrayAlpha
-        (4, 16, _) => {
-            // GrayAlpha16 now impls Pod; construct via raw bytes
-            // pixels are already native-endian u16 pairs (v, a) = same layout as GrayAlpha16
-            PixelBuffer::from_vec(pixels, w as u32, h as u32, GrayAlpha16::DESCRIPTOR)
-                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))
-        }
-        (4, 8, _) => {
-            // GA8 already expanded to RGBA8
-            let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);
-            Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
-                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))?)
-        }
-        // RGBA
-        (6, 16, _) => {
-            let rgba = try_cast_vec_or(pixels, bytes_to_rgba16_vec);
-            Ok(PixelBuffer::from_imgvec(ImgVec::new(rgba, w, h)).into())
-        }
-        (6, 8, _) => {
-            let rgba: Vec<Rgba<u8>> = bytemuck::cast_vec(pixels);
-            Ok(PixelBuffer::from_pixels_erased(rgba, w32, h32)
-                .map_err(|e| at!(PngError::Decode(alloc::format!("{e}"))))?)
-        }
-        _ => Err(at!(PngError::UnsupportedFeature(alloc::format!(
-            "unsupported color_type={} bit_depth={}",
+) -> crate::error::Result<PixelBuf> {
+    PixelBuf::from_bytes(
+        pixels,
+        w as u32,
+        h as u32,
+        crate::codec::native_output_descriptor(
             ihdr.color_type,
-            ihdr.bit_depth
-        )))),
-    }
+            ihdr.bit_depth,
+            ancillary.trns.is_some(),
+        ),
+    )
+    .map_err(|e| at!(PngError::Decode(e.to_string())))
 }
 
 #[cfg(test)]

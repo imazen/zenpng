@@ -105,7 +105,18 @@ fn pipelined_decode_matches_serial() {
                 decode(&png, &cfg.with_max_threads(0), &Unstoppable).unwrap()
             });
             assert!(
-                serial.pixels.copy_to_contiguous_bytes() == piped.pixels.copy_to_contiguous_bytes(),
+                serial
+                    .pixels
+                    .as_view()
+                    .to_contiguous_bytes()
+                    .unwrap()
+                    .into_owned()
+                    == piped
+                        .pixels
+                        .as_view()
+                        .to_contiguous_bytes()
+                        .unwrap()
+                        .into_owned(),
                 "{name}: pipelined output differs"
             );
             assert_eq!(serial.warnings, piped.warnings, "{name}: warnings differ");
@@ -164,27 +175,29 @@ struct CollectSink(Vec<u8>);
 impl zencodec::decode::DecodeRowSink for CollectSink {
     fn provide_next_buffer(
         &mut self,
-        _y: u32,
-        height: u32,
-        width: u32,
-        descriptor: zenpixels::PixelDescriptor,
-    ) -> Result<zenpixels::PixelSliceMut<'_>, zencodec::decode::SinkError> {
-        let stride = width as usize * descriptor.bytes_per_pixel();
-        self.0.resize(height as usize * stride, 0);
-        Ok(
-            zenpixels::PixelSliceMut::new(&mut self.0, width, height, stride, descriptor)
-                .expect("sized"),
+        strip: zencodec::decode::RowStrip,
+        descriptor: zenpixels::PixelFormat,
+    ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
+        let stride = strip.width as usize * descriptor.layout.bytes_per_pixel();
+        self.0.resize(strip.height as usize * stride, 0);
+        Ok(zenpixels::PixelViewMut::new_with_format_cow(
+            &mut self.0,
+            strip.width,
+            strip.height,
+            stride,
+            zenpixels::FormatCow::from_owned(descriptor),
         )
+        .expect("sized"))
     }
 }
 
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn push(png: &[u8], strict: bool) -> Result<Vec<u8>, String> {
     use zencodec::decode::{DecodeJob, DecodePolicy, DecoderConfig};
     let mut sink = CollectSink(Vec::new());
     zenpng::PngDecoderConfig::new()
         .job()
-        .with_policy(DecodePolicy::none().with_strict(strict))
+        .try_with_policy(DecodePolicy::none().with_strict(strict))
+        .expect("strict decode policy admitted")
         .push_decoder(png.into(), &mut sink, &[])
         .map_err(|e| format!("{e}"))?;
     Ok(sink.0)
@@ -202,7 +215,10 @@ fn pipelined_push_decoder_matches_serial() {
         )
         .unwrap()
         .pixels
-        .copy_to_contiguous_bytes();
+        .as_view()
+        .to_contiguous_bytes()
+        .unwrap()
+        .into_owned();
         assert!(
             piped(name, || push(&png, false)).unwrap() == serial,
             "{name}: push differs"
@@ -226,12 +242,12 @@ fn stream(png: &[u8], strict: bool) -> Result<Vec<u8>, String> {
 }
 
 /// `serial`: a sequential threading policy (no inflate thread).
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn stream_with(png: &[u8], strict: bool, serial: bool) -> Result<Vec<u8>, String> {
     use zencodec::decode::{DecodeJob, DecodePolicy, DecoderConfig, StreamingDecode};
     let mut job = zenpng::PngDecoderConfig::new()
         .job()
-        .with_policy(DecodePolicy::none().with_strict(strict));
+        .try_with_policy(DecodePolicy::none().with_strict(strict))
+        .expect("strict decode policy admitted");
     if serial {
         job = job.with_limits(
             zencodec::ResourceLimits::none().with_threading(zencodec::ThreadingPolicy::Sequential),
@@ -242,7 +258,7 @@ fn stream_with(png: &[u8], strict: bool, serial: bool) -> Result<Vec<u8>, String
         .map_err(|e| format!("{e}"))?;
     let mut out = Vec::new();
     while let Some((_, rows)) = dec.next_batch().map_err(|e| format!("{e}"))? {
-        for y in 0..rows.rows() {
+        for y in 0..rows.height() {
             out.extend_from_slice(rows.row(y));
         }
     }
@@ -262,7 +278,10 @@ fn pipelined_streaming_decoder_matches_serial() {
         )
         .unwrap()
         .pixels
-        .copy_to_contiguous_bytes();
+        .as_view()
+        .to_contiguous_bytes()
+        .unwrap()
+        .into_owned();
         assert!(
             piped(name, || stream(&png, false)).unwrap() == serial,
             "{name}: stream differs"
@@ -317,7 +336,10 @@ fn serial_streaming_decoder_matches_decode() {
         )
         .unwrap()
         .pixels
-        .copy_to_contiguous_bytes();
+        .as_view()
+        .to_contiguous_bytes()
+        .unwrap()
+        .into_owned();
         assert!(
             stream_with(&png, false, true).unwrap() == serial,
             "{name}: serial stream differs"

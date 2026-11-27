@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use enough::Unstoppable;
 use sha2::{Digest, Sha256};
 use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
-use zenpixels::{ChannelType, PixelSlice};
+use zenpixels::{PixelView, SampleType};
 use zenpng::{Compression, EncodeConfig, PngDecodeConfig, PngDecodeOutput, PngEncoderConfig};
 
 fn collect_pngs(args: &[String]) -> Vec<PathBuf> {
@@ -76,17 +76,17 @@ fn encode_one_cfg(out: &PngDecodeOutput, effort: u32, single_thread: bool) -> Ve
         .with_compression(Compression::Effort(effort))
         .with_parallel(!single_thread);
     let px = &out.pixels;
-    let encoded = if let Some(img) = px.try_as_imgref::<rgb::Rgb<u8>>() {
+    let encoded = if let Ok(img) = px.as_view().as_imgref::<rgb::Rgb<u8>>() {
         zenpng::encode_rgb8(img, None, &cfg, &Unstoppable, &Unstoppable)
-    } else if let Some(img) = px.try_as_imgref::<rgb::Rgba<u8>>() {
+    } else if let Ok(img) = px.as_view().as_imgref::<rgb::Rgba<u8>>() {
         zenpng::encode_rgba8(img, None, &cfg, &Unstoppable, &Unstoppable)
-    } else if let Some(img) = px.try_as_imgref::<rgb::Gray<u8>>() {
+    } else if let Ok(img) = px.as_view().as_imgref::<rgb::Gray<u8>>() {
         zenpng::encode_gray8(img, None, &cfg, &Unstoppable, &Unstoppable)
-    } else if let Some(img) = px.try_as_imgref::<rgb::Rgb<u16>>() {
+    } else if let Ok(img) = px.as_view().as_imgref::<rgb::Rgb<u16>>() {
         zenpng::encode_rgb16(img, None, &cfg, &Unstoppable, &Unstoppable)
-    } else if let Some(img) = px.try_as_imgref::<rgb::Rgba<u16>>() {
+    } else if let Ok(img) = px.as_view().as_imgref::<rgb::Rgba<u16>>() {
         zenpng::encode_rgba16(img, None, &cfg, &Unstoppable, &Unstoppable)
-    } else if let Some(img) = px.try_as_imgref::<rgb::Gray<u16>>() {
+    } else if let Ok(img) = px.as_view().as_imgref::<rgb::Gray<u16>>() {
         zenpng::encode_gray16(img, None, &cfg, &Unstoppable, &Unstoppable)
     } else {
         return encode_gray_alpha(out, effort, single_thread);
@@ -98,14 +98,20 @@ fn encode_one_cfg(out: &PngDecodeOutput, effort: u32, single_thread: bool) -> Ve
 /// descriptor and the same compression, threading and default downcasts.
 fn encode_gray_alpha(out: &PngDecodeOutput, effort: u32, single_thread: bool) -> Vec<u8> {
     let (w, h) = (out.info.width, out.info.height);
-    let desc = out.pixels.descriptor();
+    let desc = out.pixels.format();
     assert!(
-        desc.channels() == 2 && matches!(desc.channel_type(), ChannelType::U8 | ChannelType::U16),
+        desc.layout.channels() == 2
+            && matches!(desc.layout.sample, SampleType::U8 | SampleType::U16),
         "unsupported decoded layout for re-encode: {w}x{h} {desc:?}"
     );
-    let bytes = out.pixels.copy_to_contiguous_bytes();
-    let stride = w as usize * desc.bytes_per_pixel();
-    let pixels = PixelSlice::new(&bytes, w, h, stride, desc)
+    let bytes = out
+        .pixels
+        .as_view()
+        .to_contiguous_bytes()
+        .unwrap()
+        .into_owned();
+    let stride = w as usize * desc.layout.bytes_per_pixel();
+    let pixels = PixelView::new(&bytes, w, h, stride, desc)
         .unwrap_or_else(|e| panic!("gray+alpha pixel slice: {e}"));
     let mut cfg = PngEncoderConfig::new().with_compression(Compression::Effort(effort));
     if single_thread {
@@ -133,13 +139,18 @@ struct Samples {
 /// byte order; the conversion to stream order depends only on the target's
 /// endianness, so a decoder that skipped or doubled the swap cannot match.
 fn zenpng_samples(out: &PngDecodeOutput) -> Samples {
-    let desc = out.pixels.descriptor();
-    let bits = match desc.channel_type() {
-        ChannelType::U8 => 8,
-        ChannelType::U16 => 16,
+    let desc = out.pixels.format();
+    let bits = match desc.layout.sample {
+        SampleType::U8 => 8,
+        SampleType::U16 => 16,
         other => panic!("PNG decode produced {other:?} samples"),
     };
-    let mut stream_order = out.pixels.copy_to_contiguous_bytes();
+    let mut stream_order = out
+        .pixels
+        .as_view()
+        .to_contiguous_bytes()
+        .unwrap()
+        .into_owned();
     if bits == 16 && cfg!(target_endian = "little") {
         for s in stream_order.as_chunks_mut::<2>().0 {
             s.swap(0, 1);
@@ -148,7 +159,7 @@ fn zenpng_samples(out: &PngDecodeOutput) -> Samples {
     Samples {
         width: out.info.width,
         height: out.info.height,
-        channels: desc.channels(),
+        channels: desc.layout.channels(),
         bits,
         stream_order,
     }
@@ -334,7 +345,12 @@ fn cmd_hash(effort: u32, files: Vec<PathBuf>) {
     for p in files {
         let data = load(&p);
         let out = decode_one(&data, true);
-        let px = out.pixels.copy_to_contiguous_bytes();
+        let px = out
+            .pixels
+            .as_view()
+            .to_contiguous_bytes()
+            .unwrap()
+            .into_owned();
         let mut h = Sha256::new();
         h.update(&px);
         h.update(out.info.width.to_le_bytes());
@@ -469,7 +485,12 @@ fn cmd_pair(args: &[String]) {
             h.update(out.info.width.to_le_bytes());
             h.update(out.info.height.to_le_bytes());
             h.update([out.info.color_type, out.info.bit_depth]);
-            let pixels = out.pixels.copy_to_contiguous_bytes();
+            let pixels = out
+                .pixels
+                .as_view()
+                .to_contiguous_bytes()
+                .unwrap()
+                .into_owned();
             h.update((pixels.len() as u64).to_le_bytes());
             h.update(&pixels);
         }

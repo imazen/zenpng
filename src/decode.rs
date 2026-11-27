@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use enough::Stop;
 use zencodec::Cicp;
-use zenpixels::PixelBuffer;
+use zenpixels::PixelBuf;
 use zenpixels::hdr::{ContentLightLevel, MasteringDisplay};
 
 use crate::error::PngError;
@@ -218,7 +218,7 @@ pub enum PngWarning {
 #[non_exhaustive]
 pub struct PngDecodeOutput {
     /// Decoded pixel data.
-    pub pixels: PixelBuffer,
+    pub pixels: PixelBuf,
     /// Image metadata.
     pub info: PngInfo,
     /// Non-fatal warnings detected during decoding.
@@ -479,7 +479,14 @@ pub fn decode(
     config: &PngDecodeConfig,
     cancel: &dyn Stop,
 ) -> crate::error::Result<PngDecodeOutput> {
-    crate::decoder::decode_png(data, config, cancel)
+    let mut output = crate::decoder::decode_png(data, config, cancel)?;
+    let icc = output
+        .info
+        .icc_profile
+        .as_deref()
+        .map(alloc::sync::Arc::from);
+    output.pixels = crate::codec::tag_decoded_pixels(output.pixels, &output.info, icc)?;
+    Ok(output)
 }
 
 // ── APNG decode ──────────────────────────────────────────────────────
@@ -500,7 +507,7 @@ pub struct ApngFrameInfo {
 #[non_exhaustive]
 pub struct ApngFrame {
     /// Fully composited pixel data at the canvas dimensions.
-    pub pixels: PixelBuffer,
+    pub pixels: PixelBuf,
     /// Frame timing metadata.
     pub frame_info: ApngFrameInfo,
 }
@@ -535,7 +542,7 @@ pub fn decode_apng(
     let probe_info = crate::decoder::probe_png_with(data, config.skip_critical_chunk_crc)?;
     if !probe_info.sequence.is_animation() {
         // Non-animated PNG: decode normally, wrap as single frame
-        let output = crate::decoder::decode_png(data, config, cancel)?;
+        let output = decode(data, config, cancel)?;
         let frame = ApngFrame {
             pixels: output.pixels,
             frame_info: ApngFrameInfo {
@@ -555,8 +562,17 @@ pub fn decode_apng(
 
     let info = crate::decoder::build_png_info(&result.ihdr, &mut result.ancillary);
 
+    let icc = info.icc_profile.as_deref().map(alloc::sync::Arc::from);
+    let frames = result
+        .frames
+        .into_iter()
+        .map(|mut frame| {
+            frame.pixels = crate::codec::tag_decoded_pixels(frame.pixels, &info, icc.clone())?;
+            Ok(frame)
+        })
+        .collect::<crate::error::Result<Vec<_>>>()?;
     Ok(ApngDecodeOutput {
-        frames: result.frames,
+        frames,
         info,
         num_plays: result.num_plays,
         warnings: result.warnings,

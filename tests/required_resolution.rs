@@ -4,17 +4,17 @@ use zencodec::{
     animation::FrameDuration,
     decode::{AnimationFrameDecoder, DecodeJob, DecoderConfig},
     encode::{AnimationFrameEncoder, DynEncoderConfig, EncodeJob, Encoder, EncoderConfig},
-    operation::{Decision, EncodeRequest, Question},
+    operation::{Decision, EncodeOptions, Question},
 };
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{PixelFormat, PixelView};
 use zenpng::{Compression, PngDecoderConfig, PngEncoderConfig};
 
 const BYTES: [u8; 24] = [
     19, 83, 201, 23, 151, 43, 65, 97, 111, 0xff, 0xff, 0xff, 39, 63, 181, 43, 131, 63, 85, 77, 131,
     0xff, 0xff, 0xff,
 ];
-fn pixels() -> PixelSlice<'static> {
-    PixelSlice::new(&BYTES, 3, 2, 12, PixelDescriptor::RGB8_SRGB).unwrap()
+fn pixels() -> PixelView<'static> {
+    PixelView::new(&BYTES, 3, 2, 12, &zenpixels::formats::RGB8_SRGB).unwrap()
 }
 fn resolution(x: f64, y: f64, unit: ResolutionUnit) -> Resolution {
     Resolution { x, y, unit }
@@ -61,7 +61,7 @@ fn exact_density_survives_generic_erased_registered_and_row_paths() {
             let erased = job.encode(pixels()).unwrap();
             assert_eq!(output.data(), erased.data());
 
-            let request = EncodeRequest::new(ImageFormat::Png).with_resolution(expected);
+            let request = EncodeOptions::new(ImageFormat::Png).require_resolution(expected);
             let mut calls = 0;
             let registered = request
                 .encode_with(&set, pixels(), &mut |question: Question<'_>| -> Result<
@@ -96,15 +96,15 @@ fn exact_density_survives_generic_erased_registered_and_row_paths() {
                 .unwrap()
                 .encoder()
                 .unwrap();
-            rows.begin(3, 2, PixelDescriptor::RGB8_SRGB).unwrap();
+            rows.begin(3, 2, PixelFormat::RGB8_SRGB).unwrap();
             for y in 0..2 {
                 rows.push_rows(
-                    PixelSlice::new(
+                    PixelView::new(
                         &BYTES[y * 12..y * 12 + 9],
                         3,
                         1,
                         9,
-                        PixelDescriptor::RGB8_SRGB,
+                        &zenpixels::formats::RGB8_SRGB,
                     )
                     .unwrap(),
                 )
@@ -161,7 +161,7 @@ fn animation_canvas_keeps_the_same_required_density_and_frame_pixels() {
             .unwrap();
         if streaming {
             encoder
-                .begin(3, 2, PixelDescriptor::RGB8_SRGB, Some(2))
+                .begin(3, 2, PixelFormat::RGB8_SRGB, Some(2))
                 .unwrap();
         }
         for _ in 0..2 {
@@ -174,7 +174,7 @@ fn animation_canvas_keeps_the_same_required_density_and_frame_pixels() {
         assert!(expected.is_equivalent_to(&info.resolution.unwrap()));
         let mut decoder = PngDecoderConfig::new()
             .job()
-            .animation_frame_decoder(Cow::Borrowed(output.data()), &[PixelDescriptor::RGB8_SRGB])
+            .animation_frame_decoder(Cow::Borrowed(output.data()), &[PixelFormat::RGB8_SRGB])
             .unwrap();
         for _ in 0..2 {
             let frame = decoder.render_next_frame(None).unwrap().unwrap();

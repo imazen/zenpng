@@ -35,7 +35,7 @@ fn main() {
                 .unwrap();
             let mut n = 0;
             while let Some((_, rows)) = dec.next_batch().unwrap() {
-                for y in 0..rows.rows() {
+                for y in 0..rows.height() {
                     n += std::hint::black_box(rows.row(y)).len();
                 }
             }
@@ -61,7 +61,9 @@ fn main() {
         } else {
             let d = zenpng::decode(data, &config, &Unstoppable).unwrap();
             std::hint::black_box(&d);
-            d.pixels.descriptor().bytes_per_pixel() * d.info.width as usize * d.info.height as usize
+            d.pixels.format().layout.bytes_per_pixel()
+                * d.info.width as usize
+                * d.info.height as usize
         }
     };
     // Warmup
@@ -91,16 +93,18 @@ struct VecSink(Vec<u8>);
 impl zencodec::decode::DecodeRowSink for VecSink {
     fn provide_next_buffer(
         &mut self,
-        _y: u32,
-        height: u32,
-        width: u32,
-        descriptor: zenpixels::PixelDescriptor,
-    ) -> Result<zenpixels::PixelSliceMut<'_>, zencodec::decode::SinkError> {
-        let stride = width as usize * descriptor.bytes_per_pixel();
-        self.0.resize(height as usize * stride, 0);
-        Ok(
-            zenpixels::PixelSliceMut::new(&mut self.0, width, height, stride, descriptor)
-                .expect("sized"),
+        strip: zencodec::decode::RowStrip,
+        descriptor: zenpixels::PixelFormat,
+    ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
+        let stride = strip.width as usize * descriptor.layout.bytes_per_pixel();
+        self.0.resize(strip.height as usize * stride, 0);
+        Ok(zenpixels::PixelViewMut::new_with_format_cow(
+            &mut self.0,
+            strip.width,
+            strip.height,
+            stride,
+            zenpixels::FormatCow::from_owned(descriptor),
         )
+        .expect("sized"))
     }
 }

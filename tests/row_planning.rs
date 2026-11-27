@@ -11,27 +11,36 @@ use zencodec::encode::{
 };
 use zencodec::output_patch::OutputAccess;
 use zencodec::{ResourceLimits, ThreadingPolicy};
-use zenpixels::{Cicp, ColorContext, ColorPrimaries, PixelDescriptor, PixelSlice};
+use zenpixels::{AlphaMode, ColorSpace, PixelFormat, PixelView, Primaries};
 use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
 use zenpng::{Compression, PngEncodeJob, PngEncoder, PngEncoderConfig};
+
+fn icc_color() -> ColorSpace {
+    ColorSpace::Icc {
+        profile: Arc::from(DISPLAY_P3_V4),
+        color_channels: 3,
+        alpha: AlphaMode::None,
+        intent: zenpixels::RenderingIntent::default(),
+    }
+}
 
 fn declaration(
     width: u32,
     height: u32,
-    descriptor: PixelDescriptor,
-    context: Option<&ColorContext>,
+    descriptor: PixelFormat,
+    context: Option<&ColorSpace>,
     access: OutputAccess,
-) -> EncodeDeclaration<'_> {
+) -> EncodeDeclaration {
     let declaration = EncodeDeclaration::new(width, height, descriptor).with_access(access);
     match context {
-        Some(context) => declaration.with_color(context),
+        Some(context) => declaration.with_color(context.clone()),
         None => declaration,
     }
 }
 
 /// PNG rows are one ordered pass that emits in that (final) pass, and the
 /// plan does not report colour carriers yet; only the timing varies.
-fn row_timing(plan: EncodePlan, declaration: &EncodeDeclaration<'_>) -> OutputTiming {
+fn row_timing(plan: EncodePlan, declaration: &EncodeDeclaration) -> OutputTiming {
     assert_eq!(plan.input, InputRequirement::Rows);
     assert_eq!(plan.output_phase, OutputPhase::FinalPass);
     assert_eq!(plan.carriers, None, "carrier evidence is not reported");
@@ -44,8 +53,8 @@ fn plan_rows(
     job: &PngEncodeJob,
     width: u32,
     height: u32,
-    descriptor: PixelDescriptor,
-    context: Option<&ColorContext>,
+    descriptor: PixelFormat,
+    context: Option<&ColorSpace>,
     access: OutputAccess,
 ) -> Result<OutputTiming, BoxedError> {
     let declaration = declaration(width, height, descriptor, context, access);
@@ -58,8 +67,8 @@ fn begin_declared(
     encoder: &mut PngEncoder,
     width: u32,
     height: u32,
-    descriptor: PixelDescriptor,
-    context: Option<&ColorContext>,
+    descriptor: PixelFormat,
+    context: Option<&ColorSpace>,
     access: OutputAccess,
 ) -> Result<OutputTiming, zencodec::At<zencodec::CodecError>> {
     let declaration = declaration(width, height, descriptor, context, access);
@@ -72,21 +81,17 @@ const EFFORTS: [u32; 9] = [0, 1, 2, 5, 7, 13, 16, 19, 22];
 
 /// Declarations whose interpretation, layout or depth differ, and a
 /// contradiction that must refuse in both planning and startup.
-fn declarations() -> Vec<(&'static str, PixelDescriptor, Option<ColorContext>)> {
-    let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+fn declarations() -> Vec<(&'static str, PixelFormat, Option<ColorSpace>)> {
+    let p3 = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     vec![
-        ("rgb8", PixelDescriptor::RGB8_SRGB, None),
-        ("rgba8", PixelDescriptor::RGBA8_SRGB, None),
-        ("gray8", PixelDescriptor::GRAY8_SRGB, None),
-        ("rgb16", PixelDescriptor::RGB16_SRGB, None),
-        ("p3 descriptor", p3, None),
-        ("p3 icc", p3, Some(ColorContext::from_icc(DISPLAY_P3_V4))),
-        ("linear f32", PixelDescriptor::RGBF32_LINEAR, None),
-        (
-            "contradiction",
-            p3,
-            Some(ColorContext::from_cicp(Cicp::SRGB)),
-        ),
+        ("rgb8", PixelFormat::RGB8_SRGB, None),
+        ("rgba8", PixelFormat::RGBA8_SRGB, None),
+        ("gray8", PixelFormat::GRAY8_SRGB, None),
+        ("rgb16", PixelFormat::RGB16_SRGB, None),
+        ("p3 descriptor", p3.clone(), None),
+        ("p3 icc", p3.clone(), Some(icc_color())),
+        ("linear f32", PixelFormat::RGBF32_LINEAR, None),
+        ("contradiction", p3, Some(ColorSpace::SRGB)),
     ]
 }
 
@@ -117,12 +122,15 @@ fn effective_plan_matches_native_startup() {
                             if !downcast {
                                 config = config.with_downcast(zenpng::DowncastFlags::none());
                             }
+                            if what == "contradiction" {
+                                config = config.with_cicp(Some(zenpixels::Cicp::DISPLAY_P3));
+                            }
                             let job = config.job().with_limits(limits(parallel));
                             let planned = plan_rows(
                                 &job,
                                 width,
                                 height,
-                                descriptor,
+                                descriptor.clone(),
                                 context.as_ref(),
                                 access,
                             );
@@ -130,7 +138,7 @@ fn effective_plan_matches_native_startup() {
                                 &mut job.encoder().unwrap(),
                                 width,
                                 height,
-                                descriptor,
+                                descriptor.clone(),
                                 context.as_ref(),
                                 access,
                             );
@@ -185,7 +193,8 @@ fn strided_rgb(width: u32, height: u32) -> (Vec<u8>, usize) {
 #[test]
 fn planning_is_repeatable_and_leaves_the_job_unchanged() {
     let (data, stride) = strided_rgb(640, 900);
-    let pixels = || PixelSlice::new(&data, 640, 900, stride, PixelDescriptor::RGB8_SRGB).unwrap();
+    let pixels =
+        || PixelView::new(&data, 640, 900, stride, &zenpixels::formats::RGB8_SRGB).unwrap();
     for effort in EFFORTS {
         let job = PngEncoderConfig::new()
             .with_compression(Compression::Effort(effort))
@@ -196,7 +205,7 @@ fn planning_is_repeatable_and_leaves_the_job_unchanged() {
                 &job,
                 640,
                 900,
-                PixelDescriptor::RGB8_SRGB,
+                PixelFormat::RGB8_SRGB,
                 None,
                 OutputAccess::Forward,
             )
@@ -208,7 +217,7 @@ fn planning_is_repeatable_and_leaves_the_job_unchanged() {
             .clone()
             .encoder()
             .unwrap()
-            .begin_output(640, 900, PixelDescriptor::RGB8_SRGB, OutputAccess::SeekBack)
+            .begin_output(640, 900, PixelFormat::RGB8_SRGB, OutputAccess::SeekBack)
             .unwrap();
         assert_eq!(timing, first, "effort {effort}");
         let actual = job.encoder().unwrap().encode(pixels()).unwrap();
@@ -222,25 +231,30 @@ fn planning_is_repeatable_and_leaves_the_job_unchanged() {
 #[test]
 fn declared_colour_reaches_the_header_and_rows_match_one_shot_colour() {
     let (data, stride) = strided_rgb(640, 900);
-    let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
-    let context = Arc::new(ColorContext::from_icc(DISPLAY_P3_V4));
-    let pixels = || {
-        PixelSlice::new(&data, 640, 900, stride, p3)
-            .unwrap()
-            .with_color_context(context.clone())
-    };
+    let p3 = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
+    let context = icc_color();
+    let context_spec = PixelFormat::new(p3.layout, context.clone());
+    let pixels = || PixelView::new(&data, 640, 900, stride, &context_spec).unwrap();
     for effort in [0, 1, 5, 19] {
         let job = PngEncoderConfig::new()
             .with_compression(Compression::Effort(effort))
             .job();
-        let planned = plan_rows(&job, 640, 900, p3, Some(&context), OutputAccess::Forward).unwrap();
+        let planned = plan_rows(
+            &job,
+            640,
+            900,
+            p3.clone(),
+            Some(&context),
+            OutputAccess::Forward,
+        )
+        .unwrap();
         let one_shot = job.clone().encoder().unwrap().encode(pixels()).unwrap();
         let mut rows = job.encoder().unwrap();
         let timing = begin_declared(
             &mut rows,
             640,
             900,
-            p3,
+            p3.clone(),
             Some(&context),
             OutputAccess::Forward,
         )
@@ -248,7 +262,7 @@ fn declared_colour_reaches_the_header_and_rows_match_one_shot_colour() {
         assert_eq!(timing, planned);
         let mut file = Vec::new();
         for y in (0..900).step_by(37) {
-            rows.push_rows(pixels().sub_rows(y, 37.min(900 - y)))
+            rows.push_rows(pixels().sub_rows(y, 37.min(900 - y)).unwrap())
                 .unwrap();
             if !timing.streams() {
                 assert!(rows.pending_output().is_empty(), "effort {effort}");
@@ -300,13 +314,18 @@ fn zencodec_io_planned_row_adapter_writes_the_direct_row_file() {
     }
     let (w, h) = (640u32, 900u32);
     let (data, stride) = strided_rgb(w, h);
-    let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
-    let icc = Arc::new(ColorContext::from_icc(DISPLAY_P3_V4));
-    let contradiction = Arc::new(ColorContext::from_cicp(Cicp::SRGB));
-    let pixels = |context: &Arc<ColorContext>| {
-        PixelSlice::new(&data, w, h, stride, p3)
-            .unwrap()
-            .with_color_context(context.clone())
+    let p3 = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
+    let icc = icc_color();
+    let contradiction = ColorSpace::SRGB;
+    let pixels = |color: &ColorSpace| {
+        PixelView::new_with_format_cow(
+            &data,
+            w,
+            h,
+            stride,
+            zenpixels::FormatCow::from_owned(PixelFormat::new(p3.layout, color.clone())),
+        )
+        .unwrap()
     };
     let effort = |e| PngEncoderConfig::new().with_compression(Compression::Effort(e));
     let configs = [
@@ -316,13 +335,13 @@ fn zencodec_io_planned_row_adapter_writes_the_direct_row_file() {
         ("buffered", effort(19)),
     ];
     for (mode, config) in configs {
-        let declaration = EncodeDeclaration::new(w, h, p3).with_color(&icc);
+        let declaration = EncodeDeclaration::new(w, h, p3.clone()).with_color(icc.clone());
         let mut direct = config.clone().job().encoder().unwrap();
         direct.begin_declared(&declaration).unwrap();
         let mut expected = Vec::new();
         for y in (0..h).step_by(37) {
             direct
-                .push_rows(pixels(&icc).sub_rows(y, 37.min(h - y)))
+                .push_rows(pixels(&icc).sub_rows(y, 37.min(h - y)).unwrap())
                 .unwrap();
             direct.take_output(&mut expected);
         }
@@ -355,7 +374,7 @@ fn zencodec_io_planned_row_adapter_writes_the_direct_row_file() {
 
         let mut refused = Vec::new();
         let failure = row_encode::encode_job(
-            config.job(),
+            config.with_cicp(Some(zenpixels::Cicp::DISPLAY_P3)).job(),
             Raster::new(pixels(&contradiction)),
             &mut refused,
             BoundPolicy::new(PolicySet::new(), FirstRoute),
@@ -378,16 +397,21 @@ fn zencodec_io_planned_row_adapter_writes_the_direct_row_file() {
 #[test]
 fn erased_hooks_forward_the_plan_and_the_native_error() {
     use zencodec::encode::DynEncoderConfig;
-    let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
-    let contradiction = ColorContext::from_cicp(Cicp::SRGB);
+    let p3 = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
+    let contradiction = ColorSpace::SRGB;
     let (mut planned, mut refused) = (0, 0);
     for effort in EFFORTS {
         let config = PngEncoderConfig::new().with_compression(Compression::Effort(effort));
         for (descriptor, color) in [
-            (PixelDescriptor::RGB8_SRGB, None),
-            (p3, Some(&contradiction)),
+            (PixelFormat::RGB8_SRGB, None),
+            (p3.clone(), Some(&contradiction)),
         ] {
             let declaration = declaration(640, 900, descriptor, color, OutputAccess::Forward);
+            let config = if color.is_some() {
+                config.clone().with_cicp(Some(zenpixels::Cicp::DISPLAY_P3))
+            } else {
+                config.clone()
+            };
             let typed = config.clone().job().plan_encode(&declaration);
             let erased_job = DynEncoderConfig::dyn_job(&config);
             match (typed, erased_job.plan_encode(&declaration)) {
@@ -427,7 +451,7 @@ fn erased_hooks_forward_the_plan_and_the_native_error() {
 #[test]
 fn a_refused_declaration_leaves_the_encoder_unchanged() {
     let (data, stride) = strided_rgb(8, 8);
-    let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+    let p3 = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     for effort in [0, 1, 7] {
         let mut enc = PngEncoderConfig::new()
             .with_compression(Compression::Effort(effort))
@@ -435,9 +459,9 @@ fn a_refused_declaration_leaves_the_encoder_unchanged() {
             .with_limits(ResourceLimits::none().with_max_pixels(100))
             .encoder()
             .unwrap();
-        assert!(begin_declared(&mut enc, 64, 32, p3, None, OutputAccess::Forward).is_err());
-        enc.begin(8, 8, PixelDescriptor::RGB8_SRGB).unwrap();
-        enc.push_rows(PixelSlice::new(&data, 8, 8, stride, PixelDescriptor::RGB8_SRGB).unwrap())
+        assert!(begin_declared(&mut enc, 64, 32, p3.clone(), None, OutputAccess::Forward).is_err());
+        enc.begin(8, 8, PixelFormat::RGB8_SRGB).unwrap();
+        enc.push_rows(PixelView::new(&data, 8, 8, stride, &zenpixels::formats::RGB8_SRGB).unwrap())
             .unwrap();
         let mut file = Vec::new();
         enc.take_output(&mut file);
@@ -470,7 +494,7 @@ fn cancelled_planning_refuses_with_its_reason() {
         &job,
         32,
         32,
-        PixelDescriptor::RGB8_SRGB,
+        PixelFormat::RGB8_SRGB,
         None,
         OutputAccess::Forward,
     )
