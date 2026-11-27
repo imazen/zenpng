@@ -425,13 +425,13 @@ fn gray_pq_metadata_gets_a_gray_companion_profile() {
 
     let coded = [0x1234u16, 0x4321];
     let spec = PixelFormat::GRAY16_SRGB.with_transfer(Transfer::Pq);
-    #[allow(deprecated)] // Balanced ICC emission is a legacy policy option.
     let job = PngEncoderConfig::new()
         .with_compression(Compression::None)
         .with_downcast(DowncastFlags::none())
         .job()
-        .with_policy(EncodePolicy::none().with_color(zencodec::ColorEmitPolicy::Balanced))
-        .with_metadata(zencodec::Metadata::none().with_cicp(Cicp::new(1, 16, 0, true)));
+        .try_with_policy(EncodePolicy::none().with_color(zencodec::ColorEmitPolicy::Balanced))
+        .unwrap()
+        .with_unfiltered_metadata(zencodec::Metadata::none().with_cicp(Cicp::new(1, 16, 0, true)));
     let output = job
         .encoder()
         .unwrap()

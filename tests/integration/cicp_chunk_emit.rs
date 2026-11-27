@@ -84,9 +84,10 @@ fn a_linear_cicp_on_f32_input_is_written_as_srgb() {
         .unwrap();
     let via_metadata = PngEncoderConfig::new()
         .job()
-        .with_metadata_policy(
-            zencodec::Metadata::none().with_cicp(p3_linear),
-            zencodec::MetadataPolicy::PreserveExact,
+        .with_unfiltered_metadata(
+            zencodec::Metadata::none()
+                .with_cicp(p3_linear)
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
         )
         .encoder()
         .unwrap()
@@ -94,9 +95,10 @@ fn a_linear_cicp_on_f32_input_is_written_as_srgb() {
         .unwrap();
     let mut streaming = PngEncoderConfig::new()
         .job()
-        .with_metadata_policy(
-            zencodec::Metadata::none().with_cicp(p3_linear),
-            zencodec::MetadataPolicy::PreserveExact,
+        .with_unfiltered_metadata(
+            zencodec::Metadata::none()
+                .with_cicp(p3_linear)
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
         )
         .encoder()
         .unwrap();
@@ -151,9 +153,10 @@ fn grey_pixels_with_an_rgb_icc_stay_rgb() {
 
     let with_icc = PngEncoderConfig::new()
         .job()
-        .with_metadata_policy(
-            zencodec::Metadata::none().with_icc(icc),
-            zencodec::MetadataPolicy::PreserveExact,
+        .with_unfiltered_metadata(
+            zencodec::Metadata::none()
+                .with_icc(icc)
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
         )
         .encoder()
         .unwrap()
@@ -221,7 +224,7 @@ fn translucent_hdr_keeps_alpha_through_negotiation() {
             .collect();
         let bytes: &[u8] = bytemuck::cast_slice(&samples);
         let stride = w as usize * 8;
-        let supported = PngEncoderConfig::supported_descriptors();
+        let supported = PngEncoderConfig::supported_pixel_formats();
         let policy = zenpixels_convert::ConvertPolicy::permissive()
             .with_alpha(zenpixels_convert::AlphaPolicy::DiscardUnchecked);
         let selected =

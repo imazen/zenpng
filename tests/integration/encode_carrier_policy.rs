@@ -66,7 +66,6 @@ fn encode(route: Route, meta: Metadata, native: Option<Cicp>) -> Result<Vec<u8>,
     )
 }
 
-#[allow(deprecated)] // Exercises the published best-effort job setters.
 fn encode_with(
     route: Route,
     meta: Metadata,
@@ -86,15 +85,10 @@ fn encode_with(
         .with_downcast(DowncastFlags::none())
         .with_cicp(native)
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
         .with_canvas_size(W, H);
-    // The checked setter does not admit embed_icc yet; this is the legacy
-    // setter's effect, which the checked one will reuse.
     if let Some(policy) = policy {
-        #[allow(deprecated)]
-        {
-            job = job.with_policy(policy);
-        }
+        job = job.try_with_policy(policy).unwrap();
     }
     Ok(match route {
         Route::OneShot => job.encoder()?.encode(pixels())?.into_vec(),

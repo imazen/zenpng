@@ -123,7 +123,7 @@ pub(super) fn start(
             let unavailable = inspect_color(data, &mut full, job.policy.as_ref(), &check_stop)?;
             let interlaced = full.is_progressive;
             ctx.set_info(full);
-            ctx.set_output_descriptor(output.native_format.clone());
+            ctx.set_output_pixel_format(output.native_format.clone());
             let mut facts = InterpretationFacts::new(
                 output.width,
                 output.height,

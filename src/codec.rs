@@ -652,7 +652,7 @@ impl zencodec::encode::EncoderConfig for PngEncoderConfig {
         ImageFormat::Png
     }
 
-    fn supported_descriptors() -> &'static [PixelFormat] {
+    fn supported_pixel_formats() -> &'static [PixelFormat] {
         ENCODE_DESCRIPTORS
     }
 
@@ -743,10 +743,10 @@ impl zencodec::encode::EncoderConfig for PngEncoderConfig {
     ) -> zencodec::estimate::ResourceEstimate {
         use zencodec::estimate::ResourceEstimate;
         let effort = self.config.compression.effort();
-        let bpp = image.descriptor().layout.bytes_per_pixel() as u8;
+        let bpp = image.pixel_format().layout.bytes_per_pixel() as u8;
         match crate::heuristics::estimate_encode(image.width(), image.height(), bpp, effort) {
             Some(e) => ResourceEstimate::new(e.peak_memory_bytes, e.time_ms as u64)
-                .with_peak_max(e.peak_memory_bytes_max)
+                .with_peak_memory_bytes_max(e.peak_memory_bytes_max)
                 .with_threading(crate::heuristics::encode_threading_info(effort))
                 .at_cores(compute.cores()),
             None => ResourceEstimate::conservative(image).at_cores(compute.cores()),
@@ -869,7 +869,7 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         self
     }
 
-    fn with_metadata(mut self, meta: Metadata) -> Self {
+    fn with_unfiltered_metadata(mut self, meta: Metadata) -> Self {
         self.metadata = Some(meta);
         self
     }
@@ -879,7 +879,6 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         meta: Metadata,
         policy: zencodec::MetadataPolicy,
     ) -> Result<(), zencodec::encode::BoxedError> {
-        #[allow(deprecated)]
         let retained = meta.filtered(&policy);
         let unsupported = || {
             Box::new(zencodec::UnsupportedOperation::MetadataRetention)
@@ -943,23 +942,21 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
         self
     }
 
-    fn with_policy(mut self, policy: zencodec::encode::EncodePolicy) -> Self {
-        self.policy = Some(policy);
-        self
-    }
-
     fn try_set_policy(
         &mut self,
         policy: zencodec::encode::EncodePolicy,
     ) -> Result<(), zencodec::UnsupportedOperation> {
-        use zencodec::{ColorEmitPolicy, encode::EncodePolicy};
+        use zencodec::encode::EncodePolicy;
         if policy == EncodePolicy::none() {
             return Ok(());
         }
-        // The checked route currently qualifies exact supplied color carriers.
-        // Other fields retain their legacy setter until their effects are
-        // qualified across the still, row and animation paths.
-        if policy != EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim) {
+        let mut admitted = EncodePolicy::none();
+        admitted.color = policy.color;
+        admitted.embed_icc = policy.embed_icc;
+        admitted.embed_exif = policy.embed_exif;
+        admitted.embed_xmp = policy.embed_xmp;
+        // Any other field (`strict` or a field a later zencodec adds) differs.
+        if admitted != policy {
             return Err(zencodec::UnsupportedOperation::EncodePolicy);
         }
         self.policy = Some(policy);
@@ -1022,7 +1019,7 @@ impl zencodec::encode::EncodeJob for PngEncodeJob {
             .prepare_rows(
                 declaration.width,
                 declaration.height,
-                declaration.descriptor.clone(),
+                declaration.pixel_format.clone(),
                 declaration.access,
             )
             .map(zencodec::encode::EncodePlan::rows)
@@ -1522,7 +1519,7 @@ impl zencodec::encode::Encoder for PngEncoder {
         self.begin_inner(
             declaration.width,
             declaration.height,
-            declaration.descriptor.clone(),
+            declaration.pixel_format.clone(),
             declaration.access,
         )
         .map(zencodec::encode::EncodePlan::rows)
@@ -3847,7 +3844,7 @@ impl zencodec::decode::DecoderConfig for PngDecoderConfig {
         &[ImageFormat::Png]
     }
 
-    fn supported_descriptors() -> &'static [PixelFormat] {
+    fn supported_pixel_formats() -> &'static [PixelFormat] {
         DECODE_DESCRIPTORS
     }
 
@@ -3861,14 +3858,14 @@ impl zencodec::decode::DecoderConfig for PngDecoderConfig {
         compute: &zencodec::estimate::ComputeEnvironment,
     ) -> zencodec::estimate::ResourceEstimate {
         use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
-        let bpp = image.descriptor().layout.bytes_per_pixel() as u8;
+        let bpp = image.pixel_format().layout.bytes_per_pixel() as u8;
         match crate::heuristics::estimate_decode(image.width(), image.height(), bpp) {
             Some(e) => ResourceEstimate::new(e.peak_memory_bytes, e.time_ms as u64)
                 // A format negotiation that needs `pixels.convert_to(target)` (codec.rs)
                 // holds the native decode buffer AND the converted output concurrently —
                 // the conservative peak adds the output buffer. The common path
                 // (native == target, no conversion) is `typ`.
-                .with_peak_max(e.peak_memory_bytes.saturating_add(e.output_bytes))
+                .with_peak_memory_bytes_max(e.peak_memory_bytes.saturating_add(e.output_bytes))
                 .with_threading(ThreadingInformation::SERIAL)
                 .at_cores(compute.cores()),
             None => ResourceEstimate::conservative(image).at_cores(compute.cores()),
@@ -3913,25 +3910,24 @@ impl<'a> zencodec::decode::DecodeJob<'a> for PngDecodeJob {
         self
     }
 
-    fn with_policy(mut self, policy: zencodec::decode::DecodePolicy) -> Self {
-        self.policy = Some(policy);
-        self
-    }
-
-    /// Admits the metadata gates (`allow_icc`, `allow_exif`, `allow_xmp`) and
-    /// `allow_truncated: false`, and refuses every other field. Each admitted
-    /// field holds on every route this job creates: probe, one-shot, row
-    /// streaming, push, incremental, APNG frames and controlled
-    /// (`tests/integration/decode_policy.rs`). PNG has no partial-image mode,
-    /// so `allow_truncated: true` is refused.
+    /// Admits metadata gates (`allow_icc`, `allow_exif`, `allow_xmp`),
+    /// `allow_progressive`, `allow_animation`, `strict`, and refusing
+    /// truncated input (`allow_truncated: false`). PNG has no partial-image
+    /// mode, so `allow_truncated: true` is refused.
     fn try_set_policy(
         &mut self,
         policy: zencodec::decode::DecodePolicy,
     ) -> Result<(), zencodec::UnsupportedOperation> {
+        if policy == zencodec::decode::DecodePolicy::none() {
+            return Ok(());
+        }
         let mut admitted = zencodec::decode::DecodePolicy::none();
         admitted.allow_icc = policy.allow_icc;
         admitted.allow_exif = policy.allow_exif;
         admitted.allow_xmp = policy.allow_xmp;
+        admitted.allow_progressive = policy.allow_progressive;
+        admitted.allow_animation = policy.allow_animation;
+        admitted.strict = policy.strict;
         if policy.allow_truncated == Some(false) {
             admitted.allow_truncated = Some(false);
         }
@@ -4490,8 +4486,7 @@ fn push_decoder_native_noninterlaced<'a>(
         ($y:expr, $n:expr) => {
             sink.provide_buffer_with_metadata(
                 zencodec::decode::BatchMeta::final_rows($y),
-                $n,
-                w,
+                zencodec::decode::StripDimensions::new(w, $n),
                 descriptor.clone(),
                 &metadata,
             )
@@ -4951,6 +4946,7 @@ impl PngAnimationFrameDecoder {
         preferred: &[PixelFormat],
         start_frame_index: u32,
     ) -> Result<Self, At<PngError>> {
+        check_progressive_policy(&data, policy)?;
         check_truncation_policy(&data, policy)?;
         let probe_info = crate::decode::probe(&data)?;
         limits
@@ -6704,14 +6700,14 @@ mod tests {
     #[test]
     fn supported_descriptors_includes_rgbx_and_bgrx() {
         use zencodec::encode::EncoderConfig;
-        let desc = PngEncoderConfig::supported_descriptors();
+        let desc = PngEncoderConfig::supported_pixel_formats();
         assert!(
             desc.contains(&zenpixels::formats::RGBX8_SRGB),
-            "RGBX8_SRGB must be in supported_descriptors"
+            "RGBX8_SRGB must be in supported_pixel_formats"
         );
         assert!(
             desc.contains(&zenpixels::formats::BGRX8_SRGB),
-            "BGRX8_SRGB must be in supported_descriptors"
+            "BGRX8_SRGB must be in supported_pixel_formats"
         );
     }
 
@@ -9129,13 +9125,12 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)] // Exercises the published best-effort job setters.
     fn encode_job_with_metadata() {
         let enc = PngEncoderConfig::new();
         let meta = Metadata::default();
         let job = enc
             .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact);
+            .with_unfiltered_metadata(meta.filtered(&zencodec::MetadataPolicy::PreserveExact));
         let encoder = job.encoder().unwrap();
         let pixels = vec![Rgb { r: 0u8, g: 0, b: 0 }; 4];
         let img = Img::new(pixels, 2, 2);
@@ -9162,13 +9157,12 @@ mod tests {
     /// the `SynthesizeFrom` → `synthesize_icc_for_cicp` lowering (the transfer-aware
     /// switch) through a real encode + decode roundtrip.
     #[test]
-    #[allow(deprecated)] // Exercises the published best-effort job setters.
     fn cicp_only_display_p3_synthesizes_icc() {
         let enc = PngEncoderConfig::new();
         let meta = Metadata::default().with_cicp(zenpixels::Cicp::DISPLAY_P3);
         let job = enc
             .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact);
+            .with_unfiltered_metadata(meta.filtered(&zencodec::MetadataPolicy::PreserveExact));
         let encoder = job.encoder().unwrap();
         let pixels = vec![
             Rgb {
@@ -9211,7 +9205,6 @@ mod tests {
 
     /// Both feature configurations ship the database used for the companion ICC.
     #[test]
-    #[allow(deprecated)] // Balanced emission is available through the legacy policy setter.
     fn cicp_pq_embeds_a_bt2020_pq_rgb_profile() {
         let output = PngEncoderConfig::new()
             .with_downcast(crate::encode::DowncastFlags::none())
@@ -9221,10 +9214,11 @@ mod tests {
                 zencodec::MetadataPolicy::PreserveExact,
             )
             .unwrap()
-            .with_policy(
+            .try_with_policy(
                 zencodec::encode::EncodePolicy::none()
                     .with_color(zencodec::ColorEmitPolicy::Balanced),
             )
+            .unwrap()
             .encoder()
             .unwrap()
             .do_encode(&[10, 20, 30], 1, 1, crate::encode::ColorType::Rgb)
@@ -9302,7 +9296,7 @@ mod tests {
 
     #[test]
     fn encoder_supported_descriptors() {
-        let descs = <PngEncoderConfig as EncoderConfig>::supported_descriptors();
+        let descs = <PngEncoderConfig as EncoderConfig>::supported_pixel_formats();
         assert!(!descs.is_empty());
         assert!(descs.contains(&zenpixels::formats::RGB8_SRGB));
         assert!(descs.contains(&zenpixels::formats::RGBA8_SRGB));

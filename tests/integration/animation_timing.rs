@@ -314,9 +314,8 @@ fn animation_inherits_frame_icc_and_enforces_decode_job_limits() {
     let source = source.relabel_format(spec).unwrap();
     let mut encoder = PngEncoderConfig::new()
         .job()
-        .with_metadata_policy(
-            zencodec::Metadata::none(),
-            zencodec::MetadataPolicy::PreserveExact,
+        .with_unfiltered_metadata(
+            zencodec::Metadata::none().filtered(&zencodec::MetadataPolicy::PreserveExact),
         )
         .animation_frame_encoder()
         .unwrap();

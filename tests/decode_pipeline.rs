@@ -175,17 +175,15 @@ struct CollectSink(Vec<u8>);
 impl zencodec::decode::DecodeRowSink for CollectSink {
     fn provide_next_buffer(
         &mut self,
-        _y: u32,
-        height: u32,
-        width: u32,
+        strip: zencodec::decode::RowStrip,
         descriptor: zenpixels::PixelFormat,
     ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
-        let stride = width as usize * descriptor.layout.bytes_per_pixel();
-        self.0.resize(height as usize * stride, 0);
+        let stride = strip.width as usize * descriptor.layout.bytes_per_pixel();
+        self.0.resize(strip.height as usize * stride, 0);
         Ok(zenpixels::PixelViewMut::new_with_format_cow(
             &mut self.0,
-            width,
-            height,
+            strip.width,
+            strip.height,
             stride,
             zenpixels::FormatCow::from_owned(descriptor),
         )
@@ -193,13 +191,13 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
     }
 }
 
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn push(png: &[u8], strict: bool) -> Result<Vec<u8>, String> {
     use zencodec::decode::{DecodeJob, DecodePolicy, DecoderConfig};
     let mut sink = CollectSink(Vec::new());
     zenpng::PngDecoderConfig::new()
         .job()
-        .with_policy(DecodePolicy::none().with_strict(strict))
+        .try_with_policy(DecodePolicy::none().with_strict(strict))
+        .expect("strict decode policy admitted")
         .push_decoder(png.into(), &mut sink, &[])
         .map_err(|e| format!("{e}"))?;
     Ok(sink.0)
@@ -244,12 +242,12 @@ fn stream(png: &[u8], strict: bool) -> Result<Vec<u8>, String> {
 }
 
 /// `serial`: a sequential threading policy (no inflate thread).
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn stream_with(png: &[u8], strict: bool, serial: bool) -> Result<Vec<u8>, String> {
     use zencodec::decode::{DecodeJob, DecodePolicy, DecoderConfig, StreamingDecode};
     let mut job = zenpng::PngDecoderConfig::new()
         .job()
-        .with_policy(DecodePolicy::none().with_strict(strict));
+        .try_with_policy(DecodePolicy::none().with_strict(strict))
+        .expect("strict decode policy admitted");
     if serial {
         job = job.with_limits(
             zencodec::ResourceLimits::none().with_threading(zencodec::ThreadingPolicy::Sequential),

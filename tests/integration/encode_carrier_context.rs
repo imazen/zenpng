@@ -42,9 +42,6 @@ enum Route {
 
 const ROUTES: [Route; 3] = [Route::OneShot, Route::Rows, Route::Animation];
 
-/// `policy` goes through the legacy setter (the checked one does not admit
-/// `embed_icc` yet).
-#[allow(deprecated)] // Exercises the published best-effort job setters.
 fn encode(
     route: Route,
     meta: Metadata,
@@ -64,13 +61,10 @@ fn encode(
     let mut job = PngEncoderConfig::new()
         .with_downcast(DowncastFlags::none())
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
         .with_canvas_size(W, H);
     if let Some(policy) = policy {
-        #[allow(deprecated)]
-        {
-            job = job.with_policy(policy);
-        }
+        job = job.try_with_policy(policy).unwrap();
     }
     Ok(match route {
         Route::OneShot => job.encoder()?.encode(pixels()?)?.into_vec(),

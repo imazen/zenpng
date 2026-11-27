@@ -12,7 +12,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
-use zencodec::operation::EncodeRequest;
+use zencodec::operation::EncodeOptions;
 use zencodec::{CodecSet, ImageFormat, Metadata, MetadataPolicy};
 use zenpixels::{Cicp, ColorSpace, PixelFormat, PixelView, Primaries};
 use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
@@ -141,17 +141,16 @@ fn assert_samples(read: &Read, tolerance: u8, what: &str) {
 
 fn checked(pixels: PixelView<'_>) -> Result<Vec<u8>, String> {
     let codecs = CodecSet::new().with_encoder(PngEncoderConfig::new());
-    EncodeRequest::new(ImageFormat::Png)
+    EncodeOptions::new(ImageFormat::Png)
         .encode(&codecs, pixels)
         .map(|outcome| outcome.into_output().into_vec())
         .map_err(|error| format!("{error:?}"))
 }
 
-#[allow(deprecated)] // Exercises the published best-effort job setters.
 fn with_metadata(meta: Metadata, pixels: PixelView<'_>) -> Result<Vec<u8>, String> {
     PngEncoderConfig::new()
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
         .encoder()
         .and_then(|encoder| encoder.encode(pixels))
         .map(|output| output.into_vec())

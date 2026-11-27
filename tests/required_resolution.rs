@@ -4,7 +4,7 @@ use zencodec::{
     animation::FrameDuration,
     decode::{AnimationFrameDecoder, DecodeJob, DecoderConfig},
     encode::{AnimationFrameEncoder, DynEncoderConfig, EncodeJob, Encoder, EncoderConfig},
-    operation::{Decision, EncodeRequest, Question},
+    operation::{Decision, EncodeOptions, Question},
 };
 use zenpixels::{PixelFormat, PixelView};
 use zenpng::{Compression, PngDecoderConfig, PngEncoderConfig};
@@ -61,7 +61,7 @@ fn exact_density_survives_generic_erased_registered_and_row_paths() {
             let erased = job.encode(pixels()).unwrap();
             assert_eq!(output.data(), erased.data());
 
-            let request = EncodeRequest::new(ImageFormat::Png).with_resolution(expected);
+            let request = EncodeOptions::new(ImageFormat::Png).require_resolution(expected);
             let mut calls = 0;
             let registered = request
                 .encode_with(&set, pixels(), &mut |question: Question<'_>| -> Result<

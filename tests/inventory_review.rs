@@ -65,11 +65,10 @@ fn itxt(keyword: &str, flag: u8, text: &[u8]) -> Vec<u8> {
     d
 }
 
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn inv_with(bytes: &[u8], policy: Option<DecodePolicy>) -> Inventory {
     let mut job = PngDecoderConfig::new().job();
     if let Some(p) = policy {
-        job = job.with_policy(p);
+        job = job.try_with_policy(p).unwrap();
     }
     let inv = job.inventory(bytes).unwrap();
     inv.validate()
@@ -77,14 +76,13 @@ fn inv_with(bytes: &[u8], policy: Option<DecodePolicy>) -> Inventory {
     inv
 }
 
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn decode_with(
     bytes: &[u8],
     policy: Option<DecodePolicy>,
 ) -> Result<zencodec::decode::DecodeOutput, String> {
     let mut job = PngDecoderConfig::new().job();
     if let Some(p) = policy {
-        job = job.with_policy(p);
+        job = job.try_with_policy(p).unwrap();
     }
     job.decoder(bytes.into(), &[])
         .map_err(|e| e.to_string())?
@@ -198,11 +196,15 @@ fn strict_crc_alone_separates_good_and_bad_pre_idat_exif() {
         parts_of(&inv_with(&bad, Some(strict_crc_only())), b"eXIf")[0].disposition(),
         D::Dropped
     );
-    // strict() also bans EXIF outright, so a good chunk is Dropped for that reason.
-    let out = decode_with(&good, Some(DecodePolicy::strict())).unwrap();
+    // untrusted_minimal() also bans EXIF outright, so a good chunk is Dropped for that reason.
+    let out = decode_with(&good, Some(DecodePolicy::untrusted_minimal())).unwrap();
     assert!(out.info().metadata().exif.is_none());
     assert_eq!(
-        parts_of(&inv_with(&good, Some(DecodePolicy::strict())), b"eXIf")[0].disposition(),
+        parts_of(
+            &inv_with(&good, Some(DecodePolicy::untrusted_minimal())),
+            b"eXIf"
+        )[0]
+        .disposition(),
         D::Dropped
     );
 }
@@ -482,7 +484,6 @@ fn apng() -> Vec<u8> {
 }
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn animation_policy_skips_frame_chunks() {
     let png = apng();
     let policy = DecodePolicy::none().with_allow_animation(false);
@@ -491,7 +492,8 @@ fn animation_policy_skips_frame_chunks() {
     let fctl = parts_of(&inv, b"fcTL");
     let anim = PngDecoderConfig::new()
         .job()
-        .with_policy(policy)
+        .try_with_policy(policy)
+        .unwrap()
         .animation_frame_decoder(png.as_slice().into(), &[]);
     let one = decode_with(&png, Some(policy)).unwrap();
     eprintln!(

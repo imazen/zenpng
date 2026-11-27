@@ -93,17 +93,15 @@ struct VecSink(Vec<u8>);
 impl zencodec::decode::DecodeRowSink for VecSink {
     fn provide_next_buffer(
         &mut self,
-        _y: u32,
-        height: u32,
-        width: u32,
+        strip: zencodec::decode::RowStrip,
         descriptor: zenpixels::PixelFormat,
     ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
-        let stride = width as usize * descriptor.layout.bytes_per_pixel();
-        self.0.resize(height as usize * stride, 0);
+        let stride = strip.width as usize * descriptor.layout.bytes_per_pixel();
+        self.0.resize(strip.height as usize * stride, 0);
         Ok(zenpixels::PixelViewMut::new_with_format_cow(
             &mut self.0,
-            width,
-            height,
+            strip.width,
+            strip.height,
             stride,
             zenpixels::FormatCow::from_owned(descriptor),
         )

@@ -302,7 +302,6 @@ fn representable_mastering_and_cicp_round_trip_and_quantized_values_refuse() {
 }
 
 #[test]
-#[allow(deprecated)] // These controls deliberately exercise legacy setters after admission.
 fn conflicting_legacy_setters_refuse_before_encoder_or_header() {
     use zencodec::encode::EncodePolicy;
     let expected = Metadata::none().with_xmp(b"<checked/>".as_slice());
@@ -312,10 +311,16 @@ fn conflicting_legacy_setters_refuse_before_encoder_or_header() {
             .try_with_metadata_policy(expected.clone(), MetadataPolicy::PreserveExact)
             .unwrap()
     };
-    assert!(make().with_metadata(Metadata::none()).encoder().is_err());
     assert!(
         make()
-            .with_policy(EncodePolicy::none().with_embed_xmp(false))
+            .with_unfiltered_metadata(Metadata::none())
+            .encoder()
+            .is_err()
+    );
+    assert!(
+        make()
+            .try_with_policy(EncodePolicy::none().with_embed_xmp(false))
+            .unwrap()
             .encoder()
             .is_err()
     );
@@ -379,12 +384,12 @@ fn field_orientation_and_float_color_cannot_be_silently_rewritten() {
         .try_with_metadata_policy(oriented.clone(), MetadataPolicy::PreserveExact)
         .unwrap();
     assert_readback(&encode(job), &oriented, &[7, 19, 43, 255]);
-    #[allow(deprecated)]
     let conflict = config()
         .job()
         .try_with_metadata_policy(oriented, MetadataPolicy::PreserveExact)
         .unwrap()
-        .with_policy(EncodePolicy::none().with_embed_exif(false));
+        .try_with_policy(EncodePolicy::none().with_embed_exif(false))
+        .unwrap();
     assert!(conflict.encoder().is_err());
     let linear = zenpixels::Cicp::new(1, 8, 0, true);
     let job = config()
@@ -419,7 +424,6 @@ fn discarding_policy_cannot_leave_native_hdr_from_before_replacement() {
 }
 
 #[test]
-#[allow(deprecated)] // Exercise the published policy setter after checked admission.
 fn explicit_color_policy_cannot_substitute_retained_icc() {
     let meta = Metadata::none().with_icc(zenpixels_convert::icc_profiles::DISPLAY_P3_V4);
     let job = config()
@@ -434,7 +438,9 @@ fn explicit_color_policy_cannot_substitute_retained_icc() {
     let pixels = PixelView::from_bytes(&data, 1, 1, &spec).unwrap();
     let output = job.clone().encoder().unwrap().encode(pixels).unwrap();
     assert_readback(output.data(), &meta, &data);
-    let conflict = job.with_policy(zencodec::encode::EncodePolicy::none().with_embed_icc(false));
+    let conflict = job
+        .try_with_policy(zencodec::encode::EncodePolicy::none().with_embed_icc(false))
+        .unwrap();
     assert!(conflict.encoder().is_err());
 }
 
@@ -501,7 +507,6 @@ fn streaming_animation_preserves_checked_record_and_refuses_conflicting_context_
 }
 
 #[test]
-#[allow(deprecated)] // Exercise reinsertion through the legacy job setter.
 fn discarded_or_cleared_metadata_cannot_be_reinserted_by_legacy_setters() {
     let original = Metadata::none().with_xmp(b"<private/>".as_slice());
     let mut job = config().job();
@@ -511,17 +516,17 @@ fn discarded_or_cleared_metadata_cannot_be_reinserted_by_legacy_setters() {
     assert!(zenpng::probe(&output).unwrap().xmp.is_none());
     assert!(
         job.clone()
-            .with_metadata(original.clone())
+            .with_unfiltered_metadata(original.clone())
             .encoder()
             .is_err()
     );
     assert!(
         job.clone()
-            .with_metadata(original.clone())
+            .with_unfiltered_metadata(original.clone())
             .animation_frame_encoder()
             .is_err()
     );
     job.try_set_metadata_policy(Metadata::none(), MetadataPolicy::PreserveExact)
         .unwrap();
-    assert!(job.with_metadata(original).encoder().is_err());
+    assert!(job.with_unfiltered_metadata(original).encoder().is_err());
 }

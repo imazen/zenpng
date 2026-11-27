@@ -187,13 +187,16 @@ fn required_p3_icc_refuses_bt2020_samples_before_writing_header() {
         );
     };
     check_conflict(make().encode(pixels.clone()).unwrap_err());
-    #[allow(deprecated)] // The former override lived in the legacy Verbatim route.
     let legacy = config(0)
         .job()
-        .with_metadata_policy(meta.clone(), zencodec::MetadataPolicy::PreserveExact)
-        .with_policy(
+        .with_unfiltered_metadata(
+            meta.clone()
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
+        )
+        .try_with_policy(
             zencodec::encode::EncodePolicy::none().with_color(zencodec::ColorEmitPolicy::Verbatim),
         )
+        .unwrap()
         .encoder()
         .unwrap();
     check_conflict(legacy.encode(pixels).unwrap_err());
@@ -218,7 +221,7 @@ fn gray_alpha_native_depth_and_strided_rows() {
             zenpixels::PixelFormat::GRAYA8_SRGB.color,
         ),
     ] {
-        assert!(PngEncoderConfig::supported_descriptors().contains(&descriptor));
+        assert!(PngEncoderConfig::supported_pixel_formats().contains(&descriptor));
         let (w, h) = (1024u32, 600u32);
         let bytes = descriptor.layout.bytes_per_pixel();
         let row_bytes = w as usize * bytes;

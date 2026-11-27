@@ -260,13 +260,11 @@ impl DecodeRowSink for Counted {
     }
     fn provide_next_buffer(
         &mut self,
-        y: u32,
-        h: u32,
-        w: u32,
+        strip: zencodec::decode::RowStrip,
         d: PixelFormat,
     ) -> Result<PixelViewMut<'_>, SinkError> {
         self.calls += 1;
-        self.sink.provide_next_buffer(y, h, w, d)
+        self.sink.provide_next_buffer(strip, d)
     }
     fn finish(&mut self) -> Result<(), SinkError> {
         self.calls += 1;
@@ -320,18 +318,29 @@ fn checked_setter_admits_the_metadata_gates_and_refusing_truncation_only() {
     let gate = DecodePolicy::none().with_allow_exif(false);
     let mut accepted = PngDecoderConfig::new().job();
     accepted.try_set_policy(gate).unwrap();
-    for refused in [
-        DecodePolicy::none().with_allow_truncated(true),
+    for admitted in [
         DecodePolicy::none().with_allow_progressive(false),
         DecodePolicy::none().with_allow_progressive(true),
         DecodePolicy::none().with_allow_animation(false),
         DecodePolicy::none().with_allow_animation(true),
         DecodePolicy::none().with_strict(true),
         DecodePolicy::none().with_strict(false),
-        DecodePolicy::strict(),
+        DecodePolicy::untrusted_minimal(),
+        gate.with_strict(true),
+    ] {
+        PngDecoderConfig::new()
+            .job()
+            .try_set_policy(admitted)
+            .unwrap_or_else(|e| panic!("{admitted:?}: {e:?}"));
+        PngDecoderConfig::new()
+            .dyn_job()
+            .try_set_policy(admitted)
+            .unwrap_or_else(|e| panic!("dyn {admitted:?}: {e}"));
+    }
+    for refused in [
+        DecodePolicy::none().with_allow_truncated(true),
         DecodePolicy::permissive(),
         gate.with_allow_truncated(true),
-        gate.with_strict(true),
     ] {
         assert_eq!(
             accepted.try_set_policy(refused),

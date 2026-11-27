@@ -13,17 +13,15 @@ struct CollectSink(Vec<u8>);
 impl DecodeRowSink for CollectSink {
     fn provide_next_buffer(
         &mut self,
-        _y: u32,
-        height: u32,
-        width: u32,
+        strip: zencodec::decode::RowStrip,
         descriptor: PixelFormat,
     ) -> Result<PixelViewMut<'_>, SinkError> {
-        let stride = width as usize * descriptor.layout.bytes_per_pixel();
-        self.0.resize(height as usize * stride, 0);
+        let stride = strip.width as usize * descriptor.layout.bytes_per_pixel();
+        self.0.resize(strip.height as usize * stride, 0);
         Ok(PixelViewMut::new_with_format_cow(
             &mut self.0,
-            width,
-            height,
+            strip.width,
+            strip.height,
             stride,
             zenpixels::FormatCow::from_owned(descriptor),
         )
@@ -198,7 +196,6 @@ fn bad_adler_png() -> Vec<u8> {
 }
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn strict_policy_verifies_adler_in_push_and_streaming() {
     use zencodec::decode::DecodePolicy;
     let data = bad_adler_png();
@@ -207,13 +204,15 @@ fn strict_policy_verifies_adler_in_push_and_streaming() {
         let mut sink = CollectSink(Vec::new());
         let push = PngDecoderConfig::new()
             .job()
-            .with_policy(policy)
+            .try_with_policy(policy)
+            .unwrap()
             .push_decoder(data.as_slice().into(), &mut sink, &[]);
         assert_eq!(push.is_err(), strict, "push_decoder, strict={strict}");
 
         let mut dec = PngDecoderConfig::new()
             .job()
-            .with_policy(policy)
+            .try_with_policy(policy)
+            .unwrap()
             .streaming_decoder(data.as_slice().into(), &[])
             .unwrap();
         let end = loop {
@@ -250,9 +249,7 @@ fn push_respects_bounded_loans_and_preserves_color_metadata() {
 
         fn provide_next_buffer(
             &mut self,
-            _y: u32,
-            _h: u32,
-            _w: u32,
+            _strip: zencodec::decode::RowStrip,
             _spec: PixelFormat,
         ) -> Result<PixelViewMut<'_>, SinkError> {
             Err("the decoder omitted row metadata".into())
@@ -261,22 +258,21 @@ fn push_respects_bounded_loans_and_preserves_color_metadata() {
         fn provide_buffer_with_metadata(
             &mut self,
             batch: BatchMeta,
-            h: u32,
-            w: u32,
+            size: zencodec::decode::StripDimensions,
             spec: PixelFormat,
             metadata: &RowMetadata,
         ) -> Result<PixelViewMut<'_>, SinkError> {
             assert!(batch.is_final);
             assert_eq!(batch.y, self.next_y);
-            assert!(h > 0 && h <= self.max_buffer_rows().get());
+            assert!(size.height > 0 && size.height <= self.max_buffer_rows().get());
             assert_eq!(
                 metadata.origin.as_ref().unwrap().cicp,
                 Some(Cicp::BT2100_PQ_RGB)
             );
             assert!(metadata.hdr.content_light_level.is_some());
-            self.next_y += h;
+            self.next_y += size.height;
             self.output
-                .provide_buffer_with_metadata(batch, h, w, spec, metadata)
+                .provide_buffer_with_metadata(batch, size, spec, metadata)
         }
 
         fn finish(&mut self) -> Result<(), SinkError> {

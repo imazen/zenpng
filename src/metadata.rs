@@ -193,7 +193,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                 )?;
             }
             b"iCCP" => {
-                req.packet(len)?;
+                req.check_metadata_budget(len)?;
                 if matches!(req.policy().fields().icc, zencodec::IccRetention::Drop) {
                     return Err(Error::Unsupported(
                         "removing PNG ICC requires color conversion",
@@ -216,7 +216,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
                             req.max_metadata(),
                             req.pulse(),
                         )?;
-                        req.packet(compressed.len())?;
+                        req.check_metadata_budget(compressed.len())?;
                         let body = [b"ICC\0\0".as_slice(), &compressed].concat();
                         out.record(
                             req,
@@ -423,7 +423,7 @@ fn plan<'a>(req: &ScrubRequest<'a>) -> Result<Plan<'a>, Error> {
 }
 
 fn read_xmp(req: &ScrubRequest<'_>, data: &[u8]) -> Result<Vec<u8>, Error> {
-    req.packet(data.len())?;
+    req.check_metadata_budget(data.len())?;
     let start = XMP_KEY.len() + 1;
     let flag = *data.get(start).ok_or(Error::Malformed("PNG XMP flags"))?;
     if flag > 1 || data.get(start + 1) != Some(&0) {

@@ -36,20 +36,18 @@ impl DecodeRowSink for Rows {
     }
     fn provide_next_buffer(
         &mut self,
-        _y: u32,
-        height: u32,
-        width: u32,
+        strip: zencodec::decode::RowStrip,
         descriptor: PixelFormat,
     ) -> Result<PixelViewMut<'_>, SinkError> {
         self.ship();
-        let row = width as usize * descriptor.layout.bytes_per_pixel();
+        let row = strip.width as usize * descriptor.layout.bytes_per_pixel();
         self.strip.clear();
-        self.strip.resize(row * height as usize, 0);
-        self.strip_rows = height;
+        self.strip.resize(row * strip.height as usize, 0);
+        self.strip_rows = strip.height;
         Ok(PixelViewMut::new_with_format_cow(
             &mut self.strip,
-            width,
-            height,
+            strip.width,
+            strip.height,
             row,
             zenpixels::FormatCow::from_owned(descriptor),
         )

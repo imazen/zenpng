@@ -66,11 +66,10 @@ fn itxt(keyword: &str, flag: u8, text: &[u8]) -> Vec<u8> {
     d
 }
 
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn inv_with(bytes: &[u8], policy: Option<DecodePolicy>) -> Inventory {
     let mut job = PngDecoderConfig::new().job();
     if let Some(p) = policy {
-        job = job.with_policy(p);
+        job = job.try_with_policy(p).unwrap();
     }
     let inv = job.inventory(bytes).unwrap();
     inv.validate()
@@ -78,14 +77,13 @@ fn inv_with(bytes: &[u8], policy: Option<DecodePolicy>) -> Inventory {
     inv
 }
 
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn decode_with(
     bytes: &[u8],
     policy: Option<DecodePolicy>,
 ) -> Result<zencodec::decode::DecodeOutput, String> {
     let mut job = PngDecoderConfig::new().job();
     if let Some(p) = policy {
-        job = job.with_policy(p);
+        job = job.try_with_policy(p).unwrap();
     }
     job.decoder(bytes.into(), &[])
         .map_err(|e| e.to_string())?

@@ -4,9 +4,9 @@ use zencodec::{
     At, CodecSet, ImageFormat,
     decode::{
         DecodeJob, DecodeRowSink, DecoderConfig, InterpretationState, InterpretationUnavailable,
-        SinkError,
+        RowStrip, SinkError,
     },
-    operation::{Decision, DecodeRequest, Question},
+    operation::{Decision, DecodeOptions, Question},
     storage::StorageBudget,
 };
 use zencodec_io::{CollectSink, PolicyDecoder, drive_from_slice};
@@ -25,13 +25,11 @@ impl DecodeRowSink for Effects {
     }
     fn provide_next_buffer(
         &mut self,
-        y: u32,
-        h: u32,
-        w: u32,
+        strip: RowStrip,
         d: PixelFormat,
     ) -> Result<PixelViewMut<'_>, SinkError> {
         self.calls.set(self.calls.get() + 1);
-        self.sink.provide_next_buffer(y, h, w, d)
+        self.sink.provide_next_buffer(strip, d)
     }
     fn finish(&mut self) -> Result<(), SinkError> {
         self.calls.set(self.calls.get() + 1);
@@ -101,7 +99,7 @@ fn native_formats_and_adam7_match_independent_pixels_after_adoption() {
         for registered in [false, true] {
             let budget = StorageBudget::new(bytes.len() + 65536, 8);
             let session = if registered {
-                DecodeRequest::new()
+                DecodeOptions::new()
                     .start_controlled(
                         &CodecSet::new().with_decoder(PngDecoderConfig::new()),
                         budget.clone(),
@@ -256,9 +254,9 @@ fn required_layout_refuses_and_preference_falls_back_without_relabeling() {
     for required in [true, false] {
         let budget = StorageBudget::new(bytes.len() + 65536, 8);
         let request = if required {
-            DecodeRequest::new().with_output(PixelFormat::RGBA8_SRGB)
+            DecodeOptions::new().require_pixel_format(PixelFormat::RGBA8_SRGB)
         } else {
-            DecodeRequest::new().preferring_output(vec![PixelFormat::RGBA8_SRGB])
+            DecodeOptions::new().prefer_pixel_formats(vec![PixelFormat::RGBA8_SRGB])
         };
         let session = request
             .with_format(ImageFormat::Png)
@@ -585,7 +583,8 @@ fn native_hdr_and_icc_keep_exact_samples_and_reported_interpretation() {
     let budget = StorageBudget::new(icc.len() + 65536, 8);
     let session = PngDecoderConfig::new()
         .job()
-        .with_policy(DecodePolicy::none().with_allow_icc(false))
+        .try_with_policy(DecodePolicy::none().with_allow_icc(false))
+        .unwrap()
         .dyn_controlled_decoder(&[], budget.clone())
         .unwrap();
     let mut reason = None;
