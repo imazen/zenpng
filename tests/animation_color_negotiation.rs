@@ -54,7 +54,7 @@ fn exact_native_color_preference_never_converts_the_animation() {
                 let frame = decoder.render_next_frame(None).unwrap().unwrap();
                 let pixels = frame.pixels();
                 assert_eq!(pixels.format(), &descriptor, "{transfer:?} {preference:?}");
-                assert_eq!(pixels.format().color.to_cicp(), Some(color));
+                assert_eq!(pixels.format().color.to_cicp_lossy(), Some(color));
                 for y in 0..13 {
                     assert_eq!(pixels.row(y), input.as_view().row(y));
                 }

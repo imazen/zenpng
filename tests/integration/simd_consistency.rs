@@ -85,7 +85,7 @@ fn png_roundtrip_all_tiers_match() {
         let pixel_bytes = decoded
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         let h = hash_bytes(&pixel_bytes);

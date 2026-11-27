@@ -170,7 +170,7 @@ fn checked_request_binds_the_current_pixel_colour() {
         zenpixels::SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(DISPLAY_P3_V4),
-            channels: 3,
+            color_channels: 3,
             alpha: zenpixels::AlphaMode::None,
             intent: zenpixels::RenderingIntent::default(),
         },

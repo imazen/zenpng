@@ -73,7 +73,7 @@ fn main() {
         let pixel_bytes = decoded
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         let row_bytes = w * bpp;

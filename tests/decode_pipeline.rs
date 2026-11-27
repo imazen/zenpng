@@ -108,13 +108,13 @@ fn pipelined_decode_matches_serial() {
                 serial
                     .pixels
                     .as_view()
-                    .contiguous_bytes()
+                    .to_contiguous_bytes()
                     .unwrap()
                     .into_owned()
                     == piped
                         .pixels
                         .as_view()
-                        .contiguous_bytes()
+                        .to_contiguous_bytes()
                         .unwrap()
                         .into_owned(),
                 "{name}: pipelined output differs"
@@ -218,7 +218,7 @@ fn pipelined_push_decoder_matches_serial() {
         .unwrap()
         .pixels
         .as_view()
-        .contiguous_bytes()
+        .to_contiguous_bytes()
         .unwrap()
         .into_owned();
         assert!(
@@ -260,7 +260,7 @@ fn stream_with(png: &[u8], strict: bool, serial: bool) -> Result<Vec<u8>, String
         .map_err(|e| format!("{e}"))?;
     let mut out = Vec::new();
     while let Some((_, rows)) = dec.next_batch().map_err(|e| format!("{e}"))? {
-        for y in 0..rows.rows() {
+        for y in 0..rows.height() {
             out.extend_from_slice(rows.row(y));
         }
     }
@@ -281,7 +281,7 @@ fn pipelined_streaming_decoder_matches_serial() {
         .unwrap()
         .pixels
         .as_view()
-        .contiguous_bytes()
+        .to_contiguous_bytes()
         .unwrap()
         .into_owned();
         assert!(
@@ -339,7 +339,7 @@ fn serial_streaming_decoder_matches_decode() {
         .unwrap()
         .pixels
         .as_view()
-        .contiguous_bytes()
+        .to_contiguous_bytes()
         .unwrap()
         .into_owned();
         assert!(

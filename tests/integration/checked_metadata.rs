@@ -58,7 +58,7 @@ impl zencodec_io::row_encode::Source for PullSource {
         _pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<(), Self::Error> {
         assert_eq!(first, 0);
-        assert_eq!(rows.rows(), 1);
+        assert_eq!(rows.height(), 1);
         rows.row_mut(0).copy_from_slice(&self.data);
         self.reads.set(self.reads.get() + 1);
         Ok(())
@@ -329,7 +329,7 @@ fn unsupported_and_native_conflicts_refuse_atomically() {
     job.try_set_metadata_policy(good.clone(), MetadataPolicy::PreserveExact)
         .unwrap();
     for bad in [
-        Metadata::none().with_diffuse_white(DiffuseWhite::new(203.0)),
+        Metadata::none().with_diffuse_white(DiffuseWhite::new(203.0).unwrap()),
         Metadata::none().with_xmp(&b"\xff"[..]),
         Metadata::none().with_xmp(&b"x\0y"[..]),
         Metadata::none().with_xmp(&b""[..]),

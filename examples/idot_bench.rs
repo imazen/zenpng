@@ -34,7 +34,7 @@ fn main() {
         let ref_bytes = reference
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         let mp = reference.info.width as f64 * reference.info.height as f64 / 1e6;
@@ -48,7 +48,7 @@ fn main() {
             if out
                 .pixels
                 .as_view()
-                .contiguous_bytes()
+                .to_contiguous_bytes()
                 .unwrap()
                 .into_owned()
                 != ref_bytes

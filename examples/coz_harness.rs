@@ -107,7 +107,7 @@ fn encode_gray_alpha(out: &PngDecodeOutput, effort: u32, single_thread: bool) ->
     let bytes = out
         .pixels
         .as_view()
-        .contiguous_bytes()
+        .to_contiguous_bytes()
         .unwrap()
         .into_owned();
     let stride = w as usize * desc.layout.bytes_per_pixel();
@@ -148,7 +148,7 @@ fn zenpng_samples(out: &PngDecodeOutput) -> Samples {
     let mut stream_order = out
         .pixels
         .as_view()
-        .contiguous_bytes()
+        .to_contiguous_bytes()
         .unwrap()
         .into_owned();
     if bits == 16 && cfg!(target_endian = "little") {
@@ -348,7 +348,7 @@ fn cmd_hash(effort: u32, files: Vec<PathBuf>) {
         let px = out
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         let mut h = Sha256::new();
@@ -488,7 +488,7 @@ fn cmd_pair(args: &[String]) {
             let pixels = out
                 .pixels
                 .as_view()
-                .contiguous_bytes()
+                .to_contiguous_bytes()
                 .unwrap()
                 .into_owned();
             h.update((pixels.len() as u64).to_le_bytes());

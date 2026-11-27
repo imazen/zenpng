@@ -160,7 +160,7 @@ fn segmented_output_roundtrips_everywhere() {
                 serial
                     .pixels
                     .as_view()
-                    .contiguous_bytes()
+                    .to_contiguous_bytes()
                     .unwrap()
                     .into_owned(),
                 src
@@ -168,7 +168,7 @@ fn segmented_output_roundtrips_everywhere() {
             assert_eq!(
                 par.pixels
                     .as_view()
-                    .contiguous_bytes()
+                    .to_contiguous_bytes()
                     .unwrap()
                     .into_owned(),
                 src
@@ -226,7 +226,11 @@ fn parallel_strip_segments_roundtrip_everywhere() {
                 )
                 .unwrap();
                 assert_eq!(
-                    d.pixels.as_view().contiguous_bytes().unwrap().into_owned(),
+                    d.pixels
+                        .as_view()
+                        .to_contiguous_bytes()
+                        .unwrap()
+                        .into_owned(),
                     src,
                     "zenpng {t}, e{effort}"
                 );

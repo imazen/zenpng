@@ -20,8 +20,8 @@ pub fn to_pixels<P: PixelType>(pixels: &PixelBuf, spec: PixelFormat) -> imgref::
     let view = zenpixels::PixelView::new(
         view.as_strided_bytes(),
         view.width(),
-        view.rows(),
-        view.stride(),
+        view.height(),
+        view.stride_bytes(),
         &nominal_spec,
     )
     .expect("native PNG samples");

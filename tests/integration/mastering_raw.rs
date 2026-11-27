@@ -216,7 +216,7 @@ fn checked_matrix_nine_retention_refuses_before_output() {
         Ok(())
     };
     let mut output = Vec::new();
-    let error = write(zenpixels::Cicp::BT2100_PQ, &mut output).unwrap_err();
+    let error = write(zenpixels::Cicp::BT2100_PQ_YCBCR_FULL, &mut output).unwrap_err();
     assert_eq!(
         error.downcast_ref::<zencodec::UnsupportedOperation>(),
         Some(&zencodec::UnsupportedOperation::MetadataRetention)

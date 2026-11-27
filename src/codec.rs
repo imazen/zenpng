@@ -1695,14 +1695,14 @@ impl PngEncoder {
                 Primaries::Custom(p) => {
                     let quantize = |value: f32| (f64::from(value) * 100_000.0 + 0.5) as i32;
                     Some(crate::decode::PngChromaticities {
-                        white_x: quantize(p.white().x()),
-                        white_y: quantize(p.white().y()),
-                        red_x: quantize(p.r().x()),
-                        red_y: quantize(p.r().y()),
-                        green_x: quantize(p.g().x()),
-                        green_y: quantize(p.g().y()),
-                        blue_x: quantize(p.b().x()),
-                        blue_y: quantize(p.b().y()),
+                        white_x: quantize(p.white_point().x()),
+                        white_y: quantize(p.white_point().y()),
+                        red_x: quantize(p.red().x()),
+                        red_y: quantize(p.red().y()),
+                        green_x: quantize(p.green().x()),
+                        green_y: quantize(p.green().y()),
+                        blue_x: quantize(p.blue().x()),
+                        blue_y: quantize(p.blue().y()),
                     })
                 }
                 Primaries::Bt709 | Primaries::Unknown => None,
@@ -1717,7 +1717,7 @@ impl PngEncoder {
                 chromaticities,
             });
         }
-        if let Some(cicp) = spec.color.to_cicp().or_else(|| {
+        if let Some(cicp) = spec.color.to_cicp_lossy().or_else(|| {
             if gray {
                 transfer
                     .to_cicp()
@@ -1792,11 +1792,11 @@ impl PngEncoder {
         use zenpixels::SampleLayout;
 
         // PNG forbids a zero width or height (IHDR); `begin` refuses them too.
-        if pixels.width() == 0 || pixels.rows() == 0 {
+        if pixels.width() == 0 || pixels.height() == 0 {
             return Err(at!(PngError::InvalidInput(alloc::format!(
                 "PNG cannot encode a {}x{} image",
                 pixels.width(),
-                pixels.rows()
+                pixels.height()
             ))));
         }
 
@@ -1805,7 +1805,7 @@ impl PngEncoder {
         self.check_retained_color(Some(pixels.format().layout.channels() as u8))?;
 
         let w = pixels.width();
-        let h = pixels.rows();
+        let h = pixels.height();
         // Policy-filtered metadata for auto-indexed paths (used by auto-quantize paths)
         #[cfg(any(feature = "quantize", feature = "imagequant", feature = "quantette"))]
         let effective_meta = apply_encode_policy(
@@ -2405,7 +2405,7 @@ impl PngEncoder {
         use zenpixels::SampleLayout;
 
         let w = rows.width();
-        let h = rows.rows();
+        let h = rows.height();
 
         if h == 0 {
             return Ok(());
@@ -2947,7 +2947,8 @@ impl PngAnimationFrameEncoder {
         cancel: &dyn enough::Stop,
     ) -> Result<(), At<PngError>> {
         let st = self.streaming.as_ref().expect("streaming");
-        if (pixels.width(), pixels.rows(), pixels.format()) != (st.width, st.height, &st.descriptor)
+        if (pixels.width(), pixels.height(), pixels.format())
+            != (st.width, st.height, &st.descriptor)
         {
             return Err(at!(PngError::InvalidInput(
                 "APNG frame differs from the canvas and descriptor declared at begin".into()
@@ -3087,7 +3088,7 @@ impl PngAnimationFrameEncoder {
             }
         };
         let npixels = (pixels.width() as usize)
-            .checked_mul(pixels.rows() as usize)
+            .checked_mul(pixels.height() as usize)
             .ok_or_else(|| {
                 at!(PngError::OutOfMemory(
                     "APNG frame exceeds address space".into()
@@ -3116,7 +3117,7 @@ impl PngAnimationFrameEncoder {
         let layout = desc.layout.order;
         let opaque_alpha = desc.color.alpha() == AlphaMode::Opaque;
         let w = pixels.width() as usize;
-        let h = pixels.rows();
+        let h = pixels.height();
         let h_us = h as usize;
         let out_bpp = match want {
             FrameLayout::Rgb8 => 3,
@@ -3252,7 +3253,7 @@ impl PngAnimationFrameEncoder {
         out.try_reserve_exact(len)
             .map_err(|e| at!(PngError::OutOfMemory(e.to_string())))?;
         let mut all_opaque = true;
-        for y in 0..pixels.rows() {
+        for y in 0..pixels.height() {
             stop.check().map_err(|e| at!(PngError::from(e)))?;
             for p in pixels.row(y).chunks_exact(channels * 2) {
                 let sample = |c: usize| u16::from_ne_bytes([p[c * 2], p[c * 2 + 1]]);
@@ -3349,7 +3350,7 @@ impl zencodec::encode::AnimationFrameEncoder for PngAnimationFrameEncoder {
                 "more than the {n} APNG frames declared at begin"
             )))));
         }
-        let (width, height) = (pixels.width(), pixels.rows());
+        let (width, height) = (pixels.width(), pixels.height());
         let descriptor = pixels.format();
         if let Some(first) = &self.frame_descriptor
             && (first.layout.sample != descriptor.layout.sample
@@ -4290,7 +4291,7 @@ fn decoded_spec(
         if zenpixels::icc::profile_color_space(profile) == Some(expected) {
             spec.color = ColorSpace::Icc {
                 profile: profile.clone(),
-                channels: if gray { 1 } else { 3 },
+                color_channels: if gray { 1 } else { 3 },
                 alpha,
                 intent: RenderingIntent::default(),
             };
@@ -4367,7 +4368,7 @@ fn decoded_row_metadata(
         (None, None) => None,
     };
     metadata.hdr = HdrMetadata {
-        cll: info.content_light_level,
+        content_light_level: info.content_light_level,
         mastering: info.mastering_display,
     };
     metadata
@@ -5115,8 +5116,8 @@ impl zencodec::decode::AnimationFrameDecoder for PngAnimationFrameDecoder {
                 let view = PixelView::new_with_format_cow(
                     view.as_strided_bytes(),
                     view.width(),
-                    view.rows(),
-                    view.stride(),
+                    view.height(),
+                    view.stride_bytes(),
                     zenpixels::FormatCow::from_owned(spec),
                 )
                 .map_err(|e| CodecError::of(at!(PngError::InvalidBuffer(e.to_string()))))?;
@@ -5359,7 +5360,7 @@ fn apply_encode_policy(
             }
             ColorSpace::Icc {
                 profile: profile.clone(),
-                channels,
+                color_channels: channels,
                 alpha: AlphaMode::None,
                 intent: zenpixels::RenderingIntent::default(),
             }
@@ -5591,7 +5592,7 @@ fn check_truncation_policy(
 /// Returns `Cow::Borrowed` when rows are tightly packed (zero-copy),
 /// `Cow::Owned` when stride padding must be stripped.
 fn contiguous_bytes<'a>(pixels: &PixelView<'a>) -> Result<Cow<'a, [u8]>, At<PngError>> {
-    pixels.contiguous_bytes().map_err(|e| match e.error() {
+    pixels.to_contiguous_bytes().map_err(|e| match e.error() {
         zenpixels::BufferError::AllocationFailed => at!(PngError::OutOfMemory(e.to_string())),
         _ => at!(PngError::InvalidBuffer(e.to_string())),
     })
@@ -5672,7 +5673,7 @@ fn append_png_rows(
     use linear_srgb::default::{linear_to_srgb_u8_rgba_slice, linear_to_srgb_u8_slice};
     use zenpixels::SampleLayout;
     let format = rows.format().layout;
-    let h = rows.rows();
+    let h = rows.height();
     for y in 0..h {
         let src = rows.row(y);
         match format {
@@ -6144,7 +6145,7 @@ where
     [P]: rgb::ComponentBytes<u8>,
 {
     use rgb::ComponentBytes;
-    for y in 0..src.height().min(dst.rows() as usize) {
+    for y in 0..src.height().min(dst.height() as usize) {
         let src_row = &src.buf()[y * src.stride()..][..src.width()];
         let src_bytes = src_row.as_bytes();
         let dst_row = dst.row_mut(y as u32);
@@ -6158,7 +6159,7 @@ fn decode_into_rgb_f32(pixels: PixelBuf, dst: &mut PixelViewMut<'_>) {
     use linear_srgb::default::srgb_u8_to_linear;
 
     let src = to_rgb8(pixels);
-    for y in 0..src.height().min(dst.rows() as usize) {
+    for y in 0..src.height().min(dst.height() as usize) {
         let src_row = &src.buf()[y * src.stride()..][..src.width()];
         let dst_row = dst.row_mut(y as u32);
         for (i, s) in src_row.iter().enumerate() {
@@ -6181,7 +6182,7 @@ fn decode_into_rgba_f32(pixels: PixelBuf, dst: &mut PixelViewMut<'_>) {
     use linear_srgb::default::srgb_u8_to_linear;
 
     let src = to_rgba8(pixels);
-    for y in 0..src.height().min(dst.rows() as usize) {
+    for y in 0..src.height().min(dst.height() as usize) {
         let src_row = &src.buf()[y * src.stride()..][..src.width()];
         let dst_row = dst.row_mut(y as u32);
         for (i, s) in src_row.iter().enumerate() {
@@ -6205,7 +6206,7 @@ fn decode_into_gray_f32(pixels: PixelBuf, dst: &mut PixelViewMut<'_>) {
     use linear_srgb::default::srgb_u8_to_linear;
 
     let src = to_gray8(pixels);
-    for y in 0..src.height().min(dst.rows() as usize) {
+    for y in 0..src.height().min(dst.height() as usize) {
         let src_row = &src.buf()[y * src.stride()..][..src.width()];
         let dst_row = dst.row_mut(y as u32);
         for (i, s) in src_row.iter().enumerate() {
@@ -6422,7 +6423,7 @@ fn to_gray16(pixels: PixelBuf) -> imgref::ImgVec<Gray<u16>> {
 /// Decode into Rgb<u16> target buffer.
 fn decode_into_rgb16(pixels: PixelBuf, dst: &mut PixelViewMut<'_>) {
     let src = to_rgb16(pixels);
-    for y in 0..src.height().min(dst.rows() as usize) {
+    for y in 0..src.height().min(dst.height() as usize) {
         let src_row = &src.buf()[y * src.stride()..][..src.width()];
         let dst_row = dst.row_mut(y as u32);
         for (i, s) in src_row.iter().enumerate() {
@@ -6440,7 +6441,7 @@ fn decode_into_rgb16(pixels: PixelBuf, dst: &mut PixelViewMut<'_>) {
 /// Decode into Rgba<u16> target buffer.
 fn decode_into_rgba16(pixels: PixelBuf, dst: &mut PixelViewMut<'_>) {
     let src = to_rgba16(pixels);
-    for y in 0..src.height().min(dst.rows() as usize) {
+    for y in 0..src.height().min(dst.height() as usize) {
         let src_row = &src.buf()[y * src.stride()..][..src.width()];
         let dst_row = dst.row_mut(y as u32);
         for (i, s) in src_row.iter().enumerate() {
@@ -6459,7 +6460,7 @@ fn decode_into_rgba16(pixels: PixelBuf, dst: &mut PixelViewMut<'_>) {
 /// Decode into Gray<u16> target buffer.
 fn decode_into_gray16(pixels: PixelBuf, dst: &mut PixelViewMut<'_>) {
     let src = to_gray16(pixels);
-    for y in 0..src.height().min(dst.rows() as usize) {
+    for y in 0..src.height().min(dst.height() as usize) {
         let src_row = &src.buf()[y * src.stride()..][..src.width()];
         let dst_row = dst.row_mut(y as u32);
         for (i, s) in src_row.iter().enumerate() {
@@ -6483,7 +6484,7 @@ fn pixel_descriptor_for_data(pixels: &PixelBuf) -> PixelFormat {
 fn pixel_data_bytes(pixels: &PixelBuf) -> Vec<u8> {
     pixels
         .as_view()
-        .contiguous_bytes()
+        .to_contiguous_bytes()
         .expect("native PNG buffer")
         .into_owned()
 }
@@ -7332,7 +7333,7 @@ mod tests {
             assert_eq!(out.height(), h as u32);
             out.into_buffer()
                 .as_view()
-                .contiguous_bytes()
+                .to_contiguous_bytes()
                 .unwrap()
                 .into_owned()
         };
@@ -10024,13 +10025,13 @@ mod tests {
             decoded_push
                 .pixels
                 .as_view()
-                .contiguous_bytes()
+                .to_contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned(),
             decoded_one
                 .pixels
                 .as_view()
-                .contiguous_bytes()
+                .to_contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned()
         );
@@ -10238,13 +10239,13 @@ mod tests {
             dec_push
                 .pixels
                 .as_view()
-                .contiguous_bytes()
+                .to_contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned(),
             dec_one
                 .pixels
                 .as_view()
-                .contiguous_bytes()
+                .to_contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned()
         );
@@ -10352,13 +10353,13 @@ mod tests {
             decoded
                 .pixels
                 .as_view()
-                .contiguous_bytes()
+                .to_contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned(),
             decoded_one
                 .pixels
                 .as_view()
-                .contiguous_bytes()
+                .to_contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned()
         );
@@ -10626,13 +10627,13 @@ mod tests {
             decoded
                 .pixels
                 .as_view()
-                .contiguous_bytes()
+                .to_contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned(),
             decoded_one
                 .pixels
                 .as_view()
-                .contiguous_bytes()
+                .to_contiguous_bytes()
                 .expect("native PNG buffer")
                 .into_owned()
         );
@@ -11365,7 +11366,7 @@ mod strip_stream_tests {
                 assert!(
                     d.pixels
                         .as_view()
-                        .contiguous_bytes()
+                        .to_contiguous_bytes()
                         .expect("native PNG buffer")
                         .into_owned()
                         == px,

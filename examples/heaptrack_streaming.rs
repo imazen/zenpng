@@ -81,7 +81,7 @@ fn load(file: &[u8]) -> Pixels {
     let (w, h) = (dec.info().width as usize, dec.info().height as usize);
     let mut data = Vec::new();
     while let Some((_, rows)) = dec.next_batch().unwrap() {
-        for y in 0..rows.rows() {
+        for y in 0..rows.height() {
             let row = rows.row(y);
             if data.capacity() == 0 {
                 data.reserve_exact(row.len() * h);
@@ -216,7 +216,7 @@ fn main() {
                     .unwrap();
                 let mut sum = 0usize;
                 while let Some((_, rows)) = dec.next_batch().unwrap() {
-                    for y in 0..rows.rows() {
+                    for y in 0..rows.height() {
                         sum += rows.row(y).len();
                     }
                 }

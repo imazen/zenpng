@@ -211,8 +211,8 @@ mod tests {
     #[test]
     fn cicp_pq_hlg_rejected() {
         // HDR PQ — not v0-supported.
-        assert_eq!(SourceGamut::from_cicp(Cicp::BT2100_PQ), None);
-        assert_eq!(SourceGamut::from_cicp(Cicp::BT2100_HLG), None);
+        assert_eq!(SourceGamut::from_cicp(Cicp::BT2100_PQ_RGB), None);
+        assert_eq!(SourceGamut::from_cicp(Cicp::BT2100_HLG_RGB), None);
     }
 
     #[test]

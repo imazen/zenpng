@@ -103,7 +103,7 @@ fn decode(png: &[u8]) -> Vec<u8> {
         .unwrap()
         .pixels
         .as_view()
-        .contiguous_bytes()
+        .to_contiguous_bytes()
         .unwrap()
         .into_owned()
 }

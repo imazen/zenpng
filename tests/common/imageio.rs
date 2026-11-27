@@ -49,7 +49,7 @@ pub fn to_imageio(
     if src_bpc != bpc {
         return Err(format!("depth: zenpng {src_bpc}-bit, ImageIO {bpc}-bit"));
     }
-    let bytes = px.as_view().contiguous_bytes().unwrap().into_owned();
+    let bytes = px.as_view().to_contiguous_bytes().unwrap().into_owned();
     let cb = bpc / 8;
     let dst_ch = bpp / bpc;
     let n = bytes.len() / (src_ch * cb);

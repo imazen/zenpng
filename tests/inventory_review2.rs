@@ -94,7 +94,7 @@ fn parts_of(inv: &Inventory, ty: &[u8; 4]) -> Vec<zencodec::inventory::Part> {
 fn pixels(out: &zencodec::decode::DecodeOutput) -> Vec<u8> {
     let s = out.pixels();
     let mut v = Vec::new();
-    for y in 0..s.rows() {
+    for y in 0..s.height() {
         v.extend_from_slice(s.row(y));
     }
     v
@@ -156,7 +156,7 @@ fn frames(png: &[u8]) -> Vec<Vec<u8>> {
     while let Some(f) = d.render_next_frame(None).unwrap() {
         let s = f.pixels();
         let mut v = Vec::new();
-        for y in 0..s.rows() {
+        for y in 0..s.height() {
             v.extend_from_slice(s.row(y));
         }
         out.push(v);

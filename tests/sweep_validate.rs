@@ -164,7 +164,7 @@ fn sweep_cells_decode_exactly_and_steps_are_live() {
                 let decoded = out
                     .pixels
                     .as_view()
-                    .contiguous_bytes()
+                    .to_contiguous_bytes()
                     .unwrap()
                     .into_owned();
                 if decoded != img.rgb {

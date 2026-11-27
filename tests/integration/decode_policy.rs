@@ -162,7 +162,7 @@ fn job(policy: DecodePolicy) -> PngDecodeJob {
 }
 fn packed(pixels: &PixelView<'_>) -> Vec<u8> {
     let row = pixels.width() as usize * pixels.format().layout.bytes_per_pixel();
-    (0..pixels.rows())
+    (0..pixels.height())
         .flat_map(|y| pixels.row(y)[..row].to_vec())
         .collect()
 }
@@ -365,7 +365,7 @@ fn metadata_gates_hold_on_every_still_route_without_changing_pixels() {
         zenpixels::SampleLayout::RGB8,
         zenpixels::ColorSpace::Icc {
             profile: std::sync::Arc::from(P3),
-            channels: 3,
+            color_channels: 3,
             alpha: zenpixels::AlphaMode::None,
             intent: zenpixels::RenderingIntent::default(),
         },

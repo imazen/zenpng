@@ -109,8 +109,16 @@ fn main() {
         zenpng::__set_idot_min_bytes(0);
         let par_eq = match (&serial, &par) {
             (Ok(s), Ok(p)) => {
-                s.pixels.as_view().contiguous_bytes().unwrap().into_owned()
-                    == p.pixels.as_view().contiguous_bytes().unwrap().into_owned()
+                s.pixels
+                    .as_view()
+                    .to_contiguous_bytes()
+                    .unwrap()
+                    .into_owned()
+                    == p.pixels
+                        .as_view()
+                        .to_contiguous_bytes()
+                        .unwrap()
+                        .into_owned()
             }
             (Err(_), Err(_)) => true,
             _ => false,

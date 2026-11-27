@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             p3,
             Some(ColorSpace::Icc {
                 profile: std::sync::Arc::from(zenpixels_convert::icc_profiles::DISPLAY_P3_V4),
-                channels: 3,
+                color_channels: 3,
                 alpha: zenpixels::AlphaMode::None,
                 intent: zenpixels::RenderingIntent::default(),
             }),

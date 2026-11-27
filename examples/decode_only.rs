@@ -35,7 +35,7 @@ fn main() {
                 .unwrap();
             let mut n = 0;
             while let Some((_, rows)) = dec.next_batch().unwrap() {
-                for y in 0..rows.rows() {
+                for y in 0..rows.height() {
                     n += std::hint::black_box(rows.row(y)).len();
                 }
             }

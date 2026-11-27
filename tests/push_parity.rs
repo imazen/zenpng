@@ -113,7 +113,7 @@ fn push_decoder_matches_one_shot_descriptor_and_pixels() {
         };
         let s = out.pixels();
         let row = s.width() as usize * s.format().layout.bytes_per_pixel();
-        let want: Vec<u8> = (0..s.rows())
+        let want: Vec<u8> = (0..s.height())
             .flat_map(|y| s.row(y)[..row].to_vec())
             .collect();
         if sink.desc.as_ref() != Some(s.format()) {

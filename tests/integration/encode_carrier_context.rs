@@ -142,7 +142,7 @@ fn with(profile: &[u8], at: usize, bytes: &[u8]) -> Vec<u8> {
 fn icc_color(profile: &[u8]) -> ColorSpace {
     ColorSpace::Icc {
         profile: Arc::from(profile),
-        channels: 3,
+        color_channels: 3,
         alpha: AlphaMode::Straight,
         intent: zenpixels::RenderingIntent::default(),
     }

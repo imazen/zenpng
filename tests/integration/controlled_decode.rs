@@ -94,7 +94,7 @@ fn native_formats_and_adam7_match_independent_pixels_after_adoption() {
         let expected = independent(&bytes);
         let native = PngDecoderConfig::new().decode(&bytes).unwrap();
         assert_eq!(
-            native.pixels().contiguous_bytes().unwrap().as_ref(),
+            native.pixels().to_contiguous_bytes().unwrap().as_ref(),
             expected,
             "ordinary native {name}"
         );
@@ -667,7 +667,7 @@ fn gray_alpha_sixteen_reports_the_same_default_transfer_as_other_png_layouts() {
         let image = config.clone().decode(&bytes).unwrap();
         assert_eq!(image.pixels().format(), &descriptor);
         assert_eq!(
-            image.pixels().contiguous_bytes().unwrap().as_ref(),
+            image.pixels().to_contiguous_bytes().unwrap().as_ref(),
             independent(&bytes)
         );
         let mut stream = config

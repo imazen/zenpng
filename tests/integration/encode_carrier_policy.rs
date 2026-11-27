@@ -77,7 +77,7 @@ fn encode_with(
     let spec = PixelFormat::new(
         zenpixels::SampleLayout::RGBA8,
         zenpixels::ColorSpace::Untagged {
-            channels: 4,
+            total_channels: 4,
             alpha: zenpixels::AlphaMode::Straight,
         },
     );

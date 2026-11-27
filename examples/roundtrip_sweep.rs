@@ -96,7 +96,7 @@ fn rgba16(px: &zenpixels::PixelBuf) -> Vec<u16> {
         SampleType::U16 => true,
         t => panic!("channel type {t:?}"),
     };
-    let b = px.as_view().contiguous_bytes().unwrap().into_owned();
+    let b = px.as_view().to_contiguous_bytes().unwrap().into_owned();
     let v: Vec<u16> = if wide {
         b.as_chunks::<2>()
             .0

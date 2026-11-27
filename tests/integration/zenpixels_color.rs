@@ -228,7 +228,7 @@ fn grayscale_icc_keeps_gray_profile_and_samples() {
     let file = fixture(0, 16, &row, &[(b"iCCP", &iccp)]);
     let output = zenpng::decode(&file, &PngDecodeConfig::strict(), &Unstoppable).unwrap();
     assert!(
-        matches!(&output.pixels.format().color, ColorSpace::Icc { profile: active, channels: 1, .. } if active.as_ref() == profile.as_ref())
+        matches!(&output.pixels.format().color, ColorSpace::Icc { profile: active, color_channels: 1, .. } if active.as_ref() == profile.as_ref())
     );
     let encoded = PngEncoderConfig::new()
         .with_compression(Compression::None)
@@ -308,7 +308,7 @@ fn baking_hdr_orientation_preserves_color_and_raw_signaling() {
     assert_eq!(origin.kind, OriginKind::Cicp);
     assert_eq!(origin.cicp, Some(Cicp::BT2100_PQ_RGB));
     let hdr = pixels.hdr();
-    assert!(hdr.cll.is_some() && hdr.mastering.is_some());
+    assert!(hdr.content_light_level.is_some() && hdr.mastering.is_some());
     let facts = pixels.facts();
     assert!(facts.depth.is_some());
 

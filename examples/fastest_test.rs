@@ -40,7 +40,7 @@ fn main() {
     let pixel_bytes_owned = decoded
         .pixels
         .as_view()
-        .contiguous_bytes()
+        .to_contiguous_bytes()
         .unwrap()
         .into_owned();
     let pixel_bytes: &[u8] = &pixel_bytes_owned;

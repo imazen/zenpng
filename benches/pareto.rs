@@ -297,7 +297,12 @@ fn bench_encode(suite: &mut Suite) {
         }
         let d = zenpng_decode(data, 1);
         let alpha = name.contains("_rgba8_");
-        let bytes = d.pixels.as_view().contiguous_bytes().unwrap().into_owned();
+        let bytes = d
+            .pixels
+            .as_view()
+            .to_contiguous_bytes()
+            .unwrap()
+            .into_owned();
         let (w, h) = (d.info.width as usize, d.info.height as usize);
         if bytes.len() != w * h * if alpha { 4 } else { 3 } {
             continue; // the file decoded to another layout (e.g. gray)
@@ -346,14 +351,14 @@ fn add_decode_group(suite: &mut Suite, group: String, data: &'static [u8], check
         let ours = out
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         assert!(ours == png_decode(data), "{group}: png disagrees");
         let mt = zenpng_decode(data, 0)
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         assert!(ours == mt, "{group}: zenpng MT disagrees with ST");
@@ -381,7 +386,12 @@ fn bench_decode(suite: &mut Suite) {
             let d = zenpng_decode(data, 1);
             let (w, h) = (d.info.width as usize, d.info.height as usize);
             let alpha = name.contains("_rgba8_");
-            let bytes = d.pixels.as_view().contiguous_bytes().unwrap().into_owned();
+            let bytes = d
+                .pixels
+                .as_view()
+                .to_contiguous_bytes()
+                .unwrap()
+                .into_owned();
             if bytes.len() != w * h * if alpha { 4 } else { 3 } {
                 continue;
             }
@@ -462,7 +472,7 @@ fn stream_decode_with(data: &[u8], sequential: bool) -> Vec<u8> {
     let h = dec.info().height as usize;
     let mut out = Vec::new();
     while let Some((_, rows)) = dec.next_batch().unwrap() {
-        for y in 0..rows.rows() {
+        for y in 0..rows.height() {
             // Sized once, as a consumer that keeps the image would.
             if out.capacity() == 0 {
                 out.reserve_exact(rows.row(y).len() * h);
@@ -523,7 +533,7 @@ fn bench_pipeline_decode(suite: &mut Suite) {
         let whole = zenpng_decode(data, 1)
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         for seq in [true, false] {
@@ -548,13 +558,13 @@ fn bench_pipeline_decode(suite: &mut Suite) {
                 zenpng_decode(i, 0)
                     .pixels
                     .as_view()
-                    .contiguous_bytes()
+                    .to_contiguous_bytes()
                     .unwrap()
                     .into_owned()
                     == zenpng_decode(i, 1)
                         .pixels
                         .as_view()
-                        .contiguous_bytes()
+                        .to_contiguous_bytes()
                         .unwrap()
                         .into_owned(),
                 "{name}: parallel iDOT decode differs from serial"
@@ -610,7 +620,7 @@ fn bench_stream_decode(suite: &mut Suite) {
         let whole = zenpng_decode(data, 1)
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         assert!(push_decode(data) == whole, "{name}: push differs");
@@ -704,7 +714,12 @@ fn bench_stream_encode(suite: &mut Suite) {
         }
         let d = zenpng_decode(data, 1);
         let alpha = name.contains("_rgba8_");
-        let bytes = d.pixels.as_view().contiguous_bytes().unwrap().into_owned();
+        let bytes = d
+            .pixels
+            .as_view()
+            .to_contiguous_bytes()
+            .unwrap()
+            .into_owned();
         let (w, h) = (d.info.width as usize, d.info.height as usize);
         if bytes.len() != w * h * if alpha { 4 } else { 3 } {
             continue;

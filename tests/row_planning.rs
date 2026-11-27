@@ -18,7 +18,7 @@ use zenpng::{Compression, PngEncodeJob, PngEncoder, PngEncoderConfig};
 fn icc_color() -> ColorSpace {
     ColorSpace::Icc {
         profile: Arc::from(DISPLAY_P3_V4),
-        channels: 3,
+        color_channels: 3,
         alpha: AlphaMode::None,
         intent: zenpixels::RenderingIntent::default(),
     }

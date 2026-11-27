@@ -985,7 +985,7 @@ mod tests {
             let raw = decoded
                 .pixels
                 .as_view()
-                .contiguous_bytes()
+                .to_contiguous_bytes()
                 .unwrap()
                 .into_owned();
             assert_eq!(
@@ -1036,7 +1036,7 @@ mod tests {
             let raw = decoded
                 .pixels
                 .as_view()
-                .contiguous_bytes()
+                .to_contiguous_bytes()
                 .unwrap()
                 .into_owned();
             assert_eq!(

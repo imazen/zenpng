@@ -68,8 +68,16 @@ fn assert_parallel_equals_serial(path: &Path, base: PngDecodeConfig) {
         match (&serial, &par) {
             (Ok(s), Ok(p)) => {
                 assert!(
-                    s.pixels.as_view().contiguous_bytes().unwrap().into_owned()
-                        == p.pixels.as_view().contiguous_bytes().unwrap().into_owned(),
+                    s.pixels
+                        .as_view()
+                        .to_contiguous_bytes()
+                        .unwrap()
+                        .into_owned()
+                        == p.pixels
+                            .as_view()
+                            .to_contiguous_bytes()
+                            .unwrap()
+                            .into_owned(),
                     "{}: pixels differ with max_threads={threads}",
                     path.display()
                 );

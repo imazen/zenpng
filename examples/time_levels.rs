@@ -35,7 +35,7 @@ fn main() {
     let raw_mib = decoded
         .pixels
         .as_view()
-        .contiguous_bytes()
+        .to_contiguous_bytes()
         .unwrap()
         .into_owned()
         .len() as f64

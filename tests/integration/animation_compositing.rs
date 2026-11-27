@@ -145,7 +145,7 @@ fn subframes_blend_dispose_and_skip_at_both_precisions() {
                     {
                         let frame = decoder.render_next_frame(None).unwrap().unwrap();
                         let pixels = frame.pixels();
-                        assert_eq!((pixels.width(), pixels.rows()), (3, 2));
+                        assert_eq!((pixels.width(), pixels.height()), (3, 2));
                         assert_eq!(
                             *pixels.format(),
                             if depth == 16 {
@@ -228,7 +228,7 @@ fn sink_completion_carries_exact_displayed_frame_timing() {
         assert_eq!(owned.duration(), duration);
         assert_eq!(owned.frame_index(), index as u32);
         assert_eq!(
-            owned.pixels().contiguous_bytes().unwrap().as_ref(),
+            owned.pixels().to_contiguous_bytes().unwrap().as_ref(),
             sink.bytes()
         );
     }

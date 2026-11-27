@@ -1549,7 +1549,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
@@ -1601,7 +1601,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         assert_eq!(raw.len(), w * h * 4);
@@ -1630,7 +1630,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels.iter().map(|p| p.value()).collect();
@@ -1656,7 +1656,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels
@@ -1686,7 +1686,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels
@@ -1717,7 +1717,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels
@@ -1748,7 +1748,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         for (i, px) in pixels.iter().enumerate() {
@@ -1828,7 +1828,7 @@ mod tests {
         let frame_bytes = apng.frames[0]
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         // All pixels are (128, 128, 128, 128)
@@ -1996,7 +1996,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         for (i, px) in pixels.iter().enumerate() {
@@ -2036,7 +2036,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         for (i, px) in pixels.iter().enumerate() {
@@ -2166,7 +2166,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels
@@ -2198,7 +2198,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels
@@ -2231,7 +2231,7 @@ mod tests {
         let raw = decoded
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         let expected: Vec<u8> = pixels
@@ -2410,13 +2410,13 @@ mod tests {
         let f0 = decoded.frames[0]
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         let f1 = decoded.frames[1]
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         assert_eq!(f0, frame0);
@@ -2444,13 +2444,13 @@ mod tests {
         let f0 = decoded.frames[0]
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         let f1 = decoded.frames[1]
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         assert_eq!(f0, frame0);

@@ -135,7 +135,7 @@ fn push_decoder_matches_decode_on_every_format() {
         let expected = expected
             .pixels
             .as_view()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         assert_eq!(sink.0, expected, "{}", path.display());
@@ -150,10 +150,10 @@ fn push_decoder_matches_decode_on_every_format() {
             let mut next_y = 0;
             while let Some((y, rows)) = dec.next_batch().unwrap() {
                 assert_eq!(y, next_y, "{}: batch start", path.display());
-                for r in 0..rows.rows() {
+                for r in 0..rows.height() {
                     got.extend_from_slice(rows.row(r));
                 }
-                next_y += rows.rows();
+                next_y += rows.height();
             }
             assert_eq!(got, expected, "{}: streaming", path.display());
         }
@@ -273,7 +273,7 @@ fn push_respects_bounded_loans_and_preserves_color_metadata() {
                 metadata.origin.as_ref().unwrap().cicp,
                 Some(Cicp::BT2100_PQ_RGB)
             );
-            assert!(metadata.hdr.cll.is_some());
+            assert!(metadata.hdr.content_light_level.is_some());
             self.next_y += h;
             self.output
                 .provide_buffer_with_metadata(batch, h, w, spec, metadata)
@@ -329,7 +329,7 @@ fn push_respects_bounded_loans_and_preserves_color_metadata() {
         let pixels = sink.output.into_buffer().unwrap();
         assert_eq!(pixels.format(), &output.native_format);
         assert_eq!(
-            pixels.as_view().contiguous_bytes().unwrap().as_ref(),
+            pixels.as_view().to_contiguous_bytes().unwrap().as_ref(),
             expected
         );
         assert_eq!(first.origin(), Some(pixels.origin()));
@@ -357,7 +357,10 @@ fn push_respects_bounded_loans_and_preserves_color_metadata() {
                 .iter()
                 .flat_map(|&[r, g, b]| [r, g, b, 255])
                 .collect();
-            assert_eq!(pixels.as_view().contiguous_bytes().unwrap().as_ref(), rgba);
+            assert_eq!(
+                pixels.as_view().to_contiguous_bytes().unwrap().as_ref(),
+                rgba
+            );
         }
     }
 }

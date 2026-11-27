@@ -98,7 +98,7 @@ fn rejected_timing_and_dimensions_do_not_accept_frames() {
 #[test]
 fn native_zero_denominator_means_centiseconds_without_rounding() {
     let pixels = pixels();
-    let bytes = pixels.as_view().contiguous_bytes().unwrap().into_owned();
+    let bytes = pixels.as_view().to_contiguous_bytes().unwrap().into_owned();
     let frames = [
         zenpng::ApngFrameInput::new(&bytes, 7, 0),
         zenpng::ApngFrameInput::new(&bytes, 1, 30000),
@@ -306,7 +306,7 @@ fn animation_inherits_frame_icc_and_enforces_decode_job_limits() {
         source.format().layout,
         ColorSpace::Icc {
             profile: Arc::from(icc),
-            channels: 3,
+            color_channels: 3,
             alpha: source.format().color.alpha(),
             intent: zenpixels::RenderingIntent::default(),
         },
@@ -346,7 +346,7 @@ fn animation_inherits_frame_icc_and_enforces_decode_job_limits() {
     let active = &frame.pixels().format().color;
     match active {
         ColorSpace::Icc { profile, .. } => assert_eq!(profile.as_ref(), icc),
-        _ => assert_eq!(active.to_cicp(), Some(zenpixels::Cicp::DISPLAY_P3)),
+        _ => assert_eq!(active.to_cicp_lossy(), Some(zenpixels::Cicp::DISPLAY_P3)),
     }
     assert_eq!(
         decoder.info().source_color.icc_profile.as_deref(),
